@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' wsmedia: data:; media-src 'self' wsmedia: blob:; connect-src 'self' wsmedia:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>Woodshed</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="titlebar"></div>
+
+  <!-- Dependency banner -->
+  <div id="deps-banner" class="deps-banner hidden"></div>
+
+  <nav id="sidebar">
+    <div class="brand">
+      <span class="logo">◐</span>
+      <span class="brand-name">Woodshed</span>
+    </div>
+    <button class="nav-btn active" data-view="library"><span>≡</span> Library</button>
+    <button class="nav-btn" data-view="settings"><span>⚙</span> Settings</button>
+    <div class="sidebar-spacer"></div>
+    <button id="add-btn" class="add-btn">＋ Add song</button>
+  </nav>
+
+  <main id="content">
+    <!-- LIBRARY VIEW -->
+    <section id="view-library" class="view active">
+      <header class="view-header">
+        <h1>Library</h1>
+        <input id="lib-search" class="search" type="search" placeholder="Search songs…" />
+      </header>
+      <div id="jobs"></div>
+      <div id="library-grid" class="library-grid"></div>
+      <div id="library-empty" class="empty hidden">
+        <p>No songs yet.</p>
+        <button class="add-btn" data-add>＋ Add your first song</button>
+      </div>
+    </section>
+
+    <!-- PLAYER VIEW -->
+    <section id="view-player" class="view">
+      <button id="player-back" class="back-btn">‹ Library</button>
+      <div id="player-root"></div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="view-settings" class="view">
+      <header class="view-header"><h1>Settings</h1></header>
+      <div id="settings-root"></div>
+    </section>
+  </main>
+
+  <!-- ADD MODAL -->
+  <div id="add-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2>Add a song</h2>
+      <label class="field">
+        <span>YouTube URL</span>
+        <input id="add-url" type="url" placeholder="https://www.youtube.com/watch?v=…" />
+      </label>
+      <label class="field">
+        <span>Quality preset</span>
+        <select id="add-preset"></select>
+      </label>
+      <label class="field">
+        <span>Stems</span>
+        <select id="add-stemmode"></select>
+      </label>
+      <p id="add-preset-desc" class="hint"></p>
+      <div class="modal-actions">
+        <button id="add-cancel" class="btn-ghost">Cancel</button>
+        <button id="add-go" class="btn-primary">Process</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
