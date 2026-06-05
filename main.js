@@ -2,6 +2,9 @@
 
 const { app, BrowserWindow, ipcMain, protocol, shell, net, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const { Store } = require('./lib/store');
 const { Runtime } = require('./lib/runtime');
@@ -25,6 +28,27 @@ function emit(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function runQuiet(bin, args) {
+  return new Promise((resolve, reject) => {
+    const c = spawn(bin, args);
+    let err = '';
+    c.stderr.on('data', (d) => (err = (err + d).slice(-2000)));
+    c.on('error', reject);
+    c.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${path.basename(bin)} exited ${code}\n${err}`))));
+  });
+}
+
+function runCapture(bin, args) {
+  return new Promise((resolve, reject) => {
+    const c = spawn(bin, args);
+    let out = '', err = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.stderr.on('data', (d) => (err = (err + d).slice(-3000)));
+    c.on('error', reject);
+    c.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`${path.basename(bin)} exited ${code}\n${err}`))));
+  });
 }
 
 function createWindow() {
@@ -174,6 +198,39 @@ function registerIpc() {
       settings, addedAt: song.addedAt,
     });
     return { jobId };
+  });
+
+  // Auto-detect beats/downbeats with BeatNet (provisions its env on first use).
+  ipcMain.handle('metro:detect', async (_e, songId) => {
+    const song = store.getLibrary().songs.find((s) => s.id === songId);
+    if (!song) return { error: 'Song not found' };
+    const onLog = (line) => emit('runtime:log', { line });
+    const progress = (stage, message) => emit('metro:detectProgress', { songId, stage, message });
+    let mix = null;
+    try {
+      progress('setup', 'Preparing the beat detector…');
+      const py = await runtime.ensureBeatnet(onLog);
+
+      progress('mix', 'Building a mix from the stems…');
+      const ffmpeg = runtime.resolveTool('ffmpeg');
+      if (!ffmpeg) throw new Error('ffmpeg is not available.');
+      const songDir = store.songDir(songId);
+      mix = path.join(os.tmpdir(), `woodshed-mix-${songId}.wav`);
+      const inputs = song.stems.flatMap((s) => ['-i', path.join(songDir, s.file)]);
+      await runQuiet(ffmpeg, ['-y', ...inputs, '-filter_complex', `amix=inputs=${song.stems.length}:normalize=0`, mix]);
+
+      progress('detect', 'Detecting beats…');
+      const script = path.join(__dirname, 'lib', 'beatnet_detect.py');
+      const out = await runCapture(py, [script, mix]);
+      const line = out.split('\n').find((l) => l.startsWith('BEATS_JSON'));
+      if (!line) throw new Error('Beat detection produced no output.');
+      const { beats } = JSON.parse(line.slice('BEATS_JSON'.length));
+      return { beats };
+    } catch (e) {
+      return { error: String(e.message || e) };
+    } finally {
+      if (mix) { try { fs.rmSync(mix, { force: true }); } catch {} }
+    }
   });
 
   ipcMain.handle('process:cancel', (_e, jobId) => processor.cancel(jobId));

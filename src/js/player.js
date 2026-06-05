@@ -159,7 +159,12 @@ export async function openPlayer(song, onBack) {
           <span class="t-label">Vol</span>
           <input type="range" id="m-vol" min="0" max="1" step="0.01" value="0.7" />
         </div>
-        <div class="mp-changes">
+        <div class="mp-row mp-detect">
+          <button class="toggle-btn" id="m-detect">✨ Auto-detect beats</button>
+          <span class="mp-detect-status" id="m-detect-status">Manual tempo</span>
+          <button class="toggle-btn sm hidden" id="m-detect-clear">Use manual</button>
+        </div>
+        <div class="mp-changes" id="mp-manual">
           <div class="mp-changes-head">
             <span>Tempo / time-sig changes</span>
             <button class="toggle-btn sm" id="m-add">＋ Add at playhead</button>
@@ -575,6 +580,19 @@ export async function openPlayer(song, onBack) {
     mList.querySelectorAll('.mp-del').forEach((b) => {
       b.onclick = (e) => { e.stopPropagation(); metronome.removeSectionAt(metronome.map[+b.dataset.i].t); };
     });
+    // Detected vs manual state.
+    const detStatus = document.getElementById('m-detect-status');
+    const detClear = document.getElementById('m-detect-clear');
+    const manual = document.getElementById('mp-manual');
+    if (metronome.source === 'detected' && metronome.detected) {
+      detStatus.textContent = `Detected ✓ (${metronome.detected.length} beats)`;
+      detClear.classList.remove('hidden');
+      manual.classList.add('dim');
+    } else {
+      detStatus.textContent = 'Manual tempo';
+      detClear.classList.add('hidden');
+      manual.classList.remove('dim');
+    }
   }
   metronome.onChange = () => { refreshMetroUI(); drawGrid(); persistTempo(); };
 
@@ -613,6 +631,32 @@ export async function openPlayer(song, onBack) {
     clearTimeout(tapReset);
     tapReset = setTimeout(() => { taps = []; }, 2000);
   };
+
+  // Auto-detect (BeatNet). First use provisions an isolated env (one-time DL),
+  // so we stream the install/detect log into the status line.
+  const mDetect = document.getElementById('m-detect');
+  const mDetectStatus = document.getElementById('m-detect-status');
+  const mDetectClear = document.getElementById('m-detect-clear');
+  let detecting = false;
+  let offDetectLog = null;
+  mDetect.onclick = async () => {
+    if (detecting) return;
+    detecting = true;
+    mDetect.disabled = true;
+    mDetectStatus.textContent = 'Starting…';
+    offDetectLog = window.api.on('runtime:log', ({ line }) => { mDetectStatus.textContent = line.slice(0, 70); });
+    const offProg = window.api.on('metro:detectProgress', ({ songId, message }) => { if (songId === song.id) mDetectStatus.textContent = message; });
+    const res = await window.api.detectBeats(song.id);
+    if (offDetectLog) { offDetectLog(); offDetectLog = null; }
+    offProg();
+    detecting = false;
+    mDetect.disabled = false;
+    if (res.error) { mDetectStatus.textContent = '⚠ ' + res.error.split('\n')[0].slice(0, 64); return; }
+    metronome.setDetected(res.beats);
+    if (!metronome.enabled) metronome.setEnabled(true);
+    refreshMetroUI();
+  };
+  mDetectClear.onclick = () => metronome.clearDetected();
 
   async function doPlayPause() {
     if (engine.playing) { engine.pause(); setPlayIcon(); return; }

@@ -86,9 +86,14 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
     along (the tap also aligns the downbeat), pick a time signature, accent the
     downbeat, adjust volume, and optionally **count in** a bar before playback.
     Add **tempo / time-signature changes at any point** ("Add at playhead") for
-    songs that speed up, slow down, or switch meter. A faint **beat grid** is
-    drawn on the waveforms (brighter downbeats) and the click stays locked to
-    the audio at any playback speed and through loops.
+    songs that speed up, slow down, or switch meter. Or **auto-detect** the
+    whole beat/downbeat track with [BeatNet](https://github.com/mjhydri/BeatNet)
+    ("Auto-detect beats") — handles tempo drift and meter changes automatically.
+    A faint **beat grid** is drawn on the waveforms (brighter downbeats) and the
+    click stays locked to the audio at any playback speed and through loops.
+
+  > Auto-detect provisions its own small Python environment on first use (it
+  > needs `madmom`, which only runs on Python 3.9). One-time download.
 
 ### Keyboard shortcuts (in the player)
 

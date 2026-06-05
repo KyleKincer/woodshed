@@ -19,6 +19,8 @@ export class Metronome {
     this.volume = 0.7;
     this.countIn = false;
     this.map = [{ t: 0, bpm: 120, beatsPerBar: 4, unit: 4 }];
+    this.source = 'map';   // 'map' (manual tempo map) | 'detected' (BeatNet)
+    this.detected = null;  // [{ time, downbeat }]
 
     this.beats = [];
     this._timer = null;
@@ -34,16 +36,34 @@ export class Metronome {
     if (typeof tempo.accent === 'boolean') this.accent = tempo.accent;
     if (typeof tempo.volume === 'number') this.volume = tempo.volume;
     if (typeof tempo.countIn === 'boolean') this.countIn = tempo.countIn;
+    if (Array.isArray(tempo.detected) && tempo.detected.length) this.detected = tempo.detected;
+    if (tempo.source === 'detected' && this.detected) this.source = 'detected';
     this.recompute();
     if (tempo.enabled) this.setEnabled(true);
   }
 
   serialize() {
-    return { map: this.map, accent: this.accent, volume: this.volume, countIn: this.countIn, enabled: this.enabled };
+    return {
+      map: this.map, accent: this.accent, volume: this.volume, countIn: this.countIn,
+      enabled: this.enabled, source: this.source, detected: this.detected,
+    };
   }
+
+  // BeatNet output: [[time, beatInBar], ...] where beatInBar === 1 is a downbeat.
+  setDetected(rawBeats) {
+    this.detected = rawBeats.map(([time, k]) => ({ time: +time, downbeat: +k === 1 }));
+    this.source = 'detected';
+    this.recompute();
+    this._notify();
+  }
+  clearDetected() { this.detected = null; this.source = 'map'; this.recompute(); this._notify(); }
 
   // ---- tempo map ----------------------------------------------------------
   recompute() {
+    if (this.source === 'detected' && this.detected && this.detected.length) {
+      this.beats = this.detected.filter((b) => b.time >= 0).sort((a, b) => a.time - b.time);
+      return;
+    }
     const dur = this.engine.duration || 0;
     this.map.sort((a, b) => a.t - b.t);
     const beats = [];
@@ -141,9 +161,21 @@ export class Metronome {
 
   // One free bar of clicks before playback; calls onDone when the bar elapses.
   countInThenPlay(onDone) {
-    const s = this.sectionAt(this.engine.getPosition());
-    const interval = 60 / Math.max(20, Math.min(400, s.bpm));
-    const n = Math.max(1, s.beatsPerBar | 0);
+    const pos = this.engine.getPosition();
+    let interval, n;
+    if (this.source === 'detected' && this.beats.length > 1) {
+      const idx = Math.max(0, this.beats.findIndex((b) => b.time >= pos));
+      const a = this.beats[idx], b = this.beats[idx + 1] || this.beats[idx];
+      interval = Math.max(0.15, b.time - a.time || 0.5);
+      // beats per bar = gap between the two downbeats around the cursor (default 4)
+      const dbs = this.beats.filter((x) => x.downbeat).map((x) => x.time);
+      const di = dbs.findIndex((t) => t >= pos);
+      n = di > 0 ? Math.max(1, Math.round((dbs[di] - dbs[di - 1]) / interval)) : 4;
+    } else {
+      const s = this.sectionAt(pos);
+      interval = 60 / Math.max(20, Math.min(400, s.bpm));
+      n = Math.max(1, s.beatsPerBar | 0);
+    }
     const now = this.ctx.currentTime + 0.12;
     for (let k = 0; k < n; k++) this._click(now + k * interval, k === 0 && this.accent);
     setTimeout(onDone, n * interval * 1000);

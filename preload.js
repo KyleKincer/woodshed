@@ -3,7 +3,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Whitelisted event channels the renderer may subscribe to.
-const EVENTS = ['process:queued', 'process:meta', 'process:progress', 'process:done', 'process:error', 'process:canceled', 'runtime:log'];
+const EVENTS = ['process:queued', 'process:meta', 'process:progress', 'process:done', 'process:error', 'process:canceled', 'runtime:log', 'metro:detectProgress'];
 
 contextBridge.exposeInMainWorld('api', {
   runtimeStatus: () => ipcRenderer.invoke('runtime:status'),
@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   listLibrary: () => ipcRenderer.invoke('library:list'),
   renameSong: (id, title) => ipcRenderer.invoke('library:rename', { id, title }),
   saveTempo: (id, tempo) => ipcRenderer.invoke('library:saveTempo', { id, tempo }),
+  detectBeats: (songId) => ipcRenderer.invoke('metro:detect', songId),
   deleteSong: (id) => ipcRenderer.invoke('library:delete', id),
   openExternal: (url) => ipcRenderer.invoke('library:openExternal', url),
 
