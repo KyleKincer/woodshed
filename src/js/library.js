@@ -39,7 +39,7 @@ export async function renderLibrary(filter = '') {
     });
     card.querySelector('.card-menu').addEventListener('click', (e) => {
       e.stopPropagation();
-      cardMenu(song);
+      cardMenu(song, e.currentTarget);
     });
   });
 }
@@ -60,25 +60,66 @@ function cardHtml(s) {
   </div>`;
 }
 
-async function cardMenu(song) {
-  const action = window.prompt(
-    `"${song.title}"\n\nType an action:\n  r = rename\n  d = delete\n  s = open source on YouTube`,
-    ''
-  );
-  if (!action) return;
-  const a = action.trim().toLowerCase();
-  if (a === 'r') {
-    const name = window.prompt('New name:', song.title);
-    if (name) { await window.api.renameSong(song.id, name); renderLibrary(); }
-  } else if (a === 'd') {
-    if (window.confirm(`Delete "${song.title}" and its stem files?`)) {
-      await window.api.deleteSong(song.id);
-      renderLibrary();
-    }
-  } else if (a === 's') {
-    window.api.openExternal(song.url);
-  }
+// External link for a song, if it has one (downloads/Spotify do; files/searches don't).
+function sourceUrl(song) {
+  const v = song.source?.value || song.url;
+  if (!v) return null;
+  return /^https?:\/\//i.test(v) ? v : null;
 }
+
+function closeCardMenu() {
+  document.querySelector('.ctx-menu')?.remove();
+  document.removeEventListener('mousedown', onDocDown, true);
+  document.removeEventListener('keydown', onMenuKey, true);
+}
+function onDocDown(e) { if (!e.target.closest('.ctx-menu')) closeCardMenu(); }
+function onMenuKey(e) { if (e.key === 'Escape') closeCardMenu(); }
+
+function cardMenu(song, anchor) {
+  closeCardMenu();
+  const url = sourceUrl(song);
+  const items = [
+    { label: 'Play', action: () => onOpenSong(song) },
+    { label: 'Rename…', action: () => renameSong(song) },
+    ...(url ? [{ label: 'Open original source', action: () => window.api.openExternal(url) }] : []),
+    { label: 'Delete', danger: true, action: () => deleteSong(song) },
+  ];
+
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  items.forEach((it) => {
+    const b = document.createElement('button');
+    b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+    b.textContent = it.label;
+    b.onclick = () => { closeCardMenu(); it.action(); };
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+
+  // Position under the ⋯ button, kept on-screen.
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  let top = r.bottom + 6;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 6;
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top = Math.max(8, top) + 'px';
+
+  document.addEventListener('mousedown', onDocDown, true);
+  document.addEventListener('keydown', onMenuKey, true);
+}
+
+async function renameSong(song) {
+  const name = await promptModal('Rename song', song.title);
+  if (name && name.trim()) { await window.api.renameSong(song.id, name.trim()); renderLibrary(currentFilter()); }
+}
+
+async function deleteSong(song) {
+  const ok = await confirmModal('Delete song?', `"${song.title}" and its stem files will be permanently removed.`, 'Delete');
+  if (ok) { await window.api.deleteSong(song.id); renderLibrary(currentFilter()); }
+}
+
+function currentFilter() { return document.getElementById('lib-search').value; }
 
 // ---------- Add modal ----------
 function wireAddModal() {
@@ -248,4 +289,54 @@ function failJob(jobId, error) {
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- Lightweight dialogs (window.prompt/confirm don't work in Electron) ----------
+function promptModal(title, value = '') {
+  return new Promise((resolve) => {
+    const m = buildDialog(title, `
+      <input id="dlg-input" class="dlg-input" type="text" />
+      <div class="modal-actions">
+        <button class="btn-ghost" data-cancel>Cancel</button>
+        <button class="btn-primary" data-ok>Save</button>
+      </div>`);
+    const input = m.querySelector('#dlg-input');
+    input.value = value;
+    const done = (v) => { m.remove(); resolve(v); };
+    m.querySelector('[data-cancel]').onclick = () => done(null);
+    m.querySelector('[data-ok]').onclick = () => done(input.value);
+    m.addEventListener('click', (e) => { if (e.target === m) done(null); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') done(input.value);
+      if (e.key === 'Escape') done(null);
+    });
+    input.focus();
+    input.select();
+  });
+}
+
+function confirmModal(title, message, okLabel = 'OK') {
+  return new Promise((resolve) => {
+    const m = buildDialog(title, `
+      <p class="dlg-msg">${esc(message)}</p>
+      <div class="modal-actions">
+        <button class="btn-ghost" data-cancel>Cancel</button>
+        <button class="btn-danger" data-ok>${esc(okLabel)}</button>
+      </div>`);
+    const done = (v) => { m.remove(); resolve(v); };
+    m.querySelector('[data-cancel]').onclick = () => done(false);
+    m.querySelector('[data-ok]').onclick = () => done(true);
+    m.addEventListener('click', (e) => { if (e.target === m) done(false); });
+    document.addEventListener('keydown', function k(e) {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', k); done(false); }
+    });
+  });
+}
+
+function buildDialog(title, innerHtml) {
+  const m = document.createElement('div');
+  m.className = 'modal';
+  m.innerHTML = `<div class="modal-card"><h2>${esc(title)}</h2>${innerHtml}</div>`;
+  document.body.appendChild(m);
+  return m;
 }

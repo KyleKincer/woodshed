@@ -167,6 +167,25 @@ body { display: flex; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); font: inherit; padding: 10px 16px; border-radius: 9px; cursor: pointer; }
 .btn-ghost:hover { background: var(--bg-3); }
+.btn-danger { background: var(--bad); border: none; color: #fff; font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; }
+.btn-danger:hover { filter: brightness(1.08); }
+.dlg-input { width: 100%; background: var(--bg-3); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 9px; font: inherit; font-size: 14px; outline: none; margin-bottom: 18px; }
+.dlg-input:focus { border-color: var(--accent); }
+.dlg-msg { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+
+/* ---------- Card context menu ---------- */
+.ctx-menu {
+  position: fixed; z-index: 250; min-width: 180px; padding: 6px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px;
+}
+.ctx-item {
+  display: block; width: 100%; text-align: left; background: transparent; border: none;
+  color: var(--text); font: inherit; font-size: 13px; padding: 9px 12px; border-radius: 7px; cursor: pointer;
+}
+.ctx-item:hover { background: var(--bg-3); }
+.ctx-item.danger { color: var(--bad); }
+.ctx-item.danger:hover { background: var(--bad); color: #fff; }
 
 /* ---------- Deps banner ---------- */
 .deps-banner {
