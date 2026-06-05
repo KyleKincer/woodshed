@@ -91,6 +91,7 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 | `←` / `→` | Seek ∓5s (hold `Shift` for 1s) |
 | `,` / `.` | Nudge playhead ∓0.05s (hold `Shift` for 0.01s) |
 | `[` / `]` | Set loop start / end at the playhead |
+| `Home` / `End` | Jump the playhead to loop A / B (or click the A/B times) |
 | `L` | Toggle A–B loop |
 | `−` / `=` | Zoom out / in (at the playhead) |
 | `\` | Fit (zoom out to the whole song) |

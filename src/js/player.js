@@ -127,7 +127,7 @@ export async function openPlayer(song, onBack) {
 
         <div class="t-spacer"></div>
         <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">⟲ Mix</button>
-        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · [ ] set loop · L loop · −/= zoom · \\ fit · 1–9 mute · 0 reset">?</button>
+        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · 1–9 mute · 0 reset">?</button>
       </div>
     </div>
   `;
@@ -343,7 +343,8 @@ export async function openPlayer(song, onBack) {
   }
   function onDragUp() {
     if (!drag) return;
-    if (!drag.moved && (drag.mode === 'new')) engine.seek(drag.startT); // click = seek
+    // A click (no drag) always seeks — even inside the loop or on a handle.
+    if (!drag.moved) engine.seek(drag.startT);
     drag = null;
     timeTip.style.display = 'none';
   }
@@ -430,6 +431,17 @@ export async function openPlayer(song, onBack) {
     };
   });
 
+  // Click the A / B time readouts to jump the playhead there.
+  const loopActive = () => engine.loop.enabled && engine.loop.b > engine.loop.a;
+  const lrA = document.getElementById('lr-a');
+  const lrB = document.getElementById('lr-b');
+  lrA.classList.add('jumpable');
+  lrB.classList.add('jumpable');
+  lrA.title = 'Jump playhead to A (Home)';
+  lrB.title = 'Jump playhead to B (End)';
+  lrA.onclick = () => { if (loopActive()) engine.seek(engine.loop.a); };
+  lrB.onclick = () => { if (loopActive()) engine.seek(engine.loop.b); };
+
   // Speed
   const speed = document.getElementById('speed');
   const speedVal = document.getElementById('speed-val');
@@ -490,6 +502,8 @@ export async function openPlayer(song, onBack) {
     else if (k === '[') { engine.setLoop(true, engine.getPosition(), Math.max(engine.loop.b, engine.getPosition() + 0.1)); setLoopBtn(true); updateLoopOverlay(); }
     else if (k === ']') { engine.setLoop(true, Math.min(engine.loop.a, engine.getPosition() - 0.1), engine.getPosition()); setLoopBtn(true); updateLoopOverlay(); }
     else if (k.toLowerCase() === 'l') loopToggle.click();
+    else if (k === 'Home') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) engine.seek(engine.loop.a); }
+    else if (k === 'End') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) engine.seek(engine.loop.b); }
     else if (k === '-' || k === '_') zoomAt(engine.getPosition(), 2);
     else if (k === '=' || k === '+') zoomAt(engine.getPosition(), 0.5);
     else if (k === '\\') fit();

@@ -357,6 +357,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .loop-readout { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); opacity: .6; }
 .loop-readout.active { opacity: 1; }
 .loop-readout .lr-val { font-variant-numeric: tabular-nums; color: var(--text); min-width: 52px; text-align: center; }
+.loop-readout .lr-val.jumpable { cursor: pointer; border-radius: 4px; }
+.loop-readout.active .lr-val.jumpable:hover { color: var(--accent); text-decoration: underline; }
 .loop-readout .lr-sep { color: var(--muted); }
 .loop-readout .lr-len { color: var(--muted); }
 .loop-readout .nudge { background: var(--bg-3); border: 1px solid var(--border); color: var(--text); width: 22px; height: 22px; border-radius: 6px; cursor: pointer; font: inherit; line-height: 1; }
