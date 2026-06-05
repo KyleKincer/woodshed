@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
 
   listLibrary: () => ipcRenderer.invoke('library:list'),
   renameSong: (id, title) => ipcRenderer.invoke('library:rename', { id, title }),
+  saveTempo: (id, tempo) => ipcRenderer.invoke('library:saveTempo', { id, tempo }),
   deleteSong: (id) => ipcRenderer.invoke('library:delete', id),
   openExternal: (url) => ipcRenderer.invoke('library:openExternal', url),
 

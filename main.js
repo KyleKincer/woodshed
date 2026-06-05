@@ -59,10 +59,8 @@ function createWindow() {
     mainWindow.webContents.once('did-finish-load', async () => {
       try {
         await wait(1800);
-        if (!process.env.WOODSHED_NOCLICK) {
-          await mainWindow.webContents.executeJavaScript(`document.querySelector('[data-id]')?.click(); true;`);
-          await wait(3500);
-        }
+        await mainWindow.webContents.executeJavaScript(`document.querySelector('[data-id]')?.click(); true;`);
+        await wait(3500);
         const img = await mainWindow.webContents.capturePage();
         require('fs').writeFileSync(process.env.WOODSHED_SHOT, img.toPNG());
         console.log('SHOT saved to', process.env.WOODSHED_SHOT);
@@ -133,6 +131,7 @@ function registerIpc() {
 
   ipcMain.handle('library:list', () => store.getLibrary());
   ipcMain.handle('library:rename', (_e, { id, title }) => store.updateSong(id, { title }));
+  ipcMain.handle('library:saveTempo', (_e, { id, tempo }) => store.updateSong(id, { tempo }));
   ipcMain.handle('library:delete', (_e, id) => store.deleteSong(id));
   ipcMain.handle('library:openExternal', (_e, url) => shell.openExternal(url));
 

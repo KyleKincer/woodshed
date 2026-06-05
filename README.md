@@ -82,6 +82,13 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
     shows exact `A → B` times with ±0.05s nudge buttons.
   - **Speed** control 0.5×–1.5× (varispeed — pitch changes with speed).
   - Click a waveform or the overview to seek; the view auto-follows playback.
+  - **Metronome** (saved per song): set a tempo by typing BPM or **tapping**
+    along (the tap also aligns the downbeat), pick a time signature, accent the
+    downbeat, adjust volume, and optionally **count in** a bar before playback.
+    Add **tempo / time-signature changes at any point** ("Add at playhead") for
+    songs that speed up, slow down, or switch meter. A faint **beat grid** is
+    drawn on the waveforms (brighter downbeats) and the click stays locked to
+    the audio at any playback speed and through loops.
 
 ### Keyboard shortcuts (in the player)
 
@@ -93,6 +100,7 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 | `[` / `]` | Set loop start / end at the playhead |
 | `Home` / `End` | Jump the playhead to loop A / B (or click the A/B times) |
 | `L` | Toggle A–B loop |
+| `M` | Open the metronome panel |
 | `−` / `=` | Zoom out / in (at the playhead) |
 | `\` | Fit (zoom out to the whole song) |
 | `1`–`9` | Mute / unmute that stem |

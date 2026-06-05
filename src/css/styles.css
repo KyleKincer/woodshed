@@ -291,7 +291,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 /* ---------- Player (full-height flex column) ---------- */
 #view-player.active { height: 100%; }
 #player-root { height: 100%; }
-.player { height: 100%; display: flex; flex-direction: column; padding-top: 38px; box-sizing: border-box; }
+.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: 38px; box-sizing: border-box; }
 
 /* Static top bar: back + art + metadata */
 .player-topbar {
@@ -331,6 +331,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 #timeline-interact { pointer-events: auto; cursor: text; z-index: 3; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 6px rgba(255,255,255,.6); z-index: 2; }
 .loop-region { position: absolute; top: 0; bottom: 0; background: rgba(91,140,255,.16); }
+.grid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.tempo-markers { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.tempo-flag {
+  position: absolute; top: 0; transform: translateX(-1px); white-space: nowrap;
+  background: var(--accent-2); color: #fff; font-size: 10px; font-weight: 600;
+  padding: 1px 5px; border-radius: 0 4px 4px 0; line-height: 1.4;
+}
 .loop-handle { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 2; }
 .loop-handle::before { content: ''; position: absolute; top: 0; left: 50%; width: 14px; height: 13px; transform: translateX(-50%); background: var(--accent); border-radius: 0 0 3px 3px; }
 .time-tip {
@@ -370,6 +377,34 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .loop-readout .lr-len { color: var(--muted); }
 .loop-readout .nudge { background: var(--bg-3); border: 1px solid var(--border); color: var(--text); width: 22px; height: 22px; border-radius: 6px; cursor: pointer; font: inherit; line-height: 1; }
 .loop-readout .nudge:hover { border-color: var(--accent); }
+
+/* ---------- Metronome popover ---------- */
+.metro-pop {
+  position: absolute; left: 22px; bottom: 76px; z-index: 30;
+  width: 560px; max-width: calc(100% - 44px);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.mp-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mp-bpm { display: flex; align-items: center; gap: 6px; }
+.mp-bpm input { width: 64px; background: var(--bg-3); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 15px; font-weight: 600; text-align: center; padding: 6px; border-radius: 8px; }
+.mp-bpm .nudge { background: var(--bg-3); border: 1px solid var(--border); color: var(--text); width: 24px; height: 26px; border-radius: 6px; cursor: pointer; font: inherit; }
+.mp-bpm .nudge:hover { border-color: var(--accent); }
+.mp-unit { font-size: 12px; color: var(--muted); }
+#m-onoff { min-width: 48px; }
+#m-sig { background: var(--bg-3); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 8px; }
+.mp-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.mp-changes { border-top: 1px solid var(--border); padding-top: 10px; }
+.mp-changes-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.mp-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto; }
+.mp-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.mp-item:hover { background: var(--bg-3); }
+.mp-item.active { background: #1a2030; }
+.mp-item .mp-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 54px; }
+.mp-item .mp-info { flex: 1; }
+.mp-item .mp-del { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 12px; border-radius: 5px; padding: 2px 6px; }
+.mp-item .mp-del:hover { background: var(--bad); color: #fff; }
 .toggle-btn { background: var(--bg-3); border: 1px solid var(--border); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
 .toggle-btn:hover { color: var(--text); border-color: var(--muted); }
 .toggle-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }

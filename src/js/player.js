@@ -1,5 +1,8 @@
 import { MultitrackEngine } from './engine.js';
+import { Metronome } from './metronome.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
+
+const TIME_SIGS = ['4/4', '3/4', '2/4', '5/4', '6/4', '7/4', '6/8', '9/8', '12/8', '5/8', '7/8'];
 
 const STEM_COLOR_VAR = {
   drums: '--drums', bass: '--bass', vocals: '--vocals', other: '--other',
@@ -30,6 +33,7 @@ function escapeHtml(s) {
 }
 
 let engine = null;
+let metronome = null;
 let rafId = null;
 let keyHandler = null;
 let cleanupFns = [];
@@ -37,6 +41,7 @@ let cleanupFns = [];
 export function closePlayer() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
+  if (metronome) { metronome.destroy(); metronome = null; }
   if (engine) { engine.destroy(); engine = null; }
   if (keyHandler) { window.removeEventListener('keydown', keyHandler); keyHandler = null; }
   cleanupFns.forEach((fn) => fn());
@@ -75,6 +80,8 @@ export async function openPlayer(song, onBack) {
 
       <div class="tracks" id="tracks">
         <div class="timeline" id="timeline">
+          <canvas id="grid-canvas" class="grid-canvas"></canvas>
+          <div class="tempo-markers" id="tempo-markers"></div>
           <div class="loop-region" id="loop-region" style="display:none"></div>
           <div class="loop-handle" id="handle-a" style="display:none"></div>
           <div class="loop-handle" id="handle-b" style="display:none"></div>
@@ -125,9 +132,40 @@ export async function openPlayer(song, onBack) {
           <button class="toggle-btn sm" id="zoom-fit">Fit</button>
         </div>
 
+        <div class="t-divider"></div>
+        <button class="toggle-btn sm" id="metro-btn" title="Metronome (M)">♩ Metro</button>
+
         <div class="t-spacer"></div>
         <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">⟲ Mix</button>
-        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · 1–9 mute · 0 reset">?</button>
+        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · M metronome · 1–9 mute · 0 reset">?</button>
+      </div>
+
+      <div class="metro-pop hidden" id="metro-pop">
+        <div class="mp-row">
+          <button class="toggle-btn" id="m-onoff">Off</button>
+          <div class="mp-bpm">
+            <button class="nudge" id="m-bpm-dn">−</button>
+            <input id="m-bpm" type="number" min="20" max="400" value="120" />
+            <span class="mp-unit">BPM</span>
+            <button class="nudge" id="m-bpm-up">+</button>
+            <button class="toggle-btn sm" id="m-tap" title="Tap in time with the track">Tap</button>
+          </div>
+          <select id="m-sig" title="Time signature"></select>
+        </div>
+        <div class="mp-row">
+          <button class="toggle-btn sm" id="m-setdown">Set downbeat at playhead</button>
+          <label class="mp-check"><input type="checkbox" id="m-accent" checked /> Accent</label>
+          <label class="mp-check"><input type="checkbox" id="m-countin" /> Count-in</label>
+          <span class="t-label">Vol</span>
+          <input type="range" id="m-vol" min="0" max="1" step="0.01" value="0.7" />
+        </div>
+        <div class="mp-changes">
+          <div class="mp-changes-head">
+            <span>Tempo / time-sig changes</span>
+            <button class="toggle-btn sm" id="m-add">＋ Add at playhead</button>
+          </div>
+          <div id="m-list" class="mp-list"></div>
+        </div>
       </div>
     </div>
   `;
@@ -180,6 +218,37 @@ export async function openPlayer(song, onBack) {
       const audible = anySolo ? track.soloed : !track.muted;
       drawWaveform(canvas, peaks, track.color, { dim: !audible });
     }
+    drawGrid();
+  }
+
+  // Beat grid + tempo-change markers over the visible window.
+  const gridCanvas = document.getElementById('grid-canvas');
+  const tempoMarkers = document.getElementById('tempo-markers');
+  function drawGrid() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = timeline.clientWidth, h = timeline.clientHeight;
+    gridCanvas.width = w * dpr; gridCanvas.height = h * dpr;
+    const ctx = gridCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    tempoMarkers.innerHTML = '';
+    if (!metronome || !metronome.enabled) return;
+    for (const b of metronome.beatsForView(view.start, view.end)) {
+      const x = timeToX(b.time);
+      ctx.strokeStyle = b.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = b.downbeat ? 1.5 : 1;
+      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
+    }
+    // Section-change flags (skip the very first/base section unless it's > 0).
+    metronome.map.forEach((s, i) => {
+      if (s.t < view.start || s.t > view.end) return;
+      if (i === 0 && s.t <= 0.001) return;
+      const flag = document.createElement('div');
+      flag.className = 'tempo-flag';
+      flag.style.left = timeToX(s.t) + 'px';
+      flag.textContent = `${s.bpm} · ${s.beatsPerBar}/${s.unit}`;
+      tempoMarkers.appendChild(flag);
+    });
   }
 
   // ---- overview / minimap ----
@@ -464,6 +533,96 @@ export async function openPlayer(song, onBack) {
     if (open) requestAnimationFrame(() => { drawMini(); updateMiniOverlay(); });
   };
 
+  // ---- metronome ----
+  metronome = new Metronome(engine);
+  metronome.load(song.tempo);
+
+  const metroPop = document.getElementById('metro-pop');
+  const metroBtn = document.getElementById('metro-btn');
+  const mOnoff = document.getElementById('m-onoff');
+  const mBpm = document.getElementById('m-bpm');
+  const mSig = document.getElementById('m-sig');
+  const mAccent = document.getElementById('m-accent');
+  const mCountin = document.getElementById('m-countin');
+  const mVol = document.getElementById('m-vol');
+  const mList = document.getElementById('m-list');
+  mSig.innerHTML = TIME_SIGS.map((s) => `<option value="${s}">${s}</option>`).join('');
+
+  let saveTimer = null;
+  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => window.api.saveTempo(song.id, metronome.serialize()), 400); }
+  const activeSection = () => metronome.sectionAt(engine.getPosition());
+  const metroActiveIndex = () => { const t = engine.getPosition(); let idx = 0; metronome.map.forEach((s, i) => { if (s.t <= t + 1e-6) idx = i; }); return idx; };
+
+  function refreshMetroUI() {
+    const s = activeSection();
+    if (document.activeElement !== mBpm) mBpm.value = s.bpm;
+    mSig.value = `${s.beatsPerBar}/${s.unit}`;
+    mAccent.checked = metronome.accent;
+    mCountin.checked = metronome.countIn;
+    mVol.value = metronome.volume;
+    mOnoff.textContent = metronome.enabled ? 'On' : 'Off';
+    mOnoff.classList.toggle('on', metronome.enabled);
+    metroBtn.classList.toggle('on', metronome.enabled);
+    const active = metroActiveIndex();
+    mList.innerHTML = metronome.map.map((sec, i) => `<div class="mp-item ${i === active ? 'active' : ''}" data-i="${i}">
+        <span class="mp-time">${fmt2(sec.t)}</span>
+        <span class="mp-info">${sec.bpm} BPM · ${sec.beatsPerBar}/${sec.unit}</span>
+        ${metronome.map.length > 1 ? `<button class="mp-del" data-i="${i}" title="Delete change">✕</button>` : ''}
+      </div>`).join('');
+    mList.querySelectorAll('.mp-item').forEach((el) => {
+      el.onclick = (e) => { if (e.target.closest('.mp-del')) return; engine.seek(metronome.map[+el.dataset.i].t); refreshMetroUI(); };
+    });
+    mList.querySelectorAll('.mp-del').forEach((b) => {
+      b.onclick = (e) => { e.stopPropagation(); metronome.removeSectionAt(metronome.map[+b.dataset.i].t); };
+    });
+  }
+  metronome.onChange = () => { refreshMetroUI(); drawGrid(); persistTempo(); };
+
+  metroBtn.onclick = () => { metroPop.classList.toggle('hidden'); if (!metroPop.classList.contains('hidden')) refreshMetroUI(); };
+  mOnoff.onclick = () => metronome.setEnabled(!metronome.enabled);
+
+  const setBpm = (v) => metronome.setSection(engine.getPosition(), { bpm: clamp(Math.round(v), 20, 400) });
+  mBpm.onchange = () => setBpm(parseFloat(mBpm.value) || 120);
+  document.getElementById('m-bpm-dn').onclick = () => setBpm(activeSection().bpm - 1);
+  document.getElementById('m-bpm-up').onclick = () => setBpm(activeSection().bpm + 1);
+  mSig.onchange = () => { const [n, u] = mSig.value.split('/').map(Number); metronome.setSection(engine.getPosition(), { beatsPerBar: n, unit: u }); };
+  document.getElementById('m-setdown').onclick = () => metronome.setDownbeatAt(engine.getPosition());
+  mAccent.onchange = () => metronome.setAccent(mAccent.checked);
+  mCountin.onchange = () => metronome.setCountIn(mCountin.checked);
+  mVol.oninput = () => metronome.setVolume(parseFloat(mVol.value));
+  document.getElementById('m-add').onclick = () => { const s = activeSection(); metronome.addChangeAt(engine.getPosition(), s.bpm, s.beatsPerBar, s.unit); };
+
+  // Tap tempo: tap interval sets BPM; the first tap of a burst sets the downbeat.
+  let taps = [];
+  let tapReset = null;
+  document.getElementById('m-tap').onclick = () => {
+    const wall = performance.now() / 1000;
+    if (!taps.length) taps._firstMedia = engine.getPosition();
+    taps.push(wall);
+    if (taps.length > 8) taps.shift();
+    if (taps.length >= 2) {
+      let sum = 0;
+      for (let i = 1; i < taps.length; i++) sum += taps[i] - taps[i - 1];
+      const bpm = clamp(Math.round(60 / (sum / (taps.length - 1))), 20, 400);
+      const s = activeSection();
+      s.bpm = bpm;
+      s.t = Math.max(0, taps._firstMedia ?? s.t);
+      metronome.recompute(); metronome._notify();
+      if (!metronome.enabled) metronome.setEnabled(true);
+    }
+    clearTimeout(tapReset);
+    tapReset = setTimeout(() => { taps = []; }, 2000);
+  };
+
+  async function doPlayPause() {
+    if (engine.playing) { engine.pause(); setPlayIcon(); return; }
+    if (metronome.enabled && metronome.countIn) {
+      playBtn.disabled = true;
+      metronome.countInThenPlay(async () => { await engine.play(); playBtn.disabled = false; setPlayIcon(); });
+    } else { await engine.play(); setPlayIcon(); }
+  }
+  playBtn.onclick = doPlayPause;
+
   // ---- initial draw + resize ----
   requestAnimationFrame(() => { drawWaveforms(); drawMini(); updateLoopOverlay(); });
   const ro = new ResizeObserver(() => { drawWaveforms(); drawMini(); updateLoopOverlay(); });
@@ -485,6 +644,12 @@ export async function openPlayer(song, onBack) {
     playhead.style.left = clamp(x, 0, w) + 'px';
     miniPlay.style.left = (pos / duration) * overview.clientWidth + 'px';
     timeEl.textContent = `${fmt2(pos)} / ${fmt(duration)}`;
+    // Keep the metronome popover's active-section display in sync as the
+    // playhead crosses tempo changes (cheap; only when the popover is open).
+    if (!metroPop.classList.contains('hidden')) {
+      const idx = metroActiveIndex();
+      if (idx !== frame._lastIdx) { frame._lastIdx = idx; refreshMetroUI(); }
+    }
     engine.tickEnd();
     rafId = requestAnimationFrame(frame);
   }
@@ -494,7 +659,8 @@ export async function openPlayer(song, onBack) {
   keyHandler = (e) => {
     if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
     const k = e.key;
-    if (e.code === 'Space') { e.preventDefault(); engine.playing ? engine.pause() : engine.play(); setPlayIcon(); }
+    if (e.code === 'Space') { e.preventDefault(); doPlayPause(); }
+    else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (e.code === 'ArrowLeft') engine.seek(engine.getPosition() - (e.shiftKey ? 1 : 5));
     else if (e.code === 'ArrowRight') engine.seek(engine.getPosition() + (e.shiftKey ? 1 : 5));
     else if (k === ',') engine.seek(engine.getPosition() - (e.shiftKey ? 0.01 : 0.05));
