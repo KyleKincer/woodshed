@@ -1,11 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, protocol, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, shell, net, dialog } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { checkDeps } = require('./lib/bins');
 const { Store } = require('./lib/store');
-const { Processor } = require('./lib/processor');
+const { Processor, classifyInput } = require('./lib/processor');
 const { PRESETS, MODELS, STEM_MODES, DEFAULT_PRESET } = require('./lib/presets');
 
 let store;
@@ -103,9 +103,39 @@ function registerIpc() {
   ipcMain.handle('library:delete', (_e, id) => store.deleteSong(id));
   ipcMain.handle('library:openExternal', (_e, url) => shell.openExternal(url));
 
-  ipcMain.handle('process:add', (_e, { url, settings }) => {
+  // Add from a text input — URL (any yt-dlp site), Spotify link, or search text.
+  ipcMain.handle('process:add', (_e, { input, settings }) => {
+    const source = classifyInput(input);
     const jobId = `${Date.now()}_${jobCounter++}`;
-    processor.enqueue({ jobId, url, settings, addedAt: Date.now() });
+    processor.enqueue({ jobId, source, label: input, settings, addedAt: Date.now() });
     return { jobId };
+  });
+
+  // Add one or more local audio files.
+  ipcMain.handle('process:addFiles', (_e, { paths, settings }) => {
+    const jobIds = [];
+    for (const p of paths) {
+      const jobId = `${Date.now()}_${jobCounter++}`;
+      processor.enqueue({
+        jobId,
+        source: { type: 'file', value: p },
+        label: path.basename(p),
+        settings,
+        addedAt: Date.now(),
+      });
+      jobIds.push(jobId);
+    }
+    return { jobIds };
+  });
+
+  ipcMain.handle('process:cancel', (_e, jobId) => processor.cancel(jobId));
+
+  ipcMain.handle('dialog:pickAudio', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose audio files',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg', 'opus', 'aif', 'aiff', 'wma'] }],
+    });
+    return res.canceled ? [] : res.filePaths;
   });
 }

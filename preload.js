@@ -1,9 +1,9 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Whitelisted event channels the renderer may subscribe to.
-const EVENTS = ['process:queued', 'process:progress', 'process:done', 'process:error'];
+const EVENTS = ['process:queued', 'process:progress', 'process:done', 'process:error', 'process:canceled'];
 
 contextBridge.exposeInMainWorld('api', {
   checkDeps: () => ipcRenderer.invoke('deps:check'),
@@ -15,7 +15,12 @@ contextBridge.exposeInMainWorld('api', {
   deleteSong: (id) => ipcRenderer.invoke('library:delete', id),
   openExternal: (url) => ipcRenderer.invoke('library:openExternal', url),
 
-  addSong: (url, settings) => ipcRenderer.invoke('process:add', { url, settings }),
+  addSong: (input, settings) => ipcRenderer.invoke('process:add', { input, settings }),
+  addFiles: (paths, settings) => ipcRenderer.invoke('process:addFiles', { paths, settings }),
+  cancelJob: (jobId) => ipcRenderer.invoke('process:cancel', jobId),
+  pickAudio: () => ipcRenderer.invoke('dialog:pickAudio'),
+  // Resolve the absolute path of a dropped File (Electron's File.path replacement).
+  pathForFile: (file) => webUtils.getPathForFile(file),
 
   // Returns an unsubscribe function.
   on: (channel, cb) => {

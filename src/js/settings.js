@@ -46,9 +46,9 @@ export function renderSettings() {
         </div>
       </div>
       <div class="row">
-        <div><label>Output format</label><div class="sub">float32 = full precision (largest); int24 = excellent + smaller.</div></div>
+        <div><label>Output format</label><div class="sub">Note: recent demucs (torchaudio + TorchCodec) writes 16-bit/44.1kHz WAV regardless of this setting. Kept for when TorchCodec adds bit-depth support. 16-bit is lossless CD quality — inaudible for practice.</div></div>
         <select id="c-format">
-          <option value="float32" ${s.custom.format === 'float32' ? 'selected' : ''}>32-bit float WAV</option>
+          <option value="float32" ${s.custom.format === 'float32' ? 'selected' : ''}>32-bit float WAV (preferred)</option>
           <option value="int24" ${s.custom.format === 'int24' ? 'selected' : ''}>24-bit WAV</option>
         </select>
       </div>

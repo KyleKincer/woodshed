@@ -98,6 +98,8 @@ function wireAddModal() {
   };
   presetSel.onchange = syncDesc;
 
+  const modalSettings = () => ({ ...config.settings, preset: presetSel.value, stemMode: stemSel.value });
+
   const open = () => {
     presetSel.value = config.settings.preset;
     stemSel.value = config.settings.stemMode;
@@ -113,20 +115,65 @@ function wireAddModal() {
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
   document.getElementById('add-go').onclick = async () => {
-    const url = urlInput.value.trim();
-    if (!url) { urlInput.focus(); return; }
-    const settings = { ...config.settings, preset: presetSel.value, stemMode: stemSel.value };
-    await window.api.addSong(url, settings);
+    const input = urlInput.value.trim();
+    if (!input) { urlInput.focus(); return; }
+    await window.api.addSong(input, modalSettings());
     close();
   };
-
   urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('add-go').click(); });
+
+  // File picker inside the modal (uses the modal's quality/stem choices).
+  document.getElementById('add-pick').onclick = async () => {
+    const paths = await window.api.pickAudio();
+    if (paths.length) { await window.api.addFiles(paths, modalSettings()); close(); }
+  };
+
+  // Drop zone inside the modal.
+  const dropZone = document.getElementById('file-drop');
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('over');
+    const paths = filesToPaths(e.dataTransfer.files);
+    if (paths.length) { await window.api.addFiles(paths, modalSettings()); close(); }
+  });
+
+  setupGlobalDrop();
+}
+
+function filesToPaths(fileList) {
+  return Array.from(fileList)
+    .map((f) => window.api.pathForFile(f))
+    .filter((p) => p && /\.(mp3|wav|flac|m4a|aac|ogg|opus|aiff?|wma)$/i.test(p));
+}
+
+// Drop audio files anywhere in the window to add them with default settings.
+function setupGlobalDrop() {
+  const overlay = document.getElementById('drop-overlay');
+  let depth = 0;
+  window.addEventListener('dragenter', (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    depth++;
+    overlay.classList.remove('hidden');
+  });
+  window.addEventListener('dragover', (e) => { if (!overlay.classList.contains('hidden')) e.preventDefault(); });
+  window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; overlay.classList.add('hidden'); } });
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    depth = 0;
+    overlay.classList.add('hidden');
+    // If the add modal is open it handles its own drop.
+    if (!document.getElementById('add-modal').classList.contains('hidden')) return;
+    const paths = filesToPaths(e.dataTransfer.files);
+    if (paths.length) await window.api.addFiles(paths, config.settings);
+  });
 }
 
 // ---------- Jobs / progress ----------
 function subscribeJobs() {
-  window.api.on('process:queued', ({ jobId, url }) => {
-    addJobCard(jobId, url);
+  window.api.on('process:queued', ({ jobId, label }) => {
+    addJobCard(jobId, label);
   });
   window.api.on('process:progress', ({ jobId, stage, percent, message }) => {
     updateJob(jobId, stage, percent, message);
@@ -138,19 +185,33 @@ function subscribeJobs() {
   window.api.on('process:error', ({ jobId, error }) => {
     failJob(jobId, error);
   });
+  window.api.on('process:canceled', ({ jobId }) => {
+    removeJob(jobId);
+    renderLibrary(document.getElementById('lib-search').value);
+  });
 }
 
 function jobsContainer() { return document.getElementById('jobs'); }
 
-function addJobCard(jobId, url) {
+function addJobCard(jobId, label) {
   if (jobs.has(jobId)) return;
   const el = document.createElement('div');
   el.className = 'job';
   el.innerHTML = `
-    <div class="job-top"><span class="job-title">${esc(url)}</span><span class="job-stage">Queued…</span></div>
+    <div class="job-top">
+      <span class="job-title">${esc(label)}</span>
+      <span class="job-right">
+        <span class="job-stage">Queued…</span>
+        <button class="job-cancel" title="Cancel">✕</button>
+      </span>
+    </div>
     <div class="job-bar"><div class="job-fill"></div></div>`;
+  el.querySelector('.job-cancel').onclick = () => {
+    el.querySelector('.job-stage').textContent = 'Canceling…';
+    window.api.cancelJob(jobId);
+  };
   jobsContainer().appendChild(el);
-  jobs.set(jobId, { url, el });
+  jobs.set(jobId, { label, el });
   document.getElementById('library-empty').classList.add('hidden');
 }
 
@@ -174,11 +235,13 @@ function failJob(jobId, error) {
   const job = jobs.get(jobId);
   if (!job) return;
   job.el.classList.add('error');
+  job.el.querySelector('.job-bar')?.remove();
+  job.el.querySelector('.job-cancel')?.remove();
   job.el.querySelector('.job-stage').textContent = 'Failed';
   job.el.querySelector('.job-top').insertAdjacentHTML('beforeend', `<button class="toggle-btn" style="margin-left:8px">Dismiss</button>`);
-  const detail = document.createElement('div');
-  detail.style.cssText = 'font-size:12px;color:var(--bad);margin-top:8px;white-space:pre-wrap';
-  detail.textContent = error.split('\n').slice(0, 3).join('\n');
+  const detail = document.createElement('pre');
+  detail.className = 'job-error';
+  detail.textContent = error;
   job.el.appendChild(detail);
   job.el.querySelector('button').onclick = () => removeJob(jobId);
 }
