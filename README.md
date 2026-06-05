@@ -88,7 +88,10 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
     Add **tempo / time-signature changes at any point** ("Add at playhead") for
     songs that speed up, slow down, or switch meter. Or **auto-detect** the
     whole beat/downbeat track with [BeatNet](https://github.com/mjhydri/BeatNet)
-    ("Auto-detect beats") — handles tempo drift and meter changes automatically.
+    ("Auto-detect beats") — handles tempo drift and meter changes automatically,
+    then **spot-correct** it ("Edit beats"): drag a beat to re-time it, click
+    empty space to add a missing beat, select + Delete a spurious one, toggle
+    downbeats (D), or shift the whole track.
     A faint **beat grid** is drawn on the waveforms (brighter downbeats) and the
     click stays locked to the audio at any playback speed and through loops.
 

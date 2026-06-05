@@ -58,6 +58,29 @@ export class Metronome {
   }
   clearDetected() { this.detected = null; this.source = 'map'; this.recompute(); this._notify(); }
 
+  // ---- per-beat manual correction (operates on the beat list) -------------
+  _ensureList() { if (!this.detected) this.detected = []; this.source = 'detected'; }
+  addBeat(t, downbeat = false) {
+    this._ensureList();
+    const o = { time: Math.max(0, t), downbeat: !!downbeat };
+    this.detected.push(o);
+    this.recompute(); this._notify();
+    return o;
+  }
+  removeBeat(o) {
+    if (!this.detected) return;
+    const i = this.detected.indexOf(o);
+    if (i >= 0) { this.detected.splice(i, 1); this.recompute(); this._notify(); }
+  }
+  moveBeat(o, t) { o.time = Math.max(0, t); this.recompute(); this._notify(); }
+  toggleDownbeat(o) { o.downbeat = !o.downbeat; this.recompute(); this._notify(); }
+  shiftAll(delta) { if (!this.detected) return; this.detected.forEach((b) => { b.time = Math.max(0, b.time + delta); }); this.recompute(); this._notify(); }
+  nearestBeat(t, maxDist) {
+    let best = null, bd = Infinity;
+    for (const b of this.beats) { const d = Math.abs(b.time - t); if (d < bd) { bd = d; best = b; } }
+    return best && bd <= maxDist ? best : null;
+  }
+
   // ---- tempo map ----------------------------------------------------------
   recompute() {
     if (this.source === 'detected' && this.detected && this.detected.length) {

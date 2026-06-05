@@ -162,7 +162,17 @@ export async function openPlayer(song, onBack) {
         <div class="mp-row mp-detect">
           <button class="toggle-btn" id="m-detect">✨ Auto-detect beats</button>
           <span class="mp-detect-status" id="m-detect-status">Manual tempo</span>
+          <button class="toggle-btn sm hidden" id="m-edit-toggle">✎ Edit beats</button>
           <button class="toggle-btn sm hidden" id="m-detect-clear">Use manual</button>
+        </div>
+        <div class="mp-row mp-edit hidden" id="mp-edit">
+          <button class="toggle-btn sm" id="be-add" title="Add a beat at the playhead">＋ Beat</button>
+          <button class="toggle-btn sm" id="be-down" title="Toggle downbeat (D)">Downbeat</button>
+          <button class="toggle-btn sm" id="be-del" title="Delete selected beat (Delete)">Delete</button>
+          <span class="t-label">Shift all</span>
+          <button class="nudge" id="be-shl" title="Shift whole track earlier">◄</button>
+          <button class="nudge" id="be-shr" title="Shift whole track later">►</button>
+          <span class="be-hint">drag a beat to move · click empty to add · click a beat then Delete</span>
         </div>
         <div class="mp-changes" id="mp-manual">
           <div class="mp-changes-head">
@@ -240,9 +250,14 @@ export async function openPlayer(song, onBack) {
     if (!metronome || !metronome.enabled) return;
     for (const b of metronome.beatsForView(view.start, view.end)) {
       const x = timeToX(b.time);
-      ctx.strokeStyle = b.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
-      ctx.lineWidth = b.downbeat ? 1.5 : 1;
+      const sel = beatEditing && b === selectedBeat;
+      ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)' : b.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = sel ? 2 : b.downbeat ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
+      if (beatEditing) { // grab handle at the top of each beat
+        ctx.fillStyle = sel ? '#fff' : b.downbeat ? 'rgba(124,91,255,0.9)' : 'rgba(255,255,255,0.4)';
+        ctx.fillRect(x - 3, 0, 6, 6);
+      }
     }
     // Section-change flags (skip the very first/base section unless it's > 0).
     metronome.map.forEach((s, i) => {
@@ -351,14 +366,26 @@ export async function openPlayer(song, onBack) {
 
   // ---- main waveform interaction (seek / loop create / edge drag / move) ----
   let drag = null;
+  let beatDrag = null;       // dragging a beat in edit mode
+  let beatEditing = false;   // beat-correction mode (detected tracks)
+  let selectedBeat = null;   // reference to the selected beat object
   const EDGE_PX = 7;
+  const selectBeat = (b) => { selectedBeat = b; drawGrid(); };
   function loopOrder(a, b) { return a <= b ? [a, b] : [b, a]; }
 
   interact.addEventListener('mousemove', (e) => {
-    if (drag) return;
+    if (drag || beatDrag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
     const t = xToTime(x);
+    if (beatEditing) {
+      const near = metronome.nearestBeat(t, (8 / waveW()) * span());
+      interact.style.cursor = near ? 'grab' : 'copy';
+      timeTip.style.display = 'block';
+      timeTip.style.left = clamp(x, 0, waveW()) + 'px';
+      timeTip.textContent = fmt2(t);
+      return;
+    }
     // hover cursor + time tooltip
     let cursor = 'text';
     const { enabled, a, b } = engine.loop;
@@ -377,6 +404,12 @@ export async function openPlayer(song, onBack) {
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
     const t = xToTime(x);
+    if (beatEditing) {
+      const near = metronome.nearestBeat(t, (8 / waveW()) * span());
+      beatDrag = near ? { obj: near, startX: x, moved: false } : { obj: null, addAt: t, startX: x, moved: false };
+      if (near) selectBeat(near);
+      return;
+    }
     const { enabled, a, b } = engine.loop;
     let mode = 'new';
     if (enabled && b > a) {
@@ -392,6 +425,17 @@ export async function openPlayer(song, onBack) {
   cleanupFns.push(() => { window.removeEventListener('mousemove', onDragMove); window.removeEventListener('mouseup', onDragUp); });
 
   function onDragMove(e) {
+    if (beatDrag) {
+      const r = interact.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const t = clamp(xToTime(x), 0, duration);
+      if (Math.abs(x - beatDrag.startX) > 3) beatDrag.moved = true;
+      if (beatDrag.obj && beatDrag.moved) metronome.moveBeat(beatDrag.obj, t);
+      timeTip.style.display = 'block';
+      timeTip.style.left = clamp(x, 0, waveW()) + 'px';
+      timeTip.textContent = fmt2(t);
+      return;
+    }
     if (!drag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
@@ -416,6 +460,15 @@ export async function openPlayer(song, onBack) {
     updateLoopOverlay();
   }
   function onDragUp() {
+    if (beatDrag) {
+      if (!beatDrag.moved) {
+        if (beatDrag.obj) selectBeat(beatDrag.obj);            // click a beat → select
+        else selectBeat(metronome.addBeat(beatDrag.addAt, false)); // click empty → add
+      }
+      beatDrag = null;
+      timeTip.style.display = 'none';
+      return;
+    }
     if (!drag) return;
     // A click (no drag) always seeks — even inside the loop or on a handle.
     if (!drag.moved) engine.seek(drag.startT);
@@ -583,15 +636,20 @@ export async function openPlayer(song, onBack) {
     // Detected vs manual state.
     const detStatus = document.getElementById('m-detect-status');
     const detClear = document.getElementById('m-detect-clear');
+    const editToggle = document.getElementById('m-edit-toggle');
     const manual = document.getElementById('mp-manual');
-    if (metronome.source === 'detected' && metronome.detected) {
+    const detected = metronome.source === 'detected' && metronome.detected;
+    if (detected) {
       detStatus.textContent = `Detected ✓ (${metronome.detected.length} beats)`;
       detClear.classList.remove('hidden');
+      editToggle.classList.remove('hidden');
       manual.classList.add('dim');
     } else {
       detStatus.textContent = 'Manual tempo';
       detClear.classList.add('hidden');
+      editToggle.classList.add('hidden');
       manual.classList.remove('dim');
+      if (beatEditing) { beatEditing = false; document.getElementById('mp-edit').classList.add('hidden'); editToggle.classList.remove('on'); }
     }
   }
   metronome.onChange = () => { refreshMetroUI(); drawGrid(); persistTempo(); };
@@ -656,7 +714,24 @@ export async function openPlayer(song, onBack) {
     if (!metronome.enabled) metronome.setEnabled(true);
     refreshMetroUI();
   };
-  mDetectClear.onclick = () => metronome.clearDetected();
+  mDetectClear.onclick = () => { beatEditing = false; metronome.clearDetected(); };
+
+  // Manual beat correction
+  const mpEdit = document.getElementById('mp-edit');
+  const mEditToggle = document.getElementById('m-edit-toggle');
+  mEditToggle.onclick = () => {
+    beatEditing = !beatEditing;
+    mEditToggle.classList.toggle('on', beatEditing);
+    mpEdit.classList.toggle('hidden', !beatEditing);
+    interact.style.cursor = beatEditing ? 'copy' : 'text';
+    drawGrid();
+  };
+  const editTarget = () => selectedBeat || metronome.nearestBeat(engine.getPosition(), 0.4);
+  document.getElementById('be-add').onclick = () => selectBeat(metronome.addBeat(engine.getPosition(), false));
+  document.getElementById('be-down').onclick = () => { const b = editTarget(); if (b) { metronome.toggleDownbeat(b); selectBeat(b); } };
+  document.getElementById('be-del').onclick = () => { const b = editTarget(); if (b) { metronome.removeBeat(b); selectedBeat = null; drawGrid(); } };
+  document.getElementById('be-shl').onclick = () => metronome.shiftAll(-0.01);
+  document.getElementById('be-shr').onclick = () => metronome.shiftAll(0.01);
 
   async function doPlayPause() {
     if (engine.playing) { engine.pause(); setPlayIcon(); return; }
@@ -703,6 +778,8 @@ export async function openPlayer(song, onBack) {
   keyHandler = (e) => {
     if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
     const k = e.key;
+    if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
+    if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
     if (e.code === 'Space') { e.preventDefault(); doPlayPause(); }
     else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (e.code === 'ArrowLeft') engine.seek(engine.getPosition() - (e.shiftKey ? 1 : 5));
