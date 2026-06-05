@@ -3,7 +3,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Whitelisted event channels the renderer may subscribe to.
-const EVENTS = ['process:queued', 'process:progress', 'process:done', 'process:error', 'process:canceled', 'runtime:log'];
+const EVENTS = ['process:queued', 'process:meta', 'process:progress', 'process:done', 'process:error', 'process:canceled', 'runtime:log'];
 
 contextBridge.exposeInMainWorld('api', {
   runtimeStatus: () => ipcRenderer.invoke('runtime:status'),

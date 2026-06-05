@@ -1,9 +1,10 @@
-// Library grid: renders processed songs, the add-song modal, live job progress,
-// search, and per-card actions (rename / delete / open source).
+// Library grid: renders processed songs (and in-progress ones, as cards with a
+// loading overlay), the add-song modal, search, and per-card actions.
 
 let config = null;
 let onOpenSong = null;
-const jobs = new Map(); // jobId -> { url, el }
+// In-flight jobs, keyed by jobId: { jobId, songId, title, uploader, duration, thumbFile, stage, percent, error }
+const processing = new Map();
 
 export function initLibrary(cfg, openSongCb) {
   config = cfg;
@@ -20,43 +21,110 @@ function fmtDur(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+const STAGE_LABEL = { queued: 'Queued', download: 'Downloading', separate: 'Separating', finalize: 'Finishing' };
+
 export async function renderLibrary(filter = '') {
   const lib = await window.api.listLibrary();
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
   const q = filter.trim().toLowerCase();
-  const songs = lib.songs.filter((s) => !q || s.title.toLowerCase().includes(q) || (s.uploader || '').toLowerCase().includes(q));
+  const match = (title, uploader) => !q || (title || '').toLowerCase().includes(q) || (uploader || '').toLowerCase().includes(q);
 
-  empty.classList.toggle('hidden', songs.length > 0 || jobs.size > 0);
-  grid.innerHTML = songs.map(cardHtml).join('');
+  const storeIds = new Set(lib.songs.map((s) => s.id));
+  const procList = [...processing.values()];
+  // Reprocessing jobs overlay an existing card; new jobs render their own card.
+  const procBySong = new Map(procList.filter((p) => p.songId && storeIds.has(p.songId)).map((p) => [p.songId, p]));
+  const pendingNew = procList.filter((p) => !p.songId || !storeIds.has(p.songId));
 
-  grid.querySelectorAll('.card').forEach((card) => {
+  const songs = lib.songs.filter((s) => match(s.title, s.uploader));
+  const newCards = pendingNew.filter((p) => match(p.title, p.uploader));
+
+  empty.classList.toggle('hidden', songs.length + newCards.length > 0);
+
+  grid.innerHTML =
+    newCards.map((p) => pendingCardHtml(p)).join('') +
+    songs.map((s) => cardHtml(s, procBySong.get(s.id))).join('');
+
+  // Wire store-song cards.
+  grid.querySelectorAll('.card[data-id]').forEach((card) => {
     const id = card.dataset.id;
     const song = lib.songs.find((s) => s.id === id);
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('.card-menu')) return;
-      onOpenSong(song);
-    });
-    card.querySelector('.card-menu').addEventListener('click', (e) => {
+    if (!song) return;
+    const proc = procBySong.get(id);
+    if (!proc) {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.card-menu')) return;
+        onOpenSong(song);
+      });
+    }
+    card.querySelector('.card-menu')?.addEventListener('click', (e) => {
       e.stopPropagation();
       cardMenu(song, e.currentTarget);
     });
   });
+
+  wireProcButtons(grid);
 }
 
-function cardHtml(s) {
-  const cover = s.thumb
-    ? `style="background-image:url('${window.api.mediaUrl(s.id, s.thumb)}')"`
-    : '';
+function wireProcButtons(grid) {
+  grid.querySelectorAll('.card-proc [data-cancel]').forEach((b) => {
+    b.addEventListener('click', (e) => { e.stopPropagation(); window.api.cancelJob(b.closest('.card').dataset.job); });
+  });
+  grid.querySelectorAll('.card-proc [data-dismiss]').forEach((b) => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      processing.delete(b.closest('.card').dataset.job);
+      renderLibrary(currentFilter());
+    });
+  });
+}
+
+function coverAttr(thumbUrl) {
+  return thumbUrl ? `style="background-image:url('${thumbUrl}')"` : '';
+}
+
+function overlayHtml(p) {
+  if (p.error) {
+    return `<div class="card-proc error">
+      <div class="cp-title">Failed</div>
+      <div class="cp-sub">${esc((p.error.split('\n')[0] || '').slice(0, 80))}</div>
+      <button class="cp-btn" data-dismiss>Dismiss</button>
+    </div>`;
+  }
+  const pct = Math.round(p.percent || 0);
+  return `<div class="card-proc">
+    <div class="spinner"></div>
+    <div class="cp-title">${STAGE_LABEL[p.stage] || 'Working'} · ${pct}%</div>
+    <div class="cp-bar"><div class="cp-fill" style="width:${pct}%"></div></div>
+    <button class="cp-btn" data-cancel>Cancel</button>
+  </div>`;
+}
+
+function cardHtml(s, proc) {
+  const cover = s.thumb ? coverAttr(window.api.mediaUrl(s.id, s.thumb)) : '';
   const stemLabel = s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / ');
-  return `<div class="card" data-id="${s.id}">
+  return `<div class="card ${proc ? 'is-processing' : ''}" data-id="${s.id}" ${proc ? `data-job="${proc.jobId}"` : ''}>
     <div class="badges"><span class="badge">${stemLabel}</span></div>
-    <button class="card-menu">⋯</button>
+    ${proc ? '' : '<button class="card-menu">⋯</button>'}
     <div class="cover" ${cover}>${s.thumb ? '' : '♪'}</div>
     <div class="meta">
       <div class="title">${esc(s.title)}</div>
       <div class="sub"><span>${esc(s.uploader || '')}</span><span>${fmtDur(s.duration)}</span></div>
     </div>
+    ${proc ? overlayHtml(proc) : ''}
+  </div>`;
+}
+
+// A card for a job whose song isn't in the library yet.
+function pendingCardHtml(p) {
+  const thumbUrl = p.songId && p.thumbFile ? window.api.mediaUrl(p.songId, p.thumbFile) : null;
+  return `<div class="card is-processing pending" data-job="${p.jobId}">
+    <div class="cover" ${coverAttr(thumbUrl)}>${thumbUrl ? '' : '♪'}</div>
+    <div class="meta">
+      <div class="title">${esc(p.title || 'Processing…')}</div>
+      <div class="sub"><span>${esc(p.uploader || '')}</span><span>${fmtDur(p.duration)}</span></div>
+    </div>
+    ${overlayHtml(p)}
   </div>`;
 }
 
@@ -245,80 +313,51 @@ function setupGlobalDrop() {
   });
 }
 
-// ---------- Jobs / progress ----------
+// ---------- Jobs / progress (rendered as cards with an overlay) ----------
 function subscribeJobs() {
-  window.api.on('process:queued', ({ jobId, label }) => {
-    addJobCard(jobId, label);
+  window.api.on('process:queued', ({ jobId, label, replaceId }) => {
+    // For a reprocess, attach to the existing song's card immediately.
+    processing.set(jobId, { jobId, songId: replaceId || undefined, title: label, stage: 'queued', percent: 0 });
+    renderLibrary(currentFilter());
   });
-  window.api.on('process:progress', ({ jobId, stage, percent, message }) => {
-    updateJob(jobId, stage, percent, message);
+  window.api.on('process:meta', ({ jobId, songId, title, uploader, duration, thumbFile }) => {
+    const p = processing.get(jobId) || { jobId };
+    Object.assign(p, { songId, title, uploader, duration, thumbFile });
+    processing.set(jobId, p);
+    renderLibrary(currentFilter());
+  });
+  window.api.on('process:progress', ({ jobId, stage, percent }) => {
+    const p = processing.get(jobId);
+    if (!p) return;
+    p.stage = stage;
+    p.percent = percent;
+    patchOverlay(p); // cheap in-place update; avoid a full re-render every tick
   });
   window.api.on('process:done', ({ jobId }) => {
-    removeJob(jobId);
-    renderLibrary(document.getElementById('lib-search').value);
+    processing.delete(jobId);
+    renderLibrary(currentFilter());
   });
   window.api.on('process:error', ({ jobId, error }) => {
-    failJob(jobId, error);
+    const p = processing.get(jobId);
+    if (!p) return;
+    p.error = error;
+    renderLibrary(currentFilter());
   });
   window.api.on('process:canceled', ({ jobId }) => {
-    removeJob(jobId);
-    renderLibrary(document.getElementById('lib-search').value);
+    processing.delete(jobId);
+    renderLibrary(currentFilter());
   });
 }
 
-function jobsContainer() { return document.getElementById('jobs'); }
-
-function addJobCard(jobId, label) {
-  if (jobs.has(jobId)) return;
-  const el = document.createElement('div');
-  el.className = 'job';
-  el.innerHTML = `
-    <div class="job-top">
-      <span class="job-title">${esc(label)}</span>
-      <span class="job-right">
-        <span class="job-stage">Queued…</span>
-        <button class="job-cancel" title="Cancel">✕</button>
-      </span>
-    </div>
-    <div class="job-bar"><div class="job-fill"></div></div>`;
-  el.querySelector('.job-cancel').onclick = () => {
-    el.querySelector('.job-stage').textContent = 'Canceling…';
-    window.api.cancelJob(jobId);
-  };
-  jobsContainer().appendChild(el);
-  jobs.set(jobId, { label, el });
-  document.getElementById('library-empty').classList.add('hidden');
-}
-
-const STAGE_LABEL = { download: 'Downloading', separate: 'Separating stems', finalize: 'Finishing' };
-
-function updateJob(jobId, stage, percent, message) {
-  const job = jobs.get(jobId);
-  if (!job) return;
-  job.el.querySelector('.job-stage').textContent = `${STAGE_LABEL[stage] || stage} · ${Math.round(percent)}%`;
-  job.el.querySelector('.job-fill').style.width = `${percent}%`;
-}
-
-function removeJob(jobId) {
-  const job = jobs.get(jobId);
-  if (!job) return;
-  job.el.remove();
-  jobs.delete(jobId);
-}
-
-function failJob(jobId, error) {
-  const job = jobs.get(jobId);
-  if (!job) return;
-  job.el.classList.add('error');
-  job.el.querySelector('.job-bar')?.remove();
-  job.el.querySelector('.job-cancel')?.remove();
-  job.el.querySelector('.job-stage').textContent = 'Failed';
-  job.el.querySelector('.job-top').insertAdjacentHTML('beforeend', `<button class="toggle-btn" style="margin-left:8px">Dismiss</button>`);
-  const detail = document.createElement('pre');
-  detail.className = 'job-error';
-  detail.textContent = error;
-  job.el.appendChild(detail);
-  job.el.querySelector('button').onclick = () => removeJob(jobId);
+// Update just the progress text/bar of a card without rebuilding the grid.
+function patchOverlay(p) {
+  const card = document.querySelector(`.card[data-job="${p.jobId}"]`);
+  if (!card) return;
+  const pct = Math.round(p.percent || 0);
+  const title = card.querySelector('.cp-title');
+  const fill = card.querySelector('.cp-fill');
+  if (title) title.textContent = `${STAGE_LABEL[p.stage] || 'Working'} · ${pct}%`;
+  if (fill) fill.style.width = `${pct}%`;
 }
 
 function esc(s) {

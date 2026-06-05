@@ -110,34 +110,31 @@ body { display: flex; }
 }
 .card:hover .card-menu { opacity: 1; }
 
+/* In-progress card overlay */
+.card.is-processing { cursor: default; }
+.card.is-processing:hover { transform: none; border-color: var(--border); }
+.card-proc {
+  position: absolute; inset: 0; z-index: 5;
+  background: rgba(10, 11, 14, 0.74); backdrop-filter: blur(2px);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 16px; text-align: center;
+}
+.card-proc .spinner { width: 28px; height: 28px; }
+.card-proc .cp-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.card-proc .cp-sub { font-size: 11px; color: var(--muted); max-width: 90%; line-height: 1.4; }
+.card-proc .cp-bar { width: 78%; height: 5px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
+.card-proc .cp-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .25s; }
+.card-proc .cp-btn {
+  margin-top: 4px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+  color: var(--text); font: inherit; font-size: 12px; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+}
+.card-proc .cp-btn:hover { background: rgba(255,255,255,.2); }
+.card-proc.error { background: rgba(40, 16, 20, 0.82); }
+.card-proc.error .cp-title { color: var(--bad); }
+
 .empty { text-align: center; color: var(--muted); padding: 80px 0; }
 .empty p { margin-bottom: 16px; font-size: 16px; }
 .empty .add-btn { display: inline-block; }
-
-/* ---------- Jobs ---------- */
-#jobs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
-.job {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px;
-}
-.job-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 8px; gap: 12px; }
-.job-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.job-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.job-stage { color: var(--muted); white-space: nowrap; }
-.job-cancel {
-  background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
-  width: 24px; height: 24px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1;
-}
-.job-cancel:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
-.job-bar { height: 6px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
-.job-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .25s; }
-.job.error { border-color: var(--bad); }
-.job.error .job-stage { color: var(--bad); }
-.job-error {
-  margin-top: 10px; padding: 10px 12px; background: #1a1216; border: 1px solid #3a2226;
-  border-radius: 8px; color: #ffb3b3; font-size: 11.5px; line-height: 1.45;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap; max-height: 180px; overflow: auto; user-select: text;
-}
 
 /* ---------- Modal ---------- */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
