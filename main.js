@@ -145,6 +145,22 @@ function registerIpc() {
     return { jobIds };
   });
 
+  // Re-run separation on an existing song (optionally with new settings),
+  // updating it in place.
+  ipcMain.handle('process:reprocess', (_e, { songId, settings }) => {
+    const song = store.getLibrary().songs.find((s) => s.id === songId);
+    if (!song) return { error: 'Song not found' };
+    const source = song.source || (song.url ? classifyInput(song.url) : null);
+    if (!source) return { error: 'This song has no re-processable source.' };
+    const jobId = `${Date.now()}_${jobCounter++}`;
+    processor.enqueue({
+      jobId, source, replaceId: songId,
+      label: `${song.title} (reprocess)`,
+      settings, addedAt: song.addedAt,
+    });
+    return { jobId };
+  });
+
   ipcMain.handle('process:cancel', (_e, jobId) => processor.cancel(jobId));
 
   ipcMain.handle('dialog:pickAudio', async () => {

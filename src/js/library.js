@@ -80,6 +80,7 @@ function cardMenu(song, anchor) {
   const url = sourceUrl(song);
   const items = [
     { label: 'Play', action: () => onOpenSong(song) },
+    { label: 'Reprocess…', action: () => reprocessDialog(song) },
     { label: 'Rename…', action: () => renameSong(song) },
     ...(url ? [{ label: 'Open original source', action: () => window.api.openExternal(url) }] : []),
     { label: 'Delete', danger: true, action: () => deleteSong(song) },
@@ -117,6 +118,39 @@ async function renameSong(song) {
 async function deleteSong(song) {
   const ok = await confirmModal('Delete song?', `"${song.title}" and its stem files will be permanently removed.`, 'Delete');
   if (ok) { await window.api.deleteSong(song.id); renderLibrary(currentFilter()); }
+}
+
+function reprocessDialog(song) {
+  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)' }];
+  const fileSource = song.source?.type === 'file';
+  const m = buildDialog('Reprocess song', `
+    <p class="dlg-msg">Re-run separation for “${esc(song.title)}”${fileSource ? ' (needs the original file to still exist)' : ' from its original source'}. The new stems replace the current ones.</p>
+    <label class="field"><span>Quality preset</span>
+      <select id="rp-preset">${presets.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
+    </label>
+    <label class="field"><span>Stems</span>
+      <select id="rp-stem">${Object.values(config.stemModes).map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select>
+    </label>
+    <div class="modal-actions">
+      <button class="btn-ghost" data-cancel>Cancel</button>
+      <button class="btn-primary" data-ok>Reprocess</button>
+    </div>`);
+  // Default to the song's current layout; preset to the app default.
+  m.querySelector('#rp-preset').value = config.settings.preset;
+  m.querySelector('#rp-stem').value = song.stemMode || config.settings.stemMode;
+  const close = () => m.remove();
+  m.querySelector('[data-cancel]').onclick = close;
+  m.addEventListener('click', (e) => { if (e.target === m) close(); });
+  m.querySelector('[data-ok]').onclick = async () => {
+    const settings = {
+      ...config.settings,
+      preset: m.querySelector('#rp-preset').value,
+      stemMode: m.querySelector('#rp-stem').value,
+    };
+    close();
+    const res = await window.api.reprocessSong(song.id, settings);
+    if (res?.error) await confirmModal('Could not reprocess', res.error, 'OK');
+  };
 }
 
 function currentFilter() { return document.getElementById('lib-search').value; }

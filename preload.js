@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
 
   addSong: (input, settings) => ipcRenderer.invoke('process:add', { input, settings }),
   addFiles: (paths, settings) => ipcRenderer.invoke('process:addFiles', { paths, settings }),
+  reprocessSong: (songId, settings) => ipcRenderer.invoke('process:reprocess', { songId, settings }),
   cancelJob: (jobId) => ipcRenderer.invoke('process:cancel', jobId),
   pickAudio: () => ipcRenderer.invoke('dialog:pickAudio'),
   // Resolve the absolute path of a dropped File (Electron's File.path replacement).
