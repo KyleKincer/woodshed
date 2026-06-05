@@ -244,6 +244,26 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .speed-val { min-width: 42px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 .kbd-hint { font-size: 11px; color: var(--muted); opacity: .7; }
 
+/* ---------- First-run setup ---------- */
+.setup { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; -webkit-app-region: drag; }
+.setup-card { width: 620px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 34px; -webkit-app-region: no-drag; }
+.setup-card h2 { font-size: 22px; margin-bottom: 10px; }
+.setup-desc { color: var(--muted); font-size: 14px; line-height: 1.55; margin-bottom: 22px; }
+.setup-checklist { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.setup-item { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.setup-item .ic { width: 20px; text-align: center; }
+.setup-item.ok .ic { color: var(--good); }
+.setup-item.pending .ic { color: var(--muted); }
+.setup-item.active .ic { color: var(--accent); }
+.setup-item .sub { color: var(--muted); font-size: 12px; margin-left: auto; }
+.setup-log {
+  background: #0a0b0e; border: 1px solid var(--border); border-radius: 9px; padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #9fb0c8;
+  height: 200px; overflow: auto; white-space: pre-wrap; margin-bottom: 18px; user-select: text;
+}
+.setup-actions { display: flex; gap: 10px; align-items: center; }
+.setup-error { color: var(--bad); font-size: 13px; margin-top: 14px; white-space: pre-wrap; }
+
 .loading { text-align: center; color: var(--muted); padding: 60px 0; }
 .spinner { display: inline-block; width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

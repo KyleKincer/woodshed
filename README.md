@@ -9,35 +9,28 @@ The default quality preset is the maximum-quality one (fine-tuned model, heavy
 shift averaging, 32-bit float output) — the same settings as the `yt-drumsplit`
 CLI script.
 
-## Prerequisites
+## No manual setup
 
-Command-line tools (the app detects them and shows a banner if any are missing —
-it searches Homebrew, pipx and pyenv locations, so it works even when launched
-from the Dock):
+You don't install anything by hand. Woodshed is self-contained:
 
-```bash
-brew install yt-dlp ffmpeg
-pipx install demucs
-pipx inject demucs torchcodec   # REQUIRED: recent demucs saves audio via TorchCodec
-pipx install spotdl             # OPTIONAL: only needed for Spotify links
-```
+- **ffmpeg / ffprobe** ship with the app (vendored static binaries).
+- **demucs (+ PyTorch), yt-dlp and spotdl** are provisioned automatically on
+  first launch into a private, app-managed Python environment using
+  [`uv`](https://github.com/astral-sh/uv). You'll see a one-time setup screen; it
+  downloads a few hundred MB (PyTorch is the bulk) and runs entirely locally — no
+  accounts, no terminal.
 
-> **Why `torchcodec`?** Recent `torchaudio` (2.9+) dropped its built-in file
-> backend and delegates saving to TorchCodec. Without it, demucs separates the
-> track fine and then crashes when writing the stems. Woodshed detects this
-> specific failure and tells you the exact fix.
+Everything lives under the app's data directory, isolated from your system
+Python. If you *already* have any of these tools on your PATH, Woodshed uses
+those instead and skips provisioning.
 
-The first separation downloads the Demucs model weights (a few hundred MB),
+> **How the audio is saved:** the managed environment pins `torchaudio < 2.9`
+> plus `soundfile`, so demucs saves via the self-contained libsndfile backend —
+> no TorchCodec and no system FFmpeg libraries required. A nice side effect:
+> `--float32` produces genuine 32-bit float WAV output (true max quality).
+
+The first separation also downloads the Demucs model weights (a few hundred MB),
 cached under `~/.cache/`.
-
-### Output quality note
-
-The model/shift/overlap settings (which drive *separation* quality) are fully
-honored. However, the current `torchaudio` + TorchCodec stack writes
-**16-bit / 44.1 kHz WAV** regardless of the `--float32` / `--int24` request —
-TorchCodec doesn't yet expose bit depth. 16-bit is lossless CD quality and
-inaudibly different from float for playback, so this doesn't matter in practice;
-the format setting is kept for when TorchCodec adds support.
 
 ## Run
 

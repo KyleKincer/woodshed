@@ -1,14 +1,49 @@
 {
   "name": "woodshed",
   "version": "0.1.0",
-  "description": "Practice along to songs — pull a YouTube track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
+  "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
   "main": "main.js",
   "author": "Kyle Kincer",
   "license": "MIT",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^34.0.0"
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0"
+  },
+  "build": {
+    "appId": "com.kylekincer.woodshed",
+    "productName": "Woodshed",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "src/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Audio"
+    }
   }
 }

@@ -3,15 +3,17 @@
 const { app, BrowserWindow, ipcMain, protocol, shell, net, dialog } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { checkDeps } = require('./lib/bins');
 const { Store } = require('./lib/store');
+const { Runtime } = require('./lib/runtime');
 const { Processor, classifyInput } = require('./lib/processor');
 const { PRESETS, MODELS, STEM_MODES, DEFAULT_PRESET } = require('./lib/presets');
 
 let store;
+let runtime;
 let processor;
 let mainWindow;
 let jobCounter = 0;
+let provisioning = false;
 
 // Serve library audio/art through a custom scheme so the renderer can fetch it
 // without nodeIntegration. URLs look like: wsmedia://stems/<songId>/<file>
@@ -55,7 +57,8 @@ function createWindow() {
 
 app.whenReady().then(() => {
   store = new Store(app.getPath('userData'));
-  processor = new Processor(store, emit);
+  runtime = new Runtime(app.getPath('userData'));
+  processor = new Processor(store, emit, runtime);
 
   // Custom protocol handler — resolves only within the media dir (no traversal).
   protocol.handle('wsmedia', (request) => {
@@ -86,7 +89,21 @@ app.on('window-all-closed', () => {
 });
 
 function registerIpc() {
-  ipcMain.handle('deps:check', () => checkDeps());
+  ipcMain.handle('runtime:status', () => runtime.status());
+
+  ipcMain.handle('runtime:provision', async () => {
+    if (provisioning) return { alreadyRunning: true };
+    provisioning = true;
+    try {
+      const onLog = (line) => emit('runtime:log', { line });
+      await runtime.provision(onLog);
+      return { ok: true, status: runtime.status() };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    } finally {
+      provisioning = false;
+    }
+  });
 
   ipcMain.handle('config:get', () => ({
     settings: store.getSettings(),
