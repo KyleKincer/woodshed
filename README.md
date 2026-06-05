@@ -73,9 +73,15 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 - **Player** — sample-locked multitrack playback:
   - Per-track **mute**, **solo**, and **volume**.
   - **Waveforms** per stem (dimmed when muted).
-  - **A–B loop**: drag across the waveforms to set a region, or use `[` / `]`.
+  - **Zoom & pan** the waveforms (scroll to zoom at the cursor, shift-scroll to
+    pan) for precise placement, with an **overview minimap** below the stems
+    that shows the loop, playhead, and current zoom window (drag the bracket to
+    pan, drag its edges to zoom, click to seek).
+  - **A–B loop** with draggable edge handles: drag across the waveforms to set a
+    region, grab an edge to fine-tune, or drag the whole region. The transport
+    shows exact `A → B` times with ±0.05s nudge buttons.
   - **Speed** control 0.5×–1.5× (varispeed — pitch changes with speed).
-  - Click waveforms or the scrub bar to seek.
+  - Click a waveform or the overview to seek; the view auto-follows playback.
 
 ### Keyboard shortcuts (in the player)
 
@@ -83,9 +89,12 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 | --- | --- |
 | `Space` | Play / pause |
 | `←` / `→` | Seek ∓5s (hold `Shift` for 1s) |
+| `,` / `.` | Nudge playhead ∓0.05s (hold `Shift` for 0.01s) |
 | `[` / `]` | Set loop start / end at the playhead |
 | `L` | Toggle A–B loop |
-| `1`–`6` | Mute / unmute that stem |
+| `−` / `=` | Zoom out / in (at the playhead) |
+| `\` | Fit (zoom out to the whole song) |
+| `1`–`9` | Mute / unmute that stem |
 | `0` | Reset the mixer |
 
 ## Where data lives
