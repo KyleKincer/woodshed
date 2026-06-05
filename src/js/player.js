@@ -43,7 +43,7 @@ export function closePlayer() {
   cleanupFns = [];
 }
 
-export async function openPlayer(song) {
+export async function openPlayer(song, onBack) {
   closePlayer();
   const root = document.getElementById('player-root');
   root.innerHTML = `<div class="loading"><div class="spinner"></div><p style="margin-top:14px">Loading stems…</p></div>`;
@@ -59,71 +59,75 @@ export async function openPlayer(song) {
   const view = { start: 0, end: duration }; // visible time window
 
   const cover = song.thumb ? `style="background-image:url('${window.api.mediaUrl(song.id, song.thumb)}')"` : '';
+  const overviewOpen = localStorage.getItem('ws.overview') === '1';
   root.innerHTML = `
-    <div class="player-head">
-      <div class="cover" ${cover}></div>
-      <div>
-        <div class="ptitle">${escapeHtml(song.title)}</div>
-        <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems · ${song.quality?.model || ''}</div>
+    <div class="player">
+      <div class="player-topbar">
+        <button class="back-btn" id="player-back">‹ Library</button>
+        <div class="pt-cover" ${cover}></div>
+        <div class="pt-meta">
+          <div class="ptitle">${escapeHtml(song.title)}</div>
+          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems · ${song.quality?.model || ''}</div>
+        </div>
+        <div class="pt-spacer"></div>
+        <button class="toggle-btn ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle overview / minimap">Overview</button>
       </div>
-    </div>
 
-    <div class="tracks" id="tracks">
-      <div class="timeline" id="timeline">
-        <div class="loop-region" id="loop-region" style="display:none"></div>
-        <div class="loop-handle" id="handle-a" style="display:none"></div>
-        <div class="loop-handle" id="handle-b" style="display:none"></div>
-        <div class="playhead" id="playhead" style="left:0"></div>
-        <div class="time-tip" id="time-tip" style="display:none"></div>
+      <div class="tracks" id="tracks">
+        <div class="timeline" id="timeline">
+          <div class="loop-region" id="loop-region" style="display:none"></div>
+          <div class="loop-handle" id="handle-a" style="display:none"></div>
+          <div class="loop-handle" id="handle-b" style="display:none"></div>
+          <div class="playhead" id="playhead" style="left:0"></div>
+          <div class="time-tip" id="time-tip" style="display:none"></div>
+        </div>
+        <div class="timeline" id="timeline-interact"></div>
       </div>
-      <div class="timeline" id="timeline-interact"></div>
-    </div>
 
-    <div class="overview" id="overview" title="Drag the bracket to pan · drag its edges to zoom · click to seek">
-      <canvas id="mini-canvas"></canvas>
-      <div class="mini-loop" id="mini-loop" style="display:none"></div>
-      <div class="mini-view" id="mini-view"><span class="mv-edge l"></span><span class="mv-edge r"></span></div>
-      <div class="mini-playhead" id="mini-playhead"></div>
-    </div>
+      <div class="overview ${overviewOpen ? '' : 'hidden'}" id="overview" title="Drag the bracket to pan · drag its edges to zoom · click to seek">
+        <canvas id="mini-canvas"></canvas>
+        <div class="mini-loop" id="mini-loop" style="display:none"></div>
+        <div class="mini-view" id="mini-view"><span class="mv-edge l"></span><span class="mv-edge r"></span></div>
+        <div class="mini-playhead" id="mini-playhead"></div>
+      </div>
 
-    <div class="transport">
-      <div class="transport-main">
+      <div class="transport">
         <button class="play-btn" id="play">▶</button>
         <div class="time" id="time">0:00.00 / ${fmt(duration)}</div>
-        <div class="loop-readout" id="loop-readout">
-          <span class="lr-label">Loop</span>
-          <button class="nudge" data-edge="a" data-d="-0.05">−</button>
+
+        <div class="t-divider"></div>
+        <div class="t-group loop-readout" id="loop-readout">
+          <button class="toggle-btn sm" id="loop-toggle" title="Toggle A–B loop (L)">Loop</button>
+          <button class="nudge" data-edge="a" data-d="-0.05" title="Nudge A back">−</button>
           <span class="lr-val" id="lr-a">—</span>
-          <button class="nudge" data-edge="a" data-d="0.05">+</button>
+          <button class="nudge" data-edge="a" data-d="0.05" title="Nudge A forward">+</button>
           <span class="lr-sep">→</span>
-          <button class="nudge" data-edge="b" data-d="-0.05">−</button>
+          <button class="nudge" data-edge="b" data-d="-0.05" title="Nudge B back">−</button>
           <span class="lr-val" id="lr-b">—</span>
-          <button class="nudge" data-edge="b" data-d="0.05">+</button>
+          <button class="nudge" data-edge="b" data-d="0.05" title="Nudge B forward">+</button>
           <span class="lr-len" id="lr-len"></span>
+          <button class="toggle-btn sm" id="set-a" title="Set A at playhead ([)">A⇤</button>
+          <button class="toggle-btn sm" id="set-b" title="Set B at playhead (])">⇥B</button>
+          <button class="toggle-btn sm" id="loop-clear" title="Clear loop">Clear</button>
         </div>
-      </div>
-      <div class="transport-tools">
-        <div class="tool">
-          <span>Zoom</span>
-          <button class="toggle-btn" id="zoom-out">−</button>
-          <button class="toggle-btn" id="zoom-in">+</button>
-          <button class="toggle-btn" id="zoom-fit">Fit</button>
-        </div>
-        <div class="tool">
-          <span>Speed</span>
+
+        <div class="t-divider"></div>
+        <div class="t-group">
+          <span class="t-label">Speed</span>
           <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="1" />
           <span class="speed-val" id="speed-val">1.00×</span>
         </div>
-        <div class="tool">
-          <button class="toggle-btn" id="set-a">Set A</button>
-          <button class="toggle-btn" id="set-b">Set B</button>
-          <button class="toggle-btn" id="loop-toggle">Loop</button>
-          <button class="toggle-btn" id="loop-clear">Clear</button>
+
+        <div class="t-divider"></div>
+        <div class="t-group" title="Zoom">
+          <button class="toggle-btn sm" id="zoom-out">−</button>
+          <button class="toggle-btn sm" id="zoom-in">+</button>
+          <button class="toggle-btn sm" id="zoom-fit">Fit</button>
         </div>
-        <div class="tool">
-          <button class="toggle-btn" id="mixer-reset">Reset mixer</button>
-        </div>
-        <div class="tool kbd-hint">space · ←/→ seek · ,/. nudge · [ ] set loop · −/= zoom · \\ fit</div>
+
+        <div class="t-spacer"></div>
+        <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">⟲ Mix</button>
+        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · [ ] set loop · L loop · −/= zoom · \\ fit · 1–9 mute · 0 reset">?</button>
       </div>
     </div>
   `;
@@ -185,6 +189,7 @@ export async function openPlayer(song) {
   const miniView = document.getElementById('mini-view');
   const miniPlay = document.getElementById('mini-playhead');
   function drawMini() {
+    if (overview.classList.contains('hidden')) return;
     const w = Math.max(200, overview.clientWidth);
     const src = trackRows[0]?.track.buffer;
     if (src) drawWaveform(miniCanvas, computePeaksRange(src, 0, duration, w), cssVar('--muted'), { dim: false });
@@ -435,6 +440,16 @@ export async function openPlayer(song) {
     tracksEl.querySelectorAll('.tbtn').forEach((b) => b.classList.remove('on'));
     tracksEl.querySelectorAll('.track-vol').forEach((s) => (s.value = 1));
     drawWaveforms();
+  };
+
+  // Back + overview toggle
+  document.getElementById('player-back').onclick = () => { if (onBack) onBack(); };
+  const miniToggle = document.getElementById('mini-toggle');
+  miniToggle.onclick = () => {
+    const open = !overview.classList.toggle('hidden');
+    miniToggle.classList.toggle('on', open);
+    localStorage.setItem('ws.overview', open ? '1' : '0');
+    if (open) requestAnimationFrame(() => { drawMini(); updateMiniOverlay(); });
   };
 
   // ---- initial draw + resize ----

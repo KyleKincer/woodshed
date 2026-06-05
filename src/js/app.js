@@ -8,16 +8,32 @@ let config = null;
 function showView(name) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  document.body.classList.toggle('in-player', name === 'player');
   if (name !== 'player') closePlayer();
   if (name === 'settings') renderSettings();
   if (name === 'library') renderLibrary(document.getElementById('lib-search').value);
 }
 
 async function openSong(song) {
-  // Player isn't a nav item; switch views manually.
+  // Player isn't a nav item; switch views manually and hide the sidebar for space.
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
-  await openPlayer(song);
+  document.body.classList.add('in-player');
+  await openPlayer(song, () => showView('library'));
+}
+
+function initSidebar() {
+  const collapsed = localStorage.getItem('ws.sidebarCollapsed') === '1';
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  const toggle = document.getElementById('sidebar-toggle');
+  const apply = () => {
+    const c = document.body.classList.contains('sidebar-collapsed');
+    localStorage.setItem('ws.sidebarCollapsed', c ? '1' : '0');
+    toggle.textContent = c ? '›' : '‹';
+    toggle.title = c ? 'Expand sidebar' : 'Collapse sidebar';
+  };
+  toggle.onclick = () => { document.body.classList.toggle('sidebar-collapsed'); apply(); };
+  apply();
 }
 
 async function maybeSpotifyTip() {
@@ -47,7 +63,7 @@ async function boot() {
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => showView(btn.dataset.view));
   });
-  document.getElementById('player-back').addEventListener('click', () => showView('library'));
+  initSidebar();
 
   await renderLibrary();
   await maybeSpotifyTip();

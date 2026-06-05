@@ -17,11 +17,12 @@
     <div class="brand">
       <span class="logo">◐</span>
       <span class="brand-name">Woodshed</span>
+      <button id="sidebar-toggle" class="sidebar-toggle" title="Collapse sidebar">‹</button>
     </div>
-    <button class="nav-btn active" data-view="library"><span>≡</span> Library</button>
-    <button class="nav-btn" data-view="settings"><span>⚙</span> Settings</button>
+    <button class="nav-btn active" data-view="library"><span class="nav-icon">≡</span><span class="nav-label">Library</span></button>
+    <button class="nav-btn" data-view="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
     <div class="sidebar-spacer"></div>
-    <button id="add-btn" class="add-btn">＋ Add song</button>
+    <button id="add-btn" class="add-btn"><span class="nav-icon">＋</span><span class="nav-label">Add song</span></button>
   </nav>
 
   <main id="content">
@@ -51,7 +52,6 @@
 
     <!-- PLAYER VIEW -->
     <section id="view-player" class="view">
-      <button id="player-back" class="back-btn">‹ Library</button>
       <div id="player-root"></div>
     </section>
 

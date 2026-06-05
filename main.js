@@ -53,6 +53,20 @@ function createWindow() {
     });
     mainWindow.webContents.on('render-process-gone', (_e, d) => console.log('[render-gone]', JSON.stringify(d)));
   }
+
+  if (process.env.WOODSHED_SHOT) {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        await wait(1800);
+        await mainWindow.webContents.executeJavaScript(`document.querySelector('[data-id]')?.click(); true;`);
+        await wait(3500);
+        const img = await mainWindow.webContents.capturePage();
+        require('fs').writeFileSync(process.env.WOODSHED_SHOT, img.toPNG());
+        console.log('SHOT saved to', process.env.WOODSHED_SHOT);
+      } catch (e) { console.log('SHOT error', e.message); }
+    });
+  }
 }
 
 app.whenReady().then(() => {
