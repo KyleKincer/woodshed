@@ -6,12 +6,33 @@ let onOpenSong = null;
 // In-flight jobs, keyed by jobId: { jobId, songId, title, uploader, duration, thumbFile, stage, percent, error }
 const processing = new Map();
 
+// View preferences (grouping + layout) persisted in localStorage.
+let view = loadView();
+function loadView() {
+  try { return { group: 'songs', layout: 'grid', ...JSON.parse(localStorage.getItem('ws.view') || '{}') }; }
+  catch { return { group: 'songs', layout: 'grid' }; }
+}
+function saveView() { localStorage.setItem('ws.view', JSON.stringify(view)); }
+
 export function initLibrary(cfg, openSongCb) {
   config = cfg;
   onOpenSong = openSongCb;
   wireAddModal();
   subscribeJobs();
+  wireViewControls();
   document.getElementById('lib-search').addEventListener('input', (e) => renderLibrary(e.target.value));
+}
+
+function wireViewControls() {
+  const gs = document.getElementById('group-seg');
+  const ls = document.getElementById('layout-seg');
+  const sync = () => {
+    gs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.group === view.group));
+    ls.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
+  };
+  gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter()); }));
+  ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter()); }));
+  sync();
 }
 
 function fmtDur(sec) {
@@ -22,13 +43,15 @@ function fmtDur(sec) {
 }
 
 const STAGE_LABEL = { queued: 'Queued', download: 'Downloading', separate: 'Separating', finalize: 'Finishing' };
+const artistOf = (s) => s.artist || s.uploader || '';
+const albumOf = (s) => s.album || '';
 
 export async function renderLibrary(filter = '') {
   const lib = await window.api.listLibrary();
-  const grid = document.getElementById('library-grid');
+  const container = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
   const q = filter.trim().toLowerCase();
-  const match = (title, uploader) => !q || (title || '').toLowerCase().includes(q) || (uploader || '').toLowerCase().includes(q);
+  const match = (...fields) => !q || fields.some((f) => (f || '').toLowerCase().includes(q));
 
   const storeIds = new Set(lib.songs.map((s) => s.id));
   const procList = [...processing.values()];
@@ -36,51 +59,105 @@ export async function renderLibrary(filter = '') {
   const procBySong = new Map(procList.filter((p) => p.songId && storeIds.has(p.songId)).map((p) => [p.songId, p]));
   const pendingNew = procList.filter((p) => !p.songId || !storeIds.has(p.songId));
 
-  const songs = lib.songs.filter((s) => match(s.title, s.uploader));
-  const newCards = pendingNew.filter((p) => match(p.title, p.uploader));
+  const songs = lib.songs.filter((s) => match(s.title, s.uploader, artistOf(s), albumOf(s)));
+  const newCards = pendingNew.filter((p) => match(p.title, p.uploader, p.artist, p.album));
 
   empty.classList.toggle('hidden', songs.length + newCards.length > 0);
 
-  grid.innerHTML =
-    newCards.map((p) => pendingCardHtml(p)).join('') +
-    songs.map((s) => cardHtml(s, procBySong.get(s.id))).join('');
+  // Build sections based on the grouping mode.
+  const sections = [];
+  if (newCards.length) sections.push({ title: 'In progress', items: newCards.map(vmPending) });
 
-  // Wire store-song cards.
-  grid.querySelectorAll('.card[data-id]').forEach((card) => {
-    const id = card.dataset.id;
-    const song = lib.songs.find((s) => s.id === id);
-    if (!song) return;
-    const proc = procBySong.get(id);
-    if (!proc) {
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('.card-menu')) return;
-        onOpenSong(song);
-      });
+  if (view.group === 'songs') {
+    sections.push({ title: null, items: songs.map((s) => vmSong(s, procBySong.get(s.id))) });
+  } else {
+    const keyFn = view.group === 'albums' ? albumOf : artistOf;
+    const unknown = view.group === 'albums' ? 'Unknown album' : 'Unknown artist';
+    const groups = new Map();
+    for (const s of songs) {
+      const k = (keyFn(s) || '').trim() || unknown;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
     }
-    card.querySelector('.card-menu')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      cardMenu(song, e.currentTarget);
-    });
-  });
+    [...groups.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+      .forEach(([title, list]) => {
+        const art = list.find((s) => s.thumb);
+        sections.push({
+          title, count: list.length,
+          coverUrl: art ? window.api.mediaUrl(art.id, art.thumb) : null,
+          items: list.map((s) => vmSong(s, procBySong.get(s.id))),
+        });
+      });
+  }
 
-  wireProcButtons(grid);
+  container.innerHTML = sections.map(sectionHtml).join('');
+  wireCards(container, lib, procBySong);
 }
 
-function wireProcButtons(grid) {
-  grid.querySelectorAll('.card-proc [data-cancel]').forEach((b) => {
-    b.addEventListener('click', (e) => { e.stopPropagation(); window.api.cancelJob(b.closest('.card').dataset.job); });
-  });
-  grid.querySelectorAll('.card-proc [data-dismiss]').forEach((b) => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      processing.delete(b.closest('.card').dataset.job);
-      renderLibrary(currentFilter());
-    });
-  });
+// ---- view models ----
+function vmSong(s, proc) {
+  return {
+    id: s.id, jobId: proc?.jobId, title: s.title,
+    artist: artistOf(s), album: albumOf(s), duration: s.duration,
+    thumbUrl: s.thumb ? window.api.mediaUrl(s.id, s.thumb) : null,
+    stemLabel: s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / '),
+    proc, isPending: false,
+  };
+}
+function vmPending(p) {
+  return {
+    id: p.songId, jobId: p.jobId, title: p.title || 'Processing…',
+    artist: p.artist || p.uploader || '', album: p.album || '', duration: p.duration,
+    thumbUrl: p.songId && p.thumbFile ? window.api.mediaUrl(p.songId, p.thumbFile) : null,
+    stemLabel: null, proc: p, isPending: true,
+  };
+}
+// Secondary line: in the Artists view show the album; otherwise the artist.
+function subFor(vm) { return view.group === 'artists' ? vm.album : vm.artist; }
+
+// ---- section + item rendering ----
+function sectionHtml(sec) {
+  const header = sec.title
+    ? `<div class="section-head">
+        ${sec.coverUrl ? `<div class="section-cover" style="background-image:url('${sec.coverUrl}')"></div>` : ''}
+        <div class="section-title">${esc(sec.title)}</div>
+        ${sec.count ? `<div class="section-count">${sec.count} song${sec.count > 1 ? 's' : ''}</div>` : ''}
+      </div>`
+    : '';
+  const body = view.layout === 'list'
+    ? `<div class="library-list">${sec.items.map(listRow).join('')}</div>`
+    : `<div class="library-grid">${sec.items.map(gridCard).join('')}</div>`;
+  return `<section class="lib-section">${header}${body}</section>`;
 }
 
 function coverAttr(thumbUrl) {
   return thumbUrl ? `style="background-image:url('${thumbUrl}')"` : '';
+}
+
+function gridCard(vm) {
+  return `<div class="card ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
+    ${vm.stemLabel ? `<div class="badges"><span class="badge">${vm.stemLabel}</span></div>` : ''}
+    ${vm.proc || vm.isPending ? '' : '<button class="card-menu">⋯</button>'}
+    <div class="cover" ${coverAttr(vm.thumbUrl)}>${vm.thumbUrl ? '' : '♪'}</div>
+    <div class="meta">
+      <div class="title">${esc(vm.title)}</div>
+      <div class="sub"><span>${esc(subFor(vm) || '')}</span><span>${fmtDur(vm.duration)}</span></div>
+    </div>
+    ${vm.proc ? overlayHtml(vm.proc) : ''}
+  </div>`;
+}
+
+function listRow(vm) {
+  return `<div class="list-row ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
+    <div class="list-thumb" ${coverAttr(vm.thumbUrl)}>${vm.thumbUrl ? '' : '♪'}</div>
+    <div class="list-main">
+      <div class="list-title">${esc(vm.title)}</div>
+      <div class="list-sub">${esc(subFor(vm) || '')}</div>
+    </div>
+    ${vm.stemLabel ? `<div class="list-badge">${vm.stemLabel}</div>` : ''}
+    ${vm.proc ? procInlineHtml(vm.proc) : `<div class="list-dur">${fmtDur(vm.duration)}</div>${vm.isPending ? '' : '<button class="card-menu list-menu">⋯</button>'}`}
+  </div>`;
 }
 
 function overlayHtml(p) {
@@ -100,32 +177,46 @@ function overlayHtml(p) {
   </div>`;
 }
 
-function cardHtml(s, proc) {
-  const cover = s.thumb ? coverAttr(window.api.mediaUrl(s.id, s.thumb)) : '';
-  const stemLabel = s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / ');
-  return `<div class="card ${proc ? 'is-processing' : ''}" data-id="${s.id}" ${proc ? `data-job="${proc.jobId}"` : ''}>
-    <div class="badges"><span class="badge">${stemLabel}</span></div>
-    ${proc ? '' : '<button class="card-menu">⋯</button>'}
-    <div class="cover" ${cover}>${s.thumb ? '' : '♪'}</div>
-    <div class="meta">
-      <div class="title">${esc(s.title)}</div>
-      <div class="sub"><span>${esc(s.uploader || '')}</span><span>${fmtDur(s.duration)}</span></div>
-    </div>
-    ${proc ? overlayHtml(proc) : ''}
+// Compact, inline progress for list rows.
+function procInlineHtml(p) {
+  if (p.error) {
+    return `<div class="proc-inline error"><span class="cp-title">Failed</span><button class="cp-btn" data-dismiss>Dismiss</button></div>`;
+  }
+  const pct = Math.round(p.percent || 0);
+  return `<div class="proc-inline">
+    <div class="cp-bar"><div class="cp-fill" style="width:${pct}%"></div></div>
+    <span class="cp-title">${STAGE_LABEL[p.stage] || 'Working'} · ${pct}%</span>
+    <button class="cp-btn" data-cancel>Cancel</button>
   </div>`;
 }
 
-// A card for a job whose song isn't in the library yet.
-function pendingCardHtml(p) {
-  const thumbUrl = p.songId && p.thumbFile ? window.api.mediaUrl(p.songId, p.thumbFile) : null;
-  return `<div class="card is-processing pending" data-job="${p.jobId}">
-    <div class="cover" ${coverAttr(thumbUrl)}>${thumbUrl ? '' : '♪'}</div>
-    <div class="meta">
-      <div class="title">${esc(p.title || 'Processing…')}</div>
-      <div class="sub"><span>${esc(p.uploader || '')}</span><span>${fmtDur(p.duration)}</span></div>
-    </div>
-    ${overlayHtml(p)}
-  </div>`;
+function wireCards(container, lib, procBySong) {
+  container.querySelectorAll('[data-id]').forEach((el) => {
+    const id = el.dataset.id;
+    const song = lib.songs.find((s) => s.id === id);
+    if (!song) return;
+    const proc = procBySong.get(id);
+    if (!proc) {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('.card-menu')) return;
+        onOpenSong(song);
+      });
+    }
+    el.querySelector('.card-menu')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cardMenu(song, e.currentTarget);
+    });
+  });
+  container.querySelectorAll('[data-cancel]').forEach((b) => {
+    b.addEventListener('click', (e) => { e.stopPropagation(); window.api.cancelJob(b.closest('[data-job]').dataset.job); });
+  });
+  container.querySelectorAll('[data-dismiss]').forEach((b) => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      processing.delete(b.closest('[data-job]').dataset.job);
+      renderLibrary(currentFilter());
+    });
+  });
 }
 
 // External link for a song, if it has one (downloads/Spotify do; files/searches don't).
@@ -351,7 +442,7 @@ function subscribeJobs() {
 
 // Update just the progress text/bar of a card without rebuilding the grid.
 function patchOverlay(p) {
-  const card = document.querySelector(`.card[data-job="${p.jobId}"]`);
+  const card = document.querySelector(`[data-job="${p.jobId}"]`);
   if (!card) return;
   const pct = Math.round(p.percent || 0);
   const title = card.querySelector('.cp-title');

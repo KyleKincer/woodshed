@@ -29,9 +29,20 @@
     <section id="view-library" class="view active">
       <header class="view-header">
         <h1>Library</h1>
-        <input id="lib-search" class="search" type="search" placeholder="Search songs…" />
+        <div class="lib-controls">
+          <div class="segmented" id="group-seg">
+            <button data-group="songs">Songs</button>
+            <button data-group="albums">Albums</button>
+            <button data-group="artists">Artists</button>
+          </div>
+          <div class="segmented" id="layout-seg">
+            <button data-layout="grid" title="Grid view">▦</button>
+            <button data-layout="list" title="List view">≣</button>
+          </div>
+          <input id="lib-search" class="search" type="search" placeholder="Search…" />
+        </div>
       </header>
-      <div id="library-grid" class="library-grid"></div>
+      <div id="library-grid"></div>
       <div id="library-empty" class="empty hidden">
         <p>No songs yet.</p>
         <button class="add-btn" data-add>＋ Add your first song</button>

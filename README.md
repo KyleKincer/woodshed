@@ -58,8 +58,10 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 
 ## Features
 
-- **Library** — every processed song with cover art, stored locally. Search,
-  rename, delete, or open the original source (the `⋯` menu on each card).
+- **Library** — every processed song with (square) cover art, stored locally.
+  Switch between **grid and list** layouts, and browse by **Songs / Albums /
+  Artists** (artist & album come from the source metadata or the file's tags).
+  Search, reprocess, rename, delete, or open the original source (the `⋯` menu).
 - **Add queue** — add songs while others process; live download + separation
   progress bars; **cancel** any queued or in-progress job (the ✕ on its card);
   failures show the (de-noised) error inline.
