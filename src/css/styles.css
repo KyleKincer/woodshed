@@ -44,22 +44,30 @@ body { display: flex; }
 
 /* ---------- Sidebar ---------- */
 #sidebar {
+  position: relative;
   width: 210px; flex-shrink: 0;
   background: var(--bg-2);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   padding: 46px 12px 16px;
   gap: 4px;
-  transition: width .14s ease;
+  transition: width .16s ease;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .logo { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .brand-name { font-weight: 700; font-size: 16px; letter-spacing: .3px; flex: 1; white-space: nowrap; overflow: hidden; }
+/* Edge-pill toggle: stays pinned to the border in both states, just rotates. */
 .sidebar-toggle {
-  background: transparent; border: none; color: var(--muted); cursor: pointer;
-  font-size: 16px; width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+  position: absolute; top: 52px; right: -12px; z-index: 60;
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35); opacity: 0; transition: opacity .12s, background .12s, color .12s;
 }
-.sidebar-toggle:hover { background: var(--bg-3); color: var(--text); }
+#sidebar:hover .sidebar-toggle { opacity: 1; }
+.sidebar-toggle:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+body.sidebar-collapsed .sidebar-toggle { opacity: 1; } /* always visible when collapsed */
 .nav-btn {
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: none; color: var(--muted);
@@ -72,11 +80,10 @@ body { display: flex; }
 .sidebar-spacer { flex: 1; }
 
 /* Collapsed icon rail */
-body.sidebar-collapsed #sidebar { width: 60px; }
+body.sidebar-collapsed #sidebar { width: 64px; }
 body.sidebar-collapsed .brand-name,
 body.sidebar-collapsed .nav-label { display: none; }
 body.sidebar-collapsed .brand { justify-content: center; padding: 4px 0 18px; }
-body.sidebar-collapsed .sidebar-toggle { position: absolute; top: 46px; right: 8px; }
 body.sidebar-collapsed .nav-btn,
 body.sidebar-collapsed .add-btn { justify-content: center; padding: 9px 0; }
 

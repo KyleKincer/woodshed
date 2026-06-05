@@ -26,13 +26,22 @@ function initSidebar() {
   const collapsed = localStorage.getItem('ws.sidebarCollapsed') === '1';
   document.body.classList.toggle('sidebar-collapsed', collapsed);
   const toggle = document.getElementById('sidebar-toggle');
+  // Tooltips for the collapsed icon rail.
+  document.querySelector('.nav-btn[data-view="library"]')?.setAttribute('title', 'Library');
+  document.querySelector('.nav-btn[data-view="settings"]')?.setAttribute('title', 'Settings');
+  document.getElementById('add-btn')?.setAttribute('title', 'Add song');
+
   const apply = () => {
     const c = document.body.classList.contains('sidebar-collapsed');
     localStorage.setItem('ws.sidebarCollapsed', c ? '1' : '0');
     toggle.textContent = c ? '›' : '‹';
-    toggle.title = c ? 'Expand sidebar' : 'Collapse sidebar';
+    toggle.title = c ? 'Expand sidebar (⌘.)' : 'Collapse sidebar (⌘.)';
   };
-  toggle.onclick = () => { document.body.classList.toggle('sidebar-collapsed'); apply(); };
+  const toggleSidebar = () => { document.body.classList.toggle('sidebar-collapsed'); apply(); };
+  toggle.onclick = toggleSidebar;
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); toggleSidebar(); }
+  });
   apply();
 }
 

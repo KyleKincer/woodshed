@@ -59,8 +59,10 @@ function createWindow() {
     mainWindow.webContents.once('did-finish-load', async () => {
       try {
         await wait(1800);
-        await mainWindow.webContents.executeJavaScript(`document.querySelector('[data-id]')?.click(); true;`);
-        await wait(3500);
+        if (!process.env.WOODSHED_NOCLICK) {
+          await mainWindow.webContents.executeJavaScript(`document.querySelector('[data-id]')?.click(); true;`);
+          await wait(3500);
+        }
         const img = await mainWindow.webContents.capturePage();
         require('fs').writeFileSync(process.env.WOODSHED_SHOT, img.toPNG());
         console.log('SHOT saved to', process.env.WOODSHED_SHOT);
