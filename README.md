@@ -152,12 +152,18 @@ npm run dist:win      # .exe  (run on Windows)
 npm run dist:linux    # .AppImage (run on Linux)
 ```
 
-Local builds are **unsigned**, so macOS quarantines them. If Gatekeeper refuses
-to open a locally built `.dmg`:
+Builds are **ad-hoc signed** — no Apple Developer certificate is involved (see
+[`scripts/adhoc-sign.js`](scripts/adhoc-sign.js)). A build you make yourself runs
+with no ceremony. A build you *download* is quarantined by the browser, and
+because an ad-hoc signature isn't notarized, macOS won't launch it until you
+clear that:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Woodshed.app
 ```
+
+(Or System Settings → Privacy & Security → **Open Anyway**. On current macOS the
+old right-click → Open trick no longer works for un-notarized apps.)
 
 > **Build on the platform and architecture you're targeting.** `ffmpeg-static`
 > downloads a single binary for the install host, so an x64 `.dmg` built on
@@ -200,6 +206,12 @@ Notes:
 - You can run the workflow manually from the Actions tab (**Run workflow**) to
   build all four platforms without tagging or releasing; the installers show up
   as run artifacts.
-- CI builds are unsigned and un-notarized (no Apple Developer certificate), so
-  first-launch on someone else's Mac needs right-click → Open, or the `xattr`
-  command above.
+- Mac builds are ad-hoc signed and **not notarized**, so anyone downloading a
+  `.dmg` needs the `xattr` step above. Making that unnecessary means an Apple
+  Developer Program membership ($99/yr): a Developer ID certificate in
+  `CSC_LINK` / `CSC_KEY_PASSWORD` plus notarization credentials, at which point
+  `scripts/adhoc-sign.js` should come out.
+- CI asserts the mac bundle is validly signed before uploading it. v1.0.0
+  shipped a bundle whose signature didn't cover it, which macOS reported as
+  "Woodshed is damaged and can't be opened" — that check exists so it can't
+  happen twice.
