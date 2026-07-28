@@ -26,7 +26,9 @@ for arg in "$@"; do
     --no-run) run=false ;;
     --clean) clean=true ;;
     -h|--help)
-      sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      # Print the header comment block (everything after the shebang, up to the
+      # first line of actual code).
+      awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
       exit 0
       ;;
     *)
