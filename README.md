@@ -185,17 +185,16 @@ That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. The tag kicks off
 | Windows | `Woodshed-X.Y.Z-win-x64.exe` |
 | Linux | `Woodshed-X.Y.Z-linux-x86_64.AppImage` |
 
-and attaches them to a **draft** GitHub Release with generated notes. Review it,
-then publish:
-
-```bash
-gh release edit vX.Y.Z --draft=false
-```
+and publishes them as a GitHub Release with generated notes. Pushing the tag is
+the only step — nothing to confirm afterwards.
 
 Notes:
 
 - `./scripts/release.sh --dry-run patch` shows the version it would cut and
   changes nothing.
+- The release is only created after all four builds succeed, so it can't appear
+  with an installer missing. To walk one back: `gh release delete vX.Y.Z`, or
+  `gh release edit vX.Y.Z --draft=true` to hide it while you sort it out.
 - The workflow refuses to build if the tag doesn't match `package.json`, so
   don't hand-tag — `release.sh` keeps them in sync.
 - You can run the workflow manually from the Actions tab (**Run workflow**) to

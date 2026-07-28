@@ -2,7 +2,7 @@
 #
 # Cut a new Woodshed version: bump package.json, tag it, push the tag.
 # Pushing the tag is what triggers .github/workflows/release.yml, which builds
-# every platform and opens a draft GitHub Release with the installers attached.
+# every platform and publishes a GitHub Release with the installers attached.
 #
 #   ./scripts/release.sh patch          # 0.1.0 -> 0.1.1
 #   ./scripts/release.sh minor          # 0.1.0 -> 0.2.0
@@ -153,10 +153,10 @@ remote_url="$(git remote get-url origin)"
 slug="$(echo "$remote_url" | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##')"
 if [ -n "$slug" ]; then
   echo "    CI:      https://github.com/$slug/actions/workflows/release.yml"
-  echo "    Release: https://github.com/$slug/releases (created as a draft)"
+  echo "    Release: https://github.com/$slug/releases/tag/$new_tag (once the builds finish)"
 fi
 if command -v gh >/dev/null 2>&1; then
   echo
   echo "    watch:   gh run watch \$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
-  echo "    publish: gh release edit $new_tag --draft=false"
+  echo "    undo:    gh release delete $new_tag"
 fi
