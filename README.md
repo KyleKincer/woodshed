@@ -183,7 +183,7 @@ That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. The tag kicks off
 | macOS (Apple Silicon) | `Woodshed-X.Y.Z-mac-arm64.dmg` |
 | macOS (Intel) | `Woodshed-X.Y.Z-mac-x64.dmg` |
 | Windows | `Woodshed-X.Y.Z-win-x64.exe` |
-| Linux | `Woodshed-X.Y.Z-linux-x64.AppImage` |
+| Linux | `Woodshed-X.Y.Z-linux-x86_64.AppImage` |
 
 and attaches them to a **draft** GitHub Release with generated notes. Review it,
 then publish:
