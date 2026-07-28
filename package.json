@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
   "main": "main.js",
   "author": "Kyle Kincer",
