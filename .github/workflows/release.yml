@@ -1,0 +1,161 @@
+name: Release
+
+# Builds installers for every platform and attaches them to a draft GitHub
+# Release.
+#
+#   * push a tag `vX.Y.Z`  -> build everything, create a draft release
+#   * run manually         -> build everything, keep artifacts, no release
+#
+# Tag a release with `./scripts/release.sh patch` (see README) — it keeps the
+# tag and package.json version in sync, which the preflight job below enforces.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Never let two runs for the same tag race each other onto the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap gate so we don't burn four build jobs on a mistagged commit.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: Read version and check it matches the tag
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "package.json version: $version"
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version. Use ./scripts/release.sh to keep them in sync."
+              exit 1
+            fi
+            echo "Tag $GITHUB_REF_NAME matches package.json."
+          fi
+
+  build:
+    needs: preflight
+    # One target per job. Don't let a failing Linux build hide a good macOS one.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            os: macos-latest
+            npm_arch: arm64
+            builder_args: --mac dmg --arm64
+            artifacts: dist/*.dmg
+          - target: mac-x64
+            os: macos-latest
+            npm_arch: x64
+            builder_args: --mac dmg --x64
+            artifacts: dist/*.dmg
+          - target: win-x64
+            os: windows-latest
+            npm_arch: x64
+            builder_args: --win nsis --x64
+            artifacts: dist/*.exe
+          - target: linux-x64
+            os: ubuntu-latest
+            npm_arch: x64
+            builder_args: --linux AppImage --x64
+            artifacts: dist/*.AppImage
+
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ffmpeg-static` downloads a single binary for the *install* host's
+      # architecture, and `npm_config_arch` is the documented way to ask for a
+      # different one. Without this, the mac-x64 job (which runs on an Apple
+      # Silicon runner) would ship an arm64 ffmpeg inside an x64 app.
+      # `ffprobe-static` bundles every platform already, so it needs nothing.
+      - name: Install dependencies (${{ matrix.npm_arch }} binaries)
+        run: npm ci
+        env:
+          npm_config_arch: ${{ matrix.npm_arch }}
+
+      - name: Verify bundled ffmpeg is ${{ matrix.npm_arch }}
+        if: runner.os == 'macOS'
+        run: |
+          info="$(file -b node_modules/ffmpeg-static/ffmpeg)"
+          echo "$info"
+          case "${{ matrix.npm_arch }}" in
+            arm64) expected=arm64 ;;
+            x64)   expected=x86_64 ;;
+          esac
+          if ! echo "$info" | grep -q "$expected"; then
+            echo "::error::bundled ffmpeg is not $expected — the app would fail on that architecture"
+            exit 1
+          fi
+
+      - name: Build ${{ matrix.target }}
+        run: npx --no-install electron-builder ${{ matrix.builder_args }} --publish never
+        env:
+          # We have no Apple Developer certificate, so build unsigned rather
+          # than letting electron-builder pick up a random local identity.
+          # See the README for the Gatekeeper workaround users need.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload ${{ matrix.target }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: woodshed-${{ matrix.target }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    # Manual runs are for testing the build; only real tags cut a release.
+    if: github.ref_type == 'tag'
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          pattern: woodshed-*
+          merge-multiple: true
+
+      - name: List installers
+        run: ls -lh installers
+
+      # Draft, so you can eyeball the assets and edit the notes before it goes
+      # public. Publish with: gh release edit <tag> --draft=false
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "Woodshed ${{ needs.preflight.outputs.version }}" \
+            installers/*

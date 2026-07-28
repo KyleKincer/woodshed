@@ -7,8 +7,17 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "try": "./scripts/build-local.sh",
+    "try:dmg": "./scripts/build-local.sh --dmg",
+    "pack": "electron-builder --dir --publish never",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac dmg --publish never",
+    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:linux": "electron-builder --linux AppImage --publish never",
+    "release": "./scripts/release.sh",
+    "release:patch": "./scripts/release.sh patch",
+    "release:minor": "./scripts/release.sh minor",
+    "release:major": "./scripts/release.sh major"
   },
   "devDependencies": {
     "electron": "^34.0.0",
@@ -34,15 +43,22 @@
     ],
     "mac": {
       "category": "public.app-category.music",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] }
+        "dmg"
       ]
     },
     "win": {
-      "target": ["nsis"]
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "target": [
+        "nsis"
+      ]
     },
     "linux": {
-      "target": ["AppImage"],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "target": [
+        "AppImage"
+      ],
       "category": "Audio"
     }
   }

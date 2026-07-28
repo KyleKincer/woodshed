@@ -123,3 +123,84 @@ stem files too.
 > Note: 32-bit float WAV stems are large (~85 MB/min per stem). For a 4-minute
 > full-band song that's ~1.4 GB. Switch the output format to 24-bit WAV in
 > Settings → Custom to roughly halve that with no audible loss.
+
+## Building a version locally
+
+`npm start` runs the source tree. That's fine for most work, but it doesn't
+exercise packaging — asar paths, the vendored ffmpeg/ffprobe binaries, the
+managed Python environment resolving from inside a bundle. To test what people
+actually download:
+
+```bash
+npm run try        # build unpacked (fast) and launch the packaged app
+npm run try:dmg    # build the real .dmg, then open dist/
+```
+
+`npm run try` runs the app binary in the foreground, so logs come back to your
+terminal (unlike double-clicking it). Extra flags:
+
+```bash
+./scripts/build-local.sh --clean     # wipe dist/ first
+./scripts/build-local.sh --no-run    # just build
+```
+
+Installers for one platform, if you want them by hand:
+
+```bash
+npm run dist:mac      # .dmg for this Mac's architecture
+npm run dist:win      # .exe  (run on Windows)
+npm run dist:linux    # .AppImage (run on Linux)
+```
+
+Local builds are **unsigned**, so macOS quarantines them. If Gatekeeper refuses
+to open a locally built `.dmg`:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Woodshed.app
+```
+
+> **Build on the platform and architecture you're targeting.** `ffmpeg-static`
+> downloads a single binary for the install host, so an x64 `.dmg` built on
+> Apple Silicon would ship an arm64 ffmpeg and fail at runtime. That's why
+> `npm run dist:mac` only builds this machine's architecture, and why CI sets
+> `npm_config_arch` per job. (`ffprobe-static` bundles every platform, so it's
+> never a problem.)
+
+## Releasing
+
+Releases are built by GitHub Actions and triggered by a version tag:
+
+```bash
+./scripts/build-local.sh     # smoke-test the packaged app first
+./scripts/release.sh patch   # or minor / major / an explicit 0.4.2
+```
+
+That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. The tag kicks off
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
+
+| Platform | Artifact |
+| --- | --- |
+| macOS (Apple Silicon) | `Woodshed-X.Y.Z-mac-arm64.dmg` |
+| macOS (Intel) | `Woodshed-X.Y.Z-mac-x64.dmg` |
+| Windows | `Woodshed-X.Y.Z-win-x64.exe` |
+| Linux | `Woodshed-X.Y.Z-linux-x64.AppImage` |
+
+and attaches them to a **draft** GitHub Release with generated notes. Review it,
+then publish:
+
+```bash
+gh release edit vX.Y.Z --draft=false
+```
+
+Notes:
+
+- `./scripts/release.sh --dry-run patch` shows the version it would cut and
+  changes nothing.
+- The workflow refuses to build if the tag doesn't match `package.json`, so
+  don't hand-tag — `release.sh` keeps them in sync.
+- You can run the workflow manually from the Actions tab (**Run workflow**) to
+  build all four platforms without tagging or releasing; the installers show up
+  as run artifacts.
+- CI builds are unsigned and un-notarized (no Apple Developer certificate), so
+  first-launch on someone else's Mac needs right-click → Open, or the `xattr`
+  command above.
