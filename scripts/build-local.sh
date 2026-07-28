@@ -59,10 +59,11 @@ if [ "$clean" = true ]; then
   rm -rf dist
 fi
 
-# No Apple Developer cert here, and an unsigned local build is fine for testing.
-# Pinning this off keeps electron-builder from grabbing some unrelated identity
-# out of the keychain and failing halfway through.
-export CSC_IDENTITY_AUTO_DISCOVERY=false
+# Signing is ad-hoc, configured as `mac.identity: "-"` in package.json — which
+# is what makes the built app launchable at all on Apple Silicon. Don't set
+# CSC_IDENTITY_AUTO_DISCOVERY=false here: that skips signing entirely, and the
+# resulting bundle keeps the stock Electron binary's stale signature, which
+# macOS rejects as "damaged".
 
 if [ "$mode" = installer ]; then
   echo "==> building Woodshed $version installer ($installer_target, this machine's arch)"

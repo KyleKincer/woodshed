@@ -30,6 +30,7 @@
   "build": {
     "appId": "com.kylekincer.woodshed",
     "productName": "Woodshed",
+    "afterPack": "scripts/adhoc-sign.js",
     "files": [
       "main.js",
       "preload.js",
@@ -44,6 +45,7 @@
     "mac": {
       "category": "public.app-category.music",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "identity": null,
       "target": [
         "dmg"
       ]

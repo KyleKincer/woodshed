@@ -111,13 +111,28 @@ jobs:
             exit 1
           fi
 
+      # macOS signing is ad-hoc, via `mac.identity: "-"` in package.json. Not
+      # setting CSC_IDENTITY_AUTO_DISCOVERY=false here is deliberate: it made
+      # electron-builder skip signing altogether, which left the renamed
+      # Electron binary's stale linker signature on the bundle. macOS then
+      # reported the app as "damaged and can't be opened" — an invalid
+      # signature, which is worse than no signature because right-click → Open
+      # can't bypass it. See v1.0.0.
       - name: Build ${{ matrix.target }}
         run: npx --no-install electron-builder ${{ matrix.builder_args }} --publish never
-        env:
-          # We have no Apple Developer certificate, so build unsigned rather
-          # than letting electron-builder pick up a random local identity.
-          # See the README for the Gatekeeper workaround users need.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Catch a broken signature here rather than in someone's Downloads folder.
+      - name: Verify the app bundle is validly signed
+        if: runner.os == 'macOS'
+        run: |
+          app="$(find dist -maxdepth 2 -name '*.app' -type d | head -1)"
+          echo "checking $app"
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -E '^Identifier='
+          if ! codesign -dv "$app" 2>&1 | grep -q '^Identifier=com.kylekincer.woodshed'; then
+            echo "::error::signature does not cover this app (stale Electron signature?)"
+            exit 1
+          fi
 
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v4
