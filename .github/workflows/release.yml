@@ -1,9 +1,8 @@
 name: Release
 
-# Builds installers for every platform and attaches them to a draft GitHub
-# Release.
+# Builds installers for every platform and publishes them as a GitHub Release.
 #
-#   * push a tag `vX.Y.Z`  -> build everything, create a draft release
+#   * push a tag `vX.Y.Z`  -> build everything, publish the release
 #   * run manually         -> build everything, keep artifacts, no release
 #
 # Tag a release with `./scripts/release.sh patch` (see README) — it keeps the
@@ -147,14 +146,16 @@ jobs:
       - name: List installers
         run: ls -lh installers
 
-      # Draft, so you can eyeball the assets and edit the notes before it goes
-      # public. Publish with: gh release edit <tag> --draft=false
-      - name: Create draft release
+      # Published outright: tagging is the deliberate act, so there's nothing
+      # left to confirm. This step only runs after all four builds succeeded, so
+      # a release can't appear with a missing installer. If one turns out to be
+      # broken anyway, `gh release delete <tag>` or `gh release edit <tag>
+      # --draft=true` walks it back.
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --draft \
             --verify-tag \
             --generate-notes \
             --title "Woodshed ${{ needs.preflight.outputs.version }}" \
