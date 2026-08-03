@@ -143,12 +143,40 @@ modal run modal/separate.py::selftest
 
 ### YouTube from a datacenter IP
 
-Downloads go through yt-dlp, and YouTube treats a Modal container as a robot
-unless two things are in the image. **A JavaScript runtime**, so yt-dlp can
-solve YouTube's JS challenges — without one it falls back to the `android_vr`
-player client and gets `Sign in to confirm you're not a bot`. **A
-proof-of-origin token**, minted locally by
-[bgutil](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).
+**This is not solved.** YouTube bot-checks most downloads from Modal's egress,
+and the app falls back to uploading your own files. What follows is what is
+known, so the next attempt doesn't re-run the same experiments.
+
+Two things have to be in the image before anything works at all. **A JavaScript
+runtime**, so yt-dlp can solve YouTube's JS challenges — without one it falls
+back to the `android_vr` player client and gets `Sign in to confirm you're not
+a bot`. **A proof-of-origin token**, minted locally by
+[bgutil](https://github.com/Brainicism/bgutil-ytdlp-pot-provider). Both are
+installed, and `selftest` confirms bgutil mints tokens.
+
+They are necessary and not sufficient. Measured from the container, `--simulate`
+only:
+
+| | |
+| --- | --- |
+| `player_client` sweep — default, `web_safari`, `mweb`, `tv`, and all three | 0/3 clean each |
+| CPU container vs. `gpu="L4"` | both 0/4 — not a GPU-pool IP problem |
+| `ytsearch1:` vs. the same video ID by direct URL | both blocked; splitting them into separate processes does not help |
+| One heavily-cached video (`dQw4w9WgXcQ`) | 8/8 clean all session |
+| A real track, direct URL | 3/3 clean, then 0/3 forty minutes later with no change |
+
+So enforcement moves on YouTube's side, and a green run proves nothing about
+the next one — which is why `selftest_youtube` retries and reports a ratio
+rather than pass/fail:
+
+```bash
+modal run modal/separate.py::selftest_youtube --target "ytsearch1:some song"
+modal run modal/separate.py::selftest_youtube --clients SWEEP
+```
+
+The untried levers are the two yt-dlp's own error message names: `--cookies`
+from a signed-in (throwaway) account, and a residential `--proxy`. Both trade
+something real — an account Google can ban, or a per-GB bill.
 
 Node rather than yt-dlp's default Deno, because bgutil's script mode needs Node
 ≥ 20 anyway — one runtime covers both. Script mode rather than bgutil's HTTP

@@ -659,6 +659,60 @@ def selftest():
     return {"ok": True}
 
 
+def _probe_youtube(target: str, attempts: int, clients: str | None) -> dict:
+    """Resolve a target with full verbosity and report how often it was blocked.
+
+    The container is the only place the truth lives: which player clients
+    yt-dlp tries, whether bgutil actually minted a token, and what YouTube said
+    back. Reproducing this locally is useless — a home IP is not what gets
+    challenged. Repeated because the block is probabilistic; one green run
+    proves nothing, which is exactly the trap this function exists to avoid.
+    """
+    args = list(YTDLP_ARGS)
+    if clients:
+        args += ["--extractor-args", f"youtube:player_client={clients}"]
+    blocked = 0
+    for i in range(attempts):
+        probe = subprocess.run(
+            ["yt-dlp", *args, "-v", "--simulate", "--no-playlist", target],
+            capture_output=True,
+            text=True,
+        )
+        out = probe.stdout + probe.stderr
+        bot = bool(re.search(r"not a bot", out, re.I))
+        blocked += bot
+        print(f"    attempt {i + 1}: exit {probe.returncode}{' BOT CHECK' if bot else ''}")
+        if probe.returncode != 0 and not bot:
+            for line in out.splitlines():
+                if line.startswith("ERROR"):
+                    print(f"      {line[:200]}")
+    print(f"  == {clients or 'default'}: {attempts - blocked}/{attempts} clean")
+    return {"clients": clients or "default", "attempts": attempts, "blocked": blocked}
+
+
+# Candidate client sets. android_vr is in yt-dlp's default rotation and is the
+# one that gets bot-checked; the others need a PO token, which bgutil mints.
+CLIENT_CANDIDATES = [None, "web_safari", "mweb", "tv", "web_safari,mweb,tv"]
+
+
+@app.function(image=image, secrets=[secrets], timeout=60 * 30)
+def selftest_youtube(
+    target: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    attempts: int = 3,
+    clients: str = "",
+):
+    """Probe YouTube resolution, optionally sweeping player_client settings.
+
+    Run with:
+      modal run modal/separate.py::selftest_youtube --target "ytsearch1:some song"
+      modal run modal/separate.py::selftest_youtube --clients web_safari
+      modal run modal/separate.py::selftest_youtube --clients SWEEP
+    """
+    if clients == "SWEEP":
+        return [_probe_youtube(target, attempts, c) for c in CLIENT_CANDIDATES]
+    return _probe_youtube(target, attempts, clients or None)
+
+
 @app.function(image=image, secrets=[secrets], gpu="L4", timeout=60 * 10)
 def selftest_gpu():
     """Prove demucs can actually reach the GPU, on the same config run_job uses.
