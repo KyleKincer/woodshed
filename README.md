@@ -123,6 +123,18 @@ npx convex env set MODAL_SHARED_SECRET <the same random string>
 The secret authenticates both directions: Convex → Modal on submit, and Modal →
 Convex on the progress/result callbacks.
 
+Verify the beat detector actually works before relying on it — its image
+installs BeatNet with `--no-deps` (BeatNet's metadata pins `numba==0.54.1`,
+which has no wheels past Python 3.9, while Modal's image builder no longer
+offers 3.9 at all). A green build only proves pip exited 0:
+
+```bash
+modal run modal/beats.py::selftest
+```
+
+That runs real DBN inference over a synthetic 120 BPM click and prints the
+detected beats.
+
 ### 5. Run
 
 ```bash

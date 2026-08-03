@@ -1,9 +1,13 @@
 """Woodshed beat/downbeat detection on Modal.
 
-BeatNet depends on madmom, which only builds on Python 3.9 — the reason the
-desktop app provisioned a second, isolated virtualenv on the user's machine.
-As a container image that constraint costs nothing: it is just a different
-`python_version`.
+The desktop app provisioned an isolated Python 3.9 virtualenv for this, but
+3.9 was never really madmom's constraint — madmom's git main supports 3.9
+through 3.12. The actual blocker is BeatNet's dependency pin of
+`numba==0.54.1`, which has no wheels past 3.9.
+
+So BeatNet is installed with `--no-deps` and its dependencies are supplied at
+versions that work on 3.11. That matters because Modal's current image builder
+no longer offers 3.9 at all.
 
 Deploy:  modal deploy modal/beats.py
 """
@@ -20,22 +24,23 @@ import modal
 
 app = modal.App("woodshed-beats")
 
-# madmom needs numpy/cython present at build time and pins hard to old numpy;
-# installing in this order is what makes the build succeed.
+# Build order matters: madmom compiles Cython extensions against the numpy
+# that is already installed, so numpy and cython have to land first. numpy is
+# held below 2.0 because madmom still uses the pre-2.0 C API.
 image = (
-    modal.Image.debian_slim(python_version="3.9")
+    modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "git", "build-essential")
-    .pip_install("numpy==1.23.5", "cython==0.29.36", "scipy==1.10.1")
+    .pip_install("numpy<2", "cython<3", "scipy")
+    .pip_install("madmom @ git+https://github.com/CPJKU/madmom.git@main")
     .pip_install(
-        "mido==1.2.10",
-        "madmom @ git+https://github.com/CPJKU/madmom.git@main",
-    )
-    .pip_install(
-        "torch==2.0.1",
-        "torchaudio==2.0.2",
+        "torch==2.7.1",
         extra_index_url="https://download.pytorch.org/whl/cpu",
     )
-    .pip_install("BeatNet==1.1.1", "librosa==0.9.2", "requests", "fastapi[standard]")
+    .pip_install("librosa", "mido", "matplotlib")
+    # --no-deps: BeatNet's metadata pins numba==0.54.1, which is Python<=3.9
+    # only. Its real imports are satisfied by the versions installed above.
+    .pip_install("BeatNet==1.1.3", extra_options="--no-deps")
+    .pip_install("requests", "fastapi[standard]")
     .env({"PYTHONUNBUFFERED": "1", "NUMBA_CACHE_DIR": "/tmp/numba"})
 )
 
@@ -134,6 +139,44 @@ def detect(wav_path: pathlib.Path) -> list[list[float]]:
     estimator = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
     output = estimator.process(str(wav_path))
     return [[round(float(t), 4), int(k)] for t, k in output]
+
+
+@app.function(image=image, timeout=60 * 10)
+def selftest():
+    """Prove the --no-deps BeatNet install actually imports and runs.
+
+    A green image build only means pip exited 0; installing BeatNet without
+    its dependency metadata could still leave a module missing at runtime.
+    Run with:  modal run modal/beats.py::selftest
+    """
+    import sys
+    import types
+
+    sys.modules.setdefault("pyaudio", types.ModuleType("pyaudio"))
+
+    import numpy, librosa, madmom  # noqa: F401
+    from BeatNet.BeatNet import BeatNet
+
+    print(f"python  {sys.version.split()[0]}")
+    print(f"numpy   {numpy.__version__}")
+    print(f"librosa {librosa.__version__}")
+    print(f"madmom  {madmom.__version__}")
+
+    # Four seconds of clicks at 120 BPM — enough to exercise the real
+    # DBN inference path, not just the import.
+    import numpy as np
+    sr = 22050
+    sig = np.zeros(sr * 4, dtype=np.float32)
+    for i in range(0, 8):
+        start = int(i * 0.5 * sr)
+        sig[start:start + 400] = np.hanning(400).astype(np.float32)
+    import scipy.io.wavfile as wav
+    wav.write("/tmp/click.wav", sr, (sig * 32767).astype("int16"))
+
+    est = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
+    out = est.process("/tmp/click.wav")
+    print(f"detected {len(out)} beats; first few: {out[:4].tolist() if hasattr(out, 'tolist') else out[:4]}")
+    return {"beats": len(out)}
 
 
 @app.function(image=image, secrets=[secrets], timeout=60)
