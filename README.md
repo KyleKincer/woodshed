@@ -135,6 +135,34 @@ modal run modal/beats.py::selftest
 That runs real DBN inference over a synthetic 120 BPM click and prints the
 detected beats.
 
+Check the separator too — its own failure mode is YouTube, not pip:
+
+```bash
+modal run modal/separate.py::selftest
+```
+
+### YouTube from a datacenter IP
+
+Downloads go through yt-dlp, and YouTube treats a Modal container as a robot
+unless two things are in the image. **A JavaScript runtime**, so yt-dlp can
+solve YouTube's JS challenges — without one it falls back to the `android_vr`
+player client and gets `Sign in to confirm you're not a bot`. **A
+proof-of-origin token**, minted locally by
+[bgutil](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).
+
+Node rather than yt-dlp's default Deno, because bgutil's script mode needs Node
+≥ 20 anyway — one runtime covers both. Script mode rather than bgutil's HTTP
+server mode because a container handles exactly one job, so a long-lived token
+server has nothing to amortise and would just be a sidecar to start and wait
+on.
+
+`yt-dlp` is deliberately **unpinned**: YouTube breaks extractors constantly, and
+a stale pin means no downloads at all. The cost is that rebuilding the image can
+change yt-dlp's behaviour with no change in this repo — which is how the JS
+runtime requirement first arrived, as intermittent bot checks on a working app.
+`selftest` resolves a real video, so it catches that rather than only proving
+the plugin imported.
+
 ### 5. Run
 
 ```bash

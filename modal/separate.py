@@ -24,9 +24,28 @@ app = modal.App("woodshed-separate")
 
 # Torch pinned below 2.9 with soundfile present so demucs saves via libsndfile
 # rather than TorchCodec — same reason the desktop build pinned it.
+
+# YouTube needs two things this image would not otherwise have. First, a
+# JavaScript runtime: yt-dlp solves YouTube's JS challenges with one, and
+# without it falls back to the android_vr player client, which YouTube answers
+# from a datacenter IP with "Sign in to confirm you're not a bot." Second, a
+# proof-of-origin token, which bgutil's provider mints locally.
+#
+# Node rather than Deno (yt-dlp's default) because bgutil's script mode needs
+# Node >= 20 anyway; one runtime serves both. Script mode rather than bgutil's
+# HTTP server mode because a container here handles exactly one job, so there
+# is nothing for a long-lived token server to amortise — and no sidecar to
+# start, wait on, or leak.
+BGUTIL_VERSION = "1.3.1"
+BGUTIL_HOME = "/opt/bgutil-ytdlp-pot-provider/server"
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "git")
+    .apt_install("ffmpeg", "git", "curl", "ca-certificates")
+    .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
+        "apt-get install -y nodejs",
+    )
     .pip_install(
         "torch==2.7.1",
         "torchaudio==2.7.1",
@@ -35,13 +54,32 @@ image = (
     .pip_install(
         "demucs==4.0.1",
         "soundfile",
+        # Deliberately unpinned: YouTube breaks extractors constantly and a
+        # stale pin means no downloads at all. The cost is that an image
+        # rebuild can change yt-dlp's behaviour with no change here.
         "yt-dlp",
+        "bgutil-ytdlp-pot-provider",
         "boto3",
         "requests",
         "fastapi[standard]",
     )
+    .run_commands(
+        f"git clone --single-branch --branch {BGUTIL_VERSION}"
+        " https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git"
+        " /opt/bgutil-ytdlp-pot-provider",
+        f"cd {BGUTIL_HOME} && npm ci && npx tsc",
+    )
     .env({"TORCH_HOME": "/models", "PYTHONUNBUFFERED": "1"})
 )
+
+# Shared by every yt-dlp invocation — metadata probe and download alike, since
+# the probe hits the same bot check.
+YTDLP_ARGS = [
+    "--js-runtimes",
+    "node",
+    "--extractor-args",
+    f"youtubepot-bgutilscript:server_home={BGUTIL_HOME}",
+]
 
 # Model weights are a few hundred MB per model. Keeping them on a Volume means
 # only the first job of a given model pays the download.
@@ -230,7 +268,7 @@ def r2_upload(client, path: pathlib.Path, key: str, content_type: str) -> int:
 def ytdlp_json(target: str) -> dict:
     try:
         out = subprocess.check_output(
-            ["yt-dlp", "--no-playlist", "--no-warnings", "--skip-download", "--dump-json", target],
+            ["yt-dlp", *YTDLP_ARGS, "--no-playlist", "--no-warnings", "--skip-download", "--dump-json", target],
             text=True,
             stderr=subprocess.DEVNULL,
         )
@@ -348,6 +386,7 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
     run(
         [
             "yt-dlp",
+            *YTDLP_ARGS,
             "--no-playlist",
             "-f",
             "bestaudio/best",
@@ -574,11 +613,33 @@ def selftest():
     import shutil
     import uuid
 
-    for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+    for tool in ("ffmpeg", "ffprobe", "yt-dlp", "node"):
         path = shutil.which(tool)
         print(f"{tool:8} {path or 'MISSING'}")
         if not path:
             raise RuntimeError(f"{tool} is not on PATH in the image")
+
+    # Resolve a real YouTube video without downloading it. This is the check
+    # that matters: it exercises the JS runtime and the PO token provider
+    # together, from a datacenter IP, which is exactly what fails when they are
+    # missing — with a bot check rather than an import error. Asserting the
+    # provider is *registered* is not enough; a registered provider that mints
+    # nothing still gets the job blocked.
+    probe = subprocess.run(
+        ["yt-dlp", *YTDLP_ARGS, "-v", "--simulate", "--no-warnings",
+         "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+        capture_output=True,
+        text=True,
+    )
+    out = probe.stdout + probe.stderr
+    providers = next((l for l in out.splitlines() if "PO Token Providers" in l), "")
+    print(f"yt-dlp   {providers.strip() or 'no PO token providers line'}")
+    if "bgutil" not in providers:
+        raise RuntimeError(f"bgutil PO token provider did not load.\n{out[-2000:]}")
+    if probe.returncode != 0:
+        hint = "bot check" if re.search(r"not a bot", out, re.I) else "see output"
+        raise RuntimeError(f"yt-dlp could not resolve a known video ({hint}).\n{out[-2000:]}")
+    print("yt-dlp   resolved a YouTube video without a bot check")
 
     import torch
 
