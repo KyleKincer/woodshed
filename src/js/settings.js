@@ -15,48 +15,48 @@ export function renderSettings() {
   root.innerHTML = `
     <div class="settings-section">
       <h3>Default quality preset</h3>
-      <p class="desc">Used for new songs. <strong>Studio</strong> is the highest-quality option (slowest). You can override per song when adding.</p>
+      <p class="desc">Default for new songs.</p>
       <div class="preset-grid" id="preset-grid">
         ${presets.map((p) => presetCard(p, s.preset === p.id)).join('')}
-        ${presetCard({ id: 'custom', label: 'Custom', description: 'Dial in the model, shift averaging and output format yourself.' }, s.preset === 'custom')}
+        ${presetCard({ id: 'custom', label: 'Custom', description: 'Tweak the advanced settings yourself.' }, s.preset === 'custom')}
       </div>
     </div>
 
     <div class="settings-section ${s.preset === 'custom' ? '' : 'hidden'}" id="custom-section">
       <h3>Custom parameters</h3>
-      <p class="desc">Demucs separation settings.</p>
+      <p class="desc">Advanced separation settings.</p>
       <div class="row">
-        <div><label>Model</label><div class="sub">Fine-tuned models separate better but run ~4× slower.</div></div>
+        <div><label>Model</label><div class="sub">More accurate, but slower.</div></div>
         <select id="c-model">
           ${config.models.map((m) => `<option value="${m.id}" ${s.custom.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
       <div class="row">
-        <div><label>Shift averaging</label><div class="sub">Higher = better separation, linearly slower. 0–10.</div></div>
+        <div><label>Quality passes</label><div class="sub">Higher improves separation and takes longer.</div></div>
         <div class="range-wrap">
           <input type="range" id="c-shifts" min="0" max="10" step="1" value="${s.custom.shifts}" />
           <span id="c-shifts-val">${s.custom.shifts}</span>
         </div>
       </div>
       <div class="row">
-        <div><label>Overlap</label><div class="sub">Segment overlap. 0.25 default, up to 0.75.</div></div>
+        <div><label>Overlap</label><div class="sub">Usually leave at the default.</div></div>
         <div class="range-wrap">
           <input type="range" id="c-overlap" min="0.1" max="0.75" step="0.05" value="${s.custom.overlap}" />
           <span id="c-overlap-val">${s.custom.overlap}</span>
         </div>
       </div>
       <div class="row">
-        <div><label>Output format</label><div class="sub">Note: recent demucs (torchaudio + TorchCodec) writes 16-bit/44.1kHz WAV regardless of this setting. Kept for when TorchCodec adds bit-depth support. 16-bit is lossless CD quality — inaudible for practice.</div></div>
+        <div><label>Output format</label><div class="sub">Both options sound the same for practice.</div></div>
         <select id="c-format">
-          <option value="float32" ${s.custom.format === 'float32' ? 'selected' : ''}>32-bit float WAV (preferred)</option>
-          <option value="int24" ${s.custom.format === 'int24' ? 'selected' : ''}>24-bit WAV</option>
+          <option value="float32" ${s.custom.format === 'float32' ? 'selected' : ''}>Highest quality</option>
+          <option value="int24" ${s.custom.format === 'int24' ? 'selected' : ''}>Standard</option>
         </select>
       </div>
     </div>
 
     <div class="settings-section">
       <h3>Default stems</h3>
-      <p class="desc">How many parts to split into. Full band lets you mute any instrument while you play along.</p>
+      <p class="desc">Split the full band, or isolate one part.</p>
       <div class="row">
         <div><label>Stem layout</label></div>
         <select id="s-stemmode">
@@ -66,12 +66,12 @@ export function renderSettings() {
     </div>
 
     <div class="settings-section">
-      <h3>Compute device</h3>
-      <p class="desc">Auto picks the best available. On Apple Silicon, MPS uses the GPU and is much faster.</p>
+      <h3>Processing speed</h3>
+      <p class="desc">Uses the fastest option available on your computer.</p>
       <div class="row">
         <div><label>Device</label></div>
         <select id="s-device">
-          ${['auto', 'mps', 'cuda', 'cpu'].map((d) => `<option value="${d}" ${s.device === d ? 'selected' : ''}>${d}</option>`).join('')}
+          ${config.devices.map((d) => `<option value="${d.id}" ${s.device === d.id ? 'selected' : ''}>${d.label}</option>`).join('')}
         </select>
       </div>
       <div class="row" style="border:none">

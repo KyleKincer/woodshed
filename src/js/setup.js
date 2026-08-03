@@ -2,13 +2,13 @@
 // log, and resolves once the runtime is ready.
 
 const TOOL_LABELS = {
-  ffmpeg: 'Audio engine (ffmpeg)',
-  ffprobe: 'Audio inspector (ffprobe)',
-  demucs: 'Stem separator (demucs + PyTorch)',
-  'yt-dlp': 'Downloader (yt-dlp)',
-  spotdl: 'Spotify resolver (spotdl)',
+  ffmpeg: 'Audio tools',
+  ffprobe: 'Audio inspector',
+  demucs: 'Stem separator',
+  'yt-dlp': 'Downloader',
+  spotdl: 'Spotify support',
 };
-const SOURCE_LABEL = { managed: 'installed', bundled: 'bundled', system: 'system', missing: 'needs setup' };
+const SOURCE_LABEL = { managed: 'ready', bundled: 'included', system: 'found', missing: 'pending' };
 
 export async function ensureRuntimeReady() {
   const status = await window.api.runtimeStatus();
