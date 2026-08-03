@@ -84,6 +84,16 @@ module.exports = {
     hardenedRuntime: signForDistribution,
     notarize: signForDistribution && canNotarize,
   },
+  dmg: {
+    // electron-builder notarizes and staples the .app and *then* builds the DMG
+    // around it, so by default the container someone actually downloads is
+    // itself unsigned. That's not cosmetic: Gatekeeper assesses the disk image
+    // when it's double-clicked to mount, so an unsigned DMG raises its own
+    // "cannot check it for malicious software" dialog even though the app inside
+    // is perfectly notarized. Signing here is half the fix — the release
+    // workflow notarizes and staples the DMG after this.
+    sign: signForDistribution,
+  },
   win: {
     artifactName: '${productName}-${version}-win-${arch}.${ext}',
     target: ['nsis'],

@@ -193,6 +193,27 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type exec --verbose=4 "$app"
 
+      # The .app is notarized by now, but the DMG wrapped around it is a separate
+      # artifact and needs its own ticket — Gatekeeper assesses the disk image
+      # when someone double-clicks the download to mount it. Without this the app
+      # opens fine and the DMG still warns, which reads as "not fixed" to anyone
+      # who just wanted to install it. electron-builder.cjs signs the DMG
+      # (dmg.sign); notarizing it is this step.
+      - name: Notarize the DMG
+        if: runner.os == 'macOS' && env.signing == 'notarized'
+        run: |
+          dmg="$(find dist -maxdepth 1 -name '*.dmg' | head -1)"
+          echo "notarizing $dmg"
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$dmg"
+          # Assess it the way LaunchServices does when a quarantined download is
+          # opened, which is the check an unsigned DMG fails.
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v4
         with:
