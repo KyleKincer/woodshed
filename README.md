@@ -206,6 +206,27 @@ verifies those records — until then the app loads but every Clerk request fail
 with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`. Production instances also need their
 own Google OAuth credentials; development borrows Clerk's shared test ones.
 
+### Preview deployments
+
+Vercel previews build against the **dev** Convex deployment rather than a
+per-branch one. Convex's per-branch preview deployments need a preview deploy
+key (dashboard-only) *and* a separate set of default environment variables;
+pointing previews at the dev deployment reuses the env vars that are already
+there, and for a single developer the isolation buys little.
+
+The tradeoff is real though: a branch that changes the schema pushes that
+schema to the deployment localhost is using. If that starts to hurt, switch
+`CONVEX_DEPLOY_KEY` (Preview scope) to a real preview key.
+
+Preview scope is configured with the `pk_test_` Clerk key, since production
+Clerk instances only serve their own domain while development instances accept
+any origin. `https://*.vercel.app` is in the bucket's CORS list so stems load
+from the generated preview URLs.
+
+Previews inherit Vercel's Deployment Protection, so opening one on a phone
+means signing in to Vercel in that browser first — or turning protection off
+for previews in the project settings.
+
 ### CSP
 
 `index.html` ships no `<meta>` CSP — the real policy is a response header in
