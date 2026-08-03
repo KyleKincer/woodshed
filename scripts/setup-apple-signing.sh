@@ -44,7 +44,14 @@ die() { echo "error: $*" >&2; exit 1; }
 # created it has returned, so a `local` would be out of scope by then and `set -u`
 # would abort the trap — leaving the key on disk. That happened once.
 WORK=""
-cleanup() { [ -n "$WORK" ] && rm -rf "$WORK"; return 0; }
+# Deleting the keychain file isn't enough — it stays in the user's keychain
+# search list until `delete-keychain` removes it, so track it separately.
+VERIFY_KEYCHAIN=""
+cleanup() {
+  [ -n "$VERIFY_KEYCHAIN" ] && security delete-keychain "$VERIFY_KEYCHAIN" 2>/dev/null
+  [ -n "$WORK" ] && rm -rf "$WORK"
+  return 0
+}
 trap cleanup EXIT
 
 cmd_csr() {
@@ -131,13 +138,42 @@ cmd_secrets() {
 
   local p12_pass
   p12_pass="$(openssl rand -base64 24)"
+
+  # OpenSSL 3 writes PKCS#12 files with algorithms macOS's Security framework
+  # won't import, and it reports the refusal as "MAC verification failed during
+  # PKCS12 import (wrong password?)" — a wrong-password error that has nothing to
+  # do with the password, which is a genuinely misleading afternoon. `-legacy`
+  # asks for the older algorithms it accepts. LibreSSL (macOS's /usr/bin/openssl)
+  # has no such flag and already writes a compatible file, so probe for it.
+  local legacy=()
+  if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+    legacy=(-legacy)
+  fi
+
   echo "==> building the .p12"
-  openssl pkcs12 -export \
+  openssl pkcs12 -export "${legacy[@]}" \
     -inkey "$KEY" \
     -in "$work/leaf.pem" \
     -certfile "$work/intermediate.pem" \
     -out "$work/signing.p12" \
     -passout "pass:$p12_pass"
+
+  # Import it into a throwaway keychain exactly the way electron-builder will on a
+  # runner, and confirm codesign can then see the identity. This is the step CI
+  # failed on before it existed; here it costs a couple of seconds.
+  echo "==> verifying the .p12 imports the way a runner will"
+  VERIFY_KEYCHAIN="$work/verify.keychain"
+  security create-keychain -p verify "$VERIFY_KEYCHAIN"
+  if ! security import "$work/signing.p12" -k "$VERIFY_KEYCHAIN" -P "$p12_pass" \
+      -T /usr/bin/codesign >/dev/null 2>"$work/import.err"; then
+    echo "--- security import said ---" >&2
+    cat "$work/import.err" >&2
+    die "macOS could not import the .p12, so a runner won't be able to either."
+  fi
+  if ! security find-identity -v -p codesigning "$VERIFY_KEYCHAIN" | grep -q "Developer ID Application"; then
+    die "the imported .p12 yields no usable codesigning identity"
+  fi
+  echo "==> .p12 imports and yields a codesigning identity"
 
   read -r -p "Apple ID email: " apple_id
   [ -n "$apple_id" ] || die "an Apple ID is required"
