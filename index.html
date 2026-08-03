@@ -101,15 +101,11 @@
   <!-- Global drag-drop overlay -->
   <div id="drop-overlay" class="drop-overlay hidden"><div>Drop audio files to add</div></div>
 
-  <!-- Sign-in gate -->
-  <div id="signin" class="setup hidden">
-    <div class="setup-card">
-      <div class="brand" style="padding:0 0 8px"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
-      <h2>Sign in</h2>
-      <p class="setup-desc">
-        Your library, stems and beat maps are stored in your account, so they
-        follow you to any browser.
-      </p>
+  <!-- Sign-in gate. Clerk's own card carries the heading and branding, so
+       this wrapper stays bare rather than stacking a second title on top. -->
+  <div id="signin" class="signin hidden">
+    <div class="signin-inner">
+      <div class="brand signin-brand"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
       <div id="signin-mount"></div>
     </div>
   </div>

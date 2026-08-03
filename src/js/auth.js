@@ -4,7 +4,32 @@
 // mounts its own components into a div, and ConvexClient is a plain object.
 
 import { Clerk } from '@clerk/clerk-js';
+// clerk-js v6 ships without its drop-in components; `mountSignIn` throws
+// "Clerk was not loaded with Ui components" unless the UI bundle is handed to
+// `load()`. Importing it from npm rather than Clerk's CDN keeps the app
+// self-contained and avoids widening script-src in the CSP.
+import { ClerkUI } from '@clerk/ui/entry';
+import { dark } from '@clerk/ui/themes';
 import { ConvexClient } from 'convex/browser';
+
+// Clerk's default is a light card, which reads as a hole punched in a dark
+// app. Start from its dark theme and pull the surface colours from our own
+// palette so the form belongs to the same UI.
+// Values mirror the custom properties in styles.css (--bg-2, --text, --accent,
+// --bg-3, --border, --radius); Clerk can't read CSS variables here, so they
+// have to be repeated literally.
+const clerkAppearance = {
+  baseTheme: dark,
+  variables: {
+    colorBackground: '#15171e',
+    colorForeground: '#e6e8ee',
+    colorPrimary: '#5b8cff',
+    colorInput: '#1c1f29',
+    colorBorder: '#2a2e3b',
+    colorNeutral: '#8a90a2',
+    borderRadius: '12px',
+  },
+};
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const CONVEX_URL = import.meta.env.VITE_CONVEX_URL;
@@ -34,7 +59,7 @@ export async function ensureSignedIn() {
   }
 
   clerk = new Clerk(CLERK_KEY);
-  await clerk.load();
+  await clerk.load({ ui: { ClerkUI }, appearance: clerkAppearance });
 
   convex = new ConvexClient(CONVEX_URL);
   // Convex calls this whenever it needs a fresh token; `forceRefreshToken`

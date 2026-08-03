@@ -433,6 +433,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 
 /* ---------- First-run setup ---------- */
 .setup { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; -webkit-app-region: drag; }
+
+/* Sign-in gate. No card of our own — Clerk's component brings its own
+   surface, and wrapping it in a second panel just double-frames it. */
+.signin { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; }
+.signin-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.signin-brand { padding: 0; font-size: 17px; }
+#signin-mount { min-height: 380px; }
 .setup-card { width: 620px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 34px; -webkit-app-region: no-drag; }
 .setup-card h2 { font-size: 22px; margin-bottom: 10px; }
 .setup-desc { color: var(--muted); font-size: 14px; line-height: 1.55; margin-bottom: 22px; }
