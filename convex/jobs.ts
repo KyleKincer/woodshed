@@ -73,7 +73,7 @@ export const createSeparation = mutation({
       source = source ?? song.source ?? undefined;
     }
     if (!source) {
-      throw new Error('This song has no re-processable source.');
+      throw new Error('This song can’t be split again — its original audio is gone.');
     }
 
     const now = Date.now();
