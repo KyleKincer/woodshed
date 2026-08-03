@@ -56,7 +56,11 @@ function wireViewControls() {
   const ls = document.getElementById('layout-seg');
   const sync = () => {
     gs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.group === view.group));
-    ls.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
+    ls.querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.layout === view.layout;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
   };
   gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter()); }));
   ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter()); }));
@@ -236,11 +240,26 @@ function listRow(vm) {
   </div>`;
 }
 
+// Job failures arrive as whatever Modal raised — tool names, exit codes and a
+// tail of stderr. None of that means anything to someone who just wanted a
+// song split, so map the ones we know about and swallow the rest.
+function friendlyError(msg) {
+  const raw = String(msg || '');
+  if (/Spotify/i.test(raw)) return 'Couldn’t get this Spotify track. Try a YouTube link instead.';
+  if (/no audio could be downloaded|could not resolve/i.test(raw)) return 'Couldn’t download audio. Check the link and try again.';
+  if (/produced no stems/i.test(raw)) return 'No stems were produced. Try a different quality preset.';
+  if (/no stems to analyse/i.test(raw)) return 'This song needs stems before beats can be detected.';
+  if (/rejected the job|unauthorized|is not set on this deployment/i.test(raw)) return 'Processing is unavailable right now. Try again in a minute.';
+  if (/exited with code \d+/i.test(raw)) return 'Something went wrong while processing. Try again.';
+  const first = raw.split('\n')[0] || '';
+  return first ? first.slice(0, 80) : 'Something went wrong while processing. Try again.';
+}
+
 function overlayHtml(p) {
   if (p.error) {
     return `<div class="card-proc error">
       <div class="cp-title">Failed</div>
-      <div class="cp-sub">${esc((p.error.split('\n')[0] || '').slice(0, 80))}</div>
+      <div class="cp-sub">${esc(friendlyError(p.error))}</div>
       <button class="cp-btn" data-dismiss>Dismiss</button>
     </div>`;
   }
@@ -357,15 +376,14 @@ async function renameSong(song) {
 }
 
 async function deleteSong(song) {
-  const ok = await confirmModal('Delete song?', `"${song.title}" and its stem files will be permanently removed.`, 'Delete');
+  const ok = await confirmModal('Delete song?', `"${song.title}" will be permanently removed.`, 'Delete');
   if (ok) await backend.deleteSong(song.id);
 }
 
 function reprocessDialog(song) {
-  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)' }];
-  const uploadSource = song.source?.type === 'upload';
+  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom' }];
   const m = buildDialog('Reprocess song', `
-    <p class="dlg-msg">Re-run separation for “${esc(song.title)}”${uploadSource ? ' from the file you uploaded' : ' from its original source'}. The new stems replace the current ones; your beat track and title are kept.</p>
+    <p class="dlg-msg">Split “${esc(song.title)}” again. New stems replace the current ones; your beat track and title are kept.</p>
     <label class="field"><span>Quality preset</span>
       <select id="rp-preset">${presets.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
     </label>
@@ -421,7 +439,7 @@ function wireAddModal() {
   const stemSel = document.getElementById('add-stemmode');
   const desc = document.getElementById('add-preset-desc');
 
-  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)', description: 'Uses the custom parameters set in Settings.' }];
+  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom', description: 'Your custom settings.' }];
   presetSel.innerHTML = presets.map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
   stemSel.innerHTML = Object.values(config.stemModes).map((m) => `<option value="${m.id}">${m.label}</option>`).join('');
 

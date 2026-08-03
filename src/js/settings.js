@@ -24,31 +24,31 @@ export function renderSettings() {
   root.innerHTML = `
     <div class="settings-section">
       <h3>Default quality preset</h3>
-      <p class="desc">Used for new songs. Separation runs on a cloud GPU and is billed by the second, so the cost estimate moves with the preset. You can override per song when adding.</p>
+      <p class="desc">Default for new songs — you can pick a different one per song. Higher quality takes longer and costs more to process.</p>
       <div class="preset-grid" id="preset-grid">
         ${presets.map((p) => presetCard(p, s.preset === p.id)).join('')}
-        ${presetCard({ id: 'custom', label: 'Custom', description: 'Dial in the model and shift averaging yourself.' }, s.preset === 'custom')}
+        ${presetCard({ id: 'custom', label: 'Custom', description: 'Tweak the advanced settings yourself.' }, s.preset === 'custom')}
       </div>
     </div>
 
     <div class="settings-section ${s.preset === 'custom' ? '' : 'hidden'}" id="custom-section">
       <h3>Custom parameters</h3>
-      <p class="desc">Demucs separation settings.</p>
+      <p class="desc">Advanced separation settings.</p>
       <div class="row">
-        <div><label>Model</label><div class="sub">Fine-tuned models separate better but run ~4× slower — and cost ~4× as much.</div></div>
+        <div><label>Model</label><div class="sub">More accurate, but slower and about 4× the cost.</div></div>
         <select id="c-model">
           ${config.models.map((m) => `<option value="${m.id}" ${s.custom.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
       <div class="row">
-        <div><label>Shift averaging</label><div class="sub">Higher = better separation, linearly slower and more expensive. 0–10.</div></div>
+        <div><label>Quality passes</label><div class="sub">Higher improves separation, and costs more.</div></div>
         <div class="range-wrap">
           <input type="range" id="c-shifts" min="0" max="10" step="1" value="${s.custom.shifts}" />
           <span id="c-shifts-val">${s.custom.shifts}</span>
         </div>
       </div>
       <div class="row">
-        <div><label>Overlap</label><div class="sub">Segment overlap. 0.25 default, up to 0.75.</div></div>
+        <div><label>Overlap</label><div class="sub">Usually leave at the default.</div></div>
         <div class="range-wrap">
           <input type="range" id="c-overlap" min="0.1" max="0.75" step="0.05" value="${s.custom.overlap}" />
           <span id="c-overlap-val">${s.custom.overlap}</span>
@@ -58,7 +58,7 @@ export function renderSettings() {
 
     <div class="settings-section">
       <h3>Default stems</h3>
-      <p class="desc">How many parts to split into. Full band lets you mute any instrument while you play along.</p>
+      <p class="desc">Split the full band, or isolate one part.</p>
       <div class="row">
         <div><label>Stem layout</label></div>
         <select id="s-stemmode">
@@ -68,21 +68,17 @@ export function renderSettings() {
     </div>
 
     <div class="settings-section">
-      <h3>Audio delivery</h3>
-      <p class="desc">
-        Stems are stored compressed so a song is tens of megabytes instead of hundreds.
-        Opus is encoded into a WebM container, which decodes sample-exactly — so stems stay
-        locked to each other and to the beat grid.
-      </p>
+      <h3>Audio quality</h3>
+      <p class="desc">Stems are compressed so a song downloads in seconds rather than minutes. Either format stays perfectly in sync with the others and with the beat grid.</p>
       <div class="row">
-        <div><label>Format</label><div class="sub">FLAC is lossless but roughly 4× the size and download time.</div></div>
+        <div><label>Format</label><div class="sub">Lossless is about 4× the download for no audible gain.</div></div>
         <select id="s-format">
-          <option value="opus" ${s.format === 'opus' ? 'selected' : ''}>Opus (recommended)</option>
-          <option value="flac" ${s.format === 'flac' ? 'selected' : ''}>FLAC — lossless</option>
+          <option value="opus" ${s.format === 'opus' ? 'selected' : ''}>Compressed (recommended)</option>
+          <option value="flac" ${s.format === 'flac' ? 'selected' : ''}>Lossless</option>
         </select>
       </div>
       <div class="row ${s.format === 'flac' ? 'hidden' : ''}" id="bitrate-row">
-        <div><label>Opus bitrate</label><div class="sub">Per stem. 192 kbps is past transparent for a single separated part.</div></div>
+        <div><label>Bitrate</label><div class="sub">Per stem. The recommended setting is already past what you can hear.</div></div>
         <select id="s-bitrate">
           ${config.bitrates.map((b) => `<option value="${b.id}" ${Number(s.bitrate) === b.id ? 'selected' : ''}>${b.label}</option>`).join('')}
         </select>
@@ -92,7 +88,7 @@ export function renderSettings() {
 
     <div class="settings-section">
       <h3>Offline cache</h3>
-      <p class="desc">Stems are cached in this browser after the first play, so re-opening a song is instant and costs no bandwidth.</p>
+      <p class="desc">Songs you've played are kept in this browser, so opening them again is instant.</p>
       <div class="row">
         <div><label>Cached audio</label><div class="sub" id="cache-size">Measuring…</div></div>
         <button class="btn-ghost" id="cache-clear">Clear cache</button>

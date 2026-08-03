@@ -17,8 +17,8 @@ export type Quality = {
 export const PRESETS = {
   studio: {
     id: 'studio',
-    label: 'Studio — max quality',
-    description: 'Fine-tuned model, heavy shift averaging. Slowest, best separation.',
+    label: 'Studio',
+    description: 'Best separation. Takes the longest.',
     model: 'htdemucs_ft',
     shifts: 10,
     overlap: 0.5,
@@ -27,7 +27,7 @@ export const PRESETS = {
   balanced: {
     id: 'balanced',
     label: 'Balanced',
-    description: 'Fine-tuned model with light averaging. Good quality, ~5× cheaper.',
+    description: 'Great quality without the long wait.',
     model: 'htdemucs_ft',
     shifts: 2,
     overlap: 0.25,
@@ -36,7 +36,7 @@ export const PRESETS = {
   fast: {
     id: 'fast',
     label: 'Fast',
-    description: 'Base model, no averaging. Quickest turnaround for quick ideas.',
+    description: 'Good for a quick pass.',
     model: 'htdemucs',
     shifts: 0,
     overlap: 0.25,
@@ -47,10 +47,10 @@ export const PRESETS = {
 export const DEFAULT_PRESET = 'studio';
 
 export const MODELS = [
-  { id: 'htdemucs_ft', label: 'htdemucs_ft (fine-tuned, best)' },
-  { id: 'htdemucs', label: 'htdemucs (default hybrid transformer)' },
-  { id: 'htdemucs_6s', label: 'htdemucs_6s (adds piano + guitar stems)' },
-  { id: 'mdx_extra', label: 'mdx_extra (alternative, no vocals bleed)' },
+  { id: 'htdemucs_ft', label: 'Fine-tuned (best)' },
+  { id: 'htdemucs', label: 'Standard' },
+  { id: 'htdemucs_6s', label: 'With piano & guitar' },
+  { id: 'mdx_extra', label: 'Alternative' },
 ];
 
 export const STEM_MODES = {
