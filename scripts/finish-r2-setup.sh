@@ -19,7 +19,10 @@ set -euo pipefail
 BUCKET="${R2_BUCKET:-woodshed}"
 ACCOUNT_ID="${R2_ACCOUNT_ID:-02ce394a18b10e4dc034e542227eef48}"
 ENDPOINT="https://${ACCOUNT_ID}.r2.cloudflarestorage.com"
+# Both origins by default — the browser fetches stems directly from R2, so
+# every origin the app is served from has to be listed or playback 403s.
 APP_ORIGIN="${APP_ORIGIN:-http://localhost:5173}"
+PROD_ORIGIN="${PROD_ORIGIN:-https://woodshed.kylekincer.com}"
 
 if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
   echo "✗ Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY first." >&2
@@ -32,7 +35,7 @@ npx wrangler r2 bucket create "$BUCKET" 2>&1 | tail -3 || true
 
 # Without this the browser can neither PUT an upload nor GET a stem, and the
 # failure shows up as an opaque CORS error rather than anything actionable.
-echo "→ Applying CORS policy for ${APP_ORIGIN}"
+echo "→ Applying CORS policy for ${APP_ORIGIN} and ${PROD_ORIGIN}"
 # R2's own CORS schema — a { "rules": [...] } object, not the S3-style array
 # of PascalCase keys. wrangler rejects the S3 shape outright.
 CORS_FILE="$(mktemp -t r2cors).json"
@@ -41,7 +44,7 @@ cat > "$CORS_FILE" <<JSON
   "rules": [
     {
       "allowed": {
-        "origins": ["${APP_ORIGIN}"],
+        "origins": ["${APP_ORIGIN}", "${PROD_ORIGIN}"],
         "methods": ["GET", "PUT", "HEAD"],
         "headers": ["content-type"]
       },
