@@ -125,12 +125,15 @@ async function assertConvexTokenWorks() {
     const audList = Array.isArray(aud) ? aud : [aud];
     if (audList.includes(JWT_TEMPLATE)) return;
     showFatal(
-      'Clerk JWT has the wrong audience',
+      'Clerk JWT is missing the Convex audience',
       `The <code>${JWT_TEMPLATE}</code> template issues a token with
-       <code>aud = ${JSON.stringify(aud) || 'unset'}</code>, but Convex is configured to accept
-       <code>"${JWT_TEMPLATE}"</code>, so it rejects every request.<br><br>
-       In the Clerk dashboard, recreate the template from the <strong>Convex</strong> preset
-       (not a blank one) so it sets <code>"aud": "convex"</code>.`
+       <code>aud = ${JSON.stringify(aud) ?? 'unset'}</code>. Convex matches that claim against
+       <code>applicationID</code> in <code>auth.config.ts</code>, so it rejects every request.
+       <br><br>
+       In the <a href="https://dashboard.clerk.com" target="_blank" rel="noopener">Clerk dashboard</a>
+       open <strong>Configure → JWT Templates → ${JWT_TEMPLATE}</strong> and put this in the
+       <strong>Claims</strong> box, then save and reload:
+       <br><br><code>{ "aud": "convex" }</code>`
     );
     throw new Error('Clerk JWT audience does not match applicationID.');
   }
