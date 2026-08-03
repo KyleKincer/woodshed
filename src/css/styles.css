@@ -19,6 +19,8 @@
   --piano: #4dd2c0;
   --radius: 12px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --titlebar-h: 38px;
+  --shell-pad: 12px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,7 +36,7 @@ html, body {
 }
 
 #titlebar {
-  position: fixed; top: 0; left: 0; right: 0; height: 38px;
+  position: fixed; top: 0; left: 0; right: 0; height: var(--titlebar-h);
   -webkit-app-region: drag; z-index: 50;
 }
 
@@ -49,25 +51,22 @@ body { display: flex; }
   background: var(--bg-2);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  padding: 46px 12px 16px;
+  padding: calc(var(--titlebar-h) + var(--shell-pad)) 12px 14px;
   gap: 4px;
   transition: width .16s ease;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 4px 10px; }
 .logo { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .brand-name { font-weight: 700; font-size: 16px; letter-spacing: .3px; flex: 1; white-space: nowrap; overflow: hidden; }
-/* Edge-pill toggle: stays pinned to the border in both states, just rotates. */
 .sidebar-toggle {
-  position: absolute; top: 52px; right: -12px; z-index: 60;
+  position: absolute; top: calc(var(--titlebar-h) + 10px); right: -12px; z-index: 60;
   width: 24px; height: 24px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
   cursor: pointer; font-size: 13px; line-height: 1;
-  box-shadow: 0 2px 6px rgba(0,0,0,.35); opacity: 0; transition: opacity .12s, background .12s, color .12s;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35); transition: background .12s, color .12s;
 }
-#sidebar:hover .sidebar-toggle { opacity: 1; }
 .sidebar-toggle:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-body.sidebar-collapsed .sidebar-toggle { opacity: 1; } /* always visible when collapsed */
 .nav-btn {
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: none; color: var(--muted);
@@ -77,13 +76,25 @@ body.sidebar-collapsed .sidebar-toggle { opacity: 1; } /* always visible when co
 .nav-icon { width: 18px; text-align: center; opacity: .9; flex-shrink: 0; }
 .nav-btn:hover { background: var(--bg-3); color: var(--text); }
 .nav-btn.active { background: var(--bg-3); color: var(--text); }
-.sidebar-spacer { flex: 1; }
+.sidebar-spacer { flex: 1; min-height: 12px; }
+.sidebar-footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sidebar-footer .add-btn { flex: 1; min-width: 0; }
+.user-button {
+  width: 36px; height: 36px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; overflow: hidden;
+}
+.user-button:empty { display: none; }
+.user-button > * { max-width: 100%; max-height: 100%; }
+body.sidebar-collapsed .user-button { width: 32px; height: 32px; }
+body.sidebar-collapsed .sidebar-footer { flex-direction: column; gap: 6px; }
+body.sidebar-collapsed .sidebar-footer .add-btn { width: 100%; }
 
 /* Collapsed icon rail */
 body.sidebar-collapsed #sidebar { width: 64px; }
 body.sidebar-collapsed .brand-name,
 body.sidebar-collapsed .nav-label { display: none; }
-body.sidebar-collapsed .brand { justify-content: center; padding: 4px 0 18px; }
+body.sidebar-collapsed .brand { justify-content: center; padding: 0 0 10px; }
 body.sidebar-collapsed .nav-btn,
 body.sidebar-collapsed .add-btn { justify-content: center; padding: 9px 0; }
 
@@ -98,7 +109,7 @@ body.in-player #content { padding: 0; overflow: hidden; }
 .add-btn:hover, .btn-primary:hover { filter: brightness(1.08); }
 
 /* ---------- Content ---------- */
-#content { flex: 1; overflow-y: auto; padding: 46px 32px 32px; position: relative; }
+#content { flex: 1; overflow-y: auto; padding: calc(var(--titlebar-h) + var(--shell-pad)) 32px 32px; position: relative; }
 .view { display: none; }
 .view.active { display: block; }
 .view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
@@ -118,7 +129,21 @@ body.in-player #content { padding: 0; overflow: hidden; }
 }
 .segmented button:hover { color: var(--text); }
 .segmented button.active { background: var(--bg-3); color: var(--text); }
-#layout-seg button { font-size: 15px; padding: 6px 10px; }
+
+.layout-toggle {
+  display: inline-flex; align-items: center;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+  padding: 3px; gap: 2px;
+}
+.layout-toggle button {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0;
+  background: transparent; border: none; border-radius: 7px;
+  color: var(--muted); cursor: pointer;
+}
+.layout-toggle button:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.layout-toggle button.active { background: var(--bg-3); color: var(--text); }
+.layout-toggle button svg { display: block; pointer-events: none; }
 
 /* ---------- Library sections ---------- */
 .lib-section { margin-bottom: 26px; }
@@ -260,7 +285,7 @@ body.in-player #content { padding: 0; overflow: hidden; }
 
 /* ---------- Deps banner ---------- */
 .deps-banner {
-  position: fixed; top: 38px; left: 210px; right: 0; z-index: 40;
+  position: fixed; top: var(--titlebar-h); left: 210px; right: 0; z-index: 40;
   background: #2a1f12; border-bottom: 1px solid var(--warn); color: var(--warn);
   padding: 12px 20px; font-size: 13px; display: flex; align-items: center; gap: 14px;
 }
@@ -291,7 +316,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 /* ---------- Player (full-height flex column) ---------- */
 #view-player.active { height: 100%; }
 #player-root { height: 100%; }
-.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: 38px; box-sizing: border-box; }
+.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: var(--titlebar-h); box-sizing: border-box; }
 
 /* Static top bar: back + art + metadata */
 .player-topbar {

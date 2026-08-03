@@ -28,7 +28,11 @@ function wireViewControls() {
   const ls = document.getElementById('layout-seg');
   const sync = () => {
     gs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.group === view.group));
-    ls.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
+    ls.querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.layout === view.layout;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
   };
   gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter()); }));
   ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter()); }));
@@ -275,15 +279,15 @@ async function renameSong(song) {
 }
 
 async function deleteSong(song) {
-  const ok = await confirmModal('Delete song?', `"${song.title}" and its stem files will be permanently removed.`, 'Delete');
+  const ok = await confirmModal('Delete song?', `"${song.title}" will be permanently removed.`, 'Delete');
   if (ok) { await window.api.deleteSong(song.id); renderLibrary(currentFilter()); }
 }
 
 function reprocessDialog(song) {
-  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)' }];
+  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom' }];
   const fileSource = song.source?.type === 'file';
   const m = buildDialog('Reprocess song', `
-    <p class="dlg-msg">Re-run separation for “${esc(song.title)}”${fileSource ? ' (needs the original file to still exist)' : ' from its original source'}. The new stems replace the current ones.</p>
+    <p class="dlg-msg">Split “${esc(song.title)}” again${fileSource ? ' (the original file must still be on disk)' : ''}. New stems replace the current ones.</p>
     <label class="field"><span>Quality preset</span>
       <select id="rp-preset">${presets.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
     </label>
@@ -322,7 +326,7 @@ function wireAddModal() {
   const stemSel = document.getElementById('add-stemmode');
   const desc = document.getElementById('add-preset-desc');
 
-  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)', description: 'Uses the custom parameters set in Settings.' }];
+  const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom', description: 'Your settings from Settings.' }];
   presetSel.innerHTML = presets.map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
   stemSel.innerHTML = Object.values(config.stemModes).map((m) => `<option value="${m.id}">${m.label}</option>`).join('');
 

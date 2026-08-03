@@ -52,7 +52,7 @@ async function maybeSpotifyTip() {
   if (status.tools.spotdl && !status.tools.spotdl.found) {
     banner.classList.remove('hidden');
     banner.innerHTML = `
-      <span>Spotify links work best with <code>spotdl</code>. It installs automatically the next time you run setup; for now, paste a YouTube/SoundCloud link or search instead.</span>
+      <span>Spotify links need an extra setup step. For now, paste a YouTube or SoundCloud link, or search by song name.</span>
       <button class="toggle-btn" id="dismiss-banner">Dismiss</button>`;
     document.getElementById('dismiss-banner').onclick = () => banner.classList.add('hidden');
   } else {

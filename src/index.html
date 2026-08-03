@@ -22,7 +22,10 @@
     <button class="nav-btn active" data-view="library"><span class="nav-icon">≡</span><span class="nav-label">Library</span></button>
     <button class="nav-btn" data-view="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
     <div class="sidebar-spacer"></div>
-    <button id="add-btn" class="add-btn"><span class="nav-icon">＋</span><span class="nav-label">Add song</span></button>
+    <div class="sidebar-footer">
+      <button id="add-btn" class="add-btn"><span class="nav-icon">＋</span><span class="nav-label">Add song</span></button>
+      <div id="user-button" class="user-button"></div>
+    </div>
   </nav>
 
   <main id="content">
@@ -36,9 +39,22 @@
             <button data-group="albums">Albums</button>
             <button data-group="artists">Artists</button>
           </div>
-          <div class="segmented" id="layout-seg">
-            <button data-layout="grid" title="Grid view">▦</button>
-            <button data-layout="list" title="List view">≣</button>
+          <div class="layout-toggle" id="layout-seg" role="group" aria-label="Layout">
+            <button type="button" data-layout="grid" title="Grid view" aria-label="Grid view">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <rect x="1" y="1" width="6" height="6" rx="1.5"/>
+                <rect x="9" y="1" width="6" height="6" rx="1.5"/>
+                <rect x="1" y="9" width="6" height="6" rx="1.5"/>
+                <rect x="9" y="9" width="6" height="6" rx="1.5"/>
+              </svg>
+            </button>
+            <button type="button" data-layout="list" title="List view" aria-label="List view">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <rect x="1" y="2" width="14" height="2.5" rx="1.25"/>
+                <rect x="1" y="6.75" width="14" height="2.5" rx="1.25"/>
+                <rect x="1" y="11.5" width="14" height="2.5" rx="1.25"/>
+              </svg>
+            </button>
           </div>
           <input id="lib-search" class="search" type="search" placeholder="Search…" />
         </div>
@@ -70,7 +86,7 @@
         <span>Link or search</span>
         <input id="add-url" type="text" placeholder="YouTube / Spotify / SoundCloud link, or type to search…" />
       </label>
-      <p class="hint">Paste a link from YouTube, Spotify, SoundCloud, Bandcamp… or just type a song name to search. Spotify links are matched to the closest YouTube track.</p>
+      <p class="hint">Paste a link, or type a song name to search.</p>
       <div class="file-drop" id="file-drop">
         <span>Drag audio files here, or</span>
         <button id="add-pick" class="btn-ghost">Choose files…</button>
@@ -100,9 +116,8 @@
       <div class="brand" style="padding:0 0 8px"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
       <h2 id="setup-title">One-time setup</h2>
       <p id="setup-desc" class="setup-desc">
-        Woodshed needs to set up its audio engine (demucs + PyTorch). This is a
-        one-time download of a few hundred MB and runs entirely on your machine —
-        no accounts, nothing to install by hand.
+        Woodshed needs a one-time download to split songs. Everything runs on
+        your computer — no accounts or extra installs.
       </p>
       <div id="setup-checklist" class="setup-checklist"></div>
       <pre id="setup-log" class="setup-log hidden"></pre>

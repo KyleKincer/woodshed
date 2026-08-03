@@ -9,7 +9,7 @@ const { pathToFileURL } = require('url');
 const { Store } = require('./lib/store');
 const { Runtime } = require('./lib/runtime');
 const { Processor, classifyInput } = require('./lib/processor');
-const { PRESETS, MODELS, STEM_MODES, DEFAULT_PRESET } = require('./lib/presets');
+const { PRESETS, MODELS, DEVICES, STEM_MODES, DEFAULT_PRESET } = require('./lib/presets');
 
 let store;
 let runtime;
@@ -148,6 +148,7 @@ function registerIpc() {
     presets: PRESETS,
     defaultPreset: DEFAULT_PRESET,
     models: MODELS,
+    devices: DEVICES,
     stemModes: STEM_MODES,
   }));
 
@@ -213,7 +214,7 @@ function registerIpc() {
 
       progress('mix', 'Building a mix from the stems…');
       const ffmpeg = runtime.resolveTool('ffmpeg');
-      if (!ffmpeg) throw new Error('ffmpeg is not available.');
+      if (!ffmpeg) throw new Error('Audio tools aren\'t ready — finish setup first.');
       const songDir = store.songDir(songId);
       mix = path.join(os.tmpdir(), `woodshed-mix-${songId}.wav`);
       const inputs = song.stems.flatMap((s) => ['-i', path.join(songDir, s.file)]);
@@ -223,7 +224,7 @@ function registerIpc() {
       const script = path.join(__dirname, 'lib', 'beatnet_detect.py');
       const out = await runCapture(py, [script, mix]);
       const line = out.split('\n').find((l) => l.startsWith('BEATS_JSON'));
-      if (!line) throw new Error('Beat detection produced no output.');
+      if (!line) throw new Error('Beat detection didn\'t return any results. Try again.');
       const { beats } = JSON.parse(line.slice('BEATS_JSON'.length));
       return { beats };
     } catch (e) {

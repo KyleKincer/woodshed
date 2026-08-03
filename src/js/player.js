@@ -72,7 +72,7 @@ export async function openPlayer(song, onBack) {
         <div class="pt-cover" ${cover}></div>
         <div class="pt-meta">
           <div class="ptitle">${escapeHtml(song.title)}</div>
-          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems · ${song.quality?.model || ''}</div>
+          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems</div>
         </div>
         <div class="pt-spacer"></div>
         <button class="toggle-btn ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle overview / minimap">Overview</button>
