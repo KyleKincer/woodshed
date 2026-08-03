@@ -1,7 +1,9 @@
 import { initLibrary, renderLibrary } from './library.js';
 import { initSettings, renderSettings } from './settings.js';
 import { openPlayer, closePlayer } from './player.js';
-import { ensureRuntimeReady } from './setup.js';
+import { ensureSignedIn, mountUserButton, showFatal } from './auth.js';
+import { likelySupportsOpus } from './stemcache.js';
+import * as backend from './backend.js';
 
 let config = null;
 
@@ -45,26 +47,35 @@ function initSidebar() {
   apply();
 }
 
-async function maybeSpotifyTip() {
-  // Non-blocking nudge: Spotify links work best with spotdl, which is optional.
-  const status = await window.api.runtimeStatus();
+// Warn before a user downloads 20 MB they can't play. This is only a hint —
+// the player reports the authoritative failure if decoding actually breaks.
+function maybeCodecWarning() {
   const banner = document.getElementById('deps-banner');
-  if (status.tools.spotdl && !status.tools.spotdl.found) {
-    banner.classList.remove('hidden');
-    banner.innerHTML = `
-      <span>Spotify links work best with <code>spotdl</code>. It installs automatically the next time you run setup; for now, paste a YouTube/SoundCloud link or search instead.</span>
-      <button class="toggle-btn" id="dismiss-banner">Dismiss</button>`;
-    document.getElementById('dismiss-banner').onclick = () => banner.classList.add('hidden');
-  } else {
+  if (likelySupportsOpus()) {
     banner.classList.add('hidden');
+    return;
   }
+  banner.classList.remove('hidden');
+  banner.innerHTML = `
+    <span>This browser may not be able to decode Opus audio. Chrome, Edge, Firefox, and Safari 15+ all can — or switch stems to FLAC in Settings.</span>
+    <button class="toggle-btn" id="dismiss-banner">Dismiss</button>`;
+  document.getElementById('dismiss-banner').onclick = () => banner.classList.add('hidden');
 }
 
 async function boot() {
-  // Gate the app on a ready tool runtime (first run provisions it).
-  await ensureRuntimeReady();
+  // Gate the app on a signed-in Clerk session; everything below needs a user.
+  await ensureSignedIn();
+  mountUserButton();
 
-  config = await window.api.getConfig();
+  try {
+    config = await backend.getConfig();
+  } catch (e) {
+    showFatal(
+      "Couldn't reach the backend",
+      `${String(e.message || e)}<br><br>Check that <code>npx convex dev</code> is running and that the Clerk JWT template named <code>convex</code> exists.`
+    );
+    return;
+  }
 
   initLibrary(config, openSong);
   initSettings(config);
@@ -75,7 +86,7 @@ async function boot() {
   initSidebar();
 
   await renderLibrary();
-  await maybeSpotifyTip();
+  maybeCodecWarning();
 }
 
 boot();

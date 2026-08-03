@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!--
+    No <meta> CSP here. The old one existed to lock down the Electron renderer;
+    in the browser a correct policy has to name your Clerk frontend API domain,
+    your Convex deployment (https + wss) and your R2 endpoint, so it belongs in
+    hosting headers where it can be configured per environment. See README.
+  -->
+  <title>Woodshed</title>
+  <link rel="stylesheet" href="/src/css/styles.css" />
+</head>
+<body>
+  <div id="titlebar"></div>
+
+  <!-- Advisory banner (codec support, etc.) -->
+  <div id="deps-banner" class="deps-banner hidden"></div>
+
+  <nav id="sidebar">
+    <button id="sidebar-toggle" class="sidebar-toggle" title="Collapse sidebar (⌘.)" aria-label="Toggle sidebar">‹</button>
+    <div class="brand">
+      <span class="logo">◐</span>
+      <span class="brand-name">Woodshed</span>
+    </div>
+    <button class="nav-btn active" data-view="library"><span class="nav-icon">≡</span><span class="nav-label">Library</span></button>
+    <button class="nav-btn" data-view="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+    <div class="sidebar-spacer"></div>
+    <button id="add-btn" class="add-btn"><span class="nav-icon">＋</span><span class="nav-label">Add song</span></button>
+    <div id="user-button" class="user-button"></div>
+  </nav>
+
+  <main id="content">
+    <!-- LIBRARY VIEW -->
+    <section id="view-library" class="view active">
+      <header class="view-header">
+        <h1>Library</h1>
+        <div class="lib-controls">
+          <div class="segmented" id="group-seg">
+            <button data-group="songs">Songs</button>
+            <button data-group="albums">Albums</button>
+            <button data-group="artists">Artists</button>
+          </div>
+          <div class="segmented" id="layout-seg">
+            <button data-layout="grid" title="Grid view">▦</button>
+            <button data-layout="list" title="List view">≣</button>
+          </div>
+          <input id="lib-search" class="search" type="search" placeholder="Search…" />
+        </div>
+      </header>
+      <div id="library-grid"></div>
+      <div id="library-empty" class="empty hidden">
+        <p>No songs yet.</p>
+        <button class="add-btn" data-add>＋ Add your first song</button>
+      </div>
+    </section>
+
+    <!-- PLAYER VIEW -->
+    <section id="view-player" class="view">
+      <div id="player-root"></div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="view-settings" class="view">
+      <header class="view-header"><h1>Settings</h1></header>
+      <div id="settings-root"></div>
+    </section>
+  </main>
+
+  <!-- ADD MODAL -->
+  <div id="add-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2>Add a song</h2>
+      <label class="field">
+        <span>Link or search</span>
+        <input id="add-url" type="text" placeholder="YouTube / Spotify / SoundCloud link, or type to search…" />
+      </label>
+      <p class="hint">Paste a link from YouTube, Spotify, SoundCloud, Bandcamp… or just type a song name to search. Spotify links are matched to the closest YouTube track.</p>
+      <div class="file-drop" id="file-drop">
+        <span>Drag audio files here, or</span>
+        <button id="add-pick" class="btn-ghost" type="button">Choose files…</button>
+        <input id="add-file-input" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aif,.aiff,.wma" multiple hidden />
+      </div>
+      <label class="field">
+        <span>Quality preset</span>
+        <select id="add-preset"></select>
+      </label>
+      <label class="field">
+        <span>Stems</span>
+        <select id="add-stemmode"></select>
+      </label>
+      <p id="add-preset-desc" class="hint"></p>
+      <div class="modal-actions">
+        <button id="add-cancel" class="btn-ghost">Cancel</button>
+        <button id="add-go" class="btn-primary">Process</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global drag-drop overlay -->
+  <div id="drop-overlay" class="drop-overlay hidden"><div>Drop audio files to add</div></div>
+
+  <!-- Sign-in gate -->
+  <div id="signin" class="setup hidden">
+    <div class="setup-card">
+      <div class="brand" style="padding:0 0 8px"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
+      <h2>Sign in</h2>
+      <p class="setup-desc">
+        Your library, stems and beat maps are stored in your account, so they
+        follow you to any browser.
+      </p>
+      <div id="signin-mount"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/js/app.js"></script>
+</body>
+</html>

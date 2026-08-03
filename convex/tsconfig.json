@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "strict": true,
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ESNext",
+    "lib": ["ES2021", "dom", "dom.iterable"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true,
+    // Convex functions read process.env; without this, a manual `tsc` run
+    // flags every one of them even though the runtime provides it.
+    "types": ["node"]
+  },
+  "include": ["./**/*"],
+  "exclude": []
+}

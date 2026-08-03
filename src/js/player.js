@@ -1,6 +1,8 @@
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
+import * as backend from './backend.js';
+import { codecErrorMessage, isDecodeError } from './stemcache.js';
 
 const TIME_SIGS = ['4/4', '3/4', '2/4', '5/4', '6/4', '7/4', '6/8', '9/8', '12/8', '5/8', '7/8'];
 const GRID_STORAGE_KEY = 'ws.grid';
@@ -67,17 +69,44 @@ export async function openPlayer(song, onBack) {
   root.innerHTML = `<div class="loading"><div class="spinner"></div><p style="margin-top:14px">Loading stems…</p></div>`;
 
   engine = new MultitrackEngine();
-  const stems = song.stems.map((s) => ({ name: s.name, url: window.api.mediaUrl(song.id, s.file), color: colorFor(s.name) }));
 
+  // Stems and cover live in R2; resolve every key to a signed URL in one call.
+  const keys = song.stems.map((s) => s.key).concat(song.coverKey ? [song.coverKey] : []);
+  let urls;
+  try { urls = await backend.signKeys(keys); }
+  catch (e) { root.innerHTML = `<div class="loading"><p>Couldn't reach storage: ${escapeHtml(e.message)}</p></div>`; return; }
+
+  const stems = song.stems.map((s) => ({
+    name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
+  }));
+  const unresolved = stems.filter((s) => !s.url).map((s) => s.name);
+  if (unresolved.length) {
+    root.innerHTML = `<div class="loading"><p>Missing stem audio for: ${escapeHtml(unresolved.join(', '))}.<br>Try reprocessing this song.</p></div>`;
+    return;
+  }
+
+  const progressEl = root.querySelector('.loading p');
   let info;
-  try { info = await engine.loadStems(stems); }
-  catch (e) { root.innerHTML = `<div class="loading"><p>Couldn't load audio: ${e.message}</p></div>`; return; }
+  try {
+    info = await engine.loadStems(stems, (done, total, bytes) => {
+      if (!progressEl) return;
+      const mb = (n) => (n / 1048576).toFixed(1);
+      progressEl.textContent = bytes.total
+        ? `Loading stems… ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
+        : `Loading stems… ${done}/${total}`;
+    });
+  } catch (e) {
+    const msg = isDecodeError(e) ? codecErrorMessage : `Couldn't load audio: ${e.message}`;
+    root.innerHTML = `<div class="loading"><p style="max-width:52ch;line-height:1.5">${escapeHtml(msg)}</p></div>`;
+    return;
+  }
 
   const duration = info.duration;
   const view = { start: 0, end: duration }; // visible time window
   const grid = loadGridSettings();
 
-  const cover = song.thumb ? `style="background-image:url('${window.api.mediaUrl(song.id, song.thumb)}')"` : '';
+  const coverUrl = song.coverKey ? urls[song.coverKey] : null;
+  const cover = coverUrl ? `style="background-image:url('${coverUrl}')"` : '';
   const overviewOpen = localStorage.getItem('ws.overview') === '1';
   root.innerHTML = `
     <div class="player">
@@ -717,7 +746,7 @@ export async function openPlayer(song, onBack) {
   mSig.innerHTML = TIME_SIGS.map((s) => `<option value="${s}">${s}</option>`).join('');
 
   let saveTimer = null;
-  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => window.api.saveTempo(song.id, metronome.serialize()), 400); }
+  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => backend.saveTempo(song.id, metronome.serialize()), 400); }
   const activeSection = () => metronome.sectionAt(engine.getPosition());
   const metroActiveIndex = () => { const t = engine.getPosition(); let idx = 0; metronome.map.forEach((s, i) => { if (s.t <= t + 1e-6) idx = i; }); return idx; };
 
@@ -800,23 +829,25 @@ export async function openPlayer(song, onBack) {
     tapReset = setTimeout(() => { taps = []; }, 2000);
   };
 
-  // Auto-detect (BeatNet). First use provisions an isolated env (one-time DL),
-  // so we stream the install/detect log into the status line.
+  // Auto-detect (BeatNet), now a Modal job. The first run of the day pays a
+  // container cold start, so the status line tracks the job's own messages.
   const mDetect = document.getElementById('m-detect');
   const mDetectStatus = document.getElementById('m-detect-status');
   const mDetectClear = document.getElementById('m-detect-clear');
   let detecting = false;
-  let offDetectLog = null;
   mDetect.onclick = async () => {
     if (detecting) return;
     detecting = true;
     mDetect.disabled = true;
     mDetectStatus.textContent = 'Starting…';
-    offDetectLog = window.api.on('runtime:log', ({ line }) => { mDetectStatus.textContent = line.slice(0, 70); });
-    const offProg = window.api.on('metro:detectProgress', ({ songId, message }) => { if (songId === song.id) mDetectStatus.textContent = message; });
-    const res = await window.api.detectBeats(song.id);
-    if (offDetectLog) { offDetectLog(); offDetectLog = null; }
-    offProg();
+    let res;
+    try {
+      res = await backend.detectBeats(song.id, (msg) => {
+        mDetectStatus.textContent = String(msg).slice(0, 70);
+      });
+    } catch (e) {
+      res = { error: String(e.message || e) };
+    }
     detecting = false;
     mDetect.disabled = false;
     if (res.error) { mDetectStatus.textContent = '⚠ ' + res.error.split('\n')[0].slice(0, 64); return; }

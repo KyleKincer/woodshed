@@ -1,10 +1,22 @@
 // Library grid: renders processed songs (and in-progress ones, as cards with a
 // loading overlay), the add-song modal, search, and per-card actions.
+//
+// Song and job state both arrive as live Convex subscriptions, so progress
+// updates and finished separations land here without polling — and survive a
+// page reload mid-job, which the old IPC event stream did not.
+
+import * as backend from './backend.js';
 
 let config = null;
 let onOpenSong = null;
-// In-flight jobs, keyed by jobId: { jobId, songId, title, uploader, duration, thumbFile, stage, percent, error }
-const processing = new Map();
+
+let songs = [];
+let jobs = []; // separation jobs from the server
+// Browser-side uploads that have no server job yet, keyed by a local id.
+const uploads = new Map();
+// R2 cover key -> signed URL, filled in before each render.
+let coverUrls = {};
+let unsubscribers = [];
 
 // View preferences (grouping + layout) persisted in localStorage.
 let view = loadView();
@@ -18,9 +30,25 @@ export function initLibrary(cfg, openSongCb) {
   config = cfg;
   onOpenSong = openSongCb;
   wireAddModal();
-  subscribeJobs();
   wireViewControls();
   document.getElementById('lib-search').addEventListener('input', (e) => renderLibrary(e.target.value));
+
+  unsubscribers.forEach((fn) => fn());
+  unsubscribers = [
+    backend.onLibrary((lib) => {
+      songs = lib?.songs || [];
+      renderLibrary(currentFilter());
+    }),
+    backend.onJobs((list) => {
+      jobs = (list || []).filter((j) => j.kind === 'separate');
+      renderLibrary(currentFilter());
+    }),
+  ];
+}
+
+export function teardownLibrary() {
+  unsubscribers.forEach((fn) => fn());
+  unsubscribers = [];
 }
 
 function wireViewControls() {
@@ -42,39 +70,56 @@ function fmtDur(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-const STAGE_LABEL = { queued: 'Queued', download: 'Downloading', separate: 'Separating', finalize: 'Finishing' };
+const STAGE_LABEL = {
+  queued: 'Queued', upload: 'Uploading', download: 'Downloading',
+  separate: 'Separating', finalize: 'Finishing',
+};
 const artistOf = (s) => s.artist || s.uploader || '';
 const albumOf = (s) => s.album || '';
 
+// Renders are async only because cover art needs signed URLs; overlapping
+// calls are common (a subscription tick mid-render), so stale ones bail out.
+let renderToken = 0;
+
 export async function renderLibrary(filter = '') {
-  const lib = await window.api.listLibrary();
+  const token = ++renderToken;
   const container = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
-  const q = filter.trim().toLowerCase();
+  const q = String(filter).trim().toLowerCase();
   const match = (...fields) => !q || fields.some((f) => (f || '').toLowerCase().includes(q));
 
-  const storeIds = new Set(lib.songs.map((s) => s.id));
-  const procList = [...processing.values()];
+  const procList = allPending();
+  const songIds = new Set(songs.map((s) => s.id));
   // Reprocessing jobs overlay an existing card; new jobs render their own card.
-  const procBySong = new Map(procList.filter((p) => p.songId && storeIds.has(p.songId)).map((p) => [p.songId, p]));
-  const pendingNew = procList.filter((p) => !p.songId || !storeIds.has(p.songId));
+  const procBySong = new Map(procList.filter((p) => p.songId && songIds.has(p.songId)).map((p) => [p.songId, p]));
+  const pendingNew = procList.filter((p) => !p.songId || !songIds.has(p.songId));
 
-  const songs = lib.songs.filter((s) => match(s.title, s.uploader, artistOf(s), albumOf(s)));
+  const shown = songs.filter((s) => match(s.title, s.uploader, artistOf(s), albumOf(s)));
   const newCards = pendingNew.filter((p) => match(p.title, p.uploader, p.artist, p.album));
 
-  empty.classList.toggle('hidden', songs.length + newCards.length > 0);
+  // Resolve every cover we're about to draw in one batched, cached call.
+  const keys = [
+    ...shown.map((s) => s.coverKey),
+    ...newCards.map((p) => p.coverKey),
+  ].filter(Boolean);
+  if (keys.length) {
+    try { coverUrls = { ...coverUrls, ...(await backend.signKeys(keys)) }; }
+    catch { /* covers are decorative; render without them */ }
+  }
+  if (token !== renderToken) return; // a newer render already started
 
-  // Build sections based on the grouping mode.
+  empty.classList.toggle('hidden', shown.length + newCards.length > 0);
+
   const sections = [];
   if (newCards.length) sections.push({ title: 'In progress', items: newCards.map(vmPending) });
 
   if (view.group === 'songs') {
-    sections.push({ title: null, items: songs.map((s) => vmSong(s, procBySong.get(s.id))) });
+    sections.push({ title: null, items: shown.map((s) => vmSong(s, procBySong.get(s.id))) });
   } else {
     const keyFn = view.group === 'albums' ? albumOf : artistOf;
     const unknown = view.group === 'albums' ? 'Unknown album' : 'Unknown artist';
     const groups = new Map();
-    for (const s of songs) {
+    for (const s of shown) {
       const k = (keyFn(s) || '').trim() || unknown;
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(s);
@@ -82,17 +127,48 @@ export async function renderLibrary(filter = '') {
     [...groups.entries()]
       .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
       .forEach(([title, list]) => {
-        const art = list.find((s) => s.thumb);
+        const art = list.find((s) => s.coverKey);
         sections.push({
           title, count: list.length,
-          coverUrl: art ? window.api.mediaUrl(art.id, art.thumb) : null,
+          coverUrl: art ? coverUrls[art.coverKey] : null,
           items: list.map((s) => vmSong(s, procBySong.get(s.id))),
         });
       });
   }
 
   container.innerHTML = sections.map(sectionHtml).join('');
-  wireCards(container, lib, procBySong);
+  wireCards(container, procBySong);
+}
+
+/** Server jobs plus browser-side uploads, in one uniform shape. */
+function allPending() {
+  const fromJobs = jobs.map((j) => ({
+    jobId: j.jobId,
+    songId: j.songId,
+    title: j.meta?.title || j.label,
+    uploader: j.meta?.uploader || '',
+    artist: j.meta?.artist || '',
+    album: j.meta?.album || '',
+    duration: j.meta?.duration || 0,
+    coverKey: j.meta?.coverKey || null,
+    stage: j.stage,
+    percent: j.percent,
+    message: j.message,
+    error: j.status === 'error' ? j.error || 'Processing failed.' : null,
+    local: false,
+  }));
+  const fromUploads = [...uploads.values()].map((u) => ({
+    jobId: u.id,
+    songId: null,
+    title: u.name,
+    uploader: '', artist: '', album: '', duration: 0, coverKey: null,
+    stage: 'upload',
+    percent: u.total ? (u.loaded / u.total) * 100 : 0,
+    message: 'Uploading…',
+    error: u.error || null,
+    local: true,
+  }));
+  return [...fromUploads, ...fromJobs];
 }
 
 // ---- view models ----
@@ -100,7 +176,7 @@ function vmSong(s, proc) {
   return {
     id: s.id, jobId: proc?.jobId, title: s.title,
     artist: artistOf(s), album: albumOf(s), duration: s.duration,
-    thumbUrl: s.thumb ? window.api.mediaUrl(s.id, s.thumb) : null,
+    thumbUrl: s.coverKey ? coverUrls[s.coverKey] || null : null,
     stemLabel: s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / '),
     proc, isPending: false,
   };
@@ -109,7 +185,7 @@ function vmPending(p) {
   return {
     id: p.songId, jobId: p.jobId, title: p.title || 'Processing…',
     artist: p.artist || p.uploader || '', album: p.album || '', duration: p.duration,
-    thumbUrl: p.songId && p.thumbFile ? window.api.mediaUrl(p.songId, p.thumbFile) : null,
+    thumbUrl: p.coverKey ? coverUrls[p.coverKey] || null : null,
     stemLabel: null, proc: p, isPending: true,
   };
 }
@@ -190,10 +266,10 @@ function procInlineHtml(p) {
   </div>`;
 }
 
-function wireCards(container, lib, procBySong) {
+function wireCards(container, procBySong) {
   container.querySelectorAll('[data-id]').forEach((el) => {
     const id = el.dataset.id;
-    const song = lib.songs.find((s) => s.id === id);
+    const song = songs.find((s) => s.id === id);
     if (!song) return;
     const proc = procBySong.get(id);
     if (!proc) {
@@ -208,20 +284,26 @@ function wireCards(container, lib, procBySong) {
     });
   });
   container.querySelectorAll('[data-cancel]').forEach((b) => {
-    b.addEventListener('click', (e) => { e.stopPropagation(); window.api.cancelJob(b.closest('[data-job]').dataset.job); });
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const jobId = b.closest('[data-job]').dataset.job;
+      if (uploads.has(jobId)) { uploads.delete(jobId); renderLibrary(currentFilter()); }
+      else backend.cancelJob(jobId);
+    });
   });
   container.querySelectorAll('[data-dismiss]').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      processing.delete(b.closest('[data-job]').dataset.job);
-      renderLibrary(currentFilter());
+      const jobId = b.closest('[data-job]').dataset.job;
+      if (uploads.has(jobId)) { uploads.delete(jobId); renderLibrary(currentFilter()); }
+      else backend.dismissJob(jobId);
     });
   });
 }
 
-// External link for a song, if it has one (downloads/Spotify do; files/searches don't).
+// External link for a song, if it has one (downloads/Spotify do; uploads don't).
 function sourceUrl(song) {
-  const v = song.source?.value || song.url;
+  const v = song.source?.value;
   if (!v) return null;
   return /^https?:\/\//i.test(v) ? v : null;
 }
@@ -241,7 +323,7 @@ function cardMenu(song, anchor) {
     { label: 'Play', action: () => onOpenSong(song) },
     { label: 'Reprocess…', action: () => reprocessDialog(song) },
     { label: 'Rename…', action: () => renameSong(song) },
-    ...(url ? [{ label: 'Open original source', action: () => window.api.openExternal(url) }] : []),
+    ...(url ? [{ label: 'Open original source', action: () => backend.openExternal(url) }] : []),
     { label: 'Delete', danger: true, action: () => deleteSong(song) },
   ];
 
@@ -271,48 +353,65 @@ function cardMenu(song, anchor) {
 
 async function renameSong(song) {
   const name = await promptModal('Rename song', song.title);
-  if (name && name.trim()) { await window.api.renameSong(song.id, name.trim()); renderLibrary(currentFilter()); }
+  if (name && name.trim()) await backend.renameSong(song.id, name.trim());
 }
 
 async function deleteSong(song) {
   const ok = await confirmModal('Delete song?', `"${song.title}" and its stem files will be permanently removed.`, 'Delete');
-  if (ok) { await window.api.deleteSong(song.id); renderLibrary(currentFilter()); }
+  if (ok) await backend.deleteSong(song.id);
 }
 
 function reprocessDialog(song) {
   const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom (from Settings)' }];
-  const fileSource = song.source?.type === 'file';
+  const uploadSource = song.source?.type === 'upload';
   const m = buildDialog('Reprocess song', `
-    <p class="dlg-msg">Re-run separation for “${esc(song.title)}”${fileSource ? ' (needs the original file to still exist)' : ' from its original source'}. The new stems replace the current ones.</p>
+    <p class="dlg-msg">Re-run separation for “${esc(song.title)}”${uploadSource ? ' from the file you uploaded' : ' from its original source'}. The new stems replace the current ones; your beat track and title are kept.</p>
     <label class="field"><span>Quality preset</span>
       <select id="rp-preset">${presets.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
     </label>
     <label class="field"><span>Stems</span>
       <select id="rp-stem">${Object.values(config.stemModes).map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select>
     </label>
+    <p id="rp-cost" class="hint"></p>
     <div class="modal-actions">
       <button class="btn-ghost" data-cancel>Cancel</button>
       <button class="btn-primary" data-ok>Reprocess</button>
     </div>`);
-  // Default to the song's current layout; preset to the app default.
-  m.querySelector('#rp-preset').value = config.settings.preset;
+  const presetSel = m.querySelector('#rp-preset');
+  presetSel.value = config.settings.preset;
   m.querySelector('#rp-stem').value = song.stemMode || config.settings.stemMode;
+  const cost = m.querySelector('#rp-cost');
+  const syncCost = () => { cost.textContent = costHint(presetSel.value); };
+  presetSel.onchange = syncCost;
+  syncCost();
   const close = () => m.remove();
   m.querySelector('[data-cancel]').onclick = close;
   m.addEventListener('click', (e) => { if (e.target === m) close(); });
   m.querySelector('[data-ok]').onclick = async () => {
     const settings = {
       ...config.settings,
-      preset: m.querySelector('#rp-preset').value,
+      preset: presetSel.value,
       stemMode: m.querySelector('#rp-stem').value,
     };
     close();
-    const res = await window.api.reprocessSong(song.id, settings);
-    if (res?.error) await confirmModal('Could not reprocess', res.error, 'OK');
+    try {
+      await backend.reprocessSong(song.id, settings, `${song.title} (reprocess)`);
+    } catch (e) {
+      await confirmModal('Could not reprocess', String(e.message || e), 'OK');
+    }
   };
 }
 
-function currentFilter() { return document.getElementById('lib-search').value; }
+/** Separation runs on rented GPUs now, so make the cost visible up front. */
+function costHint(presetId) {
+  const p = config.presets[presetId];
+  if (!p?.estCostUsd) return 'Custom settings — cost scales with model and shift averaging.';
+  return `Roughly $${p.estCostUsd.toFixed(2)} of GPU time per song.`;
+}
+
+function currentFilter() {
+  return document.getElementById('lib-search')?.value || '';
+}
 
 // ---------- Add modal ----------
 function wireAddModal() {
@@ -328,7 +427,7 @@ function wireAddModal() {
 
   const syncDesc = () => {
     const p = presets.find((x) => x.id === presetSel.value);
-    desc.textContent = p ? p.description : '';
+    desc.textContent = `${p ? p.description : ''} ${costHint(presetSel.value)}`.trim();
   };
   presetSel.onchange = syncDesc;
 
@@ -351,15 +450,19 @@ function wireAddModal() {
   document.getElementById('add-go').onclick = async () => {
     const input = urlInput.value.trim();
     if (!input) { urlInput.focus(); return; }
-    await window.api.addSong(input, modalSettings());
     close();
+    try { await backend.addSong(input, modalSettings()); }
+    catch (e) { await confirmModal('Could not add song', String(e.message || e), 'OK'); }
   };
   urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('add-go').click(); });
 
-  // File picker inside the modal (uses the modal's quality/stem choices).
-  document.getElementById('add-pick').onclick = async () => {
-    const paths = await window.api.pickAudio();
-    if (paths.length) { await window.api.addFiles(paths, modalSettings()); close(); }
+  // Real <input type=file> now — there is no native dialog to call into.
+  const picker = document.getElementById('add-file-input');
+  document.getElementById('add-pick').onclick = () => picker.click();
+  picker.onchange = async () => {
+    const files = audioFiles(picker.files);
+    picker.value = '';
+    if (files.length) { close(); await uploadAndQueue(files, modalSettings()); }
   };
 
   // Drop zone inside the modal.
@@ -369,17 +472,43 @@ function wireAddModal() {
   dropZone.addEventListener('drop', async (e) => {
     e.preventDefault();
     dropZone.classList.remove('over');
-    const paths = filesToPaths(e.dataTransfer.files);
-    if (paths.length) { await window.api.addFiles(paths, modalSettings()); close(); }
+    const files = audioFiles(e.dataTransfer.files);
+    if (files.length) { close(); await uploadAndQueue(files, modalSettings()); }
   });
 
   setupGlobalDrop();
 }
 
-function filesToPaths(fileList) {
-  return Array.from(fileList)
-    .map((f) => window.api.pathForFile(f))
-    .filter((p) => p && /\.(mp3|wav|flac|m4a|aac|ogg|opus|aiff?|wma)$/i.test(p));
+function audioFiles(fileList) {
+  return Array.from(fileList || []).filter(
+    (f) => backend.AUDIO_FILE_RE.test(f.name) || (f.type || '').startsWith('audio/')
+  );
+}
+
+/**
+ * Upload each file to R2 and queue a separation job, showing a local progress
+ * card until the server job takes over.
+ */
+async function uploadAndQueue(files, settings) {
+  for (const file of files) {
+    const id = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    uploads.set(id, { id, name: file.name, loaded: 0, total: file.size, error: null });
+    renderLibrary(currentFilter());
+    try {
+      await backend.addFiles([file], settings, ({ loaded, total }) => {
+        const u = uploads.get(id);
+        if (!u) return; // canceled
+        u.loaded = loaded;
+        u.total = total;
+        patchOverlay({ jobId: id, stage: 'upload', percent: total ? (loaded / total) * 100 : 0 });
+      });
+      uploads.delete(id);
+    } catch (e) {
+      const u = uploads.get(id);
+      if (u) u.error = String(e.message || e);
+    }
+    renderLibrary(currentFilter());
+  }
 }
 
 // Drop audio files anywhere in the window to add them with default settings.
@@ -399,48 +528,13 @@ function setupGlobalDrop() {
     overlay.classList.add('hidden');
     // If the add modal is open it handles its own drop.
     if (!document.getElementById('add-modal').classList.contains('hidden')) return;
-    const paths = filesToPaths(e.dataTransfer.files);
-    if (paths.length) await window.api.addFiles(paths, config.settings);
-  });
-}
-
-// ---------- Jobs / progress (rendered as cards with an overlay) ----------
-function subscribeJobs() {
-  window.api.on('process:queued', ({ jobId, label, replaceId }) => {
-    // For a reprocess, attach to the existing song's card immediately.
-    processing.set(jobId, { jobId, songId: replaceId || undefined, title: label, stage: 'queued', percent: 0 });
-    renderLibrary(currentFilter());
-  });
-  window.api.on('process:meta', ({ jobId, songId, title, uploader, duration, thumbFile }) => {
-    const p = processing.get(jobId) || { jobId };
-    Object.assign(p, { songId, title, uploader, duration, thumbFile });
-    processing.set(jobId, p);
-    renderLibrary(currentFilter());
-  });
-  window.api.on('process:progress', ({ jobId, stage, percent }) => {
-    const p = processing.get(jobId);
-    if (!p) return;
-    p.stage = stage;
-    p.percent = percent;
-    patchOverlay(p); // cheap in-place update; avoid a full re-render every tick
-  });
-  window.api.on('process:done', ({ jobId }) => {
-    processing.delete(jobId);
-    renderLibrary(currentFilter());
-  });
-  window.api.on('process:error', ({ jobId, error }) => {
-    const p = processing.get(jobId);
-    if (!p) return;
-    p.error = error;
-    renderLibrary(currentFilter());
-  });
-  window.api.on('process:canceled', ({ jobId }) => {
-    processing.delete(jobId);
-    renderLibrary(currentFilter());
+    const files = audioFiles(e.dataTransfer.files);
+    if (files.length) await uploadAndQueue(files, config.settings);
   });
 }
 
 // Update just the progress text/bar of a card without rebuilding the grid.
+// Upload progress fires far faster than the grid can usefully re-render.
 function patchOverlay(p) {
   const card = document.querySelector(`[data-job="${p.jobId}"]`);
   if (!card) return;
@@ -455,7 +549,7 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ---------- Lightweight dialogs (window.prompt/confirm don't work in Electron) ----------
+// ---------- Lightweight dialogs ----------
 function promptModal(title, value = '') {
   return new Promise((resolve) => {
     const m = buildDialog(title, `

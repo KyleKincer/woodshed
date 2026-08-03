@@ -78,6 +78,9 @@ body.sidebar-collapsed .sidebar-toggle { opacity: 1; } /* always visible when co
 .nav-btn:hover { background: var(--bg-3); color: var(--text); }
 .nav-btn.active { background: var(--bg-3); color: var(--text); }
 .sidebar-spacer { flex: 1; }
+/* Clerk mounts its avatar/account menu here. */
+.user-button { display: flex; justify-content: flex-start; padding: 10px 4px 2px; min-height: 32px; }
+body.sidebar-collapsed .user-button { justify-content: center; padding: 10px 0 2px; }
 
 /* Collapsed icon rail */
 body.sidebar-collapsed #sidebar { width: 64px; }
@@ -277,6 +280,8 @@ body.in-player #content { padding: 0; overflow: hidden; }
 .preset-card.selected { border-color: var(--accent); background: #1a2030; }
 .preset-card .pname { font-weight: 600; font-size: 14px; margin-bottom: 5px; }
 .preset-card .pdesc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+/* GPU cost estimate — separation is billed per second now, so make it visible. */
+.preset-card .pcost { display: inline-block; margin-top: 4px; color: var(--accent); white-space: nowrap; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }
 .row:first-of-type { border-top: none; }
 .row label { font-size: 14px; }
