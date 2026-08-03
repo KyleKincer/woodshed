@@ -64,7 +64,13 @@ function maybeCodecWarning() {
 
 async function boot() {
   // Gate the app on a signed-in Clerk session; everything below needs a user.
-  await ensureSignedIn();
+  // A failure here has already painted its own explanation, so stop quietly
+  // rather than adding an unhandled rejection on top of it.
+  try {
+    await ensureSignedIn();
+  } catch {
+    return;
+  }
   mountUserButton();
 
   try {

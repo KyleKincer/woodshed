@@ -68,19 +68,83 @@ export async function ensureSignedIn() {
     if (!clerk.session) return null;
     try {
       return await clerk.session.getToken({
-        template: 'convex',
+        template: JWT_TEMPLATE,
         skipCache: forceRefreshToken,
       });
-    } catch {
+    } catch (err) {
+      // Swallowing this is how a missing JWT template turns into a bare
+      // "Not signed in" from every Convex function — the one error message
+      // that sends you looking in entirely the wrong place.
+      console.error(
+        `Clerk could not mint a "${JWT_TEMPLATE}" JWT. Convex calls will fail as unauthenticated.`,
+        err
+      );
       return null;
     }
   });
 
-  if (clerk.user) {
-    hideSignIn();
-    return clerk.user;
+  const user = clerk.user || (await waitForSignIn());
+  await assertConvexTokenWorks();
+  hideSignIn();
+  return user;
+}
+
+const JWT_TEMPLATE = 'convex';
+
+/** Decode a JWT payload for diagnostics. Never used to make trust decisions. */
+function claimsOf(token) {
+  try {
+    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(payload));
+  } catch {
+    return null;
   }
-  return waitForSignIn();
+}
+
+/**
+ * Fail loudly, once, at boot if Clerk can't mint the Convex JWT.
+ *
+ * Without this the app looks signed in — avatar and all — and only breaks
+ * later, deep in an unrelated action, with a message that says nothing about
+ * JWT templates.
+ */
+async function assertConvexTokenWorks() {
+  let token = null;
+  let err = null;
+  try {
+    token = await clerk.session?.getToken({ template: JWT_TEMPLATE });
+  } catch (e) {
+    err = e;
+  }
+
+  if (token) {
+    // A template can exist and still be rejected: Convex matches the token's
+    // `aud` against `applicationID` in auth.config.ts, and a template built
+    // from a blank preset rather than the Convex one won't set it.
+    const aud = claimsOf(token)?.aud;
+    const audList = Array.isArray(aud) ? aud : [aud];
+    if (audList.includes(JWT_TEMPLATE)) return;
+    showFatal(
+      'Clerk JWT has the wrong audience',
+      `The <code>${JWT_TEMPLATE}</code> template issues a token with
+       <code>aud = ${JSON.stringify(aud) || 'unset'}</code>, but Convex is configured to accept
+       <code>"${JWT_TEMPLATE}"</code>, so it rejects every request.<br><br>
+       In the Clerk dashboard, recreate the template from the <strong>Convex</strong> preset
+       (not a blank one) so it sets <code>"aud": "convex"</code>.`
+    );
+    throw new Error('Clerk JWT audience does not match applicationID.');
+  }
+
+  showFatal(
+    'Clerk is missing the Convex JWT template',
+    `Signed in, but Clerk can't issue a <code>${JWT_TEMPLATE}</code> token, so Convex sees every
+     request as anonymous.<br><br>
+     In the <a href="https://dashboard.clerk.com" target="_blank" rel="noopener">Clerk dashboard</a>
+     go to <strong>Configure → JWT Templates → New template → Convex</strong>. Keep the name exactly
+     <code>${JWT_TEMPLATE}</code>, save, then reload this page.
+     ${err ? `<br><br><span class="setup-error">${String(err.message || err)}</span>` : ''}`
+  );
+  throw new Error('Clerk JWT template "convex" is missing.');
 }
 
 function waitForSignIn() {
