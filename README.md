@@ -160,27 +160,58 @@ ability (the cloud can't reach your old filesystem); everything else is kept.
 
 ## Deploying
 
-```bash
-npm run deploy   # convex deploy + vite build
-```
-
-Then publish `dist/` to any static host. Set the same two `VITE_*` variables in
-the host's build environment, and point Clerk's allowed origins at the deployed
-URL.
-
-`index.html` intentionally ships no `<meta>` CSP — a correct policy has to name
-your Clerk frontend API domain, your Convex deployment over both https and wss,
-and your R2 endpoint, so it belongs in host headers. A working starting point:
+Production runs on Vercel at **woodshed.kylekincer.com**, against a separate
+Convex production deployment. `vercel.json` drives the build:
 
 ```
-default-src 'self';
-script-src  'self' https://*.clerk.accounts.dev;
-connect-src 'self' https://*.convex.cloud wss://*.convex.cloud
-            https://*.clerk.accounts.dev https://*.r2.cloudflarestorage.com;
-img-src     'self' data: blob: https:;
-media-src   'self' blob: https:;
-style-src   'self' 'unsafe-inline';
+npx convex deploy --cmd-url-env-var-name VITE_CONVEX_URL --cmd 'vite build'
 ```
+
+That pushes the backend and builds the client against the same deployment, so
+the two can't drift. `VITE_CONVEX_URL` is named explicitly because `framework`
+is `null`, which leaves Convex nothing to infer the Vite convention from.
+
+`vercel deploy --prod` ships it. Two environment variables are set on the
+Vercel project (Production scope):
+
+| | |
+| --- | --- |
+| `CONVEX_DEPLOY_KEY` | Convex dashboard → Settings → Deploy Keys. No CLI for this. |
+| `VITE_CLERK_PUBLISHABLE_KEY` | The `pk_live_…` key from the Clerk **production** instance. |
+
+Everything else lives on the Convex production deployment
+(`npx convex env set --prod …`), mirroring the dev list.
+
+### Ordering traps
+
+- **Convex env vars must exist before the first push.** `auth.config.ts`
+  references `CLERK_JWT_ISSUER_DOMAIN`, and Convex statically requires every
+  env var named there to be set — a deploy fails outright otherwise, even
+  though nothing has run yet.
+- **Add the production origin to R2 CORS** before expecting playback. Stems are
+  fetched from R2 by the browser, so an unlisted origin fails every load.
+- **The `{"aud": "convex"}` claim does not clone** from the development Clerk
+  instance. Without it Convex rejects every request as unauthenticated, and the
+  app says "Not signed in" while Clerk shows you as signed in.
+
+### Clerk production instance
+
+A production instance serves auth from your own domain, which needs five CNAME
+records (`accounts`, `clerk`, `clk._domainkey`, `clk2._domainkey`, `clkmail`).
+`kylekincer.com` runs on Vercel nameservers, so they go in with
+`vercel dns add kylekincer.com <host> CNAME <target>`.
+
+Clerk issues TLS certificates for `clerk.` and `accounts.` only after it
+verifies those records — until then the app loads but every Clerk request fails
+with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`. Production instances also need their
+own Google OAuth credentials; development borrows Clerk's shared test ones.
+
+### CSP
+
+`index.html` ships no `<meta>` CSP — the real policy is a response header in
+`vercel.json`, which is where it can name your Clerk frontend API domain, your
+Convex deployment over both https and wss, and your R2 endpoint per
+environment.
 
 ## Costs
 
