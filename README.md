@@ -171,8 +171,13 @@ That pushes the backend and builds the client against the same deployment, so
 the two can't drift. `VITE_CONVEX_URL` is named explicitly because `framework`
 is `null`, which leaves Convex nothing to infer the Vite convention from.
 
-`vercel deploy --prod` ships it. Two environment variables are set on the
-Vercel project (Production scope):
+Pushing to `main` ships it — the Vercel project is connected to the GitHub
+repo and `main` is its production branch, so every merge deploys the backend
+and the client together. `vercel deploy --prod` still works for a deploy from
+your working tree, but it bypasses git and leaves nothing to trace the build
+back to.
+
+Two environment variables are set on the Vercel project (Production scope):
 
 | | |
 | --- | --- |
