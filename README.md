@@ -203,8 +203,21 @@ records (`accounts`, `clerk`, `clk._domainkey`, `clk2._domainkey`, `clkmail`).
 
 Clerk issues TLS certificates for `clerk.` and `accounts.` only after it
 verifies those records — until then the app loads but every Clerk request fails
-with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`. Production instances also need their
-own Google OAuth credentials; development borrows Clerk's shared test ones.
+with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`.
+
+Production instances also need **their own Google OAuth credentials**;
+development borrows Clerk's shared test ones. Until they're set, Clerk lists
+Google as "Setup required" and the "Continue with Google" button renders but
+fails — email sign-in is unaffected. To finish it: create an OAuth 2.0 Web
+client in Google Cloud Console with
+
+```
+Authorized redirect URI:  https://clerk.kylekincer.com/v1/oauth_callback
+```
+
+then paste the client ID and secret into **Clerk → SSO connections → Google →
+Use custom credentials**. If you'd rather not, disable the Google connection so
+the button stops appearing.
 
 ### Preview deployments
 
