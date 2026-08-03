@@ -1,32 +1,38 @@
 'use strict';
 
 // electron-builder `afterPack` hook: give the macOS bundle a valid ad-hoc
-// signature.
+// signature — the fallback for builds made without an Apple Developer ID.
 //
-// Why this exists: we have no Apple Developer certificate, so electron-builder
-// skips signing (`mac.identity: null`). But skipping isn't neutral — the
-// packaged .app still carries the *stock Electron binary's* linker signature,
-// which no longer matches the bundle once it's been renamed and filled with our
-// files. macOS sees a signature that doesn't verify and refuses to launch the
-// app at all: "Woodshed is damaged and can't be opened." An invalid signature is
-// worse than none, because right-click → Open can't bypass it. v1.0.0 shipped
-// that way.
+// Why this exists: with no certificate available, electron-builder.cjs sets
+// `mac.identity: null` and electron-builder skips signing. But skipping isn't
+// neutral — the packaged .app still carries the *stock Electron binary's* linker
+// signature, which no longer matches the bundle once it's been renamed and
+// filled with our files. macOS sees a signature that doesn't verify and refuses
+// to launch the app at all: "Woodshed is damaged and can't be opened." An
+// invalid signature is worse than none, because right-click → Open can't bypass
+// it. v1.0.0 shipped that way.
 //
-// An ad-hoc signature (`codesign --sign -`) isn't tied to a developer identity
-// and Gatekeeper still won't trust it for distribution — downloads remain
-// quarantined and need the `xattr` step in the README. But the signature is
-// *valid*, so the app runs once quarantine is cleared, and locally built copies
-// (`npm run try`) run with no ceremony at all.
-//
-// Signing here rather than letting electron-builder do it also keeps any real
-// Developer ID certificate that happens to be in the developer's keychain from
-// being picked up and stamped onto a personal app.
+// An ad-hoc signature (`codesign --sign -`) isn't tied to a developer identity,
+// so Gatekeeper still won't trust a *downloaded* copy — that needs notarization,
+// which needs a real certificate. What ad-hoc buys is a signature that's
+// *valid*, so locally built copies (`npm run try`) run with no ceremony and a
+// download can at least be cleared by hand (see the README).
 
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 exports.default = async function adhocSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
+
+  // `identity: null` is electron-builder.cjs's signal that no certificate was
+  // available. Anything else means it's about to sign for distribution, and an
+  // ad-hoc pass now would be pointless at best: afterPack runs *before*
+  // electron-builder signs, so this signature would just be overwritten. Bail
+  // out explicitly rather than depending on that ordering holding.
+  if (context.packager.platformSpecificBuildOptions.identity !== null) {
+    console.log('  • skipping ad-hoc signing — signing for distribution instead');
+    return;
+  }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
