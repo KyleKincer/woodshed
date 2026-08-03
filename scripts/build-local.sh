@@ -59,11 +59,11 @@ if [ "$clean" = true ]; then
   rm -rf dist
 fi
 
-# Signing is ad-hoc, configured as `mac.identity: "-"` in package.json — which
-# is what makes the built app launchable at all on Apple Silicon. Don't set
-# CSC_IDENTITY_AUTO_DISCOVERY=false here: that skips signing entirely, and the
-# resulting bundle keeps the stock Electron binary's stale signature, which
-# macOS rejects as "damaged".
+# Signing: electron-builder.js picks the path. With no CSC_LINK/CSC_NAME in the
+# environment — the normal case here — it sets `mac.identity: null` and
+# scripts/adhoc-sign.js applies an ad-hoc signature, which is what makes the
+# built app launchable at all on Apple Silicon. Local builds aren't quarantined,
+# so that's all they need; a *download* needs notarization (see the README).
 
 if [ "$mode" = installer ]; then
   echo "==> building Woodshed $version installer ($installer_target, this machine's arch)"

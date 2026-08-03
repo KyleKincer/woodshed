@@ -32,7 +32,29 @@ those instead and skips provisioning.
 The first separation also downloads the Demucs model weights (a few hundred MB),
 cached under `~/.cache/`.
 
-## Run
+## Install
+
+On a Mac, via Homebrew:
+
+```bash
+brew tap kylekincer/tap
+brew trust kylekincer/tap    # recent Homebrew requires this for third-party casks
+brew install --cask kylekincer/tap/woodshed
+```
+
+(If `brew trust` isn't a command on your Homebrew, it's old enough not to need
+it — skip that line.)
+
+Otherwise grab an installer from the
+[latest release](https://github.com/KyleKincer/woodshed/releases/latest) —
+`.dmg` for macOS (pick `arm64` for Apple Silicon, `x64` for Intel), `.exe` for
+Windows, `.AppImage` for Linux.
+
+> Mac downloads only open cleanly if the release was notarized by Apple. If you
+> get *"Apple could not verify Woodshed is free of malware"*, that build wasn't
+> — see [Signing](#signing) for the one-line workaround and why.
+
+## Run from source
 
 ```bash
 cd ~/src/woodshed
@@ -152,11 +174,31 @@ npm run dist:win      # .exe  (run on Windows)
 npm run dist:linux    # .AppImage (run on Linux)
 ```
 
-Builds are **ad-hoc signed** — no Apple Developer certificate is involved (see
-[`scripts/adhoc-sign.js`](scripts/adhoc-sign.js)). A build you make yourself runs
-with no ceremony. A build you *download* is quarantined by the browser, and
-because an ad-hoc signature isn't notarized, macOS won't launch it until you
-clear that:
+> **Build on the platform and architecture you're targeting.** `ffmpeg-static`
+> downloads a single binary for the install host, so an x64 `.dmg` built on
+> Apple Silicon would ship an arm64 ffmpeg and fail at runtime. That's why
+> `npm run dist:mac` only builds this machine's architecture, and why CI sets
+> `npm_config_arch` per job. (`ffprobe-static` bundles every platform, so it's
+> never a problem.)
+
+## Signing
+
+macOS packaging takes one of two paths, decided by whether an Apple Developer ID
+is available. [`electron-builder.js`](electron-builder.js) makes that call once
+and everything else follows from it.
+
+**Notarized** (needs the secrets below). electron-builder signs with the
+Developer ID certificate under the hardened runtime, uploads the bundle to
+Apple's notary service, and staples the resulting ticket into the app. Downloads
+open on a plain double-click, and `brew install --cask` works — Homebrew
+quarantines cask apps by default, so it needs notarization just as much as a
+browser download does.
+
+**Ad-hoc** (no secrets). [`scripts/adhoc-sign.js`](scripts/adhoc-sign.js) applies
+a `codesign --sign -` signature instead. Builds you make yourself run with no
+ceremony, but Gatekeeper refuses a downloaded copy — an ad-hoc signature has no
+team behind it and no notarization ticket — with *"Apple could not verify
+Woodshed is free of malware"*. Clear it by hand:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Woodshed.app
@@ -165,12 +207,60 @@ xattr -dr com.apple.quarantine /Applications/Woodshed.app
 (Or System Settings → Privacy & Security → **Open Anyway**. On current macOS the
 old right-click → Open trick no longer works for un-notarized apps.)
 
-> **Build on the platform and architecture you're targeting.** `ffmpeg-static`
-> downloads a single binary for the install host, so an x64 `.dmg` built on
-> Apple Silicon would ship an arm64 ffmpeg and fail at runtime. That's why
-> `npm run dist:mac` only builds this machine's architecture, and why CI sets
-> `npm_config_arch` per job. (`ffprobe-static` bundles every platform, so it's
-> never a problem.)
+Ad-hoc still beats *unsigned*, which is why the hook exists: skipping signing
+leaves the renamed Electron binary's stale linker signature on the bundle, and
+macOS rejects that outright as "Woodshed is damaged and can't be opened" — worse,
+because no workaround bypasses an invalid signature. v1.0.0 shipped that way.
+
+### Turning notarization on
+
+Requires an [Apple Developer Program](https://developer.apple.com/programs/)
+membership ($99/yr) on a paid Individual or Organization team — a free team
+can't issue a Developer ID or notarize.
+
+[`scripts/setup-apple-signing.sh`](scripts/setup-apple-signing.sh) does the
+mechanical parts:
+
+```bash
+./scripts/setup-apple-signing.sh csr
+#   -> upload the request at developer.apple.com, download the certificate
+./scripts/setup-apple-signing.sh secrets ~/Downloads/developerID_application.cer
+```
+
+The second step assembles the `.p12` (bundling Apple's Developer ID intermediate,
+without which signing on a runner can fail to build a certificate chain), checks
+the certificate against the local private key, verifies your notarization
+credentials against Apple with `notarytool` before trusting them, and sets all
+five repository secrets:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `MAC_CSC_LINK` | Base64 of the assembled *Developer ID Application* `.p12` |
+| `MAC_CSC_KEY_PASSWORD` | Randomly generated when the `.p12` is built |
+| `APPLE_ID` | Your Apple ID email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | An app-specific password from [appleid.apple.com](https://appleid.apple.com) |
+| `APPLE_TEAM_ID` | Read out of the certificate's OU |
+
+The private key lives in `~/.woodshed-signing` and never enters the repo. Keep
+it — re-issuing the certificate needs it.
+
+All five secrets or none. A certificate *without* notarization credentials is the
+trap worth knowing about: the bundle satisfies `codesign` and Gatekeeper still
+shows the same "could not verify" dialog, so it looks fixed without being fixed.
+The release workflow fails fast on a partial set, and a local build warns.
+
+> **Use a certificate from your own developer account.** Signing a personal app
+> with an employer's Developer ID publishes and notarizes it under their
+> identity. This machine's keychain holds a *Sweetwater Sound Inc* Developer ID,
+> so the setup script refuses that team by name.
+
+CI then asserts what actually matters to whoever downloads it — a Developer ID
+authority, a stapled ticket (`stapler validate`) and `spctl` acceptance — rather
+than merely that a signature verifies. v1.0.1 passed the weaker check and was
+still blocked.
+
+Nothing here is required to build or release; without the secrets the pipeline
+just produces ad-hoc builds as before.
 
 ## Releasing
 
@@ -191,8 +281,9 @@ That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. The tag kicks off
 | Windows | `Woodshed-X.Y.Z-win-x64.exe` |
 | Linux | `Woodshed-X.Y.Z-linux-x86_64.AppImage` |
 
-and publishes them as a GitHub Release with generated notes. Pushing the tag is
-the only step — nothing to confirm afterwards.
+then publishes them as a GitHub Release with generated notes and points the
+Homebrew tap at the new version. Pushing the tag is the only step — nothing to
+confirm afterwards.
 
 Notes:
 
@@ -206,12 +297,35 @@ Notes:
 - You can run the workflow manually from the Actions tab (**Run workflow**) to
   build all four platforms without tagging or releasing; the installers show up
   as run artifacts.
-- Mac builds are ad-hoc signed and **not notarized**, so anyone downloading a
-  `.dmg` needs the `xattr` step above. Making that unnecessary means an Apple
-  Developer Program membership ($99/yr): a Developer ID certificate in
-  `CSC_LINK` / `CSC_KEY_PASSWORD` plus notarization credentials, at which point
-  `scripts/adhoc-sign.js` should come out.
-- CI asserts the mac bundle is validly signed before uploading it. v1.0.0
-  shipped a bundle whose signature didn't cover it, which macOS reported as
-  "Woodshed is damaged and can't be opened" — that check exists so it can't
-  happen twice.
+- Whether Mac builds come out notarized depends on the secrets in
+  [Signing](#signing). Without them the pipeline still works, it just ships
+  ad-hoc builds that downloaders have to clear by hand.
+- CI verifies the mac bundle before uploading it; how strictly depends on which
+  path ran (see [Signing](#signing)). v1.0.0 and v1.0.1 both shipped `.dmg`s a
+  Mac wouldn't open, for two different reasons. Those checks exist so there
+  isn't a third.
+
+### The Homebrew tap
+
+The `homebrew` job runs [`scripts/render-cask.js`](scripts/render-cask.js) to
+produce `Casks/woodshed.rb` with a `sha256` pinned per architecture, and commits
+it to `KyleKincer/homebrew-tap`. It runs after the release is published, because
+Homebrew downloads from the release assets and they have to exist first.
+
+The default `GITHUB_TOKEN` can't write to another repo, so the job authenticates
+with a **deploy key** (`HOMEBREW_TAP_DEPLOY_KEY`) rather than a PAT — write access
+to that one repo, nothing else, not tied to anyone's account. It's already set
+up; to rotate it, generate a keypair, add the public half at
+[the tap's deploy keys](https://github.com/KyleKincer/homebrew-tap/settings/keys)
+with write access, and `gh secret set HOMEBREW_TAP_DEPLOY_KEY` with the private
+half.
+
+If the secret is ever missing the job logs a notice and uploads the rendered cask
+as a run artifact so you can copy it over by hand — a tap problem can't block a
+release.
+
+To render one locally:
+
+```bash
+node scripts/render-cask.js 1.0.2 path/to/dir/with/both/dmgs
+```
