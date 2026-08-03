@@ -561,6 +561,71 @@ def run_job(job: dict):
             pass
 
 
+@app.function(image=image, secrets=[secrets], timeout=60 * 5)
+def selftest():
+    """Check the pieces a real job depends on, without renting a GPU.
+
+    Credentials are the usual failure: they live in three places (Modal
+    secret, Convex env, the bucket's own token) and a mismatch only shows up
+    mid-job, after a download and a separation have already been paid for.
+
+    Run with:  modal run modal/separate.py::selftest
+    """
+    import shutil
+    import uuid
+
+    for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+        path = shutil.which(tool)
+        print(f"{tool:8} {path or 'MISSING'}")
+        if not path:
+            raise RuntimeError(f"{tool} is not on PATH in the image")
+
+    import torch
+
+    print(f"torch    {torch.__version__} (cuda available: {torch.cuda.is_available()})")
+
+    # R2 round trip: put an object, read it back, delete it.
+    client = r2_client()
+    bucket = os.environ["R2_BUCKET"]
+    key = f"_selftest/{uuid.uuid4()}.txt"
+    body = b"woodshed selftest"
+    client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain")
+    got = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    client.delete_object(Bucket=bucket, Key=key)
+    if got != body:
+        raise RuntimeError("R2 round trip returned different bytes")
+    print(f"r2       round trip OK on bucket '{bucket}'")
+    return {"ok": True}
+
+
+@app.function(image=image, secrets=[secrets], gpu="L4", timeout=60 * 10)
+def selftest_gpu():
+    """Prove demucs can actually reach the GPU, on the same config run_job uses.
+
+    Separate from `selftest` so the common check stays free; this one rents an
+    L4 for well under a minute. Catches a torch/CUDA mismatch here rather than
+    after a real job has already paid to download a track.
+
+    Run with:  modal run modal/separate.py::selftest_gpu
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available inside the GPU container")
+    print(f"torch {torch.__version__} on {torch.cuda.get_device_name(0)}")
+
+    # Load the model demucs would load, and push a tensor through the device,
+    # so this fails on a broken CUDA build rather than passing on a bare import.
+    from demucs.pretrained import get_model
+
+    model = get_model("htdemucs")
+    model.to("cuda")
+    x = torch.zeros(1, 2, 44100 * 2, device="cuda")
+    print(f"model loaded: {model.__class__.__name__}, sources={model.sources}")
+    print(f"tensor on {x.device}, sum={float(x.sum())}")
+    return {"ok": True, "gpu": torch.cuda.get_device_name(0)}
+
+
 @app.function(image=image, secrets=[secrets], timeout=60)
 @modal.fastapi_endpoint(method="POST")
 def submit(payload: dict, request: Request):

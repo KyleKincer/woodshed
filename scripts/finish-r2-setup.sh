@@ -33,17 +33,23 @@ npx wrangler r2 bucket create "$BUCKET" 2>&1 | tail -3 || true
 # Without this the browser can neither PUT an upload nor GET a stem, and the
 # failure shows up as an opaque CORS error rather than anything actionable.
 echo "→ Applying CORS policy for ${APP_ORIGIN}"
+# R2's own CORS schema — a { "rules": [...] } object, not the S3-style array
+# of PascalCase keys. wrangler rejects the S3 shape outright.
 CORS_FILE="$(mktemp -t r2cors).json"
 cat > "$CORS_FILE" <<JSON
-[
-  {
-    "AllowedOrigins": ["${APP_ORIGIN}"],
-    "AllowedMethods": ["GET", "PUT", "HEAD"],
-    "AllowedHeaders": ["content-type"],
-    "ExposeHeaders": ["content-length"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["${APP_ORIGIN}"],
+        "methods": ["GET", "PUT", "HEAD"],
+        "headers": ["content-type"]
+      },
+      "exposeHeaders": ["content-length"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}
 JSON
 npx wrangler r2 bucket cors set "$BUCKET" --file "$CORS_FILE" --force 2>&1 | tail -5 || {
   echo "⚠ Could not set CORS via wrangler. Paste this in the dashboard"
