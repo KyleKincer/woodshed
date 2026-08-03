@@ -3,7 +3,7 @@
 // electron-builder `afterPack` hook: give the macOS bundle a valid ad-hoc
 // signature — the fallback for builds made without an Apple Developer ID.
 //
-// Why this exists: with no certificate available, electron-builder.js sets
+// Why this exists: with no certificate available, electron-builder.cjs sets
 // `mac.identity: null` and electron-builder skips signing. But skipping isn't
 // neutral — the packaged .app still carries the *stock Electron binary's* linker
 // signature, which no longer matches the bundle once it's been renamed and
@@ -24,7 +24,7 @@ const { execFileSync, spawnSync } = require('child_process');
 exports.default = async function adhocSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
 
-  // `identity: null` is electron-builder.js's signal that no certificate was
+  // `identity: null` is electron-builder.cjs's signal that no certificate was
   // available. Anything else means it's about to sign for distribution, and an
   // ad-hoc pass now would be pointless at best: afterPack runs *before*
   // electron-builder signs, so this signature would just be overwritten. Bail

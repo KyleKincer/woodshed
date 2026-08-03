@@ -59,7 +59,7 @@ if [ "$clean" = true ]; then
   rm -rf dist
 fi
 
-# Signing: electron-builder.js picks the path. With no CSC_LINK/CSC_NAME in the
+# Signing: electron-builder.cjs picks the path. With no CSC_LINK/CSC_NAME in the
 # environment — the normal case here — it sets `mac.identity: null` and
 # scripts/adhoc-sign.js applies an ad-hoc signature, which is what makes the
 # built app launchable at all on Apple Silicon. Local builds aren't quarantined,

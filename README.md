@@ -184,7 +184,7 @@ npm run dist:linux    # .AppImage (run on Linux)
 ## Signing
 
 macOS packaging takes one of two paths, decided by whether an Apple Developer ID
-is available. [`electron-builder.js`](electron-builder.js) makes that call once
+is available. [`electron-builder.cjs`](electron-builder.cjs) makes that call once
 and everything else follows from it.
 
 **Notarized** (needs the secrets below). electron-builder signs with the

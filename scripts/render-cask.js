@@ -14,7 +14,7 @@
 // Worth knowing why the cask needs a notarized app at all: Homebrew quarantines
 // cask-installed apps by default (`cask_opts_quarantine?` returns true unless
 // you pass --no-quarantine), so `brew install --cask woodshed` hits the same
-// Gatekeeper wall as a browser download. See electron-builder.js.
+// Gatekeeper wall as a browser download. See electron-builder.cjs.
 
 const fs = require('fs');
 const path = require('path');

@@ -82,7 +82,7 @@ jobs:
     # reads CSC_LINK as the *Windows* signing certificate too, so letting it
     # reach the win job would have it try to sign the NSIS installer with a
     # Developer ID certificate. Secrets that aren't configured arrive as empty
-    # strings, which electron-builder.js and the checks below read as absent.
+    # strings, which electron-builder.cjs and the checks below read as absent.
     env:
       CSC_LINK: ${{ startsWith(matrix.target, 'mac') && secrets.MAC_CSC_LINK || '' }}
       CSC_KEY_PASSWORD: ${{ startsWith(matrix.target, 'mac') && secrets.MAC_CSC_KEY_PASSWORD || '' }}
@@ -148,13 +148,17 @@ jobs:
             exit 1
           fi
 
-      # electron-builder.js reads the job's env and picks its own path: with
+      # electron-builder.cjs reads the job's env and picks its own path: with
       # CSC_LINK it imports the certificate, signs under the hardened runtime,
       # then notarizes and staples the ticket. Without it, signing is skipped and
       # scripts/adhoc-sign.js applies an ad-hoc signature instead — skipping is
       # not neutral, because the renamed Electron binary's stale linker
       # signature would otherwise make macOS call the app "damaged" (see v1.0.0).
+      # Explicit bash on all four runners. Windows would otherwise use pwsh,
+      # where the surrounding diagnostics behave differently enough to send you
+      # chasing the wrong problem.
       - name: Build ${{ matrix.target }}
+        shell: bash
         run: npx --no-install electron-builder ${{ matrix.builder_args }} --publish never
 
       # Catch a bundle Gatekeeper would reject here rather than in someone's

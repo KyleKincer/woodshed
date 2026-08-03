@@ -17,8 +17,16 @@
 // Keeping that fork here means the release workflow, build-local.sh and the
 // signing hook all inherit one decision instead of each re-deriving it.
 //
-// Careful: electron-builder reads this file only when package.json has no
-// "build" key — package.json wins outright and silently. Don't put one back.
+// Two naming traps, both of which cost a CI run to find:
+//
+//   * electron-builder reads this file only when package.json has no "build"
+//     key — package.json wins outright and silently.
+//   * The extension must stay `.cjs`. Named `electron-builder.js`, this file
+//     shadows the CLI on Windows: `.JS` is in the default PATHEXT, so
+//     `npx electron-builder` resolves the config in the working directory
+//     instead of the real binary, runs it with node, and exits 0 having built
+//     nothing. A silent green Windows build that produces no installer.
+//     `.cjs` is in electron-builder's discovery list but not in PATHEXT.
 
 // How a certificate reaches us: CI hands electron-builder a base64 .p12 in
 // CSC_LINK (opened with CSC_KEY_PASSWORD); locally, CSC_NAME names an identity
