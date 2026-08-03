@@ -188,11 +188,13 @@ is available. [`electron-builder.cjs`](electron-builder.cjs) makes that call onc
 and everything else follows from it.
 
 **Notarized** (needs the secrets below). electron-builder signs with the
-Developer ID certificate under the hardened runtime, uploads the bundle to
-Apple's notary service, and staples the resulting ticket into the app. Downloads
-open on a plain double-click, and `brew install --cask` works — Homebrew
-quarantines cask apps by default, so it needs notarization just as much as a
-browser download does.
+Developer ID certificate under the hardened runtime, notarizes the app and
+staples the ticket into it; the workflow then signs and notarizes the `.dmg`
+around it. Both halves matter — Gatekeeper assesses the disk image when it's
+double-clicked to mount, so notarizing only the app leaves the download itself
+warning. Downloads then open on a plain double-click, and `brew install --cask`
+works — Homebrew quarantines cask apps by default, so it needs notarization just
+as much as a browser download does.
 
 **Ad-hoc** (no secrets). [`scripts/adhoc-sign.js`](scripts/adhoc-sign.js) applies
 a `codesign --sign -` signature instead. Builds you make yourself run with no
