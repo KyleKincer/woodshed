@@ -28,7 +28,11 @@ function wireViewControls() {
   const ls = document.getElementById('layout-seg');
   const sync = () => {
     gs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.group === view.group));
-    ls.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
+    ls.querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.layout === view.layout;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
   };
   gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter()); }));
   ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter()); }));
