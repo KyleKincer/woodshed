@@ -242,11 +242,16 @@ function listRow(vm) {
 
 // Job failures arrive as whatever Modal raised — tool names, exit codes and a
 // tail of stderr. None of that means anything to someone who just wanted a
-// song split, so map the ones we know about and swallow the rest.
+// song split, so the card shows a plain sentence. The raw text is never
+// dropped: it stays in the card's tooltip and goes to the console once, or a
+// failure that needs fixing in the backend has nothing left to debug it with.
 function friendlyError(msg) {
   const raw = String(msg || '');
-  if (/Spotify/i.test(raw)) return 'Couldn’t get this Spotify track. Try a YouTube link instead.';
+  // YouTube's bot check. Nothing the user did wrong and often not repeatable —
+  // separation runs from a datacenter IP, which YouTube challenges.
+  if (/not a bot|sign in to confirm/i.test(raw)) return 'YouTube blocked the download. Try again, or paste a YouTube link directly.';
   if (/no audio could be downloaded|could not resolve/i.test(raw)) return 'Couldn’t download audio. Check the link and try again.';
+  if (/Spotify/i.test(raw)) return 'Couldn’t get this Spotify track. Try a YouTube link instead.';
   if (/produced no stems/i.test(raw)) return 'No stems were produced. Try a different quality preset.';
   if (/no stems to analyse/i.test(raw)) return 'This song needs stems before beats can be detected.';
   if (/rejected the job|unauthorized|is not set on this deployment/i.test(raw)) return 'Processing is unavailable right now. Try again in a minute.';
@@ -255,9 +260,18 @@ function friendlyError(msg) {
   return first ? first.slice(0, 80) : 'Something went wrong while processing. Try again.';
 }
 
+// Renders re-run on every subscription tick, so log each failure once.
+const loggedErrors = new Set();
+function logRawError(key, raw) {
+  if (!raw || loggedErrors.has(key)) return;
+  loggedErrors.add(key);
+  console.warn(`[woodshed] job ${key} failed:\n${raw}`);
+}
+
 function overlayHtml(p) {
   if (p.error) {
-    return `<div class="card-proc error">
+    logRawError(p.jobId, p.error);
+    return `<div class="card-proc error" title="${esc(p.error)}">
       <div class="cp-title">Failed</div>
       <div class="cp-sub">${esc(friendlyError(p.error))}</div>
       <button class="cp-btn" data-dismiss>Dismiss</button>
@@ -275,7 +289,8 @@ function overlayHtml(p) {
 // Compact, inline progress for list rows.
 function procInlineHtml(p) {
   if (p.error) {
-    return `<div class="proc-inline error"><span class="cp-title">Failed</span><button class="cp-btn" data-dismiss>Dismiss</button></div>`;
+    logRawError(p.jobId, p.error);
+    return `<div class="proc-inline error" title="${esc(p.error)}"><span class="cp-title">Failed</span><button class="cp-btn" data-dismiss>Dismiss</button></div>`;
   }
   const pct = Math.round(p.percent || 0);
   return `<div class="proc-inline">
