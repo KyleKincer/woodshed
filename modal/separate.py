@@ -692,7 +692,20 @@ def _probe_youtube(target: str, attempts: int, clients: str | None) -> dict:
 
 # Candidate client sets. android_vr is in yt-dlp's default rotation and is the
 # one that gets bot-checked; the others need a PO token, which bgutil mints.
-CLIENT_CANDIDATES = [None, "web_safari", "mweb", "tv", "web_safari,mweb,tv"]
+# The embedded and mobile-app clients are here because they authenticate
+# differently from the web ones — a sweep that only walks web variants tests one
+# idea five times.
+CLIENT_CANDIDATES = [
+    None,
+    "web_safari",
+    "mweb",
+    "tv",
+    "tv_embedded",
+    "web_embedded",
+    "web_creator",
+    "ios",
+    "android",
+]
 
 
 @app.function(image=image, secrets=[secrets], timeout=60 * 30)
