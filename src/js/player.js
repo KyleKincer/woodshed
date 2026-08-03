@@ -1,8 +1,16 @@
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
+import * as backend from './backend.js';
+import { codecErrorMessage, isDecodeError } from './stemcache.js';
 
 const TIME_SIGS = ['4/4', '3/4', '2/4', '5/4', '6/4', '7/4', '6/8', '9/8', '12/8', '5/8', '7/8'];
+const GRID_STORAGE_KEY = 'ws.grid';
+const GRID_DIVISIONS = [
+  { value: 1, label: 'Beat' },
+  { value: 2, label: '1/2 beat' },
+  { value: 4, label: '1/4 beat' },
+];
 
 const STEM_COLOR_VAR = {
   drums: '--drums', bass: '--bass', vocals: '--vocals', other: '--other',
@@ -31,6 +39,13 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+function loadGridSettings() {
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem(GRID_STORAGE_KEY) || '{}'); }
+  catch {}
+  const division = GRID_DIVISIONS.some((d) => d.value === raw.division) ? raw.division : 1;
+  return { visible: raw.visible !== false, snap: raw.snap === true, division };
+}
 
 let engine = null;
 let metronome = null;
@@ -54,16 +69,44 @@ export async function openPlayer(song, onBack) {
   root.innerHTML = `<div class="loading"><div class="spinner"></div><p style="margin-top:14px">Loading stems…</p></div>`;
 
   engine = new MultitrackEngine();
-  const stems = song.stems.map((s) => ({ name: s.name, url: window.api.mediaUrl(song.id, s.file), color: colorFor(s.name) }));
 
+  // Stems and cover live in R2; resolve every key to a signed URL in one call.
+  const keys = song.stems.map((s) => s.key).concat(song.coverKey ? [song.coverKey] : []);
+  let urls;
+  try { urls = await backend.signKeys(keys); }
+  catch (e) { root.innerHTML = `<div class="loading"><p>Couldn't reach storage: ${escapeHtml(e.message)}</p></div>`; return; }
+
+  const stems = song.stems.map((s) => ({
+    name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
+  }));
+  const unresolved = stems.filter((s) => !s.url).map((s) => s.name);
+  if (unresolved.length) {
+    root.innerHTML = `<div class="loading"><p>Missing stem audio for: ${escapeHtml(unresolved.join(', '))}.<br>Try reprocessing this song.</p></div>`;
+    return;
+  }
+
+  const progressEl = root.querySelector('.loading p');
   let info;
-  try { info = await engine.loadStems(stems); }
-  catch (e) { root.innerHTML = `<div class="loading"><p>Couldn't load audio: ${e.message}</p></div>`; return; }
+  try {
+    info = await engine.loadStems(stems, (done, total, bytes) => {
+      if (!progressEl) return;
+      const mb = (n) => (n / 1048576).toFixed(1);
+      progressEl.textContent = bytes.total
+        ? `Loading stems… ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
+        : `Loading stems… ${done}/${total}`;
+    });
+  } catch (e) {
+    const msg = isDecodeError(e) ? codecErrorMessage : `Couldn't load audio: ${e.message}`;
+    root.innerHTML = `<div class="loading"><p style="max-width:52ch;line-height:1.5">${escapeHtml(msg)}</p></div>`;
+    return;
+  }
 
   const duration = info.duration;
   const view = { start: 0, end: duration }; // visible time window
+  const grid = loadGridSettings();
 
-  const cover = song.thumb ? `style="background-image:url('${window.api.mediaUrl(song.id, song.thumb)}')"` : '';
+  const coverUrl = song.coverKey ? urls[song.coverKey] : null;
+  const cover = coverUrl ? `style="background-image:url('${coverUrl}')"` : '';
   const overviewOpen = localStorage.getItem('ws.overview') === '1';
   root.innerHTML = `
     <div class="player">
@@ -72,7 +115,7 @@ export async function openPlayer(song, onBack) {
         <div class="pt-cover" ${cover}></div>
         <div class="pt-meta">
           <div class="ptitle">${escapeHtml(song.title)}</div>
-          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems</div>
+          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems · ${song.quality?.model || ''}</div>
         </div>
         <div class="pt-spacer"></div>
         <button class="toggle-btn ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle overview / minimap">Overview</button>
@@ -133,11 +176,21 @@ export async function openPlayer(song, onBack) {
         </div>
 
         <div class="t-divider"></div>
+        <div class="t-group grid-controls" title="Beat grid">
+          <span class="t-label">Grid</span>
+          <button class="toggle-btn sm" id="grid-toggle" title="Show beat grid (G)">On</button>
+          <select id="grid-division" title="Grid subdivision">
+            ${GRID_DIVISIONS.map((d) => `<option value="${d.value}">${d.label}</option>`).join('')}
+          </select>
+          <button class="toggle-btn sm" id="grid-snap" title="Snap seeks and loop edits to the grid (S)">Snap</button>
+        </div>
+
+        <div class="t-divider"></div>
         <button class="toggle-btn sm" id="metro-btn" title="Metronome (M)">♩ Metro</button>
 
         <div class="t-spacer"></div>
         <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">⟲ Mix</button>
-        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · M metronome · 1–9 mute · 0 reset">?</button>
+        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · G grid · S snap · M metronome · 1–9 mute · 0 reset">?</button>
       </div>
 
       <div class="metro-pop hidden" id="metro-pop">
@@ -239,6 +292,60 @@ export async function openPlayer(song, onBack) {
   // Beat grid + tempo-change markers over the visible window.
   const gridCanvas = document.getElementById('grid-canvas');
   const tempoMarkers = document.getElementById('tempo-markers');
+  function shouldSnapToGrid() { return grid.visible && grid.snap && metronome?.beats?.length; }
+  function persistGridSettings() {
+    localStorage.setItem(GRID_STORAGE_KEY, JSON.stringify(grid));
+  }
+  function gridTicksForView(t0, t1) {
+    if (!metronome?.beats?.length) return [];
+    const ticks = [];
+    const div = Math.max(1, grid.division | 0);
+    const beats = metronome.beats;
+    for (let i = 0; i < beats.length; i++) {
+      const b = beats[i];
+      if (b.time >= t0 && b.time <= t1) ticks.push({ time: b.time, downbeat: b.downbeat, beat: b });
+      const next = beats[i + 1];
+      if (!next || div === 1) continue;
+      for (let k = 1; k < div; k++) {
+        const t = b.time + ((next.time - b.time) * k) / div;
+        if (t >= t0 && t <= t1) ticks.push({ time: t, subdivision: true });
+      }
+    }
+    return ticks.sort((a, b) => a.time - b.time);
+  }
+  function snapTime(t) {
+    const raw = clamp(t, 0, duration);
+    if (!shouldSnapToGrid()) return raw;
+    const beats = metronome.beats;
+    let lo = 0, hi = beats.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (beats[mid].time < raw) lo = mid + 1;
+      else hi = mid;
+    }
+    const candidates = [];
+    const addInterval = (i) => {
+      const a = beats[i], b = beats[i + 1];
+      if (!a) return;
+      candidates.push(a.time);
+      if (!b) return;
+      candidates.push(b.time);
+      const div = Math.max(1, grid.division | 0);
+      for (let k = 1; k < div; k++) candidates.push(a.time + ((b.time - a.time) * k) / div);
+    };
+    addInterval(lo - 1);
+    addInterval(lo);
+    if (lo > 0) candidates.push(beats[lo - 1].time);
+    if (beats[lo]) candidates.push(beats[lo].time);
+    let best = raw, dist = Infinity;
+    for (const c of candidates) {
+      const d = Math.abs(c - raw);
+      if (d < dist) { best = c; dist = d; }
+    }
+    return clamp(best, 0, duration);
+  }
+  function seekTo(t) { engine.seek(snapTime(t)); }
+  function tipText(t) { return shouldSnapToGrid() ? `${fmt2(t)} grid` : fmt2(t); }
   function drawGrid() {
     const dpr = window.devicePixelRatio || 1;
     const w = timeline.clientWidth, h = timeline.clientHeight;
@@ -247,15 +354,17 @@ export async function openPlayer(song, onBack) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     tempoMarkers.innerHTML = '';
-    if (!metronome || !metronome.enabled) return;
-    for (const b of metronome.beatsForView(view.start, view.end)) {
-      const x = timeToX(b.time);
-      const sel = beatEditing && b === selectedBeat;
-      ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)' : b.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
-      ctx.lineWidth = sel ? 2 : b.downbeat ? 1.5 : 1;
+    if (!grid.visible || !metronome) return;
+    for (const tick of gridTicksForView(view.start, view.end)) {
+      const x = timeToX(tick.time);
+      const sel = beatEditing && tick.beat && tick.beat === selectedBeat;
+      ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)'
+        : tick.subdivision ? 'rgba(255,255,255,0.045)'
+          : tick.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = sel ? 2 : tick.downbeat ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
-      if (beatEditing) { // grab handle at the top of each beat
-        ctx.fillStyle = sel ? '#fff' : b.downbeat ? 'rgba(124,91,255,0.9)' : 'rgba(255,255,255,0.4)';
+      if (beatEditing && tick.beat) { // grab handle at the top of each beat
+        ctx.fillStyle = sel ? '#fff' : tick.downbeat ? 'rgba(124,91,255,0.9)' : 'rgba(255,255,255,0.4)';
         ctx.fillRect(x - 3, 0, 6, 6);
       }
     }
@@ -353,6 +462,34 @@ export async function openPlayer(song, onBack) {
   document.getElementById('zoom-out').onclick = () => zoomAt((view.start + view.end) / 2, 2);
   document.getElementById('zoom-fit').onclick = fit;
 
+  const gridToggle = document.getElementById('grid-toggle');
+  const gridSnap = document.getElementById('grid-snap');
+  const gridDivision = document.getElementById('grid-division');
+  function refreshGridUI() {
+    gridToggle.textContent = grid.visible ? 'On' : 'Off';
+    gridToggle.classList.toggle('on', grid.visible);
+    gridSnap.classList.toggle('on', grid.snap && grid.visible);
+    gridSnap.disabled = !grid.visible;
+    gridDivision.disabled = !grid.visible;
+    gridDivision.value = String(grid.division);
+    playhead.classList.toggle('snap-on', shouldSnapToGrid());
+  }
+  gridToggle.onclick = () => {
+    grid.visible = !grid.visible;
+    if (!grid.visible) grid.snap = false;
+    refreshGridUI(); drawGrid(); persistGridSettings();
+  };
+  gridSnap.onclick = () => {
+    if (!grid.visible) return;
+    grid.snap = !grid.snap;
+    refreshGridUI(); drawGrid(); persistGridSettings();
+  };
+  gridDivision.onchange = () => {
+    grid.division = parseInt(gridDivision.value, 10) || 1;
+    refreshGridUI(); drawGrid(); persistGridSettings();
+  };
+  refreshGridUI();
+
   // Wheel: zoom at cursor; shift / horizontal = pan.
   interact.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -377,13 +514,14 @@ export async function openPlayer(song, onBack) {
     if (drag || beatDrag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
-    const t = xToTime(x);
+    const rawT = xToTime(x);
+    const t = snapTime(rawT);
     if (beatEditing) {
-      const near = metronome.nearestBeat(t, (8 / waveW()) * span());
+      const near = metronome.nearestBeat(rawT, (8 / waveW()) * span());
       interact.style.cursor = near ? 'grab' : 'copy';
       timeTip.style.display = 'block';
       timeTip.style.left = clamp(x, 0, waveW()) + 'px';
-      timeTip.textContent = fmt2(t);
+      timeTip.textContent = fmt2(rawT);
       return;
     }
     // hover cursor + time tooltip
@@ -395,18 +533,19 @@ export async function openPlayer(song, onBack) {
     }
     interact.style.cursor = cursor;
     timeTip.style.display = 'block';
-    timeTip.style.left = clamp(x, 0, waveW()) + 'px';
-    timeTip.textContent = fmt2(t);
+    timeTip.style.left = clamp(shouldSnapToGrid() ? timeToX(t) : x, 0, waveW()) + 'px';
+    timeTip.textContent = tipText(t);
   });
   interact.addEventListener('mouseleave', () => { if (!drag) timeTip.style.display = 'none'; });
 
   interact.addEventListener('mousedown', (e) => {
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
-    const t = xToTime(x);
+    const rawT = xToTime(x);
+    const t = snapTime(rawT);
     if (beatEditing) {
-      const near = metronome.nearestBeat(t, (8 / waveW()) * span());
-      beatDrag = near ? { obj: near, startX: x, moved: false } : { obj: null, addAt: t, startX: x, moved: false };
+      const near = metronome.nearestBeat(rawT, (8 / waveW()) * span());
+      beatDrag = near ? { obj: near, startX: x, moved: false } : { obj: null, addAt: rawT, startX: x, moved: false };
       if (near) selectBeat(near);
       return;
     }
@@ -439,11 +578,11 @@ export async function openPlayer(song, onBack) {
     if (!drag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
-    const t = clamp(xToTime(x), 0, duration);
+    const t = snapTime(xToTime(x));
     if (Math.abs(x - drag.startX) > 3) drag.moved = true;
     timeTip.style.display = 'block';
-    timeTip.style.left = clamp(x, 0, waveW()) + 'px';
-    timeTip.textContent = fmt2(t);
+    timeTip.style.left = clamp(shouldSnapToGrid() ? timeToX(t) : x, 0, waveW()) + 'px';
+    timeTip.textContent = tipText(t);
 
     if (drag.mode === 'edgeA') {
       engine.setLoop(true, Math.min(t, engine.loop.b - 0.02), engine.loop.b);
@@ -471,7 +610,7 @@ export async function openPlayer(song, onBack) {
     }
     if (!drag) return;
     // A click (no drag) always seeks — even inside the loop or on a handle.
-    if (!drag.moved) engine.seek(drag.startT);
+    if (!drag.moved) seekTo(drag.startT);
     drag = null;
     timeTip.style.display = 'none';
   }
@@ -509,7 +648,7 @@ export async function openPlayer(song, onBack) {
     if (!mdrag) return;
     if (!mdrag.moved && mdrag.mode === 'seek') {
       const r = overview.getBoundingClientRect();
-      engine.seek(((clamp(e.clientX - r.left, 0, overview.clientWidth)) / overview.clientWidth) * duration);
+      seekTo(((clamp(e.clientX - r.left, 0, overview.clientWidth)) / overview.clientWidth) * duration);
     }
     mdrag = null;
   }
@@ -545,8 +684,8 @@ export async function openPlayer(song, onBack) {
     updateLoopOverlay();
   };
   document.getElementById('loop-clear').onclick = () => { engine.setLoop(false, 0, duration); updateLoopOverlay(); };
-  document.getElementById('set-a').onclick = () => { const b = engine.loop.b > engine.getPosition() ? engine.loop.b : duration; engine.setLoop(true, engine.getPosition(), b); updateLoopOverlay(); };
-  document.getElementById('set-b').onclick = () => { const a = engine.loop.a < engine.getPosition() ? engine.loop.a : 0; engine.setLoop(true, a, engine.getPosition()); updateLoopOverlay(); };
+  document.getElementById('set-a').onclick = () => { const t = snapTime(engine.getPosition()); const b = engine.loop.b > t ? engine.loop.b : duration; engine.setLoop(true, t, b); updateLoopOverlay(); };
+  document.getElementById('set-b').onclick = () => { const t = snapTime(engine.getPosition()); const a = engine.loop.a < t ? engine.loop.a : 0; engine.setLoop(true, a, t); updateLoopOverlay(); };
   document.querySelectorAll('.nudge').forEach((btn) => {
     btn.onclick = () => {
       const d = parseFloat(btn.dataset.d);
@@ -566,8 +705,8 @@ export async function openPlayer(song, onBack) {
   lrB.classList.add('jumpable');
   lrA.title = 'Jump playhead to A (Home)';
   lrB.title = 'Jump playhead to B (End)';
-  lrA.onclick = () => { if (loopActive()) engine.seek(engine.loop.a); };
-  lrB.onclick = () => { if (loopActive()) engine.seek(engine.loop.b); };
+  lrA.onclick = () => { if (loopActive()) seekTo(engine.loop.a); };
+  lrB.onclick = () => { if (loopActive()) seekTo(engine.loop.b); };
 
   // Speed
   const speed = document.getElementById('speed');
@@ -607,7 +746,7 @@ export async function openPlayer(song, onBack) {
   mSig.innerHTML = TIME_SIGS.map((s) => `<option value="${s}">${s}</option>`).join('');
 
   let saveTimer = null;
-  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => window.api.saveTempo(song.id, metronome.serialize()), 400); }
+  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => backend.saveTempo(song.id, metronome.serialize()), 400); }
   const activeSection = () => metronome.sectionAt(engine.getPosition());
   const metroActiveIndex = () => { const t = engine.getPosition(); let idx = 0; metronome.map.forEach((s, i) => { if (s.t <= t + 1e-6) idx = i; }); return idx; };
 
@@ -690,23 +829,25 @@ export async function openPlayer(song, onBack) {
     tapReset = setTimeout(() => { taps = []; }, 2000);
   };
 
-  // Auto-detect (BeatNet). First use provisions an isolated env (one-time DL),
-  // so we stream the install/detect log into the status line.
+  // Auto-detect (BeatNet), now a Modal job. The first run of the day pays a
+  // container cold start, so the status line tracks the job's own messages.
   const mDetect = document.getElementById('m-detect');
   const mDetectStatus = document.getElementById('m-detect-status');
   const mDetectClear = document.getElementById('m-detect-clear');
   let detecting = false;
-  let offDetectLog = null;
   mDetect.onclick = async () => {
     if (detecting) return;
     detecting = true;
     mDetect.disabled = true;
     mDetectStatus.textContent = 'Starting…';
-    offDetectLog = window.api.on('runtime:log', ({ line }) => { mDetectStatus.textContent = line.slice(0, 70); });
-    const offProg = window.api.on('metro:detectProgress', ({ songId, message }) => { if (songId === song.id) mDetectStatus.textContent = message; });
-    const res = await window.api.detectBeats(song.id);
-    if (offDetectLog) { offDetectLog(); offDetectLog = null; }
-    offProg();
+    let res;
+    try {
+      res = await backend.detectBeats(song.id, (msg) => {
+        mDetectStatus.textContent = String(msg).slice(0, 70);
+      });
+    } catch (e) {
+      res = { error: String(e.message || e) };
+    }
     detecting = false;
     mDetect.disabled = false;
     if (res.error) { mDetectStatus.textContent = '⚠ ' + res.error.split('\n')[0].slice(0, 64); return; }
@@ -769,6 +910,7 @@ export async function openPlayer(song, onBack) {
       const idx = metroActiveIndex();
       if (idx !== frame._lastIdx) { frame._lastIdx = idx; refreshMetroUI(); }
     }
+    playhead.classList.toggle('snap-on', shouldSnapToGrid());
     engine.tickEnd();
     rafId = requestAnimationFrame(frame);
   }
@@ -776,21 +918,23 @@ export async function openPlayer(song, onBack) {
 
   // ---- keyboard ----
   keyHandler = (e) => {
-    if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+    if ((e.target.tagName === 'INPUT' && e.target.type !== 'range') || e.target.tagName === 'SELECT') return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
     if (e.code === 'Space') { e.preventDefault(); doPlayPause(); }
     else if (k.toLowerCase() === 'm') metroBtn.click();
-    else if (e.code === 'ArrowLeft') engine.seek(engine.getPosition() - (e.shiftKey ? 1 : 5));
-    else if (e.code === 'ArrowRight') engine.seek(engine.getPosition() + (e.shiftKey ? 1 : 5));
-    else if (k === ',') engine.seek(engine.getPosition() - (e.shiftKey ? 0.01 : 0.05));
-    else if (k === '.') engine.seek(engine.getPosition() + (e.shiftKey ? 0.01 : 0.05));
-    else if (k === '[') { engine.setLoop(true, engine.getPosition(), Math.max(engine.loop.b, engine.getPosition() + 0.1)); setLoopBtn(true); updateLoopOverlay(); }
-    else if (k === ']') { engine.setLoop(true, Math.min(engine.loop.a, engine.getPosition() - 0.1), engine.getPosition()); setLoopBtn(true); updateLoopOverlay(); }
+    else if (k.toLowerCase() === 'g') gridToggle.click();
+    else if (k.toLowerCase() === 's') gridSnap.click();
+    else if (e.code === 'ArrowLeft') seekTo(engine.getPosition() - (e.shiftKey ? 1 : 5));
+    else if (e.code === 'ArrowRight') seekTo(engine.getPosition() + (e.shiftKey ? 1 : 5));
+    else if (k === ',') seekTo(engine.getPosition() - (e.shiftKey ? 0.01 : 0.05));
+    else if (k === '.') seekTo(engine.getPosition() + (e.shiftKey ? 0.01 : 0.05));
+    else if (k === '[') { const t = snapTime(engine.getPosition()); engine.setLoop(true, t, Math.max(engine.loop.b, t + 0.1)); setLoopBtn(true); updateLoopOverlay(); }
+    else if (k === ']') { const t = snapTime(engine.getPosition()); engine.setLoop(true, Math.min(engine.loop.a, t - 0.1), t); setLoopBtn(true); updateLoopOverlay(); }
     else if (k.toLowerCase() === 'l') loopToggle.click();
-    else if (k === 'Home') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) engine.seek(engine.loop.a); }
-    else if (k === 'End') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) engine.seek(engine.loop.b); }
+    else if (k === 'Home') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) seekTo(engine.loop.a); }
+    else if (k === 'End') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) seekTo(engine.loop.b); }
     else if (k === '-' || k === '_') zoomAt(engine.getPosition(), 2);
     else if (k === '=' || k === '+') zoomAt(engine.getPosition(), 0.5);
     else if (k === '\\') fit();

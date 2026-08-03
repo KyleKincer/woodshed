@@ -1,121 +1,308 @@
-<img src="build/icon.png" alt="" width="92" align="right">
-
 # Woodshed
 
-A self-contained desktop app for **practicing along to songs**. Paste a YouTube
-link, Woodshed downloads the audio, splits it into stems with
-[Demucs](https://github.com/adefossez/demucs), and gives you a multitrack player
-with per-stem mute/solo, waveforms, A–B looping and speed control.
+A web app for **practicing along to songs**. Paste a link or drop a file,
+Woodshed splits it into stems with [Demucs](https://github.com/adefossez/demucs)
+on a cloud GPU, and gives you a multitrack player with per-stem mute/solo,
+waveforms, A–B looping, speed control and a beat-locked metronome.
 
-The default quality preset is the maximum-quality one (fine-tuned model, heavy
-shift averaging, 32-bit float output) — the same settings as the `yt-drumsplit`
-CLI script.
+Your library, stems, tempo maps and corrected beat tracks live in your account,
+so they follow you to any browser.
 
-Nothing to install by hand: ffmpeg ships with the app, and demucs, yt-dlp and
-spotdl are provisioned on first launch into a private
-[`uv`](https://github.com/astral-sh/uv)-managed Python environment. That's a
-one-time download of a few hundred MB, run entirely locally.
+## Architecture
 
-## Install
+| Piece | Runs on | Holds |
+| --- | --- | --- |
+| UI | Static Vite build (Cloudflare Pages / Vercel / Netlify) | — |
+| Auth | [Clerk](https://clerk.com) | Users, sessions |
+| Data + orchestration | [Convex](https://convex.dev) | Songs, jobs, settings; job dispatch |
+| Audio blobs | [Cloudflare R2](https://developers.cloudflare.com/r2/) | Stems, cover art, uploads |
+| Separation + beat detection | [Modal](https://modal.com) | Demucs (GPU), BeatNet (CPU) |
 
-Builds come from the
-[latest release](https://github.com/KyleKincer/woodshed/releases/latest).
+**Why R2 and not Convex file storage.** A song is tens of megabytes of stems
+and gets re-fetched on every play. Convex file storage bills egress
+(~$0.12/GB); R2 has none, at ~$0.015/GB-month of storage. Convex still holds
+all the metadata and does all the authorization — it just hands out signed R2
+URLs instead of the bytes.
 
-### macOS
+**Why Opus in WebM.** Demucs emits 16-bit WAV — about 144 MB for a 4-minute
+song across four stems. Measured on a real song, Opus at 192 kbps/stem brings
+that to **13%** of the original size. WebM rather than Ogg because Safari's
+`decodeAudioData` handles Opus in WebM (macOS 12+/iOS 15+) but not in Ogg. AAC
+was rejected: its encoder-delay priming samples shift playback a few
+milliseconds, which would drift against the beat grid.
 
-Via Homebrew:
+The encode is verified sample-aligned — subtracting an Opus round-trip from the
+source leaves only −40 dB of quantization noise, where an 8 ms offset would
+leave −12 dB. Stems stay locked to each other and to the click.
 
-```bash
-brew tap kylekincer/tap
-brew trust kylekincer/tap    # recent Homebrew requires this for third-party casks
-brew install --cask kylekincer/tap/woodshed
-```
+Set `format: flac` in Settings if you want lossless (~4× the size).
 
-(If `brew trust` isn't a command on your Homebrew, it's old enough not to need
-it — skip that line.)
-
-Or download the `.dmg` directly: `mac-arm64` for Apple Silicon, `mac-x64` for
-Intel.
-
-### Windows
-
-Download and run the `.exe`. It's an unsigned installer, so SmartScreen will
-warn — **More info → Run anyway**.
-
-### Linux
-
-Download the `.AppImage`, make it executable, and run it:
+## Setup
 
 ```bash
-chmod +x Woodshed-*.AppImage
-./Woodshed-*.AppImage
+npm install
+cp .env.local.example .env.local
 ```
 
-## Run from source
+### 1. Convex
 
 ```bash
-cd ~/src/woodshed
-npm install      # first time only
-npm start
+npx convex dev          # prompts login, creates a deployment, prints its URL
 ```
 
-Or use the `woodshed` shell alias (added to your `~/.zshrc`).
+Put the printed URL in `.env.local` as `VITE_CONVEX_URL`.
+
+### 2. Clerk
+
+1. Create an application at [clerk.com](https://clerk.com).
+2. **Configure → JWT Templates → New → Convex.** Leave the name as `convex` —
+   `convex/auth.config.ts` looks for exactly that.
+3. Copy the **Issuer** URL, and the publishable key from **API keys**.
+
+```bash
+echo 'VITE_CLERK_PUBLISHABLE_KEY=pk_test_...' >> .env.local
+npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev
+```
+
+### 3. Cloudflare R2
+
+Create a bucket (e.g. `woodshed`) and an API token with object read/write.
+
+```bash
+npx convex env set R2_BUCKET            woodshed
+npx convex env set R2_ENDPOINT          https://<account-id>.r2.cloudflarestorage.com
+npx convex env set R2_ACCESS_KEY_ID     ...
+npx convex env set R2_SECRET_ACCESS_KEY ...
+```
+
+The browser uploads originals straight to R2 with signed PUT URLs, so audio
+never passes through a Convex function.
+
+**You must also set a CORS policy on the bucket** — the browser both `PUT`s
+uploads and `GET`s stems cross-origin, so without this nothing loads and nothing
+uploads. In the Cloudflare dashboard, **R2 → your bucket → Settings → CORS
+policy**:
+
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:5173", "https://your-app.example.com"],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["content-type"],
+    "ExposeHeaders": ["content-length"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+`ExposeHeaders: content-length` is what lets the player show a real
+megabyte-count while a song downloads.
+
+### 4. Modal
+
+```bash
+pip install modal && modal setup
+```
+
+Create a Modal secret named `woodshed` holding `MODAL_SHARED_SECRET` (any long
+random string), plus the same four `R2_*` values as above. Then:
+
+```bash
+npm run modal:deploy
+```
+
+Modal prints a URL per endpoint. Register them, and the same shared secret, with
+Convex:
+
+```bash
+npx convex env set MODAL_SEPARATE_URL  https://<you>--woodshed-separate-submit.modal.run
+npx convex env set MODAL_BEATS_URL     https://<you>--woodshed-beats-submit.modal.run
+npx convex env set MODAL_SHARED_SECRET <the same random string>
+```
+
+The secret authenticates both directions: Convex → Modal on submit, and Modal →
+Convex on the progress/result callbacks.
+
+Verify the beat detector actually works before relying on it — its image
+installs BeatNet with `--no-deps` (BeatNet's metadata pins `numba==0.54.1`,
+which has no wheels past Python 3.9, while Modal's image builder no longer
+offers 3.9 at all). A green build only proves pip exited 0:
+
+```bash
+modal run modal/beats.py::selftest
+```
+
+That runs real DBN inference over a synthetic 120 BPM click and prints the
+detected beats.
+
+### 5. Run
+
+```bash
+npm run dev     # convex dev + vite, together
+```
+
+## Migrating an existing desktop library
+
+Brings over stems, cover art, tempo maps and hand-corrected beat tracks.
+
+```bash
+# Add the R2_* vars to .env.local first, then:
+node scripts/migrate-local.mjs --user user_2abc... --dry-run
+node scripts/migrate-local.mjs --user user_2abc...
+```
+
+Get the Clerk user id from **Clerk dashboard → Users**. `--dry-run` transcodes
+and reports the size change without uploading. The script is idempotent, so a
+partial run can be repeated safely. `--help` lists the rest of the options.
+
+Songs whose source was a local file path lose their "reprocess from source"
+ability (the cloud can't reach your old filesystem); everything else is kept.
+
+## Deploying
+
+Production runs on Vercel at **woodshed.kylekincer.com**, against a separate
+Convex production deployment. `vercel.json` drives the build:
+
+```
+npx convex deploy --cmd-url-env-var-name VITE_CONVEX_URL --cmd 'vite build'
+```
+
+That pushes the backend and builds the client against the same deployment, so
+the two can't drift. `VITE_CONVEX_URL` is named explicitly because `framework`
+is `null`, which leaves Convex nothing to infer the Vite convention from.
+
+`vercel deploy --prod` ships it. Two environment variables are set on the
+Vercel project (Production scope):
+
+| | |
+| --- | --- |
+| `CONVEX_DEPLOY_KEY` | Convex dashboard → Settings → Deploy Keys. No CLI for this. |
+| `VITE_CLERK_PUBLISHABLE_KEY` | The `pk_live_…` key from the Clerk **production** instance. |
+
+Everything else lives on the Convex production deployment
+(`npx convex env set --prod …`), mirroring the dev list.
+
+### Ordering traps
+
+- **Convex env vars must exist before the first push.** `auth.config.ts`
+  references `CLERK_JWT_ISSUER_DOMAIN`, and Convex statically requires every
+  env var named there to be set — a deploy fails outright otherwise, even
+  though nothing has run yet.
+- **Add the production origin to R2 CORS** before expecting playback. Stems are
+  fetched from R2 by the browser, so an unlisted origin fails every load.
+- **The `{"aud": "convex"}` claim does not clone** from the development Clerk
+  instance. Without it Convex rejects every request as unauthenticated, and the
+  app says "Not signed in" while Clerk shows you as signed in.
+
+### Clerk production instance
+
+A production instance serves auth from your own domain, which needs five CNAME
+records (`accounts`, `clerk`, `clk._domainkey`, `clk2._domainkey`, `clkmail`).
+`kylekincer.com` runs on Vercel nameservers, so they go in with
+`vercel dns add kylekincer.com <host> CNAME <target>`.
+
+Clerk issues TLS certificates for `clerk.` and `accounts.` only after it
+verifies those records — until then the app loads but every Clerk request fails
+with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`.
+
+Production instances also need **their own Google OAuth credentials**;
+development borrows Clerk's shared test ones. Until they're set, Clerk lists
+Google as "Setup required" and the "Continue with Google" button renders but
+fails — email sign-in is unaffected. To finish it: create an OAuth 2.0 Web
+client in Google Cloud Console with
+
+```
+Authorized redirect URI:  https://clerk.kylekincer.com/v1/oauth_callback
+```
+
+then paste the client ID and secret into **Clerk → SSO connections → Google →
+Use custom credentials**. If you'd rather not, disable the Google connection so
+the button stops appearing.
+
+### Preview deployments
+
+Vercel previews build against the **dev** Convex deployment rather than a
+per-branch one. Convex's per-branch preview deployments need a preview deploy
+key (dashboard-only) *and* a separate set of default environment variables;
+pointing previews at the dev deployment reuses the env vars that are already
+there, and for a single developer the isolation buys little.
+
+The tradeoff is real though: a branch that changes the schema pushes that
+schema to the deployment localhost is using. If that starts to hurt, switch
+`CONVEX_DEPLOY_KEY` (Preview scope) to a real preview key.
+
+Preview scope is configured with the `pk_test_` Clerk key, since production
+Clerk instances only serve their own domain while development instances accept
+any origin. `https://*.vercel.app` is in the bucket's CORS list so stems load
+from the generated preview URLs.
+
+Previews inherit Vercel's Deployment Protection, so opening one on a phone
+means signing in to Vercel in that browser first — or turning protection off
+for previews in the project settings.
+
+### CSP
+
+`index.html` ships no `<meta>` CSP — the real policy is a response header in
+`vercel.json`, which is where it can name your Clerk frontend API domain, your
+Convex deployment over both https and wss, and your R2 endpoint per
+environment.
+
+## Costs
+
+Roughly, for one user with ~100 songs:
+
+| | |
+| --- | --- |
+| Clerk | Free to 10k monthly users |
+| Convex | Free tier is ample for metadata; $25/mo if you outgrow it |
+| R2 | ~8 GB of Opus stems ≈ **$0.12/mo**, no egress charges |
+| Modal | ~$30/mo of free credits; see below |
+| Hosting | Free |
+
+GPU time is the only per-song cost, and it scales with the preset — Fast
+~$0.01, Balanced ~$0.05, Studio ~$0.22 (`htdemucs_ft` × 10 shifts is 40 full
+passes). The Add and Settings screens show the estimate. Studio is still the
+default, matching the desktop app, but Balanced is the better default now that
+passes cost money.
 
 ## Getting songs in
 
-Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
-
 - **Any link** — YouTube, SoundCloud, Bandcamp, Vimeo, a direct `.mp3` URL…
   anything [yt-dlp supports](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
-- **Spotify link** — Spotify audio is DRM-protected and can't be downloaded
-  directly; with `spotdl` installed, Woodshed reads the track's metadata and
-  fetches the closest-matching track from YouTube. (Without `spotdl` it falls
-  back to a title search.)
-- **Search text** — just type a song name; it grabs the top YouTube result.
-- **Local audio files** — drag them onto the window, or use **Choose files…**.
-  Supports mp3 / wav / flac / m4a / aac / ogg / opus / aiff / wma.
+- **Spotify link** — DRM-protected, so the title is resolved via oEmbed and the
+  closest YouTube match is fetched.
+- **Search text** — type a song name; it grabs the top YouTube result.
+- **Local audio files** — drag onto the window or use **Choose files…**.
+
+> **Heads-up on cloud downloads.** YouTube rate-limits and bot-challenges
+> datacenter IP ranges, so link-based adds will fail intermittently from Modal
+> in a way they never did from your laptop. Uploading files always works. If
+> link ingestion matters, the usual fixes are passing cookies to yt-dlp or
+> routing it through a residential proxy.
 
 ## Features
 
-- **Library** — every processed song with (square) cover art, stored locally.
-  Switch between **grid and list** layouts, and browse by **Songs / Albums /
-  Artists** (artist & album come from the source metadata or the file's tags).
-  Search, reprocess, rename, delete, or open the original source (the `⋯` menu).
-- **Add queue** — add songs while others process; live download + separation
-  progress bars; **cancel** any queued or in-progress job (the ✕ on its card);
-  failures show the (de-noised) error inline.
-- **Presets + custom** — Studio (max quality, default), Balanced, Fast, or fully
-  custom (model, shift averaging, overlap, output bit depth). Override per song
-  in the Add dialog, or set defaults in Settings.
-- **Stem layouts** — full band (drums · bass · vocals · other), the 6-stem model
-  (adds guitar + piano), or two-stem modes (e.g. drums + everything else).
+- **Library** — cover art, grid/list layouts, browse by Songs / Albums /
+  Artists, search, reprocess, rename, delete.
+- **Add queue** — add songs while others process, with live upload, download
+  and separation progress. Progress is server-side state, so it survives a
+  reload or switching devices mid-job.
+- **Presets** — Studio, Balanced, Fast, or custom (model, shifts, overlap),
+  each with a GPU cost estimate.
+- **Stem layouts** — full band, the 6-stem model (adds guitar + piano), or
+  two-stem modes.
 - **Player** — sample-locked multitrack playback:
-  - Per-track **mute**, **solo**, and **volume**.
-  - **Waveforms** per stem (dimmed when muted).
-  - **Zoom & pan** the waveforms (scroll to zoom at the cursor, shift-scroll to
-    pan) for precise placement, with an **overview minimap** below the stems
-    that shows the loop, playhead, and current zoom window (drag the bracket to
-    pan, drag its edges to zoom, click to seek).
-  - **A–B loop** with draggable edge handles: drag across the waveforms to set a
-    region, grab an edge to fine-tune, or drag the whole region. The transport
-    shows exact `A → B` times with ±0.05s nudge buttons.
-  - **Speed** control 0.5×–1.5× (varispeed — pitch changes with speed).
-  - Click a waveform or the overview to seek; the view auto-follows playback.
-  - **Metronome** (saved per song): set a tempo by typing BPM or **tapping**
-    along (the tap also aligns the downbeat), pick a time signature, accent the
-    downbeat, adjust volume, and optionally **count in** a bar before playback.
-    Add **tempo / time-signature changes at any point** ("Add at playhead") for
-    songs that speed up, slow down, or switch meter. Or **auto-detect** the
-    whole beat/downbeat track with [BeatNet](https://github.com/mjhydri/BeatNet)
-    ("Auto-detect beats") — handles tempo drift and meter changes automatically,
-    then **spot-correct** it ("Edit beats"): drag a beat to re-time it, click
-    empty space to add a missing beat, select + Delete a spurious one, toggle
-    downbeats (D), or shift the whole track.
-    A faint **beat grid** is drawn on the waveforms (brighter downbeats) and the
-    click stays locked to the audio at any playback speed and through loops.
-
-  > Auto-detect provisions its own small Python environment on first use (it
-  > needs `madmom`, which only runs on Python 3.9). One-time download.
+  - Per-track **mute**, **solo**, **volume**.
+  - **Waveforms** per stem, with zoom/pan and an overview minimap.
+  - **A–B loop** with draggable handles and ±0.05s nudge.
+  - **Speed** 0.5×–1.5× (varispeed).
+  - **Metronome** saved per song: tap or type a BPM, time signatures, accents,
+    count-in, and tempo/meter changes at any point. Or **auto-detect** the whole
+    beat track with [BeatNet](https://github.com/mjhydri/BeatNet), then
+    spot-correct it. A beat grid is drawn on the waveforms and the click stays
+    locked to the audio at any speed and through loops.
+- **Offline cache** — stems are cached per device after the first play, keyed by
+  their immutable storage key, so re-opening a song is instant and free.
 
 ### Keyboard shortcuts (in the player)
 
@@ -125,26 +312,10 @@ Several ways, all from the **＋ Add song** dialog (or drag-and-drop):
 | `←` / `→` | Seek ∓5s (hold `Shift` for 1s) |
 | `,` / `.` | Nudge playhead ∓0.05s (hold `Shift` for 0.01s) |
 | `[` / `]` | Set loop start / end at the playhead |
-| `Home` / `End` | Jump the playhead to loop A / B (or click the A/B times) |
+| `Home` / `End` | Jump the playhead to loop A / B |
 | `L` | Toggle A–B loop |
 | `M` | Open the metronome panel |
 | `−` / `=` | Zoom out / in (at the playhead) |
 | `\` | Fit (zoom out to the whole song) |
 | `1`–`9` | Mute / unmute that stem |
 | `0` | Reset the mixer |
-
-## Where data lives
-
-Stems, cover art, `library.json` and `settings.json` live in Electron's userData
-directory: `~/Library/Application Support/woodshed/`. Deleting a song removes its
-stem files too.
-
-> Note: 32-bit float WAV stems are large (~85 MB/min per stem). For a 4-minute
-> full-band song that's ~1.4 GB. Switch the output format to 24-bit WAV in
-> Settings → Custom to roughly halve that with no audible loss.
-
-## Development
-
-- [docs/building.md](docs/building.md) — building and running the packaged app
-- [docs/signing.md](docs/signing.md) — macOS signing and notarization
-- [docs/releasing.md](docs/releasing.md) — cutting a release, the Homebrew tap

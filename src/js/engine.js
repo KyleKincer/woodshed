@@ -2,6 +2,8 @@
 // per-track gain (mute/solo/volume), master seek, varispeed, and a seamless
 // A/B loop implemented via native AudioBufferSourceNode looping.
 
+import { fetchStem } from './stemcache.js';
+
 export class MultitrackEngine {
   constructor() {
     this.ctx = new AudioContext();
@@ -20,12 +22,31 @@ export class MultitrackEngine {
     this.onEnded = null;
   }
 
-  async loadStems(stems) {
+  /**
+   * @param {Array<{name,color,key,url}>} stems
+   * @param {(done:number,total:number,bytes:{loaded:number,total:number})=>void} [onProgress]
+   */
+  async loadStems(stems, onProgress) {
+    // Per-stem byte counters, summed so the UI can show one overall bar.
+    const bytes = stems.map(() => ({ loaded: 0, total: 0 }));
+    let decoded = 0;
+    const report = () =>
+      onProgress?.(decoded, stems.length, {
+        loaded: bytes.reduce((a, b) => a + b.loaded, 0),
+        total: bytes.reduce((a, b) => a + b.total, 0),
+      });
+
     const loaded = await Promise.all(
-      stems.map(async (s) => {
-        const res = await fetch(s.url);
-        const arr = await res.arrayBuffer();
+      stems.map(async (s, i) => {
+        const arr = await fetchStem(s.key, s.url, (l, t) => {
+          bytes[i] = { loaded: l, total: t || bytes[i].total };
+          report();
+        });
+        // decodeAudioData detaches the ArrayBuffer it is handed, so a cached
+        // buffer reused across stems would fail — each fetch returns its own.
         const buffer = await this.ctx.decodeAudioData(arr);
+        decoded++;
+        report();
         return { ...s, buffer };
       })
     );

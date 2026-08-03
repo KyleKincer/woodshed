@@ -19,8 +19,6 @@
   --piano: #4dd2c0;
   --radius: 12px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  --titlebar-h: 38px;
-  --shell-pad: 12px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,7 +34,7 @@ html, body {
 }
 
 #titlebar {
-  position: fixed; top: 0; left: 0; right: 0; height: var(--titlebar-h);
+  position: fixed; top: 0; left: 0; right: 0; height: 38px;
   -webkit-app-region: drag; z-index: 50;
 }
 
@@ -51,22 +49,25 @@ body { display: flex; }
   background: var(--bg-2);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  padding: calc(var(--titlebar-h) + var(--shell-pad)) 12px 14px;
+  padding: 46px 12px 16px;
   gap: 4px;
   transition: width .16s ease;
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 4px 10px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .logo { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .brand-name { font-weight: 700; font-size: 16px; letter-spacing: .3px; flex: 1; white-space: nowrap; overflow: hidden; }
+/* Edge-pill toggle: stays pinned to the border in both states, just rotates. */
 .sidebar-toggle {
-  position: absolute; top: calc(var(--titlebar-h) + 10px); right: -12px; z-index: 60;
+  position: absolute; top: 52px; right: -12px; z-index: 60;
   width: 24px; height: 24px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
   cursor: pointer; font-size: 13px; line-height: 1;
-  box-shadow: 0 2px 6px rgba(0,0,0,.35); transition: background .12s, color .12s;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35); opacity: 0; transition: opacity .12s, background .12s, color .12s;
 }
+#sidebar:hover .sidebar-toggle { opacity: 1; }
 .sidebar-toggle:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+body.sidebar-collapsed .sidebar-toggle { opacity: 1; } /* always visible when collapsed */
 .nav-btn {
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: none; color: var(--muted);
@@ -76,25 +77,16 @@ body { display: flex; }
 .nav-icon { width: 18px; text-align: center; opacity: .9; flex-shrink: 0; }
 .nav-btn:hover { background: var(--bg-3); color: var(--text); }
 .nav-btn.active { background: var(--bg-3); color: var(--text); }
-.sidebar-spacer { flex: 1; min-height: 12px; }
-.sidebar-footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.sidebar-footer .add-btn { flex: 1; min-width: 0; }
-.user-button {
-  width: 36px; height: 36px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; overflow: hidden;
-}
-.user-button:empty { display: none; }
-.user-button > * { max-width: 100%; max-height: 100%; }
-body.sidebar-collapsed .user-button { width: 32px; height: 32px; }
-body.sidebar-collapsed .sidebar-footer { flex-direction: column; gap: 6px; }
-body.sidebar-collapsed .sidebar-footer .add-btn { width: 100%; }
+.sidebar-spacer { flex: 1; }
+/* Clerk mounts its avatar/account menu here. */
+.user-button { display: flex; justify-content: flex-start; padding: 10px 4px 2px; min-height: 32px; }
+body.sidebar-collapsed .user-button { justify-content: center; padding: 10px 0 2px; }
 
 /* Collapsed icon rail */
 body.sidebar-collapsed #sidebar { width: 64px; }
 body.sidebar-collapsed .brand-name,
 body.sidebar-collapsed .nav-label { display: none; }
-body.sidebar-collapsed .brand { justify-content: center; padding: 0 0 10px; }
+body.sidebar-collapsed .brand { justify-content: center; padding: 4px 0 18px; }
 body.sidebar-collapsed .nav-btn,
 body.sidebar-collapsed .add-btn { justify-content: center; padding: 9px 0; }
 
@@ -109,7 +101,7 @@ body.in-player #content { padding: 0; overflow: hidden; }
 .add-btn:hover, .btn-primary:hover { filter: brightness(1.08); }
 
 /* ---------- Content ---------- */
-#content { flex: 1; overflow-y: auto; padding: calc(var(--titlebar-h) + var(--shell-pad)) 32px 32px; position: relative; }
+#content { flex: 1; overflow-y: auto; padding: 46px 32px 32px; position: relative; }
 .view { display: none; }
 .view.active { display: block; }
 .view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
@@ -129,21 +121,7 @@ body.in-player #content { padding: 0; overflow: hidden; }
 }
 .segmented button:hover { color: var(--text); }
 .segmented button.active { background: var(--bg-3); color: var(--text); }
-
-.layout-toggle {
-  display: inline-flex; align-items: center;
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
-  padding: 3px; gap: 2px;
-}
-.layout-toggle button {
-  display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; padding: 0;
-  background: transparent; border: none; border-radius: 7px;
-  color: var(--muted); cursor: pointer;
-}
-.layout-toggle button:hover { color: var(--text); background: rgba(255,255,255,.04); }
-.layout-toggle button.active { background: var(--bg-3); color: var(--text); }
-.layout-toggle button svg { display: block; pointer-events: none; }
+#layout-seg button { font-size: 15px; padding: 6px 10px; }
 
 /* ---------- Library sections ---------- */
 .lib-section { margin-bottom: 26px; }
@@ -285,7 +263,7 @@ body.in-player #content { padding: 0; overflow: hidden; }
 
 /* ---------- Deps banner ---------- */
 .deps-banner {
-  position: fixed; top: var(--titlebar-h); left: 210px; right: 0; z-index: 40;
+  position: fixed; top: 38px; left: 210px; right: 0; z-index: 40;
   background: #2a1f12; border-bottom: 1px solid var(--warn); color: var(--warn);
   padding: 12px 20px; font-size: 13px; display: flex; align-items: center; gap: 14px;
 }
@@ -302,6 +280,8 @@ body.in-player #content { padding: 0; overflow: hidden; }
 .preset-card.selected { border-color: var(--accent); background: #1a2030; }
 .preset-card .pname { font-weight: 600; font-size: 14px; margin-bottom: 5px; }
 .preset-card .pdesc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+/* GPU cost estimate — separation is billed per second now, so make it visible. */
+.preset-card .pcost { display: inline-block; margin-top: 4px; color: var(--accent); white-space: nowrap; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }
 .row:first-of-type { border-top: none; }
 .row label { font-size: 14px; }
@@ -316,7 +296,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 /* ---------- Player (full-height flex column) ---------- */
 #view-player.active { height: 100%; }
 #player-root { height: 100%; }
-.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: var(--titlebar-h); box-sizing: border-box; }
+.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: 38px; box-sizing: border-box; }
 
 /* Static top bar: back + art + metadata */
 .player-topbar {
@@ -355,6 +335,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .timeline { position: absolute; top: 0; bottom: 0; left: 150px; right: 0; pointer-events: none; }
 #timeline-interact { pointer-events: auto; cursor: text; z-index: 3; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 6px rgba(255,255,255,.6); z-index: 2; }
+.playhead.snap-on { background: var(--good); box-shadow: 0 0 7px rgba(62,207,142,.65); }
 .loop-region { position: absolute; top: 0; bottom: 0; background: rgba(91,140,255,.16); }
 .grid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
 .tempo-markers { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
@@ -393,6 +374,14 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .t-spacer { flex: 1; min-width: 8px; }
 .t-label { font-size: 12px; color: var(--muted); }
 .toggle-btn.sm { padding: 5px 9px; font-size: 12px; }
+.toggle-btn:disabled { opacity: .45; cursor: default; }
+.toggle-btn:disabled:hover { color: var(--muted); border-color: var(--border); }
+.grid-controls select {
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 12px; padding: 5px 7px; border-radius: 7px; outline: none;
+}
+.grid-controls select:disabled { opacity: .45; color: var(--muted); }
+.grid-controls select:focus { border-color: var(--accent); }
 .loop-readout { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); opacity: .6; }
 .loop-readout.active { opacity: 1; }
 .loop-readout .lr-val { font-variant-numeric: tabular-nums; color: var(--text); min-width: 52px; text-align: center; }
@@ -444,6 +433,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 
 /* ---------- First-run setup ---------- */
 .setup { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; -webkit-app-region: drag; }
+
+/* Sign-in gate. No card of our own — Clerk's component brings its own
+   surface, and wrapping it in a second panel just double-frames it. */
+.signin { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; }
+.signin-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.signin-brand { padding: 0; font-size: 17px; }
+#signin-mount { min-height: 380px; }
 .setup-card { width: 620px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 34px; -webkit-app-region: no-drag; }
 .setup-card h2 { font-size: 22px; margin-bottom: 10px; }
 .setup-desc { color: var(--muted); font-size: 14px; line-height: 1.55; margin-bottom: 22px; }
