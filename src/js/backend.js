@@ -107,6 +107,14 @@ export function classifyInput(text) {
   return { type: 'search', value: t };
 }
 
+/**
+ * Queue a song.
+ *
+ * Resolves to `{ jobId, songId }` with exactly one set. A `songId` means the
+ * same audio at the same settings was already separated, so the song is in the
+ * library already and there is no job to watch — the library subscription picks
+ * it up on the next tick either way, so callers rarely need to look.
+ */
 export function addSong(input, settings) {
   const source = classifyInput(input);
   return convex.mutation(api.jobs.createSeparation, {
@@ -152,7 +160,9 @@ export async function addFiles(files, settings, onProgress) {
       settings,
       label: file.name,
     });
-    jobIds.push(res.jobId);
+    // Uploads never dedupe — they're the user's own file — so a job is always
+    // queued here. Guarded anyway so a null can't reach the progress overlay.
+    if (res.jobId) jobIds.push(res.jobId);
   }
   return { jobIds };
 }

@@ -60,6 +60,7 @@ const callback = httpAction(async (ctx, request) => {
           album: body.album ?? null,
           duration: body.duration ?? 0,
           coverKey: body.coverKey ?? null,
+          resolvedUrl: body.resolvedUrl ?? null,
         },
       });
       break;
@@ -90,6 +91,7 @@ const callback = httpAction(async (ctx, request) => {
         stems: body.stems || [],
         stemMode: String(body.stemMode || 'full'),
         quality: body.quality,
+        resolvedUrl: body.resolvedUrl ?? meta.resolvedUrl ?? undefined,
         addedAt: job.createdAt,
       });
       await ctx.runMutation(internal.jobs.patch, {
@@ -103,10 +105,18 @@ const callback = httpAction(async (ctx, request) => {
     }
 
     case 'error': {
+      const error = String(body.error || 'Processing failed.').slice(0, 4000);
+      // Modal marks YouTube's bot check retryable: it is a window that passes,
+      // not a broken job, so wait it out instead of making the user re-add the
+      // song. `requeue` reports the failure itself once attempts run out.
+      if (body.retryable) {
+        await ctx.runMutation(internal.jobs.requeue, { jobId, error });
+        break;
+      }
       await ctx.runMutation(internal.jobs.patch, {
         jobId,
         status: 'error',
-        error: String(body.error || 'Processing failed.').slice(0, 4000),
+        error,
       });
       break;
     }

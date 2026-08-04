@@ -178,6 +178,62 @@ The untried levers are the two yt-dlp's own error message names: `--cookies`
 from a signed-in (throwaway) account, and a residential `--proxy`. Both trade
 something real — an account Google can ban, or a per-GB bill.
 
+What is in place instead, because the block is a window rather than a wall:
+
+1. **SoundCloud fallback.** A search that YouTube refuses is retried against
+   SoundCloud, which draws no bot check. It is a fallback and not a replacement:
+   its catalogue is thinner, and it needs filtering (below).
+2. **Requeue with backoff.** If every source is blocked, the job goes back to
+   `queued` and is redispatched after 1, then 3, then 7 minutes before it is
+   finally reported as failed. The card says "YouTube is busy — retrying in
+   *n* min" rather than showing a failure the app expects to recover from.
+3. **Dedupe.** Audio already separated at the same settings is shared rather
+   than fetched again, so the second person to want a song never touches
+   YouTube at all.
+
+An explicit link gets no fallback. The user asked for that track, and quietly
+substituting a different upload is worse than failing.
+
+**SoundCloud needs filtering, and the filter is load-bearing.** Two ways its
+search results are unusable, both of which resolve fine and only fail (or
+worse, succeed wrongly) at download time:
+
+- Much of the catalogue is DRM-protected. `-i --max-downloads 1` over five
+  results walks past those and stops at the first that yields audio.
+- The rest is a mix of 30-second preview clips and hour-long full-album rips.
+  `--match-filter "duration > 90 & duration < 720"` rejects both. Measured on
+  one query, the top result was a 30s preview, then a 37-minute album rip, then
+  the actual track.
+
+Both bounds can reject a legitimately short or long track. That is the better
+way to be wrong: a song that fails to appear is obvious, a truncated one is not.
+
+```bash
+modal run modal/separate.py::selftest_fallback   # ordering, and both sources download
+```
+
+### Dedupe
+
+Separation is deterministic, so the same audio at the same settings is the same
+bytes. `renditions` records one separation per `(sourceKey, qualityKey)` and
+songs borrow its R2 objects, so a second request for a track somebody already
+processed costs nothing — no GPU, no download, no bot check.
+
+`sourceKey` collapses the spellings of a request: five YouTube URL forms reduce
+to `youtube:<id>`, and a Spotify `?si=` share parameter is dropped so two shares
+of one track agree. `resolvedKey` records where a search actually landed, which
+is how a Spotify link and a bare search converge once either has run.
+
+Two things it deliberately does not do. **Uploads are never shared** — they are
+the user's own files, so sharing them across accounts would leak private
+content, and a content hash would still reveal that another account holds the
+same file. **A reprocess never dedupes**, because the user asked to redo the
+work and returning the same bytes would look broken.
+
+`refCount` is why one user deleting a song cannot empty another's: blobs are
+freed only when the last reference goes. The same guard applies on reprocess,
+which used to delete the old stems unconditionally.
+
 Node rather than yt-dlp's default Deno, because bgutil's script mode needs Node
 ≥ 20 anyway — one runtime covers both. Script mode rather than bgutil's HTTP
 server mode because a container handles exactly one job, so a long-lived token

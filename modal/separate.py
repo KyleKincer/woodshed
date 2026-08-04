@@ -72,8 +72,7 @@ image = (
     .env({"TORCH_HOME": "/models", "PYTHONUNBUFFERED": "1"})
 )
 
-# Shared by every yt-dlp invocation — metadata probe and download alike, since
-# the probe hits the same bot check.
+# Shared by every yt-dlp invocation.
 YTDLP_ARGS = [
     "--js-runtimes",
     "node",
@@ -113,6 +112,17 @@ NOISE = re.compile(r"\d+%\||seconds/s|^[\s|█▏▎▍▌▋▊▉#=>.\-]*$")
 
 class Canceled(Exception):
     """Raised when Convex reports the job was canceled."""
+
+
+# YouTube's refusal. Measured to come and go in windows of minutes with no
+# change on our side — the same query and client config went 0/3 blocked and
+# then 2/2 clean a quarter of an hour later. So it is transient, and the job is
+# worth requeuing rather than failing.
+BOT_CHECK = re.compile(r"not a bot|sign in to confirm", re.I)
+
+
+class BotChecked(Exception):
+    """YouTube refused the request as automated. Transient; retry later."""
 
 
 # --------------------------------------------------------------------------
@@ -170,8 +180,12 @@ class Reporter:
 # --------------------------------------------------------------------------
 
 
-def run(cmd, on_line=None, cwd=None):
-    """Run a command, streaming combined output; raise with real output on failure."""
+def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
+    """Run a command, streaming combined output; raise with real output on failure.
+
+    `ok_codes` exists for yt-dlp's --max-downloads, which reports 101 on success
+    because it stopped early by request.
+    """
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -194,8 +208,10 @@ def run(cmd, on_line=None, cwd=None):
                 if len(meaningful) > 40:
                     meaningful.pop(0)
     code = proc.wait()
-    if code != 0:
+    if code not in ok_codes:
         detail = "\n".join(meaningful[-20:]) or "(no error output captured)"
+        if BOT_CHECK.search(detail):
+            raise BotChecked(detail)
         raise RuntimeError(f"{os.path.basename(cmd[0])} exited with code {code}\n{detail}")
 
 
@@ -265,21 +281,6 @@ def r2_upload(client, path: pathlib.Path, key: str, content_type: str) -> int:
 # --------------------------------------------------------------------------
 
 
-def ytdlp_json(target: str) -> dict:
-    try:
-        out = subprocess.check_output(
-            ["yt-dlp", *YTDLP_ARGS, "--no-playlist", "--no-warnings", "--skip-download", "--dump-json", target],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        for line in out.splitlines():
-            if line.strip().startswith("{"):
-                return json.loads(line)
-    except Exception as exc:
-        print(f"[meta] yt-dlp metadata failed: {exc}")
-    return {}
-
-
 def download_cover(url: str, dest: pathlib.Path) -> bool:
     import requests
 
@@ -336,13 +337,13 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
         return wav, meta
 
     # Everything else goes through yt-dlp.
+    query = None
     if stype == "search":
-        target = f"ytsearch1:{source['value']}"
+        query = source["value"]
     elif stype == "spotify":
-        # Spotify audio is DRM'd; resolve the title via oEmbed then match on
-        # YouTube, same fallback the desktop app used without spotdl.
+        # Spotify audio is DRM'd; resolve the title via oEmbed then match on a
+        # site we can actually download from.
         rep.progress("download", 2, "Resolving Spotify track…")
-        query = None
         try:
             res = requests.get(
                 "https://open.spotify.com/oembed",
@@ -354,12 +355,128 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
             pass
         if not query:
             raise RuntimeError("Could not resolve this Spotify link.")
-        target = f"ytsearch1:{query}"
-    else:
-        target = source["value"]
 
-    rep.progress("download", 3, "Reading metadata…")
-    info = ytdlp_json(target)
+    def fetch(target: str, extra: list[str]):
+        # A blocked attempt can leave a partial file — and its info json —
+        # behind, which would otherwise be read as the next attempt's result.
+        for stale in tmp.glob("dl*"):
+            stale.unlink(missing_ok=True)
+        return _fetch_target(target, extra, tmp, meta, rep)
+
+    return first_unblocked(download_candidates(source, query), fetch, rep)
+
+
+def download_candidates(source: dict, query: str | None) -> list[tuple[str, list[str]]]:
+    """(target, extra yt-dlp args) to try, in order.
+
+    A query can come from anywhere, so try YouTube first for catalogue and fall
+    back to SoundCloud, which draws no bot check at all. An explicit link gets no
+    fallback — the user asked for that specific track, and quietly substituting a
+    different upload is worse than failing.
+
+    SoundCloud takes five results rather than one because plenty of what it
+    returns cannot be used: some is DRM-protected, where search resolves happily
+    and the download then fails, and some is a 30-second preview of the real
+    track. `-i --max-downloads 1` walks past the dead ones and stops at the first
+    that yields audio.
+
+    The duration window is what keeps the result recognisable as the song. Below
+    90s is a preview clip; above 12 minutes is a full-album rip or a DJ mix,
+    which SoundCloud search returns readily and which would cost a fortune to
+    separate and still not be the track asked for. Both bounds can reject a
+    legitimate track, and that is the better way to be wrong: a song that fails
+    to appear is obvious, a truncated or hour-long one is not.
+    """
+    if query is not None:
+        return [
+            (f"ytsearch1:{query}", []),
+            (
+                f"scsearch5:{query}",
+                [
+                    "-i",
+                    "--max-downloads",
+                    "1",
+                    "--match-filter",
+                    "duration > 90 & duration < 720",
+                ],
+            ),
+        ]
+    # --no-playlist only matters for a link: a watch?v=…&list=… URL would
+    # otherwise pull the whole playlist.
+    return [(source["value"], ["--no-playlist"])]
+
+
+def first_unblocked(candidates: list[str], fetch, rep):
+    """Return the first candidate that isn't bot-checked.
+
+    Only BotChecked moves on to the next candidate. A genuine failure — bad link,
+    no such track, no disk — propagates, because trying SoundCloud for a track
+    YouTube simply doesn't have would just replace one error with a worse one.
+    """
+    blocked: BotChecked | None = None
+    for i, (target, extra) in enumerate(candidates):
+        try:
+            return fetch(target, extra)
+        except BotChecked as exc:
+            blocked = exc
+            if i + 1 < len(candidates):
+                print(f"[acquire] {target} bot-checked; trying {candidates[i + 1][0]}")
+                rep.progress("download", 3, "YouTube is busy — trying SoundCloud…")
+    raise blocked if blocked else RuntimeError("No audio could be downloaded.")
+
+
+def _fetch_target(target: str, extra: list[str], tmp: pathlib.Path, meta: dict, rep: Reporter):
+    """Download one target's audio as WAV and read its metadata.
+
+    Metadata comes from --write-info-json rather than a separate --dump-json
+    pass, because a search that walks past DRM-protected results downloads a
+    different track than the first result, and the old probe would have titled
+    the song after a track we never fetched. It also halves the number of
+    requests, which is the thing YouTube is counting.
+    """
+    rep.progress("download", 5, "Downloading audio…")
+
+    def on_line(line: str):
+        if "[download]" in line:
+            m = re.search(r"(\d{1,3}(?:\.\d+)?)%", line)
+            if m:
+                rep.progress("download", float(m.group(1)), "Downloading audio…")
+
+    run(
+        [
+            "yt-dlp",
+            *YTDLP_ARGS,
+            *extra,
+            "-f",
+            "bestaudio/best",
+            "-x",
+            "--audio-format",
+            "wav",
+            "--audio-quality",
+            "0",
+            "--write-info-json",
+            "--progress",
+            "--newline",
+            "-o",
+            str(tmp / "dl.%(ext)s"),
+            target,
+        ],
+        on_line=on_line,
+        # 101 is how --max-downloads reports "stopped early, as asked".
+        ok_codes=(0, 101),
+    )
+    wavs = list(tmp.glob("dl*.wav"))
+    if not wavs:
+        raise RuntimeError("No audio could be downloaded.")
+
+    info = {}
+    infos = list(tmp.glob("dl*.info.json"))
+    if infos:
+        try:
+            info = json.loads(infos[0].read_text())
+        except Exception as exc:
+            print(f"[meta] unreadable info json: {exc}")
+
     if info:
         thumb = info.get("thumbnail") or (
             (info.get("thumbnails") or [{}])[-1].get("url") if info.get("thumbnails") else None
@@ -374,40 +491,13 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
             duration=round(info.get("duration") or 0),
             cover=cover if got_cover else None,
         )
-
-    rep.progress("download", 5, "Downloading audio…")
-
-    def on_line(line: str):
-        if "[download]" in line:
-            m = re.search(r"(\d{1,3}(?:\.\d+)?)%", line)
-            if m:
-                rep.progress("download", float(m.group(1)), "Downloading audio…")
-
-    run(
-        [
-            "yt-dlp",
-            *YTDLP_ARGS,
-            "--no-playlist",
-            "-f",
-            "bestaudio/best",
-            "-x",
-            "--audio-format",
-            "wav",
-            "--audio-quality",
-            "0",
-            "--progress",
-            "--newline",
-            "-o",
-            str(tmp / "dl.%(ext)s"),
-            target,
-        ],
-        on_line=on_line,
-    )
-    wavs = list(tmp.glob("dl*.wav"))
-    if not wavs:
-        raise RuntimeError("No audio could be downloaded.")
     if not meta["duration"]:
         meta["duration"] = probe_duration(wavs[0])
+    # The canonical URL of whatever we actually landed on. A search and a link
+    # that resolve to the same upload should count as the same rendition, and
+    # only this side knows they did.
+    if info.get("webpage_url"):
+        meta["resolvedUrl"] = info["webpage_url"]
     return wavs[0], meta
 
 
@@ -547,6 +637,7 @@ def run_job(job: dict):
                 album=meta["album"],
                 duration=meta["duration"],
                 coverKey=cover_key,
+                resolvedUrl=meta.get("resolvedUrl"),
             )
 
             sep_out = tmp / "sep"
@@ -592,6 +683,14 @@ def run_job(job: dict):
 
     except Canceled:
         print(f"[job {job['jobId']}] canceled by user")
+    except BotChecked as exc:
+        # Flagged retryable so Convex requeues with backoff instead of showing
+        # the user a failure. The window usually passes in minutes.
+        print(f"[job {job['jobId']}] bot-checked: {exc}")
+        try:
+            rep.post("error", error=f"YouTube bot check.\n{exc}", retryable=True)
+        except Canceled:
+            pass
     except Exception as exc:
         print(f"[job {job['jobId']}] failed: {exc}")
         try:
@@ -724,6 +823,89 @@ def selftest_youtube(
     if clients == "SWEEP":
         return [_probe_youtube(target, attempts, c) for c in CLIENT_CANDIDATES]
     return _probe_youtube(target, attempts, clients or None)
+
+
+class _NullReporter:
+    """Stands in for Reporter in selftests — no Convex, no cancellation."""
+
+    def post(self, event: str, **fields):
+        return {}
+
+    def progress(self, stage: str, percent: float, message: str = ""):
+        print(f"    [{stage} {percent:.0f}%] {message}")
+
+
+@app.function(image=image, secrets=[secrets], timeout=60 * 20)
+def selftest_fallback(query: str = "john coltrane giant steps"):
+    """Prove the YouTube→SoundCloud fallback, and that both halves download.
+
+    The fallback ordering is checked against a fetch that refuses YouTube, since
+    a real bot check is not something we can summon on demand. Then each source
+    is downloaded for real, because "the loop is correct" and "SoundCloud
+    actually yields audio" are different claims.
+
+    Run with:  modal run modal/separate.py::selftest_fallback
+    """
+    rep = _NullReporter()
+    ok = True
+
+    cands = download_candidates({"type": "search", "value": query}, query)
+    print(f"candidates   {[t for t, _ in cands]}")
+    ok &= [t for t, _ in cands] == [f"ytsearch1:{query}", f"scsearch5:{query}"]
+    # A preview clip must not come back as the song.
+    ok &= "duration > 90 & duration < 720" in cands[1][1]
+
+    # An explicit link must not silently become a different upload.
+    link = {"type": "url", "value": "https://example.com/a.mp3"}
+    ok &= [t for t, _ in download_candidates(link, None)] == ["https://example.com/a.mp3"]
+    print(f"link only    {[t for t, _ in download_candidates(link, None)]}")
+
+    # YouTube blocked -> SoundCloud chosen.
+    def refuse_youtube(target: str, extra: list[str]):
+        if target.startswith("ytsearch"):
+            raise BotChecked("Sign in to confirm you're not a bot")
+        return target
+
+    picked = first_unblocked(cands, refuse_youtube, rep)
+    print(f"fell back to {picked}")
+    ok &= picked.startswith("scsearch")
+
+    # A real error must not be swallowed into the fallback.
+    def real_error(target: str, extra: list[str]):
+        raise RuntimeError("no such track")
+
+    try:
+        first_unblocked(cands, real_error, rep)
+        print("FAIL: a real error was swallowed")
+        ok = False
+    except RuntimeError as exc:
+        print(f"real errors propagate: {exc}")
+
+    # Both sources actually produce audio.
+    for target, extra in cands:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            meta = {"title": query, "uploader": "", "artist": "", "album": "", "duration": 0, "cover": None}
+            try:
+                wav, got = _fetch_target(target, extra, tmp, meta, rep)
+                size = wav.stat().st_size
+                dur = got["duration"]
+                plausible = 90 <= dur <= 720
+                print(f"{target[:9]}  {size / 1e6:.1f} MB  {dur}s  {got['title'][:40]}"
+                      f"{'' if plausible else '  <- NOT SONG-LENGTH'}")
+                ok &= size > 100_000
+                # Only the fallback is filtered; YouTube search relevance is
+                # left as it was rather than changed on the way past.
+                if target.startswith("scsearch"):
+                    ok &= plausible
+            except BotChecked:
+                print(f"{target[:9]}  bot-checked (window, not a code fault)")
+            except Exception as exc:
+                print(f"{target[:9]}  FAILED: {exc}")
+                ok = False
+
+    print(f"=== {'ok' if ok else 'FAILURES ABOVE'} ===")
+    return {"ok": ok}
 
 
 @app.function(image=image, secrets=[secrets], gpu="L4", timeout=60 * 10)

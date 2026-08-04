@@ -33,6 +33,42 @@ export const stemValidator = v.object({
 });
 
 export default defineSchema({
+  // A separation that already exists, so a second request for the same audio at
+  // the same settings costs nothing. Separation is deterministic and expensive:
+  // the same public track at the same quality yields byte-identical stems, and
+  // GPU time is the largest cost in the app.
+  //
+  // The rendition owns its R2 objects; songs borrow them. `refCount` is why
+  // deleting one user's song cannot pull the audio out from under another's —
+  // blobs are freed only when the last reference goes.
+  //
+  // Uploads are never deduped. They are the user's own files, so sharing them
+  // between accounts would leak private content, and a content hash would still
+  // reveal that another account holds the same file.
+  renditions: defineTable({
+    // How the audio was asked for, canonicalised — see lib/dedupe.ts.
+    sourceKey: v.string(),
+    // Where it actually resolved to, once known. A search and a link that land
+    // on the same upload share this, so the second one hits even though the
+    // request keys differ.
+    resolvedKey: v.optional(v.string()),
+    // Serialised separation settings; different settings are different audio.
+    qualityKey: v.string(),
+    stems: v.array(stemValidator),
+    coverKey: v.optional(v.string()),
+    title: v.string(),
+    uploader: v.optional(v.string()),
+    artist: v.optional(v.string()),
+    album: v.optional(v.string()),
+    duration: v.number(),
+    stemMode: v.string(),
+    quality: qualityValidator,
+    refCount: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_source_quality', ['sourceKey', 'qualityKey'])
+    .index('by_resolved_quality', ['resolvedKey', 'qualityKey']),
+
   songs: defineTable({
     // Clerk subject (`user_...`). Every query scopes on this.
     userId: v.string(),
@@ -47,6 +83,9 @@ export default defineSchema({
     stems: v.array(stemValidator),
     stemMode: v.string(),
     quality: qualityValidator,
+    // Set when the stems are shared with other songs. Absent means this song
+    // owns its blobs outright (uploads, and rows written before dedupe existed).
+    renditionId: v.optional(v.id('renditions')),
     addedAt: v.number(),
     // Metronome state: tempo map, time signatures, corrected beat track.
     // Opaque to the backend — the player owns this shape.
@@ -81,6 +120,9 @@ export default defineSchema({
     meta: v.optional(v.any()),
     // Beat detection result, for kind === 'beats'.
     result: v.optional(v.any()),
+    // Dispatches so far. YouTube's bot check comes and goes in windows of
+    // minutes, so a blocked job is requeued rather than failed; this bounds it.
+    attempts: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
