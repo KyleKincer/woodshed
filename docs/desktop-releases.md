@@ -37,7 +37,7 @@ The private local service uses an ephemeral loopback port and random credential.
 
 GitHub hosts installer/update bytes, keeping them off Vercel and R2. Model
 weights come from their upstream hosts. The locally built Linux installer is
-roughly 617 MB compressed; platform sizes vary. The large ML runtime is included
+roughly 594 MiB compressed; platform sizes vary. The large ML runtime is included
 so users do not need developer tools. Installer size does not count against a
 user's audio quota.
 

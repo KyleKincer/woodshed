@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix='woodshed-runtime-test-') as folder:
     assert len(stems)==4
     for stem in stems:
         decoded=work/'decoded.wav'
-        subprocess.run(['ffmpeg','-v','error','-y','-i',str(work/stem['name']),'-ar',str(rate),str(decoded)],env=env,check=True)
+        subprocess.run([str(root/'build/bin'/('ffmpeg.exe' if os.name=='nt' else 'ffmpeg')),'-v','error','-y','-i',str(work/stem['name']),'-ar',str(rate),str(decoded)],env=env,check=True)
         with wave.open(str(decoded)) as audio: assert audio.getnframes()==rate*seconds
     beat_dir=work/'beats';beat_dir.mkdir()
     (beat_dir/'job.json').write_text(json.dumps({'kind':'beats','quality':quality,'localStems':[str(source)]}))

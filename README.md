@@ -36,7 +36,7 @@ This noninteractive v2 initializer creates signing keys when missing. Do not
 use `--force` unless intentionally rotating keys. Configure on the deployment:
 
 - `AUTH_GOOGLE_CLIENT_ID`, `AUTH_GOOGLE_CLIENT_SECRET`: a Google **Web application** OAuth client.
-- `AUTH_ALLOWED_ORIGINS`: comma-separated website origins, e.g. `http://localhost:5173,https://woodshed.kylekincer.com`.
+- `AUTH_ALLOWED_ORIGINS`: comma-separated website origins, e.g. `http://localhost:5173,http://127.0.0.1:47832,https://woodshed.kylekincer.com`.
 - Google authorized redirect URI: `https://<deployment>.convex.site/oauth/google/callback`.
 
 For this development deployment, `bash scripts/setup-google-auth.sh` walks

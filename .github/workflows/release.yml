@@ -4,6 +4,12 @@ on:
     tags: ['v*']
     branches: ['release/**']
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Optional JSON platform matrix for validating one installer; leave blank for all.'
+        required: false
+        default: ''
+        type: string
 concurrency:
   group: desktop-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -14,19 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x64
-          - os: windows-2022
-            platform: win
-            arch: x64
-          - os: macos-14
-            platform: mac
-            arch: arm64
-          - os: macos-15-intel
-            platform: mac
-            arch: x64
+        include: ${{ fromJSON(inputs.platforms || '[{"os":"ubuntu-22.04","platform":"linux","arch":"x64"},{"os":"windows-2022","platform":"win","arch":"x64"},{"os":"macos-14","platform":"mac","arch":"arm64"},{"os":"macos-15-intel","platform":"mac","arch":"x64"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +37,7 @@ jobs:
             companion/setup.py
       - run: npm ci
       - run: npm test && npm run test:desktop && npm run typecheck
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: processor
         with:
           path: build/processor
@@ -56,6 +50,11 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then PY=companion/.venv/Scripts/python.exe; else PY=companion/.venv/bin/python; fi
           "$PY" -m pip install pyinstaller==6.16.0
           "$PY" scripts/build-processor.py
+      - uses: actions/cache/save@v4
+        if: steps.processor.outputs.cache-hit != 'true'
+        with:
+          path: build/processor
+          key: ${{ steps.processor.outputs.cache-primary-key }}
       - name: Package desktop app
         shell: bash
         env:
@@ -89,6 +88,7 @@ jobs:
             release/*.blockmap
           retention-days: 7
   release:
+    if: inputs.platforms == ''
     needs: build
     runs-on: ubuntu-22.04
     permissions:

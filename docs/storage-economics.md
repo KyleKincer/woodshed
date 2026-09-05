@@ -67,3 +67,22 @@ The following future subscription policies remain **proposals, not approved poli
 - Candidate cancellation policy: service continues until the paid-through date, then a clearly displayed **14-day export grace period** with uploads paused. Notify users of the exact deletion date; offer immediate export at cancellation and do not make a ZIP expiring in minutes their only recovery path. After grace, remove cloud audio in retryable batches and retain a small deletion record. Never delete the user's local originals. Final notices, timing and metadata retention need approval before enabling automated deletion.
 
 For scale: fourteen extra days for a 1,000-song library at 160 kbps costs roughly $0.13 with four stems or $0.20 with six, before free allowance and billing rounding. A usable export window is inexpensive compared with losing user trust. Plan for modest headroom; a public app with unrestricted signup cannot be guaranteed to stay at $0 solely by choosing a generous free tier.
+
+## Desktop installers and updates (September 2026)
+
+Ship installers and updater metadata through public GitHub Releases. The latest
+local Linux package is about 594 MiB (~0.62 GB), including its CPU processing
+runtime. At 1,000 full downloads that is about 620 GB; 10,000 downloads is about
+6.2 TB. None of those bytes pass through Vercel or R2, and installers do not
+count against a user's audio quota. Differential updates may transfer less,
+but budget examples conservatively assume a complete download each time.
+
+GitHub documents no total release-size or download-bandwidth limit; individual
+assets must fit its per-file release limit. These installers fit comfortably.
+[GitHub large binary distribution](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)
+
+Builds use standard GitHub-hosted runners in this public repository. Keep it
+public to retain free standard-runner usage; avoid switching to paid larger
+runners without revisiting costs. Temporary CI artifacts expire after seven
+days, while published release assets remain available for installed clients.
+[GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
