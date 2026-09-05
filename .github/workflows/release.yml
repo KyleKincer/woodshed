@@ -112,5 +112,12 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           test "$GITHUB_REF_NAME" = "v$VERSION"
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "Woodshed $GITHUB_REF_NAME" --notes-file docs/release-notes.md
+          if RELEASE_IS_DRAFT=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$RELEASE_IS_DRAFT" != "true" ]; then
+              echo "Release is already published; preserving its verified installers."
+              exit 0
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "Woodshed $GITHUB_REF_NAME" --notes-file docs/release-notes.md
+          fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
