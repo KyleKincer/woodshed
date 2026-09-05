@@ -109,7 +109,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       const page=await window.webContents.executeJavaScript(`({title:document.title,bridge:!!window.woodshedDesktop,header:!!document.querySelector('#app-header'),sidebar:!!document.querySelector('#sidebar')})`);
       if(!page.bridge||!page.header||page.sidebar)throw Error('Desktop UI smoke check failed');
       console.log(JSON.stringify({smoke:'passed',page,processorReady:typeof info.busy==='boolean'}));
-      fs.writeFileSync(path.join(app.getPath('temp'),'woodshed-desktop-smoke.png'),(await window.capturePage()).toPNG());
+      if(!process.env.CI)fs.writeFileSync(path.join(app.getPath('temp'),'woodshed-desktop-smoke.png'),(await window.capturePage()).toPNG());
       closing=true;app.quit();
     }
   }).catch(error=>{if(smokeTest){console.error(error);app.exit(1);return;}dialog.showErrorBox('Woodshed could not start',error.message);closing=true;app.quit();});
