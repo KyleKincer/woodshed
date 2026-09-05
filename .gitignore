@@ -8,3 +8,14 @@ __pycache__/
 *.pyc
 .vercel
 .env*
+companion/.venv/
+
+!.env.local.example
+
+/public/downloads/*.zip
+
+build/
+release/
+
+artifacts/
+release-assets/

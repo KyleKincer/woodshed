@@ -1,197 +1,210 @@
-// Clerk sign-in, and the Convex client that carries its token.
-//
-// Both SDKs have vanilla-JS builds, so the app stays framework-free: Clerk
-// mounts its own components into a div, and ConvexClient is a plain object.
+import googleSignInButton from '../assets/google-signin.png';
+import { AuthClient, defaultStorage } from '@convex-dev/auth/browser';
+// Alpha.1 exposes its framework-neutral OAuth setup through this entry point.
+// Only oauth() is used; the UI remains plain DOM.
+import { oauth } from '@convex-dev/auth/providers/oauth/react';
+import { ConvexClient, ConvexHttpClient } from 'convex/browser';
+import { api } from '../../convex/_generated/api';
 
-import { Clerk } from '@clerk/clerk-js';
-// clerk-js v6 ships without its drop-in components; `mountSignIn` throws
-// "Clerk was not loaded with Ui components" unless the UI bundle is handed to
-// `load()`. Importing it from npm rather than Clerk's CDN keeps the app
-// self-contained and avoids widening script-src in the CSP.
-import { ClerkUI } from '@clerk/ui/entry';
-import { dark } from '@clerk/ui/themes';
-import { ConvexClient } from 'convex/browser';
-
-// Clerk's default is a light card, which reads as a hole punched in a dark
-// app. Start from its dark theme and pull the surface colours from our own
-// palette so the form belongs to the same UI.
-// Values mirror the custom properties in styles.css (--bg-2, --text, --accent,
-// --bg-3, --border, --radius); Clerk can't read CSS variables here, so they
-// have to be repeated literally.
-const clerkAppearance = {
-  baseTheme: dark,
-  variables: {
-    colorBackground: '#15171e',
-    colorForeground: '#e6e8ee',
-    colorPrimary: '#5b8cff',
-    colorInput: '#1c1f29',
-    colorBorder: '#2a2e3b',
-    colorNeutral: '#8a90a2',
-    borderRadius: '12px',
-  },
-};
-
-const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const CONVEX_URL = import.meta.env.VITE_CONVEX_URL;
-
-export let clerk = null;
 export let convex = null;
+let auth = null;
+let currentUser = null;
+let boot = null;
 
-function missingEnv() {
-  const missing = [];
-  if (!CLERK_KEY) missing.push('VITE_CLERK_PUBLISHABLE_KEY');
-  if (!CONVEX_URL) missing.push('VITE_CONVEX_URL');
-  return missing;
+export function ensureSignedIn() {
+  return (boot ??= initialize());
 }
 
-/**
- * Boot auth and block until there's a signed-in session.
- * Resolves with the Clerk user once signed in.
- */
-export async function ensureSignedIn() {
-  const missing = missingEnv();
-  if (missing.length) {
-    showFatal(
-      'Not configured',
-      `Missing ${missing.join(' and ')}. Copy .env.local.example to .env.local and fill it in.`
-    );
-    return new Promise(() => {}); // never resolves; the app stays on this screen
+async function initialize() {
+  if (!CONVEX_URL) {
+    showFatal('Not configured', 'Set VITE_CONVEX_URL in .env.local and restart the website.');
+    throw new Error('Missing VITE_CONVEX_URL.');
   }
-
-  clerk = new Clerk(CLERK_KEY);
-  await clerk.load({ ui: { ClerkUI }, appearance: clerkAppearance });
-
+  // Auth mutations prove possession of their own flow/refresh secrets. Keep
+  // their transport independent of the authenticated realtime connection.
+  const transport = new ConvexHttpClient(CONVEX_URL);
   convex = new ConvexClient(CONVEX_URL);
-  // Convex calls this whenever it needs a fresh token; `forceRefreshToken`
-  // is passed through so it can recover from an expired one on its own.
-  convex.setAuth(async ({ forceRefreshToken } = {}) => {
-    if (!clerk.session) return null;
+  auth = new AuthClient({
+    mode: 'spa',
+    storage: defaultStorage(),
+    storageNamespace: CONVEX_URL,
+    authApi: {
+      refreshSession: (refreshToken) => transport.mutation(api.auth.refreshSession, { refreshToken }),
+      signOut: async (refreshToken) => { await transport.mutation(api.auth.signOut, { refreshToken }); },
+    },
+    ambientSignIns: {
+      signIns: [oauth()],
+      signInApi: {
+        mutation: (ref, args) => transport.mutation(ref, args),
+        action: (ref, args) => transport.action(ref, args),
+      },
+    },
+  });
+  await auth.init();
+  await waitForSession();
+  // Wait for the backend's verdict before starting library subscriptions.
+  await new Promise((resolve, reject) => {
+    convex.setAuth(auth.fetchAccessToken, (authenticated) => {
+      if (authenticated) resolve();
+      else reject(new Error('Your session could not be verified. Sign in again.'));
+    });
+  }).catch(async (error) => {
+    await auth.signOut();
+    showFatal('Sign-in failed', error.message + ' Reload this page to try again.');
+    throw error;
+  });
+  currentUser = await convex.query(api.users.me, {});
+  if (!currentUser) throw new Error('Your account could not be loaded.');
+  const checkAccount = user => {
+    if (user?.status === 'suspended') {
+      showFatal('Account suspended', 'Contact the app owner for help restoring access.');
+      const button=document.createElement('button'); button.className='btn-ghost';button.textContent='Sign out';
+      button.onclick=async()=>{await auth.signOut();location.reload();};
+      const manage=document.createElement('button');manage.className='btn-ghost';manage.textContent='Manage billing';
+      manage.onclick=async()=>{manage.disabled=true;try{location.assign(await convex.action(api.billing.portal,{}));}catch(error){manage.textContent=error.message;}finally{manage.disabled=false;}};
+      document.querySelector('#signin .setup-card').append(manage,button);
+      return false;
+    }
+    return true;
+  };
+  if (!checkAccount(currentUser)) throw new Error('Account suspended');
+  convex.onUpdate(api.users.me, {}, checkAccount);
+  document.getElementById('signin')?.classList.add('hidden');
+  // Signing out in another tab must also clear this tab's library UI.
+  auth.subscribe(() => {
+    const state = auth.getSnapshot();
+    if (!state.isLoading && !state.isAuthenticated) window.location.reload();
+  });
+  return currentUser;
+}
+
+function waitForSession() {
+  const screen = document.getElementById('signin');
+  const target = document.getElementById('signin-mount');
+  screen?.classList.remove('hidden');
+  if (!target) throw new Error('Missing sign-in screen.');
+  target.replaceChildren();
+  const card = document.createElement('div');
+  card.className = 'setup-card signin-card';
+  const title = document.createElement('h2');
+  title.textContent = 'Your practice library, anywhere';
+  const description = document.createElement('p');
+  description.className = 'setup-desc';
+  description.textContent = 'Keep your songs and practice settings in sync, wherever you play.';
+  const button = document.createElement('button');
+  button.className = 'google-signin';
+  button.setAttribute('aria-label', 'Sign in with Google');
+  const googleImage = document.createElement('img');
+  googleImage.src = googleSignInButton; googleImage.alt = 'Sign in with Google';
+  googleImage.width = 180; googleImage.height = 40;
+  button.append(googleImage);
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  message.className = 'signin-status';
+  const note = document.createElement('p');
+  note.className = 'signin-note';
+  note.textContent = 'New here? Signing in creates your free account.';
+  card.append(title, description, button, message, note);
+  target.append(card);
+  const values = auth.ambientSignInValues('oauth');
+  const showError = () => {
+    const error = values.get('flowError');
+    if (error) {
+      message.textContent = error.message || (error.code === 'access_denied'
+        ? 'Sign-in was canceled. You can try again.'
+        : 'Sign-in could not finish. Please try again.');
+      button.disabled = false;
+    }
+  };
+  showError();
+  const stopErrors = values.subscribe('flowError', showError);
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    message.textContent = 'Opening Google…';
     try {
-      return await clerk.session.getToken({
-        template: JWT_TEMPLATE,
-        skipCache: forceRefreshToken,
-      });
-    } catch (err) {
-      // Swallowing this is how a missing JWT template turns into a bare
-      // "Not signed in" from every Convex function — the one error message
-      // that sends you looking in entirely the wrong place.
-      console.error(
-        `Clerk could not mint a "${JWT_TEMPLATE}" JWT. Convex calls will fail as unauthenticated.`,
-        err
-      );
-      return null;
+      await values.get('actions').signIn({
+        providerName: 'google',
+        startSignIn: api.auth.startSignInGoogle,
+        completeSignIn: api.auth.completeSignInGoogle,
+      }, { redirectTo: window.woodshedDesktop ? window.location.origin + '/oauth/callback' : window.location.origin + window.location.pathname });
+    } catch {
+      showError();
+      button.disabled = false;
     }
   });
-
-  const user = clerk.user || (await waitForSignIn());
-  await assertConvexTokenWorks();
-  hideSignIn();
-  return user;
-}
-
-const JWT_TEMPLATE = 'convex';
-
-/** Decode a JWT payload for diagnostics. Never used to make trust decisions. */
-function claimsOf(token) {
-  try {
-    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(atob(payload));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Fail loudly, once, at boot if Clerk can't mint the Convex JWT.
- *
- * Without this the app looks signed in — avatar and all — and only breaks
- * later, deep in an unrelated action, with a message that says nothing about
- * JWT templates.
- */
-async function assertConvexTokenWorks() {
-  let token = null;
-  let err = null;
-  try {
-    token = await clerk.session?.getToken({ template: JWT_TEMPLATE });
-  } catch (e) {
-    err = e;
-  }
-
-  if (token) {
-    // A template can exist and still be rejected: Convex matches the token's
-    // `aud` against `applicationID` in auth.config.ts, and a template built
-    // from a blank preset rather than the Convex one won't set it.
-    const aud = claimsOf(token)?.aud;
-    const audList = Array.isArray(aud) ? aud : [aud];
-    if (audList.includes(JWT_TEMPLATE)) return;
-    showFatal(
-      'Clerk JWT is missing the Convex audience',
-      `The <code>${JWT_TEMPLATE}</code> template issues a token with
-       <code>aud = ${JSON.stringify(aud) ?? 'unset'}</code>. Convex matches that claim against
-       <code>applicationID</code> in <code>auth.config.ts</code>, so it rejects every request.
-       <br><br>
-       In the <a href="https://dashboard.clerk.com" target="_blank" rel="noopener">Clerk dashboard</a>
-       open <strong>Configure → JWT Templates → ${JWT_TEMPLATE}</strong> and put this in the
-       <strong>Claims</strong> box, then save and reload:
-       <br><br><code>{ "aud": "convex" }</code>`
-    );
-    throw new Error('Clerk JWT audience does not match applicationID.');
-  }
-
-  showFatal(
-    'Clerk is missing the Convex JWT template',
-    `Signed in, but Clerk can't issue a <code>${JWT_TEMPLATE}</code> token, so Convex sees every
-     request as anonymous.<br><br>
-     In the <a href="https://dashboard.clerk.com" target="_blank" rel="noopener">Clerk dashboard</a>
-     go to <strong>Configure → JWT Templates → New template → Convex</strong>. Keep the name exactly
-     <code>${JWT_TEMPLATE}</code>, save, then reload this page.
-     ${err ? `<br><br><span class="setup-error">${String(err.message || err)}</span>` : ''}`
-  );
-  throw new Error('Clerk JWT template "convex" is missing.');
-}
-
-function waitForSignIn() {
   return new Promise((resolve) => {
-    const screen = document.getElementById('signin');
-    const target = document.getElementById('signin-mount');
-    screen.classList.remove('hidden');
-    target.innerHTML = '';
-    clerk.mountSignIn(target);
-
-    // Clerk fires this on every auth state change, including the one that
-    // lands after a redirect back from an OAuth provider.
-    const stop = clerk.addListener(({ user }) => {
-      if (!user) return;
-      stop?.();
-      hideSignIn();
-      resolve(user);
-    });
+    let stop = () => {};
+    const update = () => {
+      const state = auth.getSnapshot();
+      if (!state.isLoading && state.isAuthenticated) {
+        stop();
+        stopErrors();
+        resolve();
+      }
+    };
+    stop = auth.subscribe(update);
+    update();
   });
 }
 
-function hideSignIn() {
-  const screen = document.getElementById('signin');
-  screen?.classList.add('hidden');
-  const target = document.getElementById('signin-mount');
-  if (target) target.innerHTML = '';
-}
-
-/** Mount the avatar / account menu into the sidebar. */
-export function mountUserButton() {
+export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
   const el = document.getElementById('user-button');
-  if (el && clerk?.user) {
-    el.innerHTML = '';
-    clerk.mountUserButton(el, { afterSignOutUrl: window.location.origin });
-  }
+  if (!el || !currentUser) return;
+  const label = currentUser.name || currentUser.email || 'Account';
+  const menu = document.createElement('details');
+  menu.className = 'account-menu';
+  const trigger = document.createElement('summary');
+  trigger.className = 'account-trigger';
+  trigger.setAttribute('aria-label', `Account: ${label}`);
+  trigger.title = label;
+  const avatar = document.createElement('span');
+  avatar.className = 'account-avatar';
+  avatar.textContent = (currentUser.name || 'Account').split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase();
+  avatar.setAttribute('aria-hidden', 'true');
+  const name = document.createElement('span');
+  name.className = 'account-name'; name.textContent = label;
+  trigger.append(avatar, name);
+  const panel = document.createElement('div');
+  panel.className = 'account-panel';
+  const email = document.createElement('div');
+  email.className = 'account-email'; email.textContent = currentUser.email || label;
+  const button = document.createElement('button');
+  button.className = 'account-signout'; button.textContent = 'Sign out';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try { await auth.signOut(); window.location.reload(); }
+    catch { button.disabled = false; button.textContent = 'Retry sign out'; }
+  });
+  panel.append(email);
+  const item = (label, action) => {
+    const entry=document.createElement('button');entry.className='account-signout';entry.textContent=label;
+    entry.onclick=()=>{menu.open=false;action();};panel.append(entry);
+  };
+  item('Plan & billing', () => navigate('billing'));
+  if (admin) item('Administration', () => navigate('admin'));
+  if (window.woodshedDesktop) item('App updates', () => document.dispatchEvent(new Event('woodshed:show-updates')));
+  if (!window.woodshedDesktop) item('Download desktop app', () => { location.href='/download'; });
+  panel.append(button); menu.append(trigger, panel);
+  const settings=document.createElement('button');settings.className='account-settings';settings.title='Settings';settings.setAttribute('aria-label','Settings');
+  settings.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 2 2h3l1-3 3-1 2-3-2-2 1-3-2-3-3 1-2-2Z"/><circle cx="11" cy="11" r="3"/></svg>';
+  settings.onclick=()=>{menu.open=false;navigate('settings');};
+  el.replaceChildren(menu,settings);
+  document.addEventListener('click', event => { if (!el.contains(event.target)) menu.open = false; });
+  menu.addEventListener('keydown', event => { if (event.key === 'Escape') { menu.open = false; trigger.focus(); } });
 }
 
 export function showFatal(title, message) {
   const screen = document.getElementById('signin');
   if (!screen) return;
   screen.classList.remove('hidden');
-  screen.innerHTML = `<div class="setup-card">
-    <div class="brand" style="padding:0 0 8px"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
-    <h2>${title}</h2>
-    <p class="setup-desc">${message}</p>
-  </div>`;
+  const card = document.createElement('div');
+  card.className = 'setup-card';
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  const description = document.createElement('p');
+  description.className = 'setup-desc';
+  description.textContent = message;
+  card.append(heading, description);
+  screen.replaceChildren(card);
 }

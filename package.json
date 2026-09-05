@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "0.2.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
@@ -13,23 +13,45 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "convex deploy --cmd 'npm run build'",
-    "modal:deploy": "modal deploy modal/separate.py && modal deploy modal/beats.py",
-    "migrate": "node scripts/migrate-local.mjs"
+    "companion": "node companion/server.mjs",
+    "companion:setup": "python3.11 companion/setup.py --beats",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p convex/tsconfig.json",
+    "desktop:prepare": "node scripts/prepare-desktop.mjs",
+    "desktop:dev": "npm run build && npm run desktop:prepare && electron .",
+    "desktop:package": "npm run build && npm run desktop:prepare && electron-builder --publish never",
+    "test:desktop": "node --test desktop/*.test.cjs"
   },
   "dependencies": {
-    "@clerk/clerk-js": "^6.25.13",
-    "@clerk/ui": "^1.27.2",
+    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/s3-request-presigner": "^3.1127.0",
+    "@convex-dev/auth": "2.0.0-alpha.1",
     "@convex-dev/r2": "^0.10.2",
-    "convex": "^1.43.0"
+    "@convex-dev/stripe": "^0.1.6",
+    "convex": "^1.43.0",
+    "electron-updater": "^6.8.9",
+    "fflate": "^0.8.3",
+    "react": "^19.2.8",
+    "stripe": "^22.6.1"
   },
   "devDependencies": {
-    "@aws-sdk/client-s3": "^3.1101.0",
+    "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^26.1.2",
     "concurrently": "^10.0.4",
+    "convex-test": "^0.0.56",
     "dotenv": "^17.2.3",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
+    "js-yaml": "^4.1.1",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0",
-    "wrangler": "^4.118.0"
+    "vitest": "^5.0.0"
+  },
+  "main": "desktop/main.cjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KyleKincer/woodshed.git"
   }
 }

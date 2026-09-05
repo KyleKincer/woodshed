@@ -1,0 +1,13 @@
+# Keep torch/torchaudio paired and below TorchCodec-only audio I/O.
+torch==2.7.1; sys_platform != 'darwin' or platform_machine != 'x86_64'
+torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'
+torchaudio==2.7.1; sys_platform != 'darwin' or platform_machine != 'x86_64'
+torchaudio==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'
+demucs==4.0.1
+soundfile>=0.13,<0.14
+requests>=2.32,<3
+numpy<2
+librosa>=0.10,<0.12
+# Last Numba/LLVM wheels available for Intel macOS; newer releases require a source toolchain.
+numba==0.62.1; sys_platform == 'darwin' and platform_machine == 'x86_64'
+llvmlite==0.45.1; sys_platform == 'darwin' and platform_machine == 'x86_64'

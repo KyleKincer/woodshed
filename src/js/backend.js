@@ -8,6 +8,7 @@
 
 import { anyApi } from 'convex/server';
 import { convex } from './auth.js';
+import { requireCompanion, localUpload } from './companion.js';
 
 const api = anyApi;
 
@@ -115,21 +116,25 @@ export function classifyInput(text) {
  * library already and there is no job to watch — the library subscription picks
  * it up on the next tick either way, so callers rarely need to look.
  */
-export function addSong(input, settings) {
+export async function addSong(input, settings) {
+  const deviceId = await requireCompanion();
   const source = classifyInput(input);
   return convex.mutation(api.jobs.createSeparation, {
     source,
+    deviceId,
     settings,
     label: String(input).trim(),
   });
 }
 
 /** Re-run separation in place. Source is inherited from the existing song. */
-export function reprocessSong(songId, settings, label) {
+export async function reprocessSong(songId, settings, label) {
+  const deviceId = await requireCompanion();
   return convex.mutation(api.jobs.createSeparation, {
     settings,
     label,
     replaceSongId: songId,
+    deviceId,
   });
 }
 
@@ -149,14 +154,12 @@ export const AUDIO_FILE_RE = /\.(mp3|wav|flac|m4a|aac|ogg|opus|aiff?|wma)$/i;
 export async function addFiles(files, settings, onProgress) {
   const jobIds = [];
   for (const file of files) {
-    const { key, url } = await convex.mutation(api.r2.generateSourceUploadUrl, {
-      filename: file.name,
-    });
-    await putWithProgress(url, file, (loaded, total) =>
-      onProgress?.({ name: file.name, loaded, total })
-    );
+    const deviceId = await requireCompanion();
+    const { id: localId } = await localUpload(file);
+    onProgress?.({ name: file.name, loaded: file.size, total: file.size });
     const res = await convex.mutation(api.jobs.createSeparation, {
-      source: { type: 'upload', value: key, filename: file.name },
+      source: { type: 'upload', value: localId, filename: file.name },
+      deviceId,
       settings,
       label: file.name,
     });
@@ -167,24 +170,6 @@ export async function addFiles(files, settings, onProgress) {
   return { jobIds };
 }
 
-// fetch() can't report upload progress; XHR still can.
-function putWithProgress(url, file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
-    };
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`Upload failed (${xhr.status})`));
-    xhr.onerror = () => reject(new Error('Upload failed — check your connection.'));
-    xhr.send(file);
-  });
-}
-
 // ---- beat detection -------------------------------------------------------
 
 /**
@@ -192,7 +177,8 @@ function putWithProgress(url, file, onProgress) {
  * @returns {Promise<{beats?: Array, error?: string}>}
  */
 export async function detectBeats(songId, onProgress) {
-  const { jobId } = await convex.mutation(api.jobs.createBeatDetection, { songId });
+  const deviceId = await requireCompanion();
+  const { jobId } = await convex.mutation(api.jobs.createBeatDetection, { songId, deviceId });
   return new Promise((resolve) => {
     let settled = false;
     const unsub = convex.onUpdate(api.jobs.get, { jobId }, (job) => {
@@ -220,3 +206,9 @@ export async function detectBeats(songId, onProgress) {
 export function openExternal(url) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
+
+export const cloudUsage = () => convex.query(api.storage.usage, {});
+export const savePractice = (id, practice) => convex.mutation(api.songs.savePractice, {id,practice});
+export const exportPage = cursor => convex.query(api.songs.exportPage, {paginationOpts:{numItems:50,cursor}});
+
+export async function retryJob(jobId) { const deviceId = await requireCompanion(); return convex.mutation(api.jobs.retry,{jobId,deviceId}); }

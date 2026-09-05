@@ -1,0 +1,123 @@
+name: Desktop release
+on:
+  push:
+    tags: ['v*']
+    branches: ['release/**']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Optional JSON platform matrix for validating one installer; leave blank for all.'
+        required: false
+        default: ''
+        type: string
+concurrency:
+  group: desktop-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.platforms || '[{"os":"ubuntu-22.04","platform":"linux","arch":"x64"},{"os":"windows-2022","platform":"win","arch":"x64"},{"os":"macos-14","platform":"mac","arch":"arm64"},{"os":"macos-15-intel","platform":"mac","arch":"x64"}]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - run: npm test && npm run test:desktop && npm run typecheck
+      - uses: actions/cache/restore@v4
+        id: processor
+        with:
+          path: build/processor
+          key: processor-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/requirements.txt', 'scripts/build-processor.py') }}
+      - name: Build isolated processor
+        if: steps.processor.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python companion/setup.py --beats --cpu
+          if [ "${{ runner.os }}" = "Windows" ]; then PY=companion/.venv/Scripts/python.exe; else PY=companion/.venv/bin/python; fi
+          "$PY" -m pip install pyinstaller==6.16.0
+          "$PY" scripts/build-processor.py
+      - uses: actions/cache/save@v4
+        if: steps.processor.outputs.cache-hit != 'true'
+        with:
+          path: build/processor
+          key: ${{ steps.processor.outputs.cache-primary-key }}
+      - name: Package desktop app
+        shell: bash
+        env:
+          VITE_CONVEX_URL: https://tidy-kookabura-985.convex.cloud
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+              test -n "${!name}" || { echo "Missing Apple signing credential: $name"; exit 1; }
+            done
+          fi
+          npm run build
+          npm run desktop:prepare
+          python scripts/test-processor.py
+          npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Launch packaged desktop app
+        run: node scripts/smoke-desktop.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.AppImage
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/latest*.yml
+            release/*.blockmap
+          retention-days: 7
+  release:
+    if: inputs.platforms == ''
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: node scripts/collect-release.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-release
+          path: release-assets/*
+          retention-days: 7
+      - name: Upload draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "$GITHUB_REF_NAME" = "v$VERSION"
+          if RELEASE_IS_DRAFT=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$RELEASE_IS_DRAFT" != "true" ]; then
+              echo "Release is already published; preserving its verified installers."
+              exit 0
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "Woodshed $GITHUB_REF_NAME" --notes-file docs/release-notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

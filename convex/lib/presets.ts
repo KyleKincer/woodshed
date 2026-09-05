@@ -22,7 +22,6 @@ export const PRESETS = {
     model: 'htdemucs_ft',
     shifts: 10,
     overlap: 0.5,
-    estCostUsd: 0.22,
   },
   balanced: {
     id: 'balanced',
@@ -31,7 +30,6 @@ export const PRESETS = {
     model: 'htdemucs_ft',
     shifts: 2,
     overlap: 0.25,
-    estCostUsd: 0.05,
   },
   fast: {
     id: 'fast',
@@ -40,11 +38,10 @@ export const PRESETS = {
     model: 'htdemucs',
     shifts: 0,
     overlap: 0.25,
-    estCostUsd: 0.01,
   },
 } as const;
 
-export const DEFAULT_PRESET = 'studio';
+export const DEFAULT_PRESET = 'balanced';
 
 export const MODELS = [
   { id: 'htdemucs_ft', label: 'Fine-tuned (best)' },
@@ -64,6 +61,7 @@ export const STEM_MODES = {
 // separated stem and keeps a 4-minute song around 20 MB across four stems.
 export const BITRATES = [
   { id: 128, label: '128 kbps — smallest' },
+  { id: 160, label: '160 kbps — smaller' },
   { id: 192, label: '192 kbps — recommended' },
   { id: 256, label: '256 kbps — highest' },
 ];
@@ -110,9 +108,11 @@ export function resolveQuality(settings: any): Quality {
           return { model: p.model, shifts: p.shifts, overlap: p.overlap };
         })();
   return {
-    ...base,
+    model: MODELS.some(m => m.id === base.model) ? base.model : 'htdemucs',
+    shifts: Number.isFinite(base.shifts) ? Math.max(0, Math.min(10, Math.floor(base.shifts))) : 0,
+    overlap: Number.isFinite(base.overlap) ? Math.max(0.1, Math.min(0.75, base.overlap)) : 0.25,
     format: s.format === 'flac' ? 'flac' : 'opus',
-    bitrate: s.bitrate || DEFAULT_SETTINGS.bitrate,
+    bitrate: BITRATES.some(b => b.id === s.bitrate) ? s.bitrate : DEFAULT_SETTINGS.bitrate,
   };
 }
 

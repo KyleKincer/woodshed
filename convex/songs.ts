@@ -1,8 +1,12 @@
 import { v } from 'convex/values';
-import { internalMutation, mutation, query } from './_generated/server';
+import { mutation, query } from './_generated/server';
 import { getUserId, requireUserId } from './lib/auth';
 import { r2 } from './r2';
-import { register, release } from './renditions';
+import { release } from './renditions';
+import { retireKey } from './storage';
+import { paginationOptsValidator } from 'convex/server';
+import type { Doc, Id } from './_generated/dataModel';
+import type { MutationCtx } from './_generated/server';
 import { qualityValidator, sourceValidator, stemValidator } from './schema';
 
 /**
@@ -14,6 +18,7 @@ import { qualityValidator, sourceValidator, stemValidator } from './schema';
  */
 export const list = query({
   args: {},
+  returns: v.any(),
   handler: async (ctx) => {
     const userId = await getUserId(ctx);
     if (!userId) return { songs: [] };
@@ -21,13 +26,14 @@ export const list = query({
       .query('songs')
       .withIndex('by_user_added', (q) => q.eq('userId', userId))
       .order('desc')
-      .collect();
+      .take(1000);
     return { songs: songs.map(toClient) };
   },
 });
 
 export const get = query({
   args: { id: v.id('songs') },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getUserId(ctx);
     const song = await ctx.db.get(args.id);
@@ -38,7 +44,7 @@ export const get = query({
 
 // Keep the client-facing shape identical to the old library.json entries so
 // the player and library UI need no reshaping. `id` is the Convex document id.
-function toClient(s: any) {
+export function toClient(s: Doc<"songs">) {
   return {
     id: s._id,
     title: s.title,
@@ -53,11 +59,13 @@ function toClient(s: any) {
     quality: s.quality,
     addedAt: s.addedAt,
     tempo: s.tempo ?? null,
+    practice: s.practice ?? null,
   };
 }
 
 export const rename = mutation({
   args: { id: v.id('songs'), title: v.string() },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
     await ctx.db.patch(song._id, { title: args.title });
@@ -67,6 +75,7 @@ export const rename = mutation({
 
 export const saveTempo = mutation({
   args: { id: v.id('songs'), tempo: v.any() },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
     await ctx.db.patch(song._id, { tempo: args.tempo });
@@ -76,36 +85,47 @@ export const saveTempo = mutation({
 
 export const remove = mutation({
   args: { id: v.id('songs') },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
+    await deleteSongData(ctx,song);
+    return true;
+  },
+});
+
+export async function deleteSongData(ctx: MutationCtx, song: Doc<'songs'>) {
     // Shared audio is freed by `release` only when this was the last song
     // holding it; `freeBlobs` is true only when this song owned its stems
     // outright, in which case clean them up here.
+    for (const key of [...song.stems.map(s => s.key), ...(song.coverKey ? [song.coverKey] : [])]) await retireKey(ctx, key);
+    const jobs = await ctx.db.query('jobs').withIndex('by_song', q => q.eq('songId', song._id)).take(100);
+    for (const job of jobs) if (['queued', 'running'].includes(job.status)) await ctx.db.patch(job._id, {status: 'canceled'});
     const { freeBlobs } = await release(ctx, song);
     if (freeBlobs) {
       // Best-effort blob cleanup: a failed delete would otherwise strand the
       // row, and an orphaned R2 object is cheaper than an undeletable song.
       for (const stem of song.stems) {
         try {
-          await r2.deleteObject(ctx, stem.key);
+          const tracked = await ctx.db.query('audioObjects').withIndex('by_key', q => q.eq('key', stem.key)).unique();
+          if (!tracked) await r2.deleteObject(ctx, stem.key);
         } catch {
           /* orphaned object; swept separately */
         }
       }
       if (song.coverKey) {
         try {
-          await r2.deleteObject(ctx, song.coverKey);
+          const key = song.coverKey;
+          const tracked = await ctx.db.query('audioObjects').withIndex('by_key', q => q.eq('key', key)).unique();
+          if (!tracked) await r2.deleteObject(ctx, key);
         } catch {
           /* ignore */
         }
       }
     }
     await ctx.db.delete(song._id);
-    return true;
-  },
-});
+}
 
-async function requireOwned(ctx: any, id: any) {
+async function requireOwned(ctx: MutationCtx, id: Id<'songs'>) {
   const userId = await requireUserId(ctx);
   const song = await ctx.db.get(id);
   if (!song) throw new Error('Song not found.');
@@ -113,90 +133,20 @@ async function requireOwned(ctx: any, id: any) {
   return song;
 }
 
-// ---- internal: written by the Modal callback path -------------------------
 
-export const upsertFromJob = internalMutation({
-  args: {
-    userId: v.string(),
-    songId: v.optional(v.id('songs')),
-    title: v.string(),
-    uploader: v.optional(v.string()),
-    artist: v.optional(v.string()),
-    album: v.optional(v.string()),
-    duration: v.number(),
-    source: v.optional(sourceValidator),
-    coverKey: v.optional(v.string()),
-    stems: v.array(stemValidator),
-    stemMode: v.string(),
-    quality: qualityValidator,
-    resolvedUrl: v.optional(v.string()),
-    addedAt: v.number(),
+export const savePractice = mutation({
+  args: { id: v.id('songs'), practice: v.any() }, returns: v.null(),
+  handler: async (ctx, {id, practice}) => {
+    const song = await requireOwned(ctx, id);
+    if (JSON.stringify(practice).length > 10_000) throw new Error('Practice settings too large.');
+    await ctx.db.patch(song._id, {practice}); return null;
   },
+});
+export const exportPage = query({
+  args: { paginationOpts: paginationOptsValidator }, returns: v.any(),
   handler: async (ctx, args) => {
-    const { songId, resolvedUrl, ...fields } = args;
-
-    // Publish the new audio so the next request for the same track at the same
-    // settings skips the GPU entirely. Returns null for uploads, which are the
-    // user's own files and never shared.
-    const renditionId = await register(ctx, {
-      source: fields.source,
-      resolvedUrl,
-      quality: fields.quality,
-      stemMode: fields.stemMode,
-      stems: fields.stems,
-      coverKey: fields.coverKey,
-      title: fields.title,
-      uploader: fields.uploader,
-      artist: fields.artist,
-      album: fields.album,
-      duration: fields.duration,
-    });
-
-    if (songId) {
-      const existing = await ctx.db.get(songId);
-      if (existing && existing.userId === args.userId) {
-        // A reprocess replaces the audio but keeps the user's edits: title,
-        // artist/album corrections, and the hand-corrected beat track.
-        //
-        // Let go of the old audio before repointing. If those stems were shared,
-        // they are still somebody else's — deleting them unconditionally, which
-        // is what this used to do, would silently empty another user's song.
-        const { freeBlobs } = await release(ctx, existing);
-        const oldStems = existing.stems;
-        const oldCover = existing.coverKey;
-        await ctx.db.patch(songId, {
-          duration: fields.duration,
-          source: fields.source,
-          stems: fields.stems,
-          stemMode: fields.stemMode,
-          quality: fields.quality,
-          renditionId: renditionId ?? undefined,
-          ...(fields.coverKey ? { coverKey: fields.coverKey } : {}),
-        });
-        if (freeBlobs) {
-          for (const stem of oldStems) {
-            if (!fields.stems.some((s) => s.key === stem.key)) {
-              try {
-                await r2.deleteObject(ctx, stem.key);
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-          if (fields.coverKey && oldCover && oldCover !== fields.coverKey) {
-            try {
-              await r2.deleteObject(ctx, oldCover);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        return songId;
-      }
-    }
-    return await ctx.db.insert('songs', {
-      ...fields,
-      renditionId: renditionId ?? undefined,
-    });
+    const userId = await requireUserId(ctx);
+    const page = await ctx.db.query('songs').withIndex('by_user', q => q.eq('userId', userId)).paginate(args.paginationOpts);
+    return { ...page, page: page.page.map(toClient) };
   },
 });

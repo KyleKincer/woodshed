@@ -47,79 +47,26 @@ function loadGridSettings() {
   return { visible: raw.visible !== false, snap: raw.snap === true, division };
 }
 
-let engine = null;
-let metronome = null;
-let rafId = null;
-let keyHandler = null;
-let cleanupFns = [];
-
-export function closePlayer() {
-  if (rafId) cancelAnimationFrame(rafId);
-  rafId = null;
-  if (metronome) { metronome.destroy(); metronome = null; }
-  if (engine) { engine.destroy(); engine = null; }
-  if (keyHandler) { window.removeEventListener('keydown', keyHandler); keyHandler = null; }
-  cleanupFns.forEach((fn) => fn());
-  cleanupFns = [];
+function createTrackRow(t) {
+    const row = document.createElement('div');
+    row.className = 'track';
+    row.innerHTML = `
+      <div class="track-ctrl">
+        <div class="track-name"><span class="track-dot" style="background:${t.color}"></span>${escapeHtml(prettyStem(t.name))}</div>
+        <div class="track-buttons">
+          <button class="tbtn mute ${t.muted ? 'on' : ''}" data-stem="${escapeHtml(t.name)}">Mute</button>
+          <button class="tbtn solo ${t.soloed ? 'on' : ''}" data-stem="${escapeHtml(t.name)}">Solo</button>
+        </div>
+        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="${t.volume}" data-stem="${escapeHtml(t.name)}" />
+      </div>
+      <div class="track-wave"><canvas></canvas></div>`;
+  return row;
 }
 
-export async function openPlayer(song, onBack) {
-  closePlayer();
-  const root = document.getElementById('player-root');
-  root.innerHTML = `<div class="loading"><div class="spinner"></div><p style="margin-top:14px">Loading stems…</p></div>`;
-
-  engine = new MultitrackEngine();
-
-  // Stems and cover live in R2; resolve every key to a signed URL in one call.
-  const keys = song.stems.map((s) => s.key).concat(song.coverKey ? [song.coverKey] : []);
-  let urls;
-  try { urls = await backend.signKeys(keys); }
-  catch (e) { root.innerHTML = `<div class="loading"><p>Couldn't reach storage: ${escapeHtml(e.message)}</p></div>`; return; }
-
-  const stems = song.stems.map((s) => ({
-    name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
-  }));
-  const unresolved = stems.filter((s) => !s.url).map((s) => s.name);
-  if (unresolved.length) {
-    root.innerHTML = `<div class="loading"><p>Missing stem audio for: ${escapeHtml(unresolved.join(', '))}.<br>Try reprocessing this song.</p></div>`;
-    return;
-  }
-
-  const progressEl = root.querySelector('.loading p');
-  let info;
-  try {
-    info = await engine.loadStems(stems, (done, total, bytes) => {
-      if (!progressEl) return;
-      const mb = (n) => (n / 1048576).toFixed(1);
-      progressEl.textContent = bytes.total
-        ? `Loading stems… ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
-        : `Loading stems… ${done}/${total}`;
-    });
-  } catch (e) {
-    const msg = isDecodeError(e) ? codecErrorMessage : `Couldn't load audio: ${e.message}`;
-    root.innerHTML = `<div class="loading"><p style="max-width:52ch;line-height:1.5">${escapeHtml(msg)}</p></div>`;
-    return;
-  }
-
-  const duration = info.duration;
-  const view = { start: 0, end: duration }; // visible time window
-  const grid = loadGridSettings();
-
-  const coverUrl = song.coverKey ? urls[song.coverKey] : null;
-  const cover = coverUrl ? `style="background-image:url('${coverUrl}')"` : '';
+function playerMarkup(song, {duration = song.duration || 0, rate = song.practice?.rate || 1} = {}) {
   const overviewOpen = localStorage.getItem('ws.overview') === '1';
-  root.innerHTML = `
+  return `
     <div class="player">
-      <div class="player-topbar">
-        <button class="back-btn" id="player-back">‹ Library</button>
-        <div class="pt-cover" ${cover}></div>
-        <div class="pt-meta">
-          <div class="ptitle">${escapeHtml(song.title)}</div>
-          <div class="psub">${escapeHtml(song.artist || song.uploader || '')} · ${song.stems.length} stems</div>
-        </div>
-        <div class="pt-spacer"></div>
-        <button class="toggle-btn ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle overview / minimap">Overview</button>
-      </div>
 
       <div class="tracks" id="tracks">
         <div class="timeline" id="timeline">
@@ -164,8 +111,8 @@ export async function openPlayer(song, onBack) {
         <div class="t-divider"></div>
         <div class="t-group">
           <span class="t-label">Speed</span>
-          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="1" />
-          <span class="speed-val" id="speed-val">1.00×</span>
+          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="${rate}" />
+          <span class="speed-val" id="speed-val">${rate.toFixed(2)}×</span>
         </div>
 
         <div class="t-divider"></div>
@@ -173,6 +120,7 @@ export async function openPlayer(song, onBack) {
           <button class="toggle-btn sm" id="zoom-out">−</button>
           <button class="toggle-btn sm" id="zoom-in">+</button>
           <button class="toggle-btn sm" id="zoom-fit">Fit</button>
+          <button class="toggle-btn sm ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle song overview">Overview</button>
         </div>
 
         <div class="t-divider"></div>
@@ -238,6 +186,117 @@ export async function openPlayer(song, onBack) {
     </div>
   `;
 
+}
+
+let engine = null;
+let playerGeneration = 0;
+let metronome = null;
+let rafId = null;
+let keyHandler = null;
+let cleanupFns = [];
+
+export function closePlayer() {
+  playerGeneration++;
+  const songHeader = document.getElementById('header-song');
+  if (songHeader) { songHeader.replaceChildren(); songHeader.classList.add('hidden'); }
+  window.woodshedDesktop?.setPlaying(false);
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  cleanupFns.forEach((fn) => fn());
+  cleanupFns = [];
+  if (metronome) { metronome.destroy(); metronome = null; }
+  if (engine) { engine.destroy(); engine = null; }
+  if (keyHandler) { window.removeEventListener('keydown', keyHandler); keyHandler = null; }
+  cleanupFns.forEach((fn) => fn());
+  cleanupFns = [];
+}
+
+export async function openPlayer(song) {
+  closePlayer();
+  const root = document.getElementById('player-root');
+  const songHeader = document.getElementById('header-song');
+  songHeader.classList.remove('hidden');
+  songHeader.innerHTML = `<div class="pt-cover"></div><div class="pt-meta"><div class="ptitle">${escapeHtml(song.title)}</div><div class="psub">${escapeHtml([song.artist || song.uploader, `${song.stems.length} stems`].filter(Boolean).join(' · '))}</div></div>`;
+  const generation = playerGeneration;
+  const isCurrent = () => generation === playerGeneration;
+  root.innerHTML = playerMarkup(song);
+  root.setAttribute('aria-busy', 'true');
+  root.querySelector('.player').classList.add('is-loading');
+  const loadingTracks = root.querySelector('#tracks');
+  for (const stem of song.stems) {
+    const saved = song.practice?.tracks?.find(track => track.name === stem.name);
+    const row = createTrackRow({...stem, color:colorFor(stem.name), volume:1, ...saved});
+    row.querySelector('.track-wave').classList.add('wave-skeleton');
+    loadingTracks.insertBefore(row, loadingTracks.querySelector('.timeline'));
+  }
+  for (const control of root.querySelectorAll('button, input, select')) control.disabled = true;
+  const progressEl = document.createElement('span');
+  progressEl.className = 'sr-only';
+  progressEl.setAttribute('role', 'status');
+  progressEl.textContent = `Loading ${song.stems.length} audio tracks`;
+  root.append(progressEl);
+  const showLoadError = message => {
+    if (!isCurrent()) return;
+    root.removeAttribute('aria-busy');
+    root.querySelector('.player').classList.remove('is-loading');
+    loadingTracks.innerHTML = '<div class="player-load-error" role="alert"><p></p><button class="btn-ghost">Try again</button></div>';
+    loadingTracks.querySelector('p').textContent = message;
+    loadingTracks.querySelector('button').onclick = () => openPlayer(song);
+    progressEl.remove();
+  };
+  const loadingEngine = new MultitrackEngine();
+  engine = loadingEngine;
+
+  // Stems and cover live in R2; resolve every key to a signed URL in one call.
+  const keys = song.stems.map((s) => s.key).concat(song.coverKey ? [song.coverKey] : []);
+  let urls;
+  try { urls = await backend.signKeys(keys); }
+  catch (e) { showLoadError(`Couldn't reach storage: ${e.message}`); return; }
+  if (!isCurrent()) return;
+  if (song.coverKey && urls[song.coverKey]) songHeader.querySelector('.pt-cover').style.backgroundImage = `url("${urls[song.coverKey]}")`;
+
+  const stems = song.stems.map((s) => ({
+    name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
+  }));
+  const unresolved = stems.filter((s) => !s.url).map((s) => s.name);
+  if (unresolved.length) {
+    showLoadError(`Missing stem audio for: ${unresolved.join(', ')}. Try reprocessing this song.`);
+    return;
+  }
+
+  let info;
+  try {
+    info = await loadingEngine.loadStems(stems, (done, total, bytes) => {
+      if (!isCurrent()) return;
+      const mb = (n) => (n / 1048576).toFixed(1);
+      progressEl.textContent = bytes.total
+        ? `Loading stems… ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
+        : `Loading stems… ${done}/${total}`;
+    });
+  } catch (e) {
+    const msg = isDecodeError(e) ? codecErrorMessage : `Couldn't load audio: ${e.message}`;
+    showLoadError(msg);
+    return;
+  }
+
+  if (!isCurrent()) return;
+
+  if (song.practice) {
+    const p = song.practice;
+    if (p.loop) engine.setLoop(p.loop.enabled, p.loop.a, p.loop.b);
+    for (const t of engine.tracks) {
+      const saved = p.tracks?.find(x => x.name === t.name);
+      if (saved) { engine.setVolume(t.name, saved.volume); if (saved.muted) engine.toggleMute(t.name); if (saved.soloed) engine.toggleSolo(t.name); }
+    }
+    if (p.rate) engine.setSpeed(p.rate);
+  }
+  const duration = info.duration;
+  const view = { start: 0, end: duration }; // visible time window
+  const grid = { ...loadGridSettings(), ...(song.practice?.grid || {}) };
+
+  root.innerHTML = playerMarkup(song, {duration, rate:engine.rate});
+  root.removeAttribute('aria-busy');
+
   const tracksEl = document.getElementById('tracks');
   const timeline = document.getElementById('timeline');
   const interact = document.getElementById('timeline-interact');
@@ -249,18 +308,7 @@ export async function openPlayer(song, onBack) {
   const trackRows = [];
 
   info.tracks.forEach((t) => {
-    const row = document.createElement('div');
-    row.className = 'track';
-    row.innerHTML = `
-      <div class="track-ctrl">
-        <div class="track-name"><span class="track-dot" style="background:${t.color}"></span>${prettyStem(t.name)}</div>
-        <div class="track-buttons">
-          <button class="tbtn mute" data-stem="${t.name}">Mute</button>
-          <button class="tbtn solo" data-stem="${t.name}">Solo</button>
-        </div>
-        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="1" data-stem="${t.name}" />
-      </div>
-      <div class="track-wave"><canvas></canvas></div>`;
+    const row = createTrackRow(t);
     tracksEl.insertBefore(row, timeline);
     trackRows.push({ track: t, canvas: row.querySelector('canvas'), row });
   });
@@ -670,7 +718,7 @@ export async function openPlayer(song, onBack) {
   // ---- transport ----
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; }
+  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; window.woodshedDesktop?.setPlaying(engine.playing); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
 
@@ -721,7 +769,6 @@ export async function openPlayer(song, onBack) {
   };
 
   // Back + overview toggle
-  document.getElementById('player-back').onclick = () => { if (onBack) onBack(); };
   const miniToggle = document.getElementById('mini-toggle');
   miniToggle.onclick = () => {
     const open = !overview.classList.toggle('hidden');
@@ -889,6 +936,22 @@ export async function openPlayer(song, onBack) {
   ro.observe(tracksEl);
   ro.observe(overview);
   cleanupFns.push(() => ro.disconnect());
+
+  const activeEngine = engine;
+  let practiceTimer;
+  let lastPractice = JSON.stringify(song.practice || null);
+  const flushPractice = () => {
+    clearTimeout(practiceTimer);
+    const practice = { loop: {...activeEngine.loop}, rate: activeEngine.rate, grid: {...grid}, tracks: activeEngine.tracks.map(t => ({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed})) };
+    const serialized = JSON.stringify(practice);
+    if (serialized === lastPractice) return;
+    lastPractice = serialized; song.practice = practice;
+    backend.savePractice(song.id, practice).catch(error => console.error('Could not sync practice settings:', error));
+  };
+  const schedulePractice = () => { clearTimeout(practiceTimer); practiceTimer = setTimeout(flushPractice, 600); };
+  for (const event of ['input','click','pointerup']) root.addEventListener(event, schedulePractice);
+  window.addEventListener('keyup', schedulePractice);
+  cleanupFns.push(() => { flushPractice(); for (const event of ['input','click','pointerup']) root.removeEventListener(event, schedulePractice); window.removeEventListener('keyup',schedulePractice); });
 
   // ---- animation loop (playhead + auto-follow) ----
   function frame() {

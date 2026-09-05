@@ -1,3 +1,8 @@
+import { renderBilling } from './billing.js';
+import { renderDownload } from './desktop.js';
+import { renderAdmin } from './admin.js';
+import { convex } from './auth.js';
+import { anyApi as api } from 'convex/server';
 import { initLibrary, renderLibrary } from './library.js';
 import { initSettings, renderSettings } from './settings.js';
 import { openPlayer, closePlayer } from './player.js';
@@ -12,39 +17,18 @@ function showView(name) {
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   document.body.classList.toggle('in-player', name === 'player');
   if (name !== 'player') closePlayer();
+  if (name === 'billing') renderBilling();
+  if (name === 'admin') renderAdmin();
   if (name === 'settings') renderSettings();
   if (name === 'library') renderLibrary(document.getElementById('lib-search').value);
 }
 
 async function openSong(song) {
-  // Player isn't a nav item; switch views manually and hide the sidebar for space.
+  // The player shares the app header and fills the remaining viewport.
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
   document.body.classList.add('in-player');
-  await openPlayer(song, () => showView('library'));
-}
-
-function initSidebar() {
-  const collapsed = localStorage.getItem('ws.sidebarCollapsed') === '1';
-  document.body.classList.toggle('sidebar-collapsed', collapsed);
-  const toggle = document.getElementById('sidebar-toggle');
-  // Tooltips for the collapsed icon rail.
-  document.querySelector('.nav-btn[data-view="library"]')?.setAttribute('title', 'Library');
-  document.querySelector('.nav-btn[data-view="settings"]')?.setAttribute('title', 'Settings');
-  document.getElementById('add-btn')?.setAttribute('title', 'Add song');
-
-  const apply = () => {
-    const c = document.body.classList.contains('sidebar-collapsed');
-    localStorage.setItem('ws.sidebarCollapsed', c ? '1' : '0');
-    toggle.textContent = c ? '›' : '‹';
-    toggle.title = c ? 'Expand sidebar (⌘.)' : 'Collapse sidebar (⌘.)';
-  };
-  const toggleSidebar = () => { document.body.classList.toggle('sidebar-collapsed'); apply(); };
-  toggle.onclick = toggleSidebar;
-  window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); toggleSidebar(); }
-  });
-  apply();
+  await openPlayer(song);
 }
 
 // Warn before a user downloads 20 MB they can't play. This is only a hint —
@@ -63,7 +47,7 @@ function maybeCodecWarning() {
 }
 
 async function boot() {
-  // Gate the app on a signed-in Clerk session; everything below needs a user.
+  // Gate the app on a signed-in session; everything below needs a user.
   // A failure here has already painted its own explanation, so stop quietly
   // rather than adding an unhandled rejection on top of it.
   try {
@@ -71,14 +55,15 @@ async function boot() {
   } catch {
     return;
   }
-  mountUserButton();
+  const admin = await convex.query(api.admin.access, {});
+  mountUserButton({ admin, navigate: showView });
 
   try {
     config = await backend.getConfig();
   } catch (e) {
     showFatal(
       "Couldn't reach the backend",
-      `${String(e.message || e)}<br><br>Check that <code>npx convex dev</code> is running and that the Clerk JWT template named <code>convex</code> exists.`
+      `${String(e.message || e)}<br><br>Check that <code>npx convex dev</code> is running.`
     );
     return;
   }
@@ -86,13 +71,21 @@ async function boot() {
   initLibrary(config, openSong);
   initSettings(config);
 
-  document.querySelectorAll('.nav-btn').forEach((btn) => {
+  document.querySelectorAll('[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => showView(btn.dataset.view));
   });
-  initSidebar();
+
 
   await renderLibrary();
   maybeCodecWarning();
+  if (location.pathname === '/billing') showView('billing');
+  document.addEventListener('woodshed:billing', () => showView('billing'));
+  if (location.pathname === '/admin' && admin) showView('admin');
+  if (window.woodshedDesktop) {
+    const { initializeDesktop } = await import('./desktop-client.js');
+    initializeDesktop();
+  }
 }
 
-boot();
+if (location.pathname === '/download') renderDownload();
+else boot();

@@ -3,35 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!--
-    No <meta> CSP here. The old one existed to lock down the Electron renderer;
-    in the browser a correct policy has to name your Clerk frontend API domain,
-    your Convex deployment (https + wss) and your R2 endpoint, so it belongs in
-    hosting headers where it can be configured per environment. See README.
-  -->
   <title>Woodshed</title>
   <link rel="stylesheet" href="/src/css/styles.css" />
 </head>
 <body>
-  <div id="titlebar"></div>
 
   <!-- Advisory banner (codec support, etc.) -->
   <div id="deps-banner" class="deps-banner hidden"></div>
 
-  <nav id="sidebar">
-    <button id="sidebar-toggle" class="sidebar-toggle" title="Collapse sidebar (⌘.)" aria-label="Toggle sidebar">‹</button>
-    <div class="brand">
-      <span class="logo">◐</span>
-      <span class="brand-name">Woodshed</span>
-    </div>
-    <button class="nav-btn active" data-view="library"><span class="nav-icon">≡</span><span class="nav-label">Library</span></button>
-    <button class="nav-btn" data-view="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
-    <div class="sidebar-spacer"></div>
-    <div class="sidebar-footer">
-      <button id="add-btn" class="add-btn"><span class="nav-icon">＋</span><span class="nav-label">Add song</span></button>
+  <header id="app-header">
+    <button class="brand brand-home" data-view="library" title="Open library"><span class="logo">◐</span><span class="brand-name">Woodshed</span></button>
+    <div id="header-song" class="header-song hidden"></div>
+    <div class="header-actions">
+      <button id="add-btn" class="add-btn"><span aria-hidden="true">＋</span><span class="add-label"> Add song</span></button>
       <div id="user-button" class="user-button"></div>
     </div>
-  </nav>
+  </header>
 
   <main id="content">
     <!-- LIBRARY VIEW -->
@@ -76,6 +63,9 @@
       <div id="player-root"></div>
     </section>
 
+<section id="view-billing" class="view"><div id="billing-root"></div></section>
+<section id="view-admin" class="view"><header class="view-header"><h1>Administration</h1></header><div id="admin-root"></div></section>
+
     <!-- SETTINGS VIEW -->
     <section id="view-settings" class="view">
       <header class="view-header"><h1>Settings</h1></header>
@@ -116,8 +106,7 @@
   <!-- Global drag-drop overlay -->
   <div id="drop-overlay" class="drop-overlay hidden"><div>Drop audio files to add</div></div>
 
-  <!-- Sign-in gate. Clerk's own card carries the heading and branding, so
-       this wrapper stays bare rather than stacking a second title on top. -->
+  <!-- Account sign-in gate. -->
   <div id="signin" class="signin hidden">
     <div class="signin-inner">
       <div class="brand signin-brand"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>

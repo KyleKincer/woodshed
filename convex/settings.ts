@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { getUserId, requireUserId } from './lib/auth';
+import { getUserId, requireWritableUserId } from './lib/auth';
 import {
   BITRATES,
   DEFAULT_PRESET,
@@ -16,6 +16,7 @@ import {
  */
 export const config = query({
   args: {},
+  returns: v.any(),
   handler: async (ctx) => {
     const userId = await getUserId(ctx);
     const row = userId
@@ -37,8 +38,9 @@ export const config = query({
 
 export const save = mutation({
   args: { settings: v.any() },
+  returns: v.any(),
   handler: async (ctx, args) => {
-    const userId = await requireUserId(ctx);
+    const userId = await requireWritableUserId(ctx);
     const merged = withDefaults(args.settings);
     const row = await ctx.db
       .query('userSettings')

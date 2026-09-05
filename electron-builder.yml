@@ -1,0 +1,46 @@
+appId: com.kylekincer.woodshed
+productName: Woodshed
+asar: true
+icon: desktop/icon.png
+directories:
+  output: release
+files:
+  - desktop/**
+  - dist/**
+  - package.json
+extraResources:
+  - from: build/processor
+    to: processor
+  - from: build/licenses
+    to: licenses
+  - from: build/bin
+    to: bin
+  - from: build/companion
+    to: companion
+  - from: build/THIRD-PARTY-NOTICES.txt
+    to: THIRD-PARTY-NOTICES.txt
+publish:
+  provider: github
+  owner: KyleKincer
+  repo: woodshed
+  releaseType: draft
+artifactName: Woodshed-${version}-${os}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+  category: AudioVideo
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.music
+  hardenedRuntime: true
+  notarize: true
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
