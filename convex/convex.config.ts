@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import r2 from '@convex-dev/r2/convex.config';
 import auth from '@convex-dev/auth/core/convex.config';
 import oauth from '@convex-dev/auth/providers/oauth/convex.config';
+import stripe from '@convex-dev/stripe/convex.config.js';
 
 const app = defineApp({
   env: {
@@ -13,9 +14,17 @@ const app = defineApp({
     OWNER_GOOGLE_ACCOUNT_ID: v.optional(v.string()),
     ADMIN_USER_IDS: v.optional(v.string()),
     AUTH_ALLOWED_ORIGINS: v.optional(v.string()),
+    STRIPE_SECRET_KEY: v.optional(v.string()),
+    STRIPE_WEBHOOK_SECRET: v.optional(v.string()),
+    STRIPE_PRICE_MONTHLY: v.optional(v.string()),
+    STRIPE_PRICE_ANNUAL: v.optional(v.string()),
+    STRIPE_BILLING_ENABLED: v.optional(v.string()),
+    BILLING_SITE_URL: v.optional(v.string()),
+    PRO_STORAGE_BYTES: v.optional(v.string()),
   },
 });
 app.use(r2);
+app.use(stripe);
 app.use(auth, {
   httpPrefix: '/auth',
   env: {

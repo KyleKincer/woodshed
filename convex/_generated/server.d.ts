@@ -31,7 +31,14 @@ type Env = {
   readonly AUTH_GOOGLE_CLIENT_SECRET: string;
   readonly AUTH_JWKS: string;
   readonly AUTH_PRIVATE_KEY: string;
+  readonly BILLING_SITE_URL: string | undefined;
   readonly OWNER_GOOGLE_ACCOUNT_ID: string | undefined;
+  readonly PRO_STORAGE_BYTES: string | undefined;
+  readonly STRIPE_BILLING_ENABLED: string | undefined;
+  readonly STRIPE_PRICE_ANNUAL: string | undefined;
+  readonly STRIPE_PRICE_MONTHLY: string | undefined;
+  readonly STRIPE_SECRET_KEY: string | undefined;
+  readonly STRIPE_WEBHOOK_SECRET: string | undefined;
 };
 
 /**

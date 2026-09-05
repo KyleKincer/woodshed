@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { requireUserId, accountControl } from './lib/auth';
 import { requireDevice } from './devices';
+import { billingAccount, paidCapacity } from './lib/billingPolicy';
 
 export async function limits(ctx: QueryCtx | MutationCtx, userId?: string) {
   const number = (key: string, fallback: number) => {
@@ -13,7 +14,15 @@ export async function limits(ctx: QueryCtx | MutationCtx, userId?: string) {
   };
   const policy = await ctx.db.query('appPolicy').withIndex('by_key', q => q.eq('key', 'storage')).unique();
   const control = userId ? await accountControl(ctx, userId) : null;
-  return { userBytes: control?.byteLimit ?? policy?.userBytes ?? number('CLOUD_USER_BYTE_LIMIT', 250_000_000), appBytes: policy?.appBytes ?? number('CLOUD_APP_BYTE_LIMIT', 8_000_000_000) };
+  const account = userId ? await billingAccount(ctx, userId) : null;
+  const freeBytes = policy?.userBytes ?? number('CLOUD_USER_BYTE_LIMIT', 250_000_000);
+  const baseAppBytes = policy?.appBytes ?? number('CLOUD_APP_BYTE_LIMIT', 8_000_000_000);
+  const fundedBytes = await paidCapacity(ctx);
+  return {
+    baseAppBytes, fundedBytes,
+    userBytes: control?.byteLimit ?? (account?.access === 'paid' ? Math.max(freeBytes, account.allocatedBytes) : freeBytes),
+    appBytes: baseAppBytes + fundedBytes,
+  };
 }
 export async function used(ctx: QueryCtx | MutationCtx, scope: string) {
   return (await ctx.db.query('storageUsage').withIndex('by_scope', q => q.eq('scope', scope)).unique())?.bytes ?? 0;
@@ -57,7 +66,7 @@ export const reserve = internalMutation({
     }
     const bytes = args.files.reduce((sum, f) => sum + f.bytes, 0);
     const l = await limits(ctx, device.userId);
-    if (await used(ctx, `user:${device.userId}`) + bytes > l.userBytes) throw new Error('Your cloud library is full. Export or delete songs to make room. The processed files remain on this computer.');
+    if (await used(ctx, `user:${device.userId}`) + bytes > l.userBytes) throw new Error('Your cloud library is full. Upgrade in Plan & billing, or export and delete songs to make room. The processed files remain on this computer.');
     if (await used(ctx, 'app') + bytes > l.appBytes) throw new Error('Cloud storage is currently full. Playback and export remain available. Your processed files remain local.');
     await adjust(ctx, device.userId, bytes);
     const rows = [];

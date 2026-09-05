@@ -10,12 +10,15 @@
 
 import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
+import type * as billing from "../billing.js";
+import type * as billingData from "../billingData.js";
 import type * as blobs from "../blobs.js";
 import type * as devices from "../devices.js";
 import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as jobs from "../jobs.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_billingPolicy from "../lib/billingPolicy.js";
 import type * as lib_dedupe from "../lib/dedupe.js";
 import type * as lib_presets from "../lib/presets.js";
 import type * as media from "../media.js";
@@ -38,12 +41,15 @@ import type {
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   auth: typeof auth;
+  billing: typeof billing;
+  billingData: typeof billingData;
   blobs: typeof blobs;
   devices: typeof devices;
   http: typeof http;
   ingest: typeof ingest;
   jobs: typeof jobs;
   "lib/auth": typeof lib_auth;
+  "lib/billingPolicy": typeof lib_billingPolicy;
   "lib/dedupe": typeof lib_dedupe;
   "lib/presets": typeof lib_presets;
   media: typeof media;
@@ -86,6 +92,7 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   r2: import("@convex-dev/r2/_generated/component.js").ComponentApi<"r2">;
+  stripe: import("@convex-dev/stripe/_generated/component.js").ComponentApi<"stripe">;
   auth: import("@convex-dev/auth/core/_generated/component.js").ComponentApi<"auth">;
   oauthGoogle: import("@convex-dev/auth/providers/oauth/_generated/component.js").ComponentApi<"oauthGoogle">;
 };

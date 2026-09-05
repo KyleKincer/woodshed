@@ -97,3 +97,19 @@ macOS/Windows have setup paths but have not been executed on those systems.
 - Real browser/Web Audio verification: four initial downloads and decodes;
   reopening added zero downloads and zero decodes. After clearing memory,
   decoding repeated but downloads stayed at four, proving the disk cache hit.
+
+### Billing preparation (September 2026)
+
+- 21 Convex tests pass, including authenticated billing scope, checkout leases,
+  stale subscription events, funded quota accounting, admin overrides, stable
+  grace deadlines, resubscription, and waiting for actual R2 deletion before
+  removing another song.
+- 10 desktop tests pass; typecheck and web build pass.
+- Pricing layout inspected at 1280px and 390px. Phone layout has no horizontal
+  overflow. Browser pricing fixture used synthetic state, not a real purchase.
+- Stripe live account activation confirmed: charges and payouts enabled, no
+  outstanding requirements. Live product, prices, default portal, and webhook
+  endpoint provisioned. Production checkout remains disabled.
+- Pending: finish Stripe's authenticator challenge to create the restricted
+  server key; configure test credentials; exercise real test-mode checkout,
+  webhook and portal flows; deploy and enable the verified integration.

@@ -40,6 +40,19 @@ export default defineSchema({
     byteLimit: v.optional(v.number()), notes: v.string(),
   }).index('by_userId', ['userId']),
   appPolicy: defineTable({ key: v.string(), userBytes: v.number(), appBytes: v.number() }).index('by_key', ['key']),
+  billingAccounts: defineTable({
+    userId: v.string(), customerId: v.optional(v.string()),
+    access: v.union(v.literal('free'), v.literal('paid'), v.literal('grace')),
+    subscriptionId: v.optional(v.string()), status: v.optional(v.string()),
+    interval: v.optional(v.union(v.literal('month'), v.literal('year'))),
+    periodEnd: v.optional(v.number()), cancelAtPeriodEnd: v.optional(v.boolean()),
+    graceEndsAt: v.optional(v.number()), allocatedBytes: v.number(), cleanupPending: v.optional(v.boolean()),
+    syncGeneration: v.number(), checkoutGeneration: v.number(),
+    checkoutBusyUntil: v.optional(v.number()), checkoutSessionId: v.optional(v.string()),
+    checkoutUrl: v.optional(v.string()), checkoutExpiresAt: v.optional(v.number()),
+    checkoutInterval: v.optional(v.union(v.literal('month'), v.literal('year'))),
+  }).index('by_userId', ['userId']).index('by_customerId', ['customerId']),
+  billingCapacity: defineTable({ key: v.string(), bytes: v.number() }).index('by_key', ['key']),
   adminAudit: defineTable({ actorId: v.string(), targetId: v.string(), action: v.string(), reason: v.string(), before: v.any(), after: v.any(), at: v.number() }).index('by_targetId', ['targetId']),
   devices: defineTable({
     userId: v.string(), tokenHash: v.string(), name: v.string(), revoked: v.boolean(),
@@ -49,7 +62,7 @@ export default defineSchema({
     userId: v.string(), jobId: v.id('jobs'), key: v.string(), name: v.string(),
     bytes: v.number(), mime: v.string(), checksum: v.string(), expiresAt: v.number(),
     status: v.union(v.literal('reserved'), v.literal('ready'), v.literal('deleting')),
-  }).index('by_key', ['key']).index('by_job', ['jobId']),
+  }).index('by_key', ['key']).index('by_job', ['jobId']).index('by_userId_status', ['userId', 'status']),
 
   // A separation that already exists, so a second request for the same audio at
   // the same settings costs nothing. Separation is deterministic and expensive:

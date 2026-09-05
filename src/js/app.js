@@ -1,3 +1,4 @@
+import { renderBilling } from './billing.js';
 import { renderDownload } from './desktop.js';
 import { renderAdmin } from './admin.js';
 import { convex } from './auth.js';
@@ -16,6 +17,7 @@ function showView(name) {
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   document.body.classList.toggle('in-player', name === 'player');
   if (name !== 'player') closePlayer();
+  if (name === 'billing') renderBilling();
   if (name === 'admin') renderAdmin();
   if (name === 'settings') renderSettings();
   if (name === 'library') renderLibrary(document.getElementById('lib-search').value);
@@ -76,6 +78,8 @@ async function boot() {
 
   await renderLibrary();
   maybeCodecWarning();
+  if (location.pathname === '/billing') showView('billing');
+  document.addEventListener('woodshed:billing', () => showView('billing'));
   if (location.pathname === '/admin' && admin) showView('admin');
   if (window.woodshedDesktop) {
     const { initializeDesktop } = await import('./desktop-client.js');

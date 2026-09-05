@@ -27,10 +27,12 @@
     "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@convex-dev/auth": "2.0.0-alpha.1",
     "@convex-dev/r2": "^0.10.2",
+    "@convex-dev/stripe": "^0.1.6",
     "convex": "^1.43.0",
     "electron-updater": "^6.8.9",
     "fflate": "^0.8.3",
-    "react": "^19.2.8"
+    "react": "^19.2.8",
+    "stripe": "^22.6.1"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

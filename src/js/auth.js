@@ -61,7 +61,9 @@ async function initialize() {
       showFatal('Account suspended', 'Contact the app owner for help restoring access.');
       const button=document.createElement('button'); button.className='btn-ghost';button.textContent='Sign out';
       button.onclick=async()=>{await auth.signOut();location.reload();};
-      document.querySelector('#signin .setup-card').append(button);
+      const manage=document.createElement('button');manage.className='btn-ghost';manage.textContent='Manage billing';
+      manage.onclick=async()=>{manage.disabled=true;try{location.assign(await convex.action(api.billing.portal,{}));}catch(error){manage.textContent=error.message;}finally{manage.disabled=false;}};
+      document.querySelector('#signin .setup-card').append(manage,button);
       return false;
     }
     return true;
@@ -179,6 +181,7 @@ export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
     const entry=document.createElement('button');entry.className='account-signout';entry.textContent=label;
     entry.onclick=()=>{menu.open=false;action();};panel.append(entry);
   };
+  item('Plan & billing', () => navigate('billing'));
   if (admin) item('Administration', () => navigate('admin'));
   if (window.woodshedDesktop) item('App updates', () => document.dispatchEvent(new Event('woodshed:show-updates')));
   if (!window.woodshedDesktop) item('Download desktop app', () => { location.href='/download'; });

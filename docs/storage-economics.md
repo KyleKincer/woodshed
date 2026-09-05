@@ -86,3 +86,45 @@ public to retain free standard-runner usage; avoid switching to paid larger
 runners without revisiting costs. Temporary CI artifacts expire after seven
 days, while published release assets remain available for installed clients.
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+
+## Woodshed Plus (September 2026)
+
+Initial pricing: **$2/month or $20/year USD for 5 GB**, versus 250 MB free.
+A four-minute song with four 192 kbps stems is approximately 23 MB before art,
+so these allowances hold roughly 200 and 10 songs respectively. Six stems,
+longer tracks, or FLAC reduce that count. Playback, local processing, and exports
+remain free. Prices are server-selected; quota is configurable with
+`PRO_STORAGE_BYTES`, and administrator overrides take precedence.
+
+Quick estimates assuming US domestic cards and a fully used 5 GB allowance:
+
+| Per subscriber | Monthly billing | Annual billing, monthly equivalent |
+| --- | ---: | ---: |
+| Revenue | $2.00 | $1.667 |
+| Stripe Payments (2.9% + $0.30 per charge) plus Billing (0.7%) | $0.372 | $0.085 |
+| R2 storage at $0.015/GB-month | $0.075 | $0.075 |
+| Illustrative backend/operations allowance | $0.10 | $0.10 |
+| Contribution toward fixed costs | **$1.453** | **$1.407** |
+
+The $0.10 allowance is a planning assumption, not measured usage. Roughly 32
+paying users would cover $45/month of combined shared hosting/backend overhead
+at this usage; existing paid accounts may already cover part of that overhead.
+This excludes taxes, international cards, currency conversion, refunds, disputes,
+support time, and future pricing changes. Annual billing reduces per-charge fees.
+R2 free allowances improve the early numbers; do not depend on them at scale.
+Downloads have no R2 egress fee, but request operations still count. Cloud
+processing is not a paid benefit: downloads and separation stay on the user's
+computer.
+
+The base 8 GB app ceiling expands by each paid subscriber's allocated capacity;
+admin UI edits the base ceiling, not the funded total. On cancellation, retain
+Plus through the paid period, then allow 14 days to export or reduce to the free
+quota. After that, remove oldest cloud songs only while over quota, waiting for
+actual R2 deletion before choosing another song. Local source/output files remain
+untouched. A new payment stops pending cleanup. Failed payments enter the same
+export grace period. No refunds or charges are initiated by cleanup.
+
+Sources: [Stripe Payments](https://stripe.com/pricing),
+[Stripe Billing](https://stripe.com/billing/pricing),
+[R2 pricing](https://developers.cloudflare.com/r2/pricing/),
+[Convex pricing](https://www.convex.dev/pricing).

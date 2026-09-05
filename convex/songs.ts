@@ -88,6 +88,12 @@ export const remove = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
+    await deleteSongData(ctx,song);
+    return true;
+  },
+});
+
+export async function deleteSongData(ctx: MutationCtx, song: Doc<'songs'>) {
     // Shared audio is freed by `release` only when this was the last song
     // holding it; `freeBlobs` is true only when this song owned its stems
     // outright, in which case clean them up here.
@@ -117,9 +123,7 @@ export const remove = mutation({
       }
     }
     await ctx.db.delete(song._id);
-    return true;
-  },
-});
+}
 
 async function requireOwned(ctx: MutationCtx, id: Id<'songs'>) {
   const userId = await requireUserId(ctx);

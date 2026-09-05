@@ -34,7 +34,7 @@ export function renderSettings() {
     </div>
     <div class="settings-section">
       <h3>Cloud library</h3>
-      <p class="desc" id="cloud-usage">Loading storage usage…</p>
+      <p class="desc" id="cloud-usage">Loading storage usage…</p><button class="btn-ghost" id="settings-upgrade">Plan & billing</button>
       <button class="btn-ghost" id="export-library">Export whole library</button> <button class="btn-ghost" id="export-originals">Export local WAVs</button>
       <p class="hint" id="export-message">Includes synced audio and practice settings. Original-quality WAV stems remain in your companion’s local data folder for export.</p>
     </div>
@@ -130,6 +130,7 @@ export function renderSettings() {
       const result=await importLegacy(directory);message.textContent=`Queued ${result.count} songs. Existing files are preserved.${result.remaining ? ` Import again after these finish for ${result.remaining} remaining songs.` : ''}`;
     } catch(e) {message.textContent=e.message;}
   };
+  document.getElementById('settings-upgrade').onclick=()=>document.dispatchEvent(new Event('woodshed:billing'));
   backend.cloudUsage().then(u=>{document.getElementById('cloud-usage').textContent=`${(u.usedBytes/1e6).toFixed(1)} MB of ${(u.limitBytes/1e6).toFixed(0)} MB used, including pending uploads. ${u.appFull?'Cloud uploads are paused; playback and export remain available.':''}`;}).catch(e=>{document.getElementById('cloud-usage').textContent=e.message;});
   document.getElementById('export-originals').onclick=async event=>{
     const button=event.currentTarget;button.disabled=true;
