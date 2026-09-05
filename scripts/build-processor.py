@@ -25,7 +25,7 @@ for distribution in importlib.metadata.distributions():
                 if '..' in dest.parts: continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, dest)
-    (notices / (name + '.txt')).write_text(str(distribution.metadata), encoding='utf-8')
+    (notices / (name + '.txt')).write_text(distribution.read_text('METADATA') or distribution.read_text('PKG-INFO') or name, encoding='utf-8')
 # BeatNet uses madmom's DBN algorithms, not madmom's pretrained models.
 # Omit those unused, separately licensed weights from the distribution.
 models = executable.parent / '_internal' / 'madmom' / 'models'

@@ -1,6 +1,7 @@
 appId: com.kylekincer.woodshed
 productName: Woodshed
 asar: true
+icon: desktop/icon.png
 directories:
   output: release
 files:

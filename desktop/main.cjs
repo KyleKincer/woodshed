@@ -90,7 +90,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.on('second-instance',()=>{window?.show();window?.focus();});
   app.whenReady().then(async()=>{
     await startWeb();await startCompanion();
-    window=new BrowserWindow({width:1280,height:850,minWidth:640,minHeight:480,backgroundColor:'#0e0f13',show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({icon:path.join(__dirname,'icon.png'),width:1280,height:850,minWidth:640,minHeight:480,backgroundColor:'#0e0f13',show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     const openExternal=url=>{try{const parsed=new URL(url);if(parsed.protocol==='https:')shell.openExternal(url);}catch{}};
     window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==UI_ORIGIN){event.preventDefault();openExternal(url);}});
     window.webContents.setWindowOpenHandler(({url})=>{openExternal(url);return {action:'deny'};});
@@ -112,7 +112,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       fs.writeFileSync(path.join(app.getPath('temp'),'woodshed-desktop-smoke.png'),(await window.capturePage()).toPNG());
       closing=true;app.quit();
     }
-  }).catch(error=>{dialog.showErrorBox('Woodshed could not start',error.message);app.quit();});
+  }).catch(error=>{if(smokeTest){console.error(error);app.exit(1);return;}dialog.showErrorBox('Woodshed could not start',error.message);closing=true;app.quit();});
   app.on('before-quit',event=>{if(!closing&&window&&!window.isDestroyed()){event.preventDefault();window.close();return;}closing=true;webServer?.close();if(companion){event.preventDefault();stopCompanion().finally(()=>app.quit());}});
   app.on('window-all-closed',()=>app.quit());
 }

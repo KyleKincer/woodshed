@@ -37,9 +37,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            companion/requirements.txt
+            companion/setup.py
       - run: npm ci
       - run: npm test && npm run test:desktop && npm run typecheck
+      - uses: actions/cache@v4
+        id: processor
+        with:
+          path: build/processor
+          key: processor-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/requirements.txt', 'scripts/build-processor.py') }}
       - name: Build isolated processor
+        if: steps.processor.outputs.cache-hit != 'true'
         shell: bash
         run: |
           python companion/setup.py --beats --cpu

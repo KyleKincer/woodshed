@@ -26,8 +26,8 @@ export function renderSettings() {
   root.innerHTML = `
     <div class="settings-section">
       <h3>This computer</h3>
-      <a href="/download" class="btn-ghost">Get the desktop companion</a>
-      <p class="desc">Install and start the Woodshed companion to download and process songs here. Your library plays on other devices without it.</p>
+      <a href="/download" class="btn-ghost">Download desktop app</a>
+      <p class="desc">Install Woodshed for desktop to download and process songs on this computer. Your library plays on other devices without it.</p>
       <div class="row"><input id="pairing-code" type="password" autocomplete="off" placeholder="Companion pairing code" aria-label="Companion pairing code" /><button class="btn-ghost" id="connect-companion">Connect</button><button class="btn-ghost" id="disconnect-companion">Disconnect</button></div>
       <p class="hint" id="companion-message">Open the link printed by your companion, or paste its pairing code here.</p>
       <div class="row"><input id="legacy-dir" placeholder="Old Woodshed data directory (optional)" aria-label="Old library directory" /><button class="btn-ghost" id="import-legacy">Import old library</button></div>
