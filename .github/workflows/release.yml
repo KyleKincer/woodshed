@@ -73,6 +73,7 @@ jobs:
           fi
           npm run build
           npm run desktop:prepare
+          python scripts/test-processor.py
           npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
       - name: Launch packaged desktop app
         run: node scripts/smoke-desktop.mjs
