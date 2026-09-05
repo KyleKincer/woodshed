@@ -22,7 +22,8 @@ export async function reconcileCustomer(ctx: Pick<ActionCtx, 'runMutation'>, cus
   const item = sub?.items.data.find(i => prices().includes(i.price.id));
   await ctx.runMutation(internal.billingData.applySync, {...lease, subscription: sub && item ? {
     id:sub.id, status:sub.status, interval:item.price.recurring?.interval === 'year' ? 'year' : 'month',
-    periodEnd:item.current_period_end*1000, cancelAtPeriodEnd:sub.cancel_at_period_end,
+    periodEnd:Math.min(item.current_period_end,sub.cancel_at ?? item.current_period_end)*1000,
+    cancelAtPeriodEnd:sub.cancel_at_period_end || sub.cancel_at !== null,
   } : null});
 }
 export const reconcile = internalAction({args:{customerId:v.string()}, returns:v.null(), handler:async(ctx,{customerId}) => {await reconcileCustomer(ctx,customerId);return null;}});
@@ -58,6 +59,18 @@ export const checkout = action({args:{interval:v.union(v.literal('month'),v.lite
       }
       if(previous.status==='open')await stripe.checkout.sessions.expire(previous.id);
     }
+    // Recover a completed checkout even when its webhook or our previous action
+    // was interrupted. Do not create a second subscription for the same account.
+    await reconcileCustomer(ctx,customerId);
+    const refreshed=await ctx.runQuery(internal.billingData.context,{userId});
+    if(['active','trialing','past_due','unpaid','incomplete'].includes(refreshed.account?.status||'')){
+      await ctx.runMutation(internal.billingData.finishCheckout,{userId,generation:lease.generation});
+      return (await client.createCustomerPortalSession(ctx,{customerId,returnUrl:`${site()}/billing`})).url;
+    }
+    // Recover sessions created before a failed action could save their IDs.
+    const openSessions=await stripe.checkout.sessions.list({customer:customerId,status:'open',limit:100});
+    if(openSessions.has_more)throw new Error('Checkout history requires review.');
+    for(const open of openSessions.data)if(open.metadata?.app==='woodshed'&&open.metadata.userId===userId)await stripe.checkout.sessions.expire(open.id);
     // Price amounts are checked server-side as well as during provisioning.
     const price=await stripe.prices.retrieve(priceId);
     if(!price.active||price.currency!=='usd'||price.unit_amount!==(interval==='year'?2000:200)||price.recurring?.interval!==interval)throw new Error('Billing configuration needs review.');

@@ -109,7 +109,19 @@ macOS/Windows have setup paths but have not been executed on those systems.
   overflow. Browser pricing fixture used synthetic state, not a real purchase.
 - Stripe live account activation confirmed: charges and payouts enabled, no
   outstanding requirements. Live product, prices, default portal, and webhook
-  endpoint provisioned. Production checkout remains disabled.
-- Pending: finish Stripe's authenticator challenge to create the restricted
-  server key; configure test credentials; exercise real test-mode checkout,
-  webhook and portal flows; deploy and enable the verified integration.
+  endpoint provisioned. Production checkout was enabled after the integration checks below.
+- Real test-mode checkout paid with Stripe's test card; the verified webhook
+  changed the test user's quota from 250 MB to 5 GB without manual sync.
+- Portal cancellation scheduled the end of service while retaining 5 GB.
+  Stripe uses `cancel_at` for this flow; reconciliation handles both timestamp
+  and legacy boolean forms. Ending the test subscription triggered the 14-day
+  grace period and restored the 250 MB upload limit automatically.
+- Annual resubscription checkout verified at $20/year. An orphaned open checkout
+  from a simulated interrupted action was expired before a replacement opened.
+- Production restricted key successfully created an unpaid checkout and portal;
+  that checkout was expired and the temporary customer removed. No live charge.
+- Production deployment `tidy-kookabura-985` has billing enabled. Vercel deployment
+  `dpl_6iXKHSx74pGCaRKAM5aR8PGGZAsm` serves the updated website at the custom
+  domain; `/` and `/billing` return 200 with `index-UK6eFOKB.js`.
+- Owner account verified as free with unchanged 250 MB quota and 22,764,458 bytes
+  used. No subscription was created for the owner during testing.

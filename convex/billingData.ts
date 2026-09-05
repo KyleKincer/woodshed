@@ -49,7 +49,7 @@ export const beginCheckout = internalMutation({
     if((row.checkoutBusyUntil||0)>now)throw new Error('Checkout is already opening. Try again in a moment.');
     if(!row.subscriptionId && row.checkoutUrl && row.checkoutInterval===args.interval && (row.checkoutExpiresAt||0)>now+60_000)return {kind:'existing' as const,url:row.checkoutUrl};
     const generation=row.checkoutGeneration+1;
-    await ctx.db.patch(row._id,{checkoutGeneration:generation,checkoutBusyUntil:now+120_000,checkoutUrl:undefined,checkoutExpiresAt:undefined});
+    await ctx.db.patch(row._id,{checkoutGeneration:generation,checkoutBusyUntil:now+600_000,checkoutUrl:undefined,checkoutExpiresAt:undefined});
     return {kind:'create' as const,generation,customerId:row.customerId,previousSessionId:row.subscriptionId ? undefined : row.checkoutSessionId};
   },
 });
