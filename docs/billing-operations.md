@@ -53,3 +53,6 @@ the app ceiling separately so editing the base does not count them twice.
 
 Validation commands: `npm test`, `npm run typecheck`, `npm run test:desktop`,
 `npm run build`. See `storage-economics.md` for cost assumptions.
+
+Checkout explicitly sets `managed_payments.enabled=false` to use standard Stripe
+Payments and Billing, avoiding the optional Managed Payments surcharge.
