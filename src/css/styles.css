@@ -44,66 +44,30 @@ body { display: flex; }
 
 .hidden { display: none !important; }
 
-/* ---------- Sidebar ---------- */
-#sidebar {
-  position: relative;
-  width: 210px; flex-shrink: 0;
-  background: var(--bg-2);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  padding: calc(var(--titlebar-h) + var(--shell-pad)) 12px 14px;
-  gap: 4px;
-  transition: width .16s ease;
-}
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 4px 10px; }
-.logo { font-size: 22px; color: var(--accent); flex-shrink: 0; }
-.brand-name { font-weight: 700; font-size: 16px; letter-spacing: .3px; flex: 1; white-space: nowrap; overflow: hidden; }
-/* Edge-pill toggle: stays pinned to the border in both states, just rotates. */
-.sidebar-toggle {
-  position: absolute; top: calc(var(--titlebar-h) + 10px); right: -12px; z-index: 60;
-  width: 24px; height: 24px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
-  cursor: pointer; font-size: 13px; line-height: 1;
-  box-shadow: 0 2px 6px rgba(0,0,0,.35); transition: background .12s, color .12s;
-}
-.sidebar-toggle:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-.nav-btn {
-  display: flex; align-items: center; gap: 10px;
-  background: transparent; border: none; color: var(--muted);
-  font: inherit; font-size: 14px; text-align: left;
-  padding: 9px 12px; border-radius: 9px; cursor: pointer; white-space: nowrap;
-}
-.nav-icon { width: 18px; text-align: center; opacity: .9; flex-shrink: 0; }
-.nav-btn:hover { background: var(--bg-3); color: var(--text); }
-.nav-btn.active { background: var(--bg-3); color: var(--text); }
-.sidebar-spacer { flex: 1; min-height: 12px; }
-.sidebar-footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.sidebar-footer .add-btn { flex: 1; min-width: 0; }
-/* Clerk mounts its avatar/account menu here; :empty keeps the row from
-   reserving space before Clerk loads (or when signed out). */
-/* No overflow:hidden — Clerk's account menu would get clipped by the 36px box. */
-.user-button {
-  width: 36px; height: 36px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-}
-.user-button:empty { display: none; }
-.user-button > * { max-width: 100%; max-height: 100%; }
-body.sidebar-collapsed .user-button { width: 32px; height: 32px; }
-body.sidebar-collapsed .sidebar-footer { flex-direction: column; gap: 6px; }
-body.sidebar-collapsed .sidebar-footer .add-btn { width: 100%; }
-
-/* Collapsed icon rail */
-body.sidebar-collapsed #sidebar { width: 64px; }
-body.sidebar-collapsed .brand-name,
-body.sidebar-collapsed .nav-label { display: none; }
-body.sidebar-collapsed .brand { justify-content: center; padding: 0 0 10px; }
-body.sidebar-collapsed .nav-btn,
-body.sidebar-collapsed .add-btn { justify-content: center; padding: 9px 0; }
-
-/* Hide the sidebar entirely while in the player for maximum space */
-body.in-player #sidebar { display: none; }
-body.in-player #content { padding: 0; overflow: hidden; }
+/* Compact app navigation */
+body { flex-direction:column; }
+#app-header { display:flex; align-items:center; justify-content:space-between; flex-shrink:0; padding:16px 28px; gap:16px; border-bottom:1px solid var(--border); background:var(--bg-2); z-index:90; }
+.brand { display:flex; align-items:center; gap:10px; font:inherit; font-weight:700; color:var(--text); }
+.brand-home { border:0; background:none; cursor:pointer; }
+.logo { color:var(--accent); font-size:22px; }
+.header-actions { display:flex; align-items:center; gap:22px; }
+.user-button { display:flex; align-items:center; gap:6px; min-width:0; }
+.account-settings { display:grid; place-items:center; width:36px; height:36px; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; }
+.account-settings:hover { background:var(--bg-3); color:var(--text); }
+.account-name { max-width:180px; }
+body.in-player #content { padding:0; overflow:hidden; }
+.account-menu { position: relative; }
+.account-trigger { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 9px; cursor: pointer; list-style: none; }
+.account-trigger::-webkit-details-marker { display: none; }
+.account-trigger:hover, .account-menu[open] .account-trigger { background: var(--bg-3); }
+.account-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.account-avatar { display: flex; align-items: center; justify-content: center; flex: 0 0 30px; height: 30px; border-radius: 50%; background: #293451; color: #b6caff; font-size: 11px; font-weight: 700; letter-spacing: .4px; }
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; flex: 1; min-width: 0; }
+.account-more { color: var(--muted); font-size: 18px; letter-spacing: 1px; }
+.account-panel { position: absolute; z-index: 80; top: calc(100% + 8px); right: 0; width: 230px; padding: 6px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 36px #0006; }
+.account-email { padding: 9px 10px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.account-signout { display: block; width: 100%; padding: 9px 10px; text-align: left; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.account-signout:hover { background: var(--panel); }
 .add-btn, .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: white; border: none; font: inherit; font-weight: 600;
@@ -486,3 +450,77 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .loading { text-align: center; color: var(--muted); padding: 60px 0; }
 .spinner { display: inline-block; width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Shared web shell, administration, and desktop handoff. */
+.nav-btn { text-decoration: none; }
+.admin-summary { display:flex; gap:40px; padding:24px; background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:24px; }
+.admin-summary h2 { margin-top:8px; }
+.admin-columns { display:grid; grid-template-columns:minmax(260px, 1fr) minmax(320px, 1.4fr); gap:28px; align-items:start; }
+.admin-search { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.admin-search input { flex:1; min-width:160px; }
+.admin-user { display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; padding:16px; margin-bottom:8px; border:1px solid var(--border); border-radius:10px; background:var(--panel); color:var(--text); cursor:pointer; }
+.admin-user:hover, .admin-user:focus-visible { border-color:var(--accent); }
+.admin-user span { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+.admin-form { display:grid; gap:14px; margin:20px 0; }
+.admin-form label { display:grid; gap:7px; color:var(--muted); font-size:13px; }
+.admin-form input, .admin-search input, .admin-form select, .admin-form textarea { width:100%; min-width:0; background:var(--bg-2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; font:inherit; }
+.admin-form textarea { min-height:90px; resize:vertical; }
+.admin-form button { justify-self:start; }
+.admin-item { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.audit-item { padding:12px 0; color:var(--muted); border-bottom:1px solid var(--border); font-size:13px; overflow-wrap:anywhere; }
+#admin-root summary { cursor:pointer; padding:12px 0; }
+.desktop-dialog { margin:auto; max-width:540px; width:calc(100% - 32px); padding:30px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:16px; box-shadow:0 20px 90px #0008; }
+.desktop-dialog::backdrop { background:#000a; }
+.desktop-dialog p { margin:18px 0; line-height:1.6; }
+a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-align:center; }
+.download-page { display:block; overflow:auto; user-select:text; }
+.download-content { max-width:1000px; margin:0 auto; padding:40px 28px 80px; }
+.download-content .brand { color:var(--text); text-decoration:none; margin-bottom:70px; }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:2px; margin-bottom:18px; }
+.download-content h1 { font-size:clamp(30px,5vw,52px); line-height:1.15; letter-spacing:-1px; }
+.download-lead { color:var(--muted); font-size:18px; line-height:1.7; max-width:740px; margin:24px 0; }
+.download-content .hint { margin:18px 0; line-height:1.6; }
+.download-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin:55px 0; }
+.download-steps section { padding:22px; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+.download-steps h2 { font-size:19px; margin-bottom:14px; }
+.download-steps p { line-height:1.7; color:var(--muted); }
+.download-steps a { color:var(--accent); }
+@media(max-width:700px) {
+  .admin-columns, .download-steps { grid-template-columns:1fr; }
+  .admin-summary { flex-direction:column; gap:20px; }
+  .view-header, .lib-controls { flex-wrap:wrap; gap:12px; }
+  #content { min-width:0; padding:24px 16px; }
+  .account-panel { right:0; }
+  .modal-actions { flex-wrap:wrap; }
+}
+
+#titlebar { pointer-events:none; }
+
+/* Keep the Google sign-in card within narrow phone viewports. */
+.signin-inner { width:100%; max-width:620px; min-width:0; }
+#signin-mount { width:100%; min-width:0; }
+.setup-card { width:100%; }
+@media(max-width:700px) {
+  .signin { padding:20px; }
+  .setup-card { padding:24px; }
+  .setup-card h2 { font-size:21px; }
+}
+
+@media(max-width:700px) {
+  #app-header { padding:12px 16px; gap:8px; }
+  .header-actions { gap:8px; }
+  .account-name { display:none; }
+  .account-trigger { padding:3px; }
+  .add-label { display:none; }
+  #content { padding:24px 16px; }
+}
+#content { padding:28px 32px; min-height:0; }
+.desktop-update { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; font-size:13px; }
+
+.desktop-downloads { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+
+.google-signin { padding:0; border:0; border-radius:4px; background:transparent; cursor:pointer; display:inline-flex; }
+.google-signin img { display:block; }
+.google-signin:hover { filter:brightness(.96); }
+.google-signin:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+.google-signin:disabled { opacity:.65; cursor:wait; }

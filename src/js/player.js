@@ -54,8 +54,11 @@ let keyHandler = null;
 let cleanupFns = [];
 
 export function closePlayer() {
+  window.woodshedDesktop?.setPlaying(false);
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
+  cleanupFns.forEach((fn) => fn());
+  cleanupFns = [];
   if (metronome) { metronome.destroy(); metronome = null; }
   if (engine) { engine.destroy(); engine = null; }
   if (keyHandler) { window.removeEventListener('keydown', keyHandler); keyHandler = null; }
@@ -101,9 +104,18 @@ export async function openPlayer(song, onBack) {
     return;
   }
 
+  if (song.practice) {
+    const p = song.practice;
+    if (p.loop) engine.setLoop(p.loop.enabled, p.loop.a, p.loop.b);
+    for (const t of engine.tracks) {
+      const saved = p.tracks?.find(x => x.name === t.name);
+      if (saved) { engine.setVolume(t.name, saved.volume); if (saved.muted) engine.toggleMute(t.name); if (saved.soloed) engine.toggleSolo(t.name); }
+    }
+    if (p.rate) engine.setSpeed(p.rate);
+  }
   const duration = info.duration;
   const view = { start: 0, end: duration }; // visible time window
-  const grid = loadGridSettings();
+  const grid = { ...loadGridSettings(), ...(song.practice?.grid || {}) };
 
   const coverUrl = song.coverKey ? urls[song.coverKey] : null;
   const cover = coverUrl ? `style="background-image:url('${coverUrl}')"` : '';
@@ -164,8 +176,8 @@ export async function openPlayer(song, onBack) {
         <div class="t-divider"></div>
         <div class="t-group">
           <span class="t-label">Speed</span>
-          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="1" />
-          <span class="speed-val" id="speed-val">1.00×</span>
+          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="${engine.rate}" />
+          <span class="speed-val" id="speed-val">${engine.rate.toFixed(2)}×</span>
         </div>
 
         <div class="t-divider"></div>
@@ -255,10 +267,10 @@ export async function openPlayer(song, onBack) {
       <div class="track-ctrl">
         <div class="track-name"><span class="track-dot" style="background:${t.color}"></span>${prettyStem(t.name)}</div>
         <div class="track-buttons">
-          <button class="tbtn mute" data-stem="${t.name}">Mute</button>
-          <button class="tbtn solo" data-stem="${t.name}">Solo</button>
+          <button class="tbtn mute ${t.muted ? 'on' : ''}" data-stem="${t.name}">Mute</button>
+          <button class="tbtn solo ${t.soloed ? 'on' : ''}" data-stem="${t.name}">Solo</button>
         </div>
-        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="1" data-stem="${t.name}" />
+        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="${t.volume}" data-stem="${t.name}" />
       </div>
       <div class="track-wave"><canvas></canvas></div>`;
     tracksEl.insertBefore(row, timeline);
@@ -670,7 +682,7 @@ export async function openPlayer(song, onBack) {
   // ---- transport ----
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; }
+  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; window.woodshedDesktop?.setPlaying(engine.playing); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
 
@@ -889,6 +901,22 @@ export async function openPlayer(song, onBack) {
   ro.observe(tracksEl);
   ro.observe(overview);
   cleanupFns.push(() => ro.disconnect());
+
+  const activeEngine = engine;
+  let practiceTimer;
+  let lastPractice = JSON.stringify(song.practice || null);
+  const flushPractice = () => {
+    clearTimeout(practiceTimer);
+    const practice = { loop: {...activeEngine.loop}, rate: activeEngine.rate, grid: {...grid}, tracks: activeEngine.tracks.map(t => ({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed})) };
+    const serialized = JSON.stringify(practice);
+    if (serialized === lastPractice) return;
+    lastPractice = serialized; song.practice = practice;
+    backend.savePractice(song.id, practice).catch(error => console.error('Could not sync practice settings:', error));
+  };
+  const schedulePractice = () => { clearTimeout(practiceTimer); practiceTimer = setTimeout(flushPractice, 600); };
+  for (const event of ['input','click','pointerup']) root.addEventListener(event, schedulePractice);
+  window.addEventListener('keyup', schedulePractice);
+  cleanupFns.push(() => { flushPractice(); for (const event of ['input','click','pointerup']) root.removeEventListener(event, schedulePractice); window.removeEventListener('keyup',schedulePractice); });
 
   // ---- animation loop (playhead + auto-follow) ----
   function frame() {

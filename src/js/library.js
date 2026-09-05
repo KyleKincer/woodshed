@@ -1,3 +1,5 @@
+import { hasCompanionCode } from './companion.js';
+import { showDesktopSetup } from './desktop.js';
 // Library grid: renders processed songs (and in-progress ones, as cards with a
 // loading overlay), the add-song modal, search, and per-card actions.
 //
@@ -274,7 +276,7 @@ function overlayHtml(p) {
     return `<div class="card-proc error" title="${esc(p.error)}">
       <div class="cp-title">Failed</div>
       <div class="cp-sub">${esc(friendlyError(p.error))}</div>
-      <button class="cp-btn" data-dismiss>Dismiss</button>
+      <button class="cp-btn" data-retry>Retry</button><button class="cp-btn" data-dismiss>Dismiss</button>
     </div>`;
   }
   const pct = Math.round(p.percent || 0);
@@ -290,7 +292,7 @@ function overlayHtml(p) {
 function procInlineHtml(p) {
   if (p.error) {
     logRawError(p.jobId, p.error);
-    return `<div class="proc-inline error" title="${esc(p.error)}"><span class="cp-title">Failed</span><button class="cp-btn" data-dismiss>Dismiss</button></div>`;
+    return `<div class="proc-inline error" title="${esc(p.error)}"><span class="cp-title">Failed</span><button class="cp-btn" data-retry>Retry</button><button class="cp-btn" data-dismiss>Dismiss</button></div>`;
   }
   const pct = Math.round(p.percent || 0);
   return `<div class="proc-inline">
@@ -324,6 +326,13 @@ function wireCards(container, procBySong) {
       if (uploads.has(jobId)) { uploads.delete(jobId); renderLibrary(currentFilter()); }
       else backend.cancelJob(jobId);
     });
+  });
+  container.querySelectorAll('[data-retry]').forEach(b => {
+    b.onclick = async e => {
+      e.stopPropagation();
+      const jobId = b.closest('[data-job]')?.dataset.job;
+      try {await backend.retryJob(jobId);}catch(error){alert(error.message);}
+    };
   });
   container.querySelectorAll('[data-dismiss]').forEach((b) => {
     b.addEventListener('click', (e) => {
@@ -438,8 +447,7 @@ function reprocessDialog(song) {
 /** Separation runs on rented GPUs now, so make the cost visible up front. */
 function costHint(presetId) {
   const p = config.presets[presetId];
-  if (!p?.estCostUsd) return 'Custom settings — cost scales with model and shift averaging.';
-  return `Roughly $${p.estCostUsd.toFixed(2)} of GPU time per song.`;
+  return 'Downloads and processing run on this computer. Higher quality takes longer.';
 }
 
 function currentFilter() {
@@ -467,6 +475,7 @@ function wireAddModal() {
   const modalSettings = () => ({ ...config.settings, preset: presetSel.value, stemMode: stemSel.value });
 
   const open = () => {
+    if (!hasCompanionCode()) { showDesktopSetup(); return; }
     presetSel.value = config.settings.preset;
     stemSel.value = config.settings.stemMode;
     urlInput.value = '';

@@ -5,5 +5,6 @@ import { internalQuery } from './_generated/server';
 // entry points — everything here is reachable only from actions we control.
 export const load = internalQuery({
   args: { songId: v.id('songs') },
+  returns: v.any(),
   handler: async (ctx, args) => await ctx.db.get(args.songId),
 });

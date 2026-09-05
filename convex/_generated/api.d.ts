@@ -8,6 +8,10 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
+import type * as auth from "../auth.js";
+import type * as blobs from "../blobs.js";
+import type * as devices from "../devices.js";
 import type * as http from "../http.js";
 import type * as ingest from "../ingest.js";
 import type * as jobs from "../jobs.js";
@@ -21,6 +25,9 @@ import type * as renditions from "../renditions.js";
 import type * as settings from "../settings.js";
 import type * as songs from "../songs.js";
 import type * as songsInternal from "../songsInternal.js";
+import type * as storage from "../storage.js";
+import type * as users from "../users.js";
+import type * as worker from "../worker.js";
 
 import type {
   ApiFromModules,
@@ -29,6 +36,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
+  auth: typeof auth;
+  blobs: typeof blobs;
+  devices: typeof devices;
   http: typeof http;
   ingest: typeof ingest;
   jobs: typeof jobs;
@@ -42,6 +53,9 @@ declare const fullApi: ApiFromModules<{
   settings: typeof settings;
   songs: typeof songs;
   songsInternal: typeof songsInternal;
+  storage: typeof storage;
+  users: typeof users;
+  worker: typeof worker;
 }>;
 
 /**
@@ -72,4 +86,6 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   r2: import("@convex-dev/r2/_generated/component.js").ComponentApi<"r2">;
+  auth: import("@convex-dev/auth/core/_generated/component.js").ComponentApi<"auth">;
+  oauthGoogle: import("@convex-dev/auth/providers/oauth/_generated/component.js").ComponentApi<"oauthGoogle">;
 };
