@@ -91,7 +91,7 @@ function waitForSession() {
   description.className = 'setup-desc';
   description.textContent = 'Sign in or create a free account to sync your songs and practice settings.';
   const button = document.createElement('button');
-  button.className = 'btn btn-primary';
+  button.className = 'google-signin';
   button.setAttribute('aria-label', 'Sign in with Google');
   const googleImage = document.createElement('img');
   googleImage.src = googleSignInButton; googleImage.alt = 'Sign in with Google';

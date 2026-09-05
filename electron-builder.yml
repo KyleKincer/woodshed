@@ -10,6 +10,8 @@ files:
 extraResources:
   - from: build/processor
     to: processor
+  - from: build/licenses
+    to: licenses
   - from: build/bin
     to: bin
   - from: build/companion

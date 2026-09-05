@@ -514,7 +514,8 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
   .add-label { display:none; }
   #content { padding:24px 16px; }
 }
-#content { padding:28px 32px; min-height:0; }
+#content { min-height:0; }
+@media(min-width:701px) { #content { padding:28px 32px; } }
 .desktop-update { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; font-size:13px; }
 
 .desktop-downloads { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }

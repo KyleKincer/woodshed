@@ -19,4 +19,3 @@ def detect(wav_path: pathlib.Path) -> list[list[float]]:
     estimator = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
     output = estimator.process(str(wav_path))
     return [[round(float(t), 4), int(k)] for t, k in output]
-

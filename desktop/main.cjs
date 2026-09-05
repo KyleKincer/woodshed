@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 const { canRestart, publicUpdateState } = require('./update-policy.cjs');
-const UI_ORIGIN = 'http://127.0.0.1:47832';
+const smokeTest = process.argv.includes('--smoke-test');
+const UI_ORIGIN = smokeTest ? 'http://127.0.0.1:47833' : 'http://127.0.0.1:47832';
+if(smokeTest)app.setPath('userData',fs.mkdtempSync(path.join(app.getPath('temp'),'woodshed-smoke-')));
 let window, webServer, companion, companionInfo, playing = false, closing = false;
 let updateState = publicUpdateState('idle');
 const resources = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'build');
@@ -20,7 +22,7 @@ async function localStatus() {
 }
 function startWeb() {
   webServer = http.createServer((req,res) => {
-    if(req.headers.host !== '127.0.0.1:47832') { res.writeHead(403);res.end();return; }
+    if(req.headers.host !== new URL(UI_ORIGIN).host) { res.writeHead(403);res.end();return; }
     const url=new URL(req.url,UI_ORIGIN);
     if(url.pathname === '/oauth/callback') {
       window?.loadURL(UI_ORIGIN+'/?'+url.searchParams.toString());window?.show();window?.focus();
@@ -36,7 +38,7 @@ function startWeb() {
       res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* https://*.convex.cloud wss://*.convex.cloud https://*.convex.site https://*.r2.cloudflarestorage.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"});res.end(data);
     }catch{res.writeHead(404);res.end('Not found');}
   });
-  return new Promise((resolve,reject)=>{webServer.once('error',reject);webServer.listen(47832,'127.0.0.1',resolve);});
+  return new Promise((resolve,reject)=>{webServer.once('error',reject);webServer.listen(Number(new URL(UI_ORIGIN).port),'127.0.0.1',resolve);});
 }
 function startCompanion() {
   return new Promise((resolve,reject)=>{
