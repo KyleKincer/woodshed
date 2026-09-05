@@ -70,3 +70,22 @@ macOS/Windows have setup paths but have not been executed on those systems.
 - Two update-policy tests verify playback/processing restart guards and bounded public update state.
 - The sign-in button uses Google's official branded asset and was inspected in the running app.
 - Cross-platform installer and packaged-app launch checks run in GitHub Actions. Publishing remains gated on their results.
+
+## Player and update UI follow-up
+
+- Native desktop media streaming passes signed-URL, cross-origin refusal,
+  single-use ticket, expiry and size-limit regression checks. R2 preflight
+  allowed the public website but refused the Electron origin; the desktop
+  now downloads directly through its native HTTP client.
+- Centered Google sign-in checked at 1280px and 390px; the button is centered
+  and the card fits both viewports.
+- Browser fixtures verified two-, four- and six-stem skeleton layouts,
+  disabled loading controls, and ignored late storage errors after leaving.
+  A generated WAV decoded through the real audio engine, replaced all four
+  skeletons with waveform canvases, and enabled playback controls.
+- Song metadata now occupies the main app header, with no second header or
+  Library button. Overview shares the zoom controls.
+- Update UI fixture verified: hidden without an update, circular outline
+  when available, cancellation performs no action, and one confirmation
+  calls download followed by install. Restart guards remain covered by the
+  desktop tests; a real installed-version upgrade is not yet exercised.

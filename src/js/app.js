@@ -22,11 +22,11 @@ function showView(name) {
 }
 
 async function openSong(song) {
-  // Player isn't a nav item; switch views manually and hide the sidebar for space.
+  // The player shares the app header and fills the remaining viewport.
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
   document.body.classList.add('in-player');
-  await openPlayer(song, () => showView('library'));
+  await openPlayer(song);
 }
 
 // Warn before a user downloads 20 MB they can't play. This is only a hint —

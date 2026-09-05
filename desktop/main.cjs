@@ -106,7 +106,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       try{const status=await localStatus();if(status.busy){const result=await dialog.showMessageBox(window,{type:'question',buttons:['Keep processing','Quit Woodshed'],defaultId:0,cancelId:0,message:'A song is still processing',detail:'Quitting stops this job. Completed local stages can resume when you reopen Woodshed.'});if(result.response===0)return;}}catch{}
       closing=true;app.quit();
     });
-    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Woodshed',submenu:[{label:'Check for Updates…',click:()=>{window?.webContents.send('desktop:open-updates');if(app.isPackaged&&!['downloading','ready'].includes(updateState.status))autoUpdater.checkForUpdates().catch(()=>{});}},{role:'quit'}]},{role:'editMenu'},{role:'viewMenu'}]));
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Woodshed',submenu:[{label:'Check for Updates…',click:()=>window?.webContents.send('desktop:open-updates')},{role:'quit'}]},{role:'editMenu'},{role:'viewMenu'}]));
     setupUpdates();await window.loadURL(UI_ORIGIN);
     if(process.argv.includes('--smoke-test')){
       const info=await localStatus();

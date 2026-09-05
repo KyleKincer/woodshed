@@ -84,12 +84,12 @@ function waitForSession() {
   if (!target) throw new Error('Missing sign-in screen.');
   target.replaceChildren();
   const card = document.createElement('div');
-  card.className = 'setup-card';
+  card.className = 'setup-card signin-card';
   const title = document.createElement('h2');
   title.textContent = 'Your practice library, anywhere';
   const description = document.createElement('p');
   description.className = 'setup-desc';
-  description.textContent = 'Sign in or create a free account to sync your songs and practice settings.';
+  description.textContent = 'Keep your songs and practice settings in sync, wherever you play.';
   const button = document.createElement('button');
   button.className = 'google-signin';
   button.setAttribute('aria-label', 'Sign in with Google');
@@ -99,8 +99,11 @@ function waitForSession() {
   button.append(googleImage);
   const message = document.createElement('p');
   message.setAttribute('role', 'status');
-  message.className = 'setup-desc';
-  card.append(title, description, button, message);
+  message.className = 'signin-status';
+  const note = document.createElement('p');
+  note.className = 'signin-note';
+  note.textContent = 'New here? Signing in creates your free account.';
+  card.append(title, description, button, message, note);
   target.append(card);
   const values = auth.ambientSignInValues('oauth');
   const showError = () => {

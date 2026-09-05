@@ -51,6 +51,8 @@ body { flex-direction:column; }
 .brand-home { border:0; background:none; cursor:pointer; }
 .logo { color:var(--accent); font-size:22px; }
 .header-actions { display:flex; align-items:center; gap:22px; }
+.header-song { display:flex; align-items:center; gap:12px; flex:1; min-width:0; margin-left:16px; }
+.header-song .ptitle { font-size:14px; }
 .user-button { display:flex; align-items:center; gap:6px; min-width:0; }
 .account-settings { display:grid; place-items:center; width:36px; height:36px; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; }
 .account-settings:hover { background:var(--bg-3); color:var(--text); }
@@ -285,26 +287,19 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 /* ---------- Player (full-height flex column) ---------- */
 #view-player.active { height: 100%; }
 #player-root { height: 100%; }
-.player { position: relative; height: 100%; display: flex; flex-direction: column; padding-top: var(--titlebar-h); box-sizing: border-box; }
+.player { position: relative; height: 100%; display: flex; flex-direction: column; min-height:0; box-sizing: border-box; }
 
-/* Static top bar: back + art + metadata */
-.player-topbar {
-  display: flex; align-items: center; gap: 14px; padding: 10px 22px;
-  border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.back-btn { background: transparent; border: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; padding: 6px 8px; border-radius: 7px; flex-shrink: 0; }
-.back-btn:hover { color: var(--text); background: var(--bg-3); }
-.pt-cover { width: 44px; height: 44px; border-radius: 8px; background: var(--bg-3); background-size: cover; background-position: center; flex-shrink: 0; }
+/* Song metadata shares the app's main header. */
+.pt-cover { width: 36px; height: 36px; border-radius: 7px; background: var(--bg-3); background-size: cover; background-position: center; flex-shrink: 0; }
 .pt-meta { min-width: 0; }
 .pt-meta .ptitle { font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pt-meta .psub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pt-spacer { flex: 1; }
 
 /* Track stack fills remaining height; one continuous panel */
 .tracks {
   flex: 1; min-height: 0; position: relative;
   display: flex; flex-direction: column;
-  margin: 14px 22px; background: var(--panel); border: 1px solid var(--border);
+  margin: 10px 22px; background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); overflow: hidden;
 }
 .track { flex: 1; min-height: 64px; display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
@@ -319,6 +314,14 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .track-vol { width: 100%; }
 .track-wave { flex: 1; position: relative; min-width: 0; }
 .track-wave canvas { width: 100%; height: 100%; display: block; }
+.player.is-loading :is(button:disabled, input:disabled, select:disabled) { opacity:.35; cursor:default; }
+.player.is-loading .timeline, .player.is-loading .overview > * { visibility:hidden; pointer-events:none; }
+.wave-skeleton::before { content:''; position:absolute; inset:28% 20px; border-radius:6px; background:linear-gradient(100deg, #ffffff04 20%, #ffffff0b 45%, #ffffff04 70%); background-size:220% 100%; animation:wave-loading 1.8s ease-in-out infinite; }
+.player-load-error { margin:auto; padding:32px; max-width:56ch; text-align:center; color:var(--muted); line-height:1.6; }
+.player-load-error button { margin-top:18px; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+@keyframes wave-loading { from { background-position:100% 0; } to { background-position:-100% 0; } }
+@media(prefers-reduced-motion:reduce) { .wave-skeleton::before { animation:none; } }
 
 /* Shared playhead + loop region + handles — confined to the track panel */
 .timeline { position: absolute; top: 0; bottom: 0; left: 150px; right: 0; pointer-events: none; }
@@ -425,10 +428,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 
 /* Sign-in gate. No card of our own — Clerk's component brings its own
    surface, and wrapping it in a second panel just double-frames it. */
-.signin { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; }
-.signin-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; }
-.signin-brand { padding: 0; font-size: 17px; }
-#signin-mount { min-height: 380px; }
+.signin { position: fixed; inset: 0; z-index: 300; background: radial-gradient(ellipse at 50% 40%, #5b8cff0c, transparent 60%), var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; overflow:auto; }
+.signin-inner { display: flex; flex-direction: column; align-items: center; gap: 28px; margin:auto; }
+.signin-brand { padding: 0; font-size: 19px; letter-spacing: -.3px; }
 .setup-card { width: 620px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 34px; -webkit-app-region: no-drag; }
 .setup-card h2 { font-size: 22px; margin-bottom: 10px; }
 .setup-desc { color: var(--muted); font-size: 14px; line-height: 1.55; margin-bottom: 22px; }
@@ -497,7 +499,7 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 #titlebar { pointer-events:none; }
 
 /* Keep the Google sign-in card within narrow phone viewports. */
-.signin-inner { width:100%; max-width:620px; min-width:0; }
+.signin-inner { width:100%; max-width:460px; min-width:0; }
 #signin-mount { width:100%; min-width:0; }
 .setup-card { width:100%; }
 @media(max-width:700px) {
@@ -508,6 +510,8 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 
 @media(max-width:700px) {
   #app-header { padding:12px 16px; gap:8px; }
+  #app-header:has(.header-song:not(.hidden)) { flex-wrap:wrap; }
+  .header-song { order:3; flex-basis:100%; margin:4px 0 0; }
   .header-actions { gap:8px; }
   .account-name { display:none; }
   .account-trigger { padding:3px; }
@@ -525,16 +529,24 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 .google-signin:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 .google-signin:disabled { opacity:.65; cursor:wait; }
 
-.desktop-update-menu { position:relative; }
-.desktop-update-trigger { position:relative; display:grid; place-items:center; width:36px; height:36px; color:var(--muted); border-radius:8px; cursor:pointer; list-style:none; }
-.desktop-update-trigger::-webkit-details-marker { display:none; }
-.desktop-update-trigger:hover, .desktop-update-menu[open] .desktop-update-trigger { color:var(--text); background:var(--bg-3); }
-.desktop-update-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.desktop-update-menu.has-update .desktop-update-trigger::after, .desktop-update-menu.has-error .desktop-update-trigger::after { content:''; position:absolute; right:5px; top:4px; width:6px; height:6px; border-radius:50%; background:var(--accent); border:2px solid var(--bg-2); }
-.desktop-update-menu.has-error .desktop-update-trigger::after { background:#dca957; }
-.desktop-update-trigger.is-downloading { color:var(--accent); }
-.desktop-update-panel { position:absolute; top:calc(100% + 12px); right:0; z-index:100; display:flex; flex-direction:column; gap:12px; width:280px; padding:18px; background:var(--bg-3); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 36px #0006; }
-.desktop-update-panel strong { font-size:13px; font-weight:600; }
-.desktop-update-panel .hint { margin:0; line-height:1.6; }
-.desktop-update-panel progress { width:100%; height:6px; accent-color:var(--accent); }
-@media(max-width:700px) { .desktop-update-panel { right:-80px; max-width:calc(100vw - 32px); } }
+.signin-card { text-align:center; padding:44px 36px 32px; border-radius:20px; box-shadow:0 20px 80px #0003; }
+.signin-card h2 { max-width:340px; margin:0 auto 16px; font-size:28px; line-height:1.25; letter-spacing:-.7px; font-weight:600; text-wrap:balance; }
+.signin-card .setup-desc { max-width:320px; margin:0 auto 30px; font-size:14px; line-height:1.7; text-wrap:balance; }
+.signin-card .google-signin { display:flex; width:fit-content; margin:0 auto; }
+.signin-status { margin:18px 0 0; font-size:13px; line-height:1.6; color:var(--muted); }
+.signin-status:empty { display:none; }
+.signin-note { margin:28px 0 0; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; line-height:1.6; text-wrap:balance; }
+@media(max-width:500px) {
+  .signin-card { padding:32px 24px 24px; }
+  .signin-card h2 { font-size:26px; }
+  .signin-inner { gap:24px; }
+}
+
+.desktop-update-trigger { display:grid; place-items:center; width:36px; height:36px; flex-shrink:0; border:1px solid var(--border); border-radius:50%; background:transparent; color:var(--accent); cursor:pointer; }
+.desktop-update-trigger[hidden] { display:none; }
+.desktop-update-trigger:hover { border-color:var(--accent); background:var(--bg-3); }
+.desktop-update-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.desktop-update-trigger:disabled { cursor:wait; }
+.desktop-update-trigger.is-downloading { border-color:var(--accent); animation:update-pulse 1.4s ease-in-out infinite; }
+@keyframes update-pulse { 50% { opacity:.5; } }
+@media(prefers-reduced-motion:reduce) { .desktop-update-trigger.is-downloading { animation:none; } }
