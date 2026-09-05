@@ -89,3 +89,11 @@ macOS/Windows have setup paths but have not been executed on those systems.
   when available, cancellation performs no action, and one confirmation
   calls download followed by install. Restart guards remain covered by the
   desktop tests; a real installed-version upgrade is not yet exercised.
+
+- Decoded audio now has an LRU memory cache: 512 MiB on desktop-class devices,
+  128 MiB on coarse-pointer or reported low-memory devices. Clear cache clears
+  both decoded and compressed audio. Three regression tests cover reuse,
+  sample-rate isolation, eviction, pending clear, and oversized buffers.
+- Real browser/Web Audio verification: four initial downloads and decodes;
+  reopening added zero downloads and zero decodes. After clearing memory,
+  decoding repeated but downloads stayed at four, proving the disk cache hit.

@@ -3,6 +3,7 @@
 // A/B loop implemented via native AudioBufferSourceNode looping.
 
 import { fetchStem } from './stemcache.js';
+import { decodedStemCache } from './decoded-stem-cache.js';
 
 export class MultitrackEngine {
   constructor() {
@@ -38,13 +39,13 @@ export class MultitrackEngine {
 
     const loaded = await Promise.all(
       stems.map(async (s, i) => {
-        const arr = await fetchStem(s.key, s.url, (l, t) => {
-          bytes[i] = { loaded: l, total: t || bytes[i].total };
-          report();
+        const buffer = await decodedStemCache.load(s.key, this.ctx.sampleRate, async () => {
+          const arr = await fetchStem(s.key, s.url, (l, t) => {
+            bytes[i] = { loaded: l, total: t || bytes[i].total };
+            report();
+          });
+          return this.ctx.decodeAudioData(arr);
         });
-        // decodeAudioData detaches the ArrayBuffer it is handed, so a cached
-        // buffer reused across stems would fail — each fetch returns its own.
-        const buffer = await this.ctx.decodeAudioData(arr);
         decoded++;
         report();
         return { ...s, buffer };

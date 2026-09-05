@@ -104,8 +104,8 @@ export function renderSettings() {
     </div>
 
     <div class="settings-section">
-      <h3>Offline cache</h3>
-      <p class="desc">Songs you've played are kept in this browser, so opening them again is instant.</p>
+      <h3>Playback cache</h3>
+      <p class="desc">Audio you've played is saved on this device to avoid repeat downloads. Recent songs stay ready for faster reopening.</p>
       <div class="row">
         <div><label>Cached audio</label><div class="sub" id="cache-size">Measuring…</div></div>
         <button class="btn-ghost" id="cache-clear">Clear cache</button>

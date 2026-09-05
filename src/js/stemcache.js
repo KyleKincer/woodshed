@@ -1,4 +1,5 @@
 import { fetchMedia } from './media-fetch.js';
+import { decodedStemCache } from './decoded-stem-cache.js';
 // Device-local cache for stem audio, plus the codec capability probe.
 //
 // Stems are immutable once written (a reprocess writes new R2 keys), so they
@@ -48,7 +49,7 @@ export async function fetchStem(key, url, onProgress) {
   if (cache) {
     // Best effort: a full disk or a private-mode quota error must not stop
     // playback, it just means we re-download next time.
-    cache.put(cacheKey, res).catch(() => {});
+    await cache.put(cacheKey, res).catch(() => {});
   }
   return buf;
 }
@@ -76,6 +77,7 @@ async function readWithProgress(res, total, onProgress) {
 
 /** Drop every cached stem. Exposed in Settings. */
 export async function clearStemCache() {
+  decodedStemCache.clear();
   if (!('caches' in window)) return 0;
   cachePromise = null;
   const cache = await caches.open(CACHE_NAME);
