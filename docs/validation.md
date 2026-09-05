@@ -60,3 +60,13 @@ macOS/Windows have setup paths but have not been executed on those systems.
 
 - Real hosted Google button opens Google sign-in with the production callback
   accepted (no redirect mismatch). Phone sign-in layout corrected after browser QA.
+
+## Electron desktop revision
+
+- Google OAuth round trip on Linux confirmed by the owner after adding the desktop origin to production.
+- Frozen Python runtime separated a generated audio fixture into four stems and encoded Opus sync files.
+- Frozen BeatNet completed beat detection, including after excluding unused madmom model weights.
+- Desktop launch smoke test verifies the isolated preload bridge, compact header, absent sidebar, and responding bundled local service.
+- Two update-policy tests verify playback/processing restart guards and bounded public update state.
+- The sign-in button uses Google's official branded asset and was inspected in the running app.
+- Cross-platform installer and packaged-app launch checks run in GitHub Actions. Publishing remains gated on their results.
