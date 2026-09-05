@@ -125,3 +125,19 @@ macOS/Windows have setup paths but have not been executed on those systems.
   domain; `/` and `/billing` return 200 with `index-UK6eFOKB.js`.
 - Owner account verified as free with unchanged 250 MB quota and 22,764,458 bytes
   used. No subscription was created for the owner during testing.
+
+
+### Desktop 1.1.0 release
+
+All four builds in GitHub Actions run `33942628448` passed: Linux x64,
+Windows x64, macOS Apple Silicon, and macOS Intel. Both Mac builds use Developer
+ID signing and notarization. The downloaded Linux AppImage passed a second
+local launch check with `processorReady: true`.
+
+Desktop artifacts were built from `70b41f7d1ef35c511181b5fc35abad8880058906`.
+Release tag `v1.1.0` points to `7e838ef7e79eb1b303ddc80bf9dbc4632841de11`,
+which adds only Convex billing fixes and documentation; desktop packaging inputs
+are unchanged. The backend was deployed independently from this release source.
+All 14 uploaded GitHub assets matched local SHA-256 digests. The three updater
+manifests also passed SHA-512 checks against their installers, with both Mac
+architectures included in the merged manifest.
