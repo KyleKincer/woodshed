@@ -43,7 +43,7 @@ function startWeb() {
 function startCompanion() {
   return new Promise((resolve,reject)=>{
     const processor=path.join(resources,'processor','woodshed-processor',process.platform==='win32'?'woodshed-processor.exe':'woodshed-processor');
-    companion=utilityProcess.fork(companionEntry,[],{env:{...process.env,WOODSHED_WEB_URL:UI_ORIGIN,WOODSHED_COMPANION_PORT:'0',WOODSHED_DATA_DIR:path.join(app.getPath('userData'),'library'),WOODSHED_PROCESSOR:processor,PATH:path.join(resources,'bin')+path.delimiter+process.env.PATH,TORCH_HOME:path.join(app.getPath('userData'),'models'),MPLCONFIGDIR:path.join(app.getPath('userData'),'matplotlib')},stdio:'pipe'});
+    companion=utilityProcess.fork(companionEntry,[],{env:{...process.env,WOODSHED_WEB_URL:UI_ORIGIN,WOODSHED_COMPANION_PORT:'0',WOODSHED_DATA_DIR:path.join(app.getPath('userData'),'library'),WOODSHED_PROCESSOR:processor,SSL_CERT_FILE:process.env.SSL_CERT_FILE||path.join(resources,'processor','woodshed-processor','_internal','certifi','cacert.pem'),PATH:path.join(resources,'bin')+path.delimiter+process.env.PATH,TORCH_HOME:path.join(app.getPath('userData'),'models'),MPLCONFIGDIR:path.join(app.getPath('userData'),'matplotlib')},stdio:'pipe'});
     const timer=setTimeout(()=>reject(new Error('Local processor did not start.')),20000);
     companion.once('message', info=>{clearTimeout(timer);companionInfo=info;resolve(info);});
     companion.on('exit',code=>{clearTimeout(timer);companionInfo=null;if(!closing)emit('error',{message:'Local processor stopped. Restart Woodshed to reconnect.'});if(code)reject(new Error('Local processor exited.'));});
