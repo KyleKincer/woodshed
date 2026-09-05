@@ -1,3 +1,4 @@
+import { fetchMedia } from './media-fetch.js';
 // Device-local cache for stem audio, plus the codec capability probe.
 //
 // Stems are immutable once written (a reprocess writes new R2 keys), so they
@@ -37,7 +38,7 @@ export async function fetchStem(key, url, onProgress) {
     }
   }
 
-  const res = await fetch(url);
+  const res = await fetchMedia(url);
   if (!res.ok) throw new Error(`Could not load stem (${res.status})`);
 
   // Tee the body so progress reporting doesn't consume the copy we cache.

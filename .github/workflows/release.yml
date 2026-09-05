@@ -31,10 +31,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
-          cache-dependency-path: |
-            companion/requirements.txt
-            companion/setup.py
       - run: npm ci
       - run: npm test && npm run test:desktop && npm run typecheck
       - uses: actions/cache/restore@v4

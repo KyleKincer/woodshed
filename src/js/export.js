@@ -1,3 +1,4 @@
+import { fetchMedia } from './media-fetch.js';
 import { Zip, ZipPassThrough } from 'fflate';
 import * as backend from './backend.js';
 const encoder = new TextEncoder();
@@ -37,7 +38,7 @@ export async function exportLibrary(onProgress = () => {}) {
       const keys=[...song.stems.map(s=>s.key),...(song.coverKey?[song.coverKey]:[])];
       const urls=await backend.signKeys(keys);
       for(const key of keys) {
-        const response=await fetch(urls[key]);if(!response.ok||!response.body) throw new Error(`Could not export ${song.title}.`);
+        const response=await fetchMedia(urls[key]);if(!response.ok||!response.body) throw new Error(`Could not export ${song.title}.`);
         const entry=new ZipPassThrough(`${safe(song.title)}-${song.id}/${safe(key.split('/').pop())}`);zip.add(entry);
         const reader=response.body.getReader();
         while(true){const {value,done}=await reader.read();if(done)break;entry.push(value);await chain;}

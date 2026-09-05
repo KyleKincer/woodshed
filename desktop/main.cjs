@@ -4,8 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 const { canRestart, publicUpdateState } = require('./update-policy.cjs');
+const {createMediaProxy}=require('./media-proxy.cjs');
 const smokeTest = process.argv.includes('--smoke-test');
 const UI_ORIGIN = smokeTest ? 'http://127.0.0.1:47833' : 'http://127.0.0.1:47832';
+const mediaProxy=createMediaProxy({origin:UI_ORIGIN});
 if(smokeTest)app.setPath('userData',fs.mkdtempSync(path.join(app.getPath('temp'),'woodshed-smoke-')));
 let window, webServer, companion, companionInfo, playing = false, closing = false;
 let updateState = publicUpdateState('idle');
@@ -24,6 +26,7 @@ function startWeb() {
   webServer = http.createServer((req,res) => {
     if(req.headers.host !== new URL(UI_ORIGIN).host) { res.writeHead(403);res.end();return; }
     const url=new URL(req.url,UI_ORIGIN);
+    if(url.pathname.startsWith('/media/')){void mediaProxy.serve(req,res);return;}
     if(url.pathname === '/oauth/callback') {
       window?.loadURL(UI_ORIGIN+'/?'+url.searchParams.toString());window?.show();window?.focus();
       res.writeHead(200,{'Content-Type':'text/html','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"});
@@ -67,6 +70,7 @@ function setupUpdates() {
   autoUpdater.on('error',error=>emit('error',{message: error.message.includes('404')?'No published update is available yet.':'Could not check or download the update. Try again later.'}));
   if(app.isPackaged){setTimeout(()=>autoUpdater.checkForUpdates().catch(()=>{}),15000).unref();setInterval(()=>{if(!['downloading','ready'].includes(updateState.status))autoUpdater.checkForUpdates().catch(()=>{});},6*60*60*1000).unref();}
 }
+ipcMain.handle('desktop:media-url',(event,url)=>{if(!trusted(event))throw Error('Untrusted window');return mediaProxy.register(url);});
 ipcMain.handle('desktop:info',event=>{
   if(!trusted(event))throw new Error('Untrusted window');
   return {version:app.getVersion(),companion:companionInfo,update:updateState};

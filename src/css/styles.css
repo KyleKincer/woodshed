@@ -516,7 +516,6 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 }
 #content { min-height:0; }
 @media(min-width:701px) { #content { padding:28px 32px; } }
-.desktop-update { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; font-size:13px; }
 
 .desktop-downloads { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
 
@@ -525,3 +524,17 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 .google-signin:hover { filter:brightness(.96); }
 .google-signin:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 .google-signin:disabled { opacity:.65; cursor:wait; }
+
+.desktop-update-menu { position:relative; }
+.desktop-update-trigger { position:relative; display:grid; place-items:center; width:36px; height:36px; color:var(--muted); border-radius:8px; cursor:pointer; list-style:none; }
+.desktop-update-trigger::-webkit-details-marker { display:none; }
+.desktop-update-trigger:hover, .desktop-update-menu[open] .desktop-update-trigger { color:var(--text); background:var(--bg-3); }
+.desktop-update-trigger:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.desktop-update-menu.has-update .desktop-update-trigger::after, .desktop-update-menu.has-error .desktop-update-trigger::after { content:''; position:absolute; right:5px; top:4px; width:6px; height:6px; border-radius:50%; background:var(--accent); border:2px solid var(--bg-2); }
+.desktop-update-menu.has-error .desktop-update-trigger::after { background:#dca957; }
+.desktop-update-trigger.is-downloading { color:var(--accent); }
+.desktop-update-panel { position:absolute; top:calc(100% + 12px); right:0; z-index:100; display:flex; flex-direction:column; gap:12px; width:280px; padding:18px; background:var(--bg-3); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 36px #0006; }
+.desktop-update-panel strong { font-size:13px; font-weight:600; }
+.desktop-update-panel .hint { margin:0; line-height:1.6; }
+.desktop-update-panel progress { width:100%; height:6px; accent-color:var(--accent); }
+@media(max-width:700px) { .desktop-update-panel { right:-80px; max-width:calc(100vw - 32px); } }
