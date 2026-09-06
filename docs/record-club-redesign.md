@@ -36,7 +36,9 @@ Local OAuth requires an origin in AUTH_ALLOWED_ORIGINS. The deployment allows lo
 
 The account menu displays the Google profile picture returned by `users.me`,
 with initials retained underneath as a fallback for missing or failed images.
-The settings gear uses a symmetric SVG with fixed dimensions.
+The settings gear uses the upstream Lucide settings SVG with fixed dimensions.
+Source: https://github.com/lucide-icons/lucide/blob/main/icons/settings.svg
+Its license is retained in `src/assets/lucide-LICENSE.txt`.
 
 For local desktop testing, run `npm run desktop:dev` from this worktree. It builds
 and serves the redesigned UI at the desktop OAuth origin (127.0.0.1:47832) and
