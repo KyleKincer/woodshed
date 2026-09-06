@@ -1,6 +1,6 @@
 import { focusModal } from './modal-focus.js';
 import { artworkMarkup, wireArtwork } from './artwork.js';
-import { hasCompanionCode } from './companion.js';
+import { isDesktopApp } from './companion.js';
 import { showDesktopSetup } from './desktop.js';
 // Library grid: renders processed songs (and in-progress ones, as cards with a
 // loading overlay), the add-song modal, search, and per-card actions.
@@ -477,7 +477,7 @@ function wireAddModal() {
   const modalSettings = () => ({ ...config.settings, preset: presetSel.value, stemMode: stemSel.value });
 
   const open = () => {
-    if (!hasCompanionCode()) { showDesktopSetup(); return; }
+    if (!isDesktopApp()) { showDesktopSetup(); return; }
     presetSel.value = config.settings.preset;
     stemSel.value = config.settings.stemMode;
     urlInput.value = '';
