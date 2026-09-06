@@ -131,3 +131,54 @@ body.in-player #content{overflow:auto;padding:0}
 /* Status sits outside the card flow: no empty gap and no layout shift. */
 .signin-card .signin-status{position:fixed;inset:auto 20px 20px;z-index:301;width:fit-content;max-width:min(460px,calc(100vw - 40px));max-height:25dvh;margin:0 auto;padding:12px 16px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:3px;background:var(--bg-2);color:var(--text);overflow-y:auto;overflow-wrap:anywhere;line-height:1.6;text-align:left;box-shadow:0 4px 18px #17211d12}
 .signin-card .signin-status:empty{display:none}
+
+/* Settings uses a compact header and one readable, centered column. */
+body:has(#view-settings.active) #app-header { min-height:76px; padding:16px 28px; }
+body:has(#view-settings.active) #app-header .brand { font-size:34px; letter-spacing:-1.5px; }
+#view-settings { width:100%; max-width:900px; margin:0 auto; padding-bottom:32px; }
+#view-settings .view-header { margin-bottom:28px; }
+#view-settings .view-header h1 { font-size:36px; letter-spacing:-1px; }
+#settings-root { display:flex; flex-direction:column; max-width:none; gap:24px; }
+#settings-root .settings-section { padding:28px; margin:0; border:1px solid var(--border); border-radius:10px; background:var(--bg-2); }
+#settings-root h2 { font-size:23px; letter-spacing:-.5px; margin:0 0 10px; }
+#settings-root h3 { font-size:16px; letter-spacing:0; margin:0 0 8px; }
+#settings-root .desc, #settings-root .hint, #settings-root .sub { font-size:14px; line-height:1.6; color:#58625b; margin:0 0 16px; }
+#settings-root .hint:empty { display:none; }
+#settings-root .preset-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0 24px; }
+#settings-root .preset-card { border-radius:6px; text-align:left; padding:16px; }
+#settings-root .preset-card .pdesc { font-size:13px; line-height:1.5; }
+#settings-root .settings-subsection { margin-top:20px; }
+#settings-root .row { gap:20px; flex-wrap:nowrap; padding:16px 0; }
+#settings-root .row > div:first-child { flex:1; }
+#settings-root .row .sub, #settings-root .row .hint { margin:4px 0 0; }
+#settings-root label { display:block; font-size:15px; font-weight:600; }
+#settings-root select, #settings-root input[type=text] { width:100%; min-height:44px; border-radius:6px; padding:10px 12px; font:inherit; background:var(--bg); }
+#settings-root select { max-width:340px; }
+#settings-root input[type=range] { width:180px; }
+#settings-root .range-wrap { flex:none; min-width:0; }
+#settings-root .settings-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:16px 0; }
+#settings-root .settings-actions:last-child { margin-bottom:0; }
+#settings-root .btn-ghost { display:inline-flex; justify-content:center; align-items:center; min-height:44px; padding:10px 16px; border-radius:6px; white-space:normal; text-align:center; }
+#settings-root button:disabled, #settings-root input:disabled { opacity:.55; cursor:not-allowed; }
+#settings-root :is(button,a,input,select,summary):focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+#settings-root .connection-status { font-size:15px; font-weight:600; margin:4px 0 12px; }
+#settings-root .storage-meter { display:block; width:100%; height:16px; margin:0 0 12px; accent-color:var(--accent); }
+#settings-root .storage-meter.hidden { display:none; }
+#settings-root .cache-row { margin-top:24px; border-top:1px solid var(--border); padding-bottom:0; }
+#settings-root .management-item { padding:24px 0; border-top:1px solid var(--border); }
+#settings-root .management-item:first-of-type { border-top:0; padding-top:12px; }
+#settings-root .management-item:last-child { padding-bottom:0; }
+#settings-root summary { font-size:16px; font-weight:600; cursor:pointer; }
+#settings-root details[open] summary { margin-bottom:16px; }
+#settings-root #legacy-dir { margin:8px 0; }
+#settings-root .settings-save-status { font-size:14px; color:#58625b; margin:0; min-height:24px; }
+@media(max-width:600px) {
+  body:has(#view-settings.active) #app-header { padding:14px 16px; }
+  body:has(#view-settings.active) #app-header .brand { font-size:26px; }
+  #settings-root .settings-section { padding:20px; }
+  #settings-root .preset-grid { grid-template-columns:1fr; }
+  #settings-root .row { flex-wrap:wrap; gap:12px; }
+  #settings-root .row > div:first-child { flex-basis:100%; }
+  #settings-root select { max-width:none; }
+  #settings-root .settings-actions > * { width:100%; }
+}
