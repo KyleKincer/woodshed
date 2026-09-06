@@ -1,3 +1,4 @@
+import { transitionView } from './motion.js';
 import { editSongs, artistLabel } from './song-metadata.js';
 import { focusModal } from './modal-focus.js';
 import { artworkMarkup, wireArtwork } from './artwork.js';
@@ -73,8 +74,8 @@ function wireViewControls() {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
   };
-  gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter()); }));
-  ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter()); }));
+  gs.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.group = b.dataset.group; saveView(); sync(); renderLibrary(currentFilter(), { animate: true }); }));
+  ls.querySelectorAll('button').forEach((b) => (b.onclick = () => { view.layout = b.dataset.layout; saveView(); sync(); renderLibrary(currentFilter(), { animate: true }); }));
   sync();
 }
 
@@ -96,7 +97,7 @@ const albumOf = (s) => s.album || '';
 // calls are common (a subscription tick mid-render), so stale ones bail out.
 let renderToken = 0;
 
-export async function renderLibrary(filter = '') {
+export async function renderLibrary(filter = '', { animate = false } = {}) {
   const token = ++renderToken;
   const container = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
@@ -154,9 +155,16 @@ export async function renderLibrary(filter = '') {
       });
   }
 
-  container.innerHTML = sections.map(sectionHtml).join('');
-  wireArtwork(container);
-  wireCards(container, procBySong);
+  const commit = () => {
+    if (token !== renderToken) return;
+    container.innerHTML = sections.map(sectionHtml).join('');
+    wireArtwork(container);
+    wireCards(container, procBySong);
+  };
+  // Only explicit layout/group changes animate, never live job updates.
+  if (animate && document.getElementById('view-library').classList.contains('active')) {
+    transitionView(commit, { interrupt: false });
+  } else commit();
 }
 
 /** Server jobs plus browser-side uploads, in one uniform shape. */
