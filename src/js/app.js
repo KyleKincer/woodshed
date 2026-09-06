@@ -1,3 +1,4 @@
+import { initializeInteractions } from './interactions.js';
 import { renderBilling } from './billing.js';
 import { renderDownload } from './desktop.js';
 import { renderAdmin } from './admin.js';
@@ -9,6 +10,8 @@ import { openPlayer, closePlayer } from './player.js';
 import { ensureSignedIn, mountUserButton, showFatal } from './auth.js';
 import { likelySupportsOpus } from './stemcache.js';
 import * as backend from './backend.js';
+
+initializeInteractions();
 
 let config = null;
 

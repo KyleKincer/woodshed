@@ -1000,10 +1000,11 @@ export async function openPlayer(song) {
 
   // ---- keyboard ----
   keyHandler = (e) => {
-    if (document.querySelector('.metadata-modal')) return;
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.target.closest('input,select,textarea,[contenteditable]')) return;
-    if (e.target.closest('button') && (e.code === 'Space' || e.key === 'Enter')) return;
+    if (e.target.closest('button,a[href],summary,[role="button"]') && (e.code === 'Space' || e.key === 'Enter')) return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }

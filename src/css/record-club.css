@@ -1,7 +1,7 @@
 /* Record Club visual system. Existing engine, timeline and app modules remain authoritative. */
 :root{--font:Arial,Helvetica,sans-serif;--track-control-w:164px;--drums:#b85029;--bass:#347052;--vocals:#174bd1;--other:#5d6470;--guitar:#804759;--piano:#3b7371}
 html,body{font-family:var(--font);color-scheme:light}
-body{user-select:text}
+body{user-select:none;-webkit-user-select:none}
 button,input,select,textarea,a{-webkit-tap-highlight-color:transparent}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 button{touch-action:manipulation}
@@ -171,7 +171,6 @@ body:has(#view-settings.active) #app-header .brand { font-size:34px; letter-spac
 #settings-root summary { font-size:16px; font-weight:600; cursor:pointer; }
 #settings-root details[open] summary { margin-bottom:16px; }
 #settings-root #legacy-dir { margin:8px 0; }
-#settings-root .settings-save-status { font-size:14px; color:#58625b; margin:0; min-height:24px; }
 @media(max-width:600px) {
   body:has(#view-settings.active) #app-header { padding:14px 16px; }
   body:has(#view-settings.active) #app-header .brand { font-size:26px; }
@@ -182,3 +181,37 @@ body:has(#view-settings.active) #app-header .brand { font-size:34px; letter-spac
   #settings-root select { max-width:none; }
   #settings-root .settings-actions > * { width:100%; }
 }
+
+/* Copyable content is explicit; application chrome behaves like controls. */
+input, textarea, [contenteditable="true"], [contenteditable=""], pre, code,
+.selectable, .app-notification span,
+#app-version, .ptitle, .list-title, .card .title {
+  user-select:text; -webkit-user-select:text;
+}
+button, a, summary, input[type=range] { touch-action:manipulation; }
+:is(button,a,input,select,textarea,summary,[tabindex]):focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+#settings-root .quality-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:20px; }
+#settings-root #quality-label { font-size:14px; color:var(--accent); font-weight:600; }
+#settings-root #quality-preset { width:100%; height:28px; margin-top:12px; background:transparent; accent-color:var(--accent); }
+#settings-root #quality-preset::-webkit-slider-runnable-track { height:4px; border-radius:3px; background:var(--bg-3); }
+#settings-root #quality-preset::-webkit-slider-thumb { margin-top:-5.5px; }
+#settings-root #quality-preset::-moz-range-track { height:4px; border-radius:3px; background:var(--bg-3); }
+#settings-root #quality-preset.is-custom { opacity:.5; }
+.preset-labels { display:flex; justify-content:space-between; margin-bottom:12px; }
+.preset-labels button { background:none; border:0; color:var(--muted); font:inherit; padding:8px 0; cursor:pointer; }
+.preset-labels button[aria-pressed=true] { color:var(--accent); font-weight:600; }
+#settings-root #custom-section { padding:16px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+.billing-interval { display:flex; width:fit-content; background:var(--bg-3); padding:4px; gap:4px; border-radius:8px; margin:20px 0; }
+.billing-interval button { border:1px solid transparent; border-radius:5px; background:transparent; color:var(--muted); font:inherit; font-size:14px; padding:8px 12px; cursor:pointer; }
+.billing-interval button[aria-pressed=true] { background:var(--bg-2); color:var(--text); border-color:var(--border); box-shadow:0 1px 3px #17211d12; }
+.billing-saving { color:var(--good); font-size:12px; margin-left:6px; white-space:nowrap; }
+#billing-notice:empty { display:none; }
+#billing-notice:not(:empty) { margin-top:20px; padding:16px; border-left:3px solid var(--accent); background:var(--bg-3); }
+[aria-busy=true] { cursor:progress; }
+[aria-busy=true]::before { content:''; display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; margin-right:8px; vertical-align:-1px; animation:action-spin .8s linear infinite; }
+@keyframes action-spin { to { transform:rotate(360deg); } }
+.app-notification { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:400; display:flex; align-items:center; gap:20px; width:max-content; max-width:calc(100vw - 32px); max-height:40dvh; overflow:auto; padding:14px 18px; border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:6px; background:var(--bg-2); box-shadow:0 4px 18px #17211d20; font-size:14px; }
+.app-notification span { overflow-wrap:anywhere; min-width:0; }
+.app-notification.is-error { border-left-color:var(--bad); }
+.app-notification button { flex-shrink:0; }
+@media(prefers-reduced-motion:reduce) { [aria-busy=true]::before { animation:none; } }
