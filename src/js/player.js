@@ -1,3 +1,4 @@
+import { editSongs, artistLabel } from './song-metadata.js';
 import { setArtwork } from './artwork.js';
 import { arrangePlayerControls } from './player-layout.js';
 import { MultitrackEngine } from './engine.js';
@@ -219,12 +220,22 @@ export async function openPlayer(song) {
   root.style.setProperty('--track-count', song.stems.length);
   const songHeader = document.getElementById('header-song');
   songHeader.classList.remove('hidden');
-  songHeader.innerHTML = `<div class="pt-cover"></div><div class="pt-meta"><div class="ptitle">${escapeHtml(song.title)}</div><div class="psub">${escapeHtml([song.artist || song.uploader, `${song.stems.length} stems`].filter(Boolean).join(' · '))}</div></div>`;
+  songHeader.innerHTML = `<div class="pt-cover"></div><div class="pt-meta"><div class="ptitle">${escapeHtml(song.title)}</div><div class="psub">${escapeHtml([artistLabel(song), `${song.stems.length} stems`].filter(Boolean).join(' · '))}</div></div>`;
+  let currentMetadata = song;
+  const renderHeader = async (updated) => {
+    currentMetadata = updated;
+    songHeader.querySelector('.ptitle').textContent = updated.title;
+    songHeader.querySelector('.psub').textContent = [artistLabel(updated), updated.album, `${song.stems.length} stems`].filter(Boolean).join(' · ');
+    const url = updated.coverUrl || (updated.coverKey ? await backend.signKey(updated.coverKey).catch(() => null) : null);
+    if (isCurrent() && currentMetadata === updated) setArtwork(songHeader.querySelector('.pt-cover'),updated,url);
+  };
+  const editButton = document.createElement('button'); editButton.className='header-edit-song'; editButton.type='button'; editButton.title='Edit song'; editButton.setAttribute('aria-label','Edit song'); editButton.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5"/></svg>'; editButton.onclick=()=>editSongs([currentMetadata]); songHeader.append(editButton);
   const generation = playerGeneration;
   const isCurrent = () => generation === playerGeneration;
   root.innerHTML = playerMarkup(song);
   arrangePlayerControls(root);
   setArtwork(songHeader.querySelector('.pt-cover'), song);
+  cleanupFns.push(backend.onSong(song.id, updated => { if (updated && isCurrent()) renderHeader(updated); }));
   root.setAttribute('aria-busy', 'true');
   root.querySelector('.player').classList.add('is-loading');
   const loadingTracks = root.querySelector('#tracks');
@@ -258,7 +269,7 @@ export async function openPlayer(song) {
   try { urls = await backend.signKeys(keys); }
   catch (e) { showLoadError(`Couldn't reach storage: ${e.message}`); return; }
   if (!isCurrent()) return;
-  if (song.coverKey && urls[song.coverKey]) setArtwork(songHeader.querySelector('.pt-cover'), song, urls[song.coverKey]);
+  if (currentMetadata === song) setArtwork(songHeader.querySelector('.pt-cover'), song, song.coverUrl || urls[song.coverKey]);
 
   const stems = song.stems.map((s) => ({
     name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
@@ -990,6 +1001,7 @@ export async function openPlayer(song) {
 
   // ---- keyboard ----
   keyHandler = (e) => {
+    if (document.querySelector('.metadata-modal')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.target.closest('input,select,textarea,[contenteditable]')) return;
     if (e.target.closest('button') && (e.code === 'Space' || e.key === 'Enter')) return;

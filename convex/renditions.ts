@@ -1,3 +1,4 @@
+import { internal } from './_generated/api';
 // Sharing separated audio between songs.
 //
 // Plain helpers rather than internal functions: every caller is already inside a
@@ -52,7 +53,7 @@ export async function claimInto(
   addedAt: number
 ): Promise<Id<'songs'>> {
   await ctx.db.patch(rendition._id, { refCount: rendition.refCount + 1 });
-  return await ctx.db.insert('songs', {
+  const songId = await ctx.db.insert('songs', {
     userId,
     title: rendition.title,
     uploader: rendition.uploader,
@@ -68,7 +69,10 @@ export async function claimInto(
     quality: rendition.quality,
     renditionId: rendition._id,
     addedAt,
+    metadataStatus: 'pending',
   });
+  await ctx.scheduler.runAfter(0, internal.metadataLookup.enrich, {id:songId});
+  return songId;
 }
 
 /**

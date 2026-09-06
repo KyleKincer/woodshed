@@ -17,4 +17,5 @@ if '--beats' in sys.argv:
     pip('install', 'cython<3', 'scipy', 'mido', 'matplotlib')
     pip('install', '--no-build-isolation', 'madmom @ git+https://github.com/CPJKU/madmom.git@main')
     pip('install', '--no-deps', 'BeatNet==1.1.3')
+subprocess.run(['node', str(root.parent / 'scripts' / 'prepare-fingerprint.mjs')], cwd=root.parent, check=True)
 print('Runtime ready. Start with npm run companion. Beat detection requires setup.py --beats.')

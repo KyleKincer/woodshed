@@ -7,7 +7,7 @@ import { retireKey } from './storage';
 import { paginationOptsValidator } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
-import { qualityValidator, sourceValidator, stemValidator } from './schema';
+import { coverKeyOf, cleanMetadata } from './lib/songMetadata';
 
 /**
  * The whole library, newest first.
@@ -46,6 +46,15 @@ export const get = query({
 // the player and library UI need no reshaping. `id` is the Convex document id.
 export function toClient(s: Doc<"songs">) {
   return {
+    albumArtist: s.albumArtist ?? '', year: s.year ?? '', genre: s.genre ?? '',
+    trackNumber: s.trackNumber ?? '', discNumber: s.discNumber ?? '',
+    musicalKey: s.musicalKey ?? '', tuning: s.tuning ?? '', tags: s.tags ?? [], notes: s.notes ?? '',
+    metadataLocks: s.metadataLocks ?? [],
+    metadataStatus: s.metadataStatus ?? null,
+    metadataRecordingId: s.metadataRecordingId ?? null,
+    metadataReleaseId: s.metadataReleaseId ?? null,
+    artwork: s.artwork ?? null,
+    coverUrl: s.artwork?.kind === 'release' ? `https://coverartarchive.org/release/${s.artwork.releaseId}/front-500` : null,
     id: s._id,
     title: s.title,
     uploader: s.uploader ?? '',
@@ -53,7 +62,7 @@ export function toClient(s: Doc<"songs">) {
     album: s.album ?? '',
     duration: s.duration,
     source: s.source ?? null,
-    coverKey: s.coverKey ?? null,
+    coverKey: coverKeyOf(s) ?? null,
     stems: s.stems,
     stemMode: s.stemMode,
     quality: s.quality,
@@ -68,8 +77,9 @@ export const rename = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
-    await ctx.db.patch(song._id, { title: args.title });
-    return toClient({ ...song, title: args.title });
+    const { title } = cleanMetadata({title: args.title});
+    await ctx.db.patch(song._id, { title, metadataLocks: [...new Set([...(song.metadataLocks ?? []), 'title'])] });
+    return toClient({ ...song, title: title! });
   },
 });
 
@@ -122,6 +132,7 @@ export async function deleteSongData(ctx: MutationCtx, song: Doc<'songs'>) {
         }
       }
     }
+    if (song.artwork?.kind === 'upload') await retireKey(ctx, song.artwork.key);
     await ctx.db.delete(song._id);
 }
 

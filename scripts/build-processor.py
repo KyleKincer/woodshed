@@ -4,7 +4,7 @@ root = pathlib.Path(__file__).resolve().parent.parent
 packages = ['demucs','dora','julius','openunmix','torchaudio','librosa','BeatNet','madmom','yt_dlp','yt_dlp_ejs']
 args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--name', 'woodshed-processor', '--distpath', str(root/'build/processor'), '--workpath', str(root/'build/pyinstaller'), '--specpath', str(root/'build'), '--paths', str(root/'companion')]
 for package in packages: args += ['--collect-all', package]
-for module in ['process','pipeline','beats','demucs.separate','soundfile','scipy.signal','scipy.special','numpy','torch','torchaudio']:
+for module in ['process','pipeline','fingerprint','beats','demucs.separate','soundfile','scipy.signal','scipy.special','numpy','torch','torchaudio']:
     args += ['--hidden-import', module]
 for package in ['demucs','torch','torchaudio','numpy','yt-dlp','einops','julius','dora-search','openunmix','lameenc','omegaconf','treetable','tqdm','requests','soundfile','librosa']:
     args += ['--copy-metadata', package]

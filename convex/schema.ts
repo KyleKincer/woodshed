@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { metadataFields, fingerprintValidator } from './lib/songMetadata';
 
 // A source is how a song got here. `upload` carries an R2 key the browser
 // PUT the original file to; the others are handed straight to yt-dlp.
@@ -59,7 +60,7 @@ export default defineSchema({
   }).index('by_token', ['tokenHash']).index('by_user', ['userId']),
   storageUsage: defineTable({scope: v.string(), bytes: v.number()}).index('by_scope', ['scope']),
   audioObjects: defineTable({
-    userId: v.string(), jobId: v.id('jobs'), key: v.string(), name: v.string(),
+    userId: v.string(), jobId: v.optional(v.id('jobs')), songId: v.optional(v.id('songs')), verified: v.optional(v.boolean()), key: v.string(), name: v.string(),
     bytes: v.number(), mime: v.string(), checksum: v.string(), expiresAt: v.number(),
     status: v.union(v.literal('reserved'), v.literal('ready'), v.literal('deleting')),
   }).index('by_key', ['key']).index('by_job', ['jobId']).index('by_userId_status', ['userId', 'status']),
@@ -100,7 +101,16 @@ export default defineSchema({
     .index('by_source_quality', ['sourceKey', 'qualityKey'])
     .index('by_resolved_quality', ['resolvedKey', 'qualityKey']),
 
+  metadataRequests: defineTable({ key: v.string(), nextAt: v.number() }).index('by_key', ['key']),
+  metadataCache: defineTable({ key: v.string(), payload: v.any(), expiresAt: v.number() }).index('by_key', ['key']),
+
   songs: defineTable({
+    ...metadataFields,
+    metadataLocks: v.optional(v.array(v.string())),
+    metadataStatus: v.optional(v.union(v.literal('pending'), v.literal('matched'), v.literal('uncertain'), v.literal('unavailable'))),
+    metadataRecordingId: v.optional(v.string()),
+    metadataReleaseId: v.optional(v.string()),
+    fingerprint: v.optional(fingerprintValidator),
     // Stable Convex Auth user identifier. Every query scopes on this.
     userId: v.string(),
     title: v.string(),

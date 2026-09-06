@@ -1,3 +1,5 @@
+import { internal } from './_generated/api';
+import { fingerprintValidator, metadataFields, cleanMetadata } from './lib/songMetadata';
 import { v } from 'convex/values';
 import { query, mutation, internalMutation, internalQuery } from './_generated/server';
 import { requireDevice } from './devices';
@@ -46,6 +48,9 @@ export const uploadContext = internalQuery({
 });
 export const resultValidator = v.object({
   title: v.string(), uploader: v.optional(v.string()), artist: v.optional(v.string()), album: v.optional(v.string()),
+  albumArtist: v.optional(v.string()), year: v.optional(v.string()), genre: v.optional(v.string()),
+  trackNumber: v.optional(v.string()), discNumber: v.optional(v.string()), musicalKey: v.optional(v.string()),
+  fingerprint: v.optional(fingerprintValidator),
   duration: v.number(), stems: v.array(stemValidator), coverKey: v.optional(v.string()),
   stemMode: v.string(), quality: qualityValidator,
 });
@@ -74,17 +79,24 @@ export const finish = internalMutation({
         return existing._id;
       }
     }
+    if (a.result.fingerprint && (a.result.fingerprint.value.length > 30000 || !/^[A-Za-z0-9_-]+$/.test(a.result.fingerprint.value) || !Number.isFinite(a.result.fingerprint.duration) || a.result.fingerprint.duration <= 0)) throw new Error('Invalid fingerprint.');
+    const imported = cleanMetadata(Object.fromEntries(Object.keys(metadataFields).filter(key => key in a.result).map(key => [key, a.result[key as keyof typeof a.result]])));
     let songId = job.songId;
-    const fields = { ...a.result, stems, source: job.source, userId: d.userId, addedAt: job.createdAt };
+    const fields = { ...a.result, ...imported, stems, source: job.source, userId: d.userId, addedAt: job.createdAt };
     if (songId) {
       const old = await ctx.db.get(songId);
       if (!old || old.userId !== d.userId) throw new Error('Song was deleted during processing.');
-      for (const key of [...old.stems.map(s => s.key), ...(old.coverKey ? [old.coverKey] : [])]) await retireKey(ctx, key);
-      await ctx.db.patch(songId, { ...fields, title: old.title, addedAt: old.addedAt, renditionId: undefined });
+      for (const key of old.stems.map(s => s.key)) await retireKey(ctx, key);
+      await ctx.db.patch(songId, { ...fields, ...Object.fromEntries(Object.keys(metadataFields).map(key => [key, old[key as keyof typeof old]])), title: old.title, artist: old.artist, album: old.album, uploader: old.uploader, coverKey: old.coverKey, addedAt: old.addedAt, renditionId: undefined });
     } else {
       songId = await ctx.db.insert('songs', { ...fields, ...(job.importMeta ? { tempo: job.importMeta.tempo, practice: job.importMeta.practice, localImportId: job.importMeta.id } : {}) });
     }
     for (const o of objects) await ctx.db.patch(o._id, { status: 'ready' });
+    if (job.songId && a.result.coverKey) await retireKey(ctx, a.result.coverKey);
+    if (!job.songId && job.kind !== 'import') {
+      await ctx.db.patch(songId, {metadataStatus:'pending'});
+      await ctx.scheduler.runAfter(0, internal.metadataLookup.enrich, {id:songId});
+    }
     await ctx.db.patch(job._id, { status: 'done', songId, percent: 100, stage: 'done', updatedAt: Date.now() });
     return songId;
   },

@@ -107,6 +107,12 @@ def probe_tags(path) -> dict:
         "title": tags.get("title"),
         "artist": tags.get("artist") or tags.get("album_artist") or tags.get("composer"),
         "album": tags.get("album"),
+        "albumArtist": tags.get("album_artist") or tags.get("albumartist"),
+        "year": str(tags.get("date") or tags.get("year") or "")[:4],
+        "genre": tags.get("genre"),
+        "trackNumber": str(tags.get("track") or "").split("/")[0],
+        "discNumber": str(tags.get("disc") or "").split("/")[0],
+        "musicalKey": tags.get("initial_key") or tags.get("key"),
     }
 
 
@@ -161,6 +167,7 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
             duration=probe_duration(raw),
             cover=cover if cover.exists() and cover.stat().st_size else None,
         )
+        meta.update({k: tags.get(k) or "" for k in ["albumArtist", "year", "genre", "trackNumber", "discNumber", "musicalKey"]})
         rep.progress("download", 100, "Ready")
         return wav, meta
 
@@ -317,6 +324,11 @@ def _fetch_target(target: str, extra: list[str], tmp: pathlib.Path, meta: dict, 
             uploader=info.get("uploader") or info.get("channel") or "",
             artist=info.get("artist") or info.get("creator") or info.get("uploader") or "",
             album=info.get("album") or "",
+            albumArtist=info.get("album_artist") or "",
+            year=str(info.get("release_year") or ""),
+            genre=info.get("genre") or "",
+            trackNumber=str(info.get("track_number") or ""),
+            discNumber=str(info.get("disc_number") or ""),
             duration=round(info.get("duration") or 0),
             cover=cover if got_cover else None,
         )

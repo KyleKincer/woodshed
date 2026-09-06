@@ -1,5 +1,6 @@
 """One resumable local job. Emits JSON progress; keeps source and WAV stems."""
 import json, pathlib, sys, shutil
+from fingerprint import fingerprint
 from pipeline import Reporter, acquire, separate, encode, expected_stems, probe_duration, run
 
 
@@ -39,6 +40,9 @@ def process(job, root):
             wav = root / 'source.wav'
             meta['cover'] = str(meta['cover']) if meta.get('cover') else None
             meta_file.write_text(json.dumps(meta))
+        if 'fingerprint' not in meta:
+            meta['fingerprint'] = fingerprint(wav)
+            meta_file.write_text(json.dumps(meta))
         out = root / 'separated'
         model_dir = out / quality['model'] / wav.stem
         wanted = expected_stems(mode, quality['model'])
@@ -58,6 +62,12 @@ def process(job, root):
     if cover.is_file() and 0 < cover.stat().st_size <= 2_000_000:
         files.append({'name':'cover.jpg','mime':'image/jpeg'})
     result = {k:str(meta.get(k) or '') for k in ['title','uploader','artist','album']}
+    if meta.get('fingerprint'): result['fingerprint'] = meta['fingerprint']
+    for key in ['albumArtist','year','genre','trackNumber','discNumber','musicalKey']:
+        value = str(meta.get(key) or '').strip()[:500]
+        if key == 'year' and (len(value) != 4 or not value.isdigit()): value = ''
+        if key in ['trackNumber','discNumber'] and (not value.isdigit() or not 0 < int(value) < 10000): value = ''
+        if value: result[key] = value
     result.update(duration=float(meta.get('duration') or probe_duration(sources[0][1])), stemMode=mode, quality=quality, files=files)
     result_file.write_text(json.dumps(result))
     return result

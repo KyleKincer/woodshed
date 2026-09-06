@@ -1,3 +1,4 @@
+import './prepare-fingerprint.mjs';
 import { mkdir, copyFile, chmod, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';

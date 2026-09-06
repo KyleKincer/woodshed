@@ -125,6 +125,22 @@ from completed source/separation/result files. **Retry** on a failed job reuses
 its local outputs, including after a quota error. If an upload reservation has
 expired, wait for cleanup before retrying. Cancellation kills the process tree.
 
+### Song details and online metadata
+
+Use **Edit song** from a library song's menu or the player header. Edit identifying
+fields, artwork, musical key, tuning, tags, and notes; changes sync across your
+library. **Select songs → Edit selected** updates only fields you touch or check.
+
+New imports look up strong catalog matches automatically. Uncertain matches stay
+available through **Find another match**, where you can review fields and choose
+an album or cover. Your corrections, explicit clearing, and artwork choices survive
+lookup and reprocessing. Tempo correction stays in the player.
+
+Online lookup uses MusicBrainz and Cover Art Archive; audio recognition uses
+Chromaprint locally and a server-side AcoustID application key. See
+[metadata setup and validation](docs/song-metadata-operations.md) for free-service
+access requirements, configuration, and export behavior.
+
 ### Audio and exports
 
 Sync defaults to Opus/WebM at 192 kbps per stem; 128/160/256 are selectable.

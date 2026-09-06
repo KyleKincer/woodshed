@@ -1,0 +1,3 @@
+# User corrections take precedence over enrichment and processing
+
+Song metadata belongs to the person's Woodshed library entry. Online enrichment can automatically populate strong matches, but manual corrections and explicit clearing—including removing artwork—remain authoritative through later lookups and audio reprocessing. This trades automatic replacement with potentially newer catalog values for stable personal corrections; users can explicitly choose another match when they want to replace those values. Metadata edits sync within Woodshed and appear in exports without rewriting original audio-file tags.

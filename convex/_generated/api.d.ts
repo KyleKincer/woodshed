@@ -9,6 +9,7 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as artworkUpload from "../artworkUpload.js";
 import type * as auth from "../auth.js";
 import type * as billing from "../billing.js";
 import type * as billingData from "../billingData.js";
@@ -19,9 +20,14 @@ import type * as ingest from "../ingest.js";
 import type * as jobs from "../jobs.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_billingPolicy from "../lib/billingPolicy.js";
+import type * as lib_catalogRequest from "../lib/catalogRequest.js";
 import type * as lib_dedupe from "../lib/dedupe.js";
+import type * as lib_musicBrainz from "../lib/musicBrainz.js";
 import type * as lib_presets from "../lib/presets.js";
+import type * as lib_songMetadata from "../lib/songMetadata.js";
 import type * as media from "../media.js";
+import type * as metadata from "../metadata.js";
+import type * as metadataLookup from "../metadataLookup.js";
 import type * as migrate from "../migrate.js";
 import type * as r2 from "../r2.js";
 import type * as renditions from "../renditions.js";
@@ -40,6 +46,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  artworkUpload: typeof artworkUpload;
   auth: typeof auth;
   billing: typeof billing;
   billingData: typeof billingData;
@@ -50,9 +57,14 @@ declare const fullApi: ApiFromModules<{
   jobs: typeof jobs;
   "lib/auth": typeof lib_auth;
   "lib/billingPolicy": typeof lib_billingPolicy;
+  "lib/catalogRequest": typeof lib_catalogRequest;
   "lib/dedupe": typeof lib_dedupe;
+  "lib/musicBrainz": typeof lib_musicBrainz;
   "lib/presets": typeof lib_presets;
+  "lib/songMetadata": typeof lib_songMetadata;
   media: typeof media;
+  metadata: typeof metadata;
+  metadataLookup: typeof metadataLookup;
   migrate: typeof migrate;
   r2: typeof r2;
   renditions: typeof renditions;

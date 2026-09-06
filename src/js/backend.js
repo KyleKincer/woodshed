@@ -212,3 +212,15 @@ export const savePractice = (id, practice) => convex.mutation(api.songs.savePrac
 export const exportPage = cursor => convex.query(api.songs.exportPage, {paginationOpts:{numItems:50,cursor}});
 
 export async function retryJob(jobId) { const deviceId = await requireCompanion(); return convex.mutation(api.jobs.retry,{jobId,deviceId}); }
+
+export const updateMetadata = (ids, changes) => convex.mutation(api.metadata.update, {ids,changes});
+export const onSong = (id, cb) => convex.onUpdate(api.songs.get,{id},cb);
+export const findMetadata = (id,title,artist,recordingId) => convex.action(api.metadataLookup.find,{id,title,artist,...(recordingId?{recordingId}:{})});
+export const metadataDetail = (id,recordingId,releaseId) => convex.action(api.metadataLookup.detail,{id,recordingId,...(releaseId?{releaseId}:{})});
+export async function uploadArtwork(id,file) {
+  const checksum=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',await file.arrayBuffer()))));
+  const upload=await convex.action(api.artworkUpload.prepare,{id,bytes:file.size,mime:file.type,checksum});
+  const response=await fetch(upload.url,{method:'PUT',headers:{'Content-Type':file.type,'x-amz-checksum-sha256':checksum},body:file});
+  if(!response.ok) throw new Error('Could not upload artwork. Try again.');
+  return convex.action(api.artworkUpload.complete,{objectId:upload.objectId});
+}

@@ -1,3 +1,4 @@
+import { editSongs, artistLabel } from './song-metadata.js';
 import { focusModal } from './modal-focus.js';
 import { artworkMarkup, wireArtwork } from './artwork.js';
 import { hasCompanionCode } from './companion.js';
@@ -15,6 +16,9 @@ let config = null;
 let onOpenSong = null;
 
 let songs = [];
+let selecting = false;
+const selected = new Set();
+let shownIds = [];
 let jobs = []; // separation jobs from the server
 // Browser-side uploads that have no server job yet, keyed by a local id.
 const uploads = new Map();
@@ -35,12 +39,14 @@ export function initLibrary(cfg, openSongCb) {
   onOpenSong = openSongCb;
   wireAddModal();
   wireViewControls();
+  wireSelection();
   document.getElementById('lib-search').addEventListener('input', (e) => renderLibrary(e.target.value));
 
   unsubscribers.forEach((fn) => fn());
   unsubscribers = [
     backend.onLibrary((lib) => {
       songs = lib?.songs || [];
+      for (const id of selected) if (!songs.some(s => s.id === id)) selected.delete(id);
       renderLibrary(currentFilter());
     }),
     backend.onJobs((list) => {
@@ -53,6 +59,7 @@ export function initLibrary(cfg, openSongCb) {
 export function teardownLibrary() {
   unsubscribers.forEach((fn) => fn());
   unsubscribers = [];
+  selected.clear(); selecting=false;
 }
 
 function wireViewControls() {
@@ -82,7 +89,7 @@ const STAGE_LABEL = {
   queued: 'Queued', upload: 'Uploading', download: 'Downloading',
   separate: 'Separating', finalize: 'Finishing',
 };
-const artistOf = (s) => s.artist || s.uploader || '';
+const artistOf = artistLabel;
 const albumOf = (s) => s.album || '';
 
 // Renders are async only because cover art needs signed URLs; overlapping
@@ -102,7 +109,9 @@ export async function renderLibrary(filter = '') {
   const procBySong = new Map(procList.filter((p) => p.songId && songIds.has(p.songId)).map((p) => [p.songId, p]));
   const pendingNew = procList.filter((p) => !p.songId || !songIds.has(p.songId));
 
-  const shown = songs.filter((s) => match(s.title, s.uploader, artistOf(s), albumOf(s)));
+  const shown = songs.filter((s) => match(s.title, s.uploader, artistOf(s), albumOf(s), s.albumArtist, s.genre, ...(s.tags || [])));
+  shownIds = shown.map(s => s.id);
+  syncSelection();
   const newCards = pendingNew.filter((p) => match(p.title, p.uploader, p.artist, p.album));
 
   // Resolve every cover we're about to draw in one batched, cached call.
@@ -135,10 +144,10 @@ export async function renderLibrary(filter = '') {
     [...groups.entries()]
       .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
       .forEach(([title, list]) => {
-        const art = list.find((s) => s.coverKey);
+        const art = list.find((s) => s.coverKey || s.coverUrl);
         sections.push({
           title, count: list.length,
-          coverUrl: art ? coverUrls[art.coverKey] : null,
+          coverUrl: art ? art.coverUrl || coverUrls[art.coverKey] : null,
           coverSong: art || list[0],
           items: list.map((s) => vmSong(s, procBySong.get(s.id))),
         });
@@ -186,7 +195,7 @@ function vmSong(s, proc) {
   return {
     id: s.id, jobId: proc?.jobId, title: s.title,
     artist: artistOf(s), album: albumOf(s), duration: s.duration,
-    thumbUrl: s.coverKey ? coverUrls[s.coverKey] || null : null,
+    thumbUrl: s.coverUrl || (s.coverKey ? coverUrls[s.coverKey] || null : null),
     stemLabel: s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / '),
     proc, isPending: false,
   };
@@ -219,6 +228,7 @@ function sectionHtml(sec) {
 
 function gridCard(vm) {
   return `<div class="card ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
+    ${selecting && vm.id && !vm.isPending ? `<input class="song-select" type="checkbox" aria-label="Select ${esc(vm.title)}" ${selected.has(vm.id)?'checked':''}>` : ''}
     ${!vm.proc && !vm.isPending ? `<button class="song-open" aria-label="Open ${esc(vm.title)}"></button>` : ''}
     ${vm.stemLabel ? `<div class="badges"><span class="badge">${vm.stemLabel}</span></div>` : ''}
     ${vm.proc || vm.isPending ? '' : `<button class="card-menu" aria-label="Actions for ${esc(vm.title)}">⋯</button>`}
@@ -233,6 +243,7 @@ function gridCard(vm) {
 
 function listRow(vm) {
   return `<div class="list-row ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
+    ${selecting && vm.id && !vm.isPending ? `<input class="song-select" type="checkbox" aria-label="Select ${esc(vm.title)}" ${selected.has(vm.id)?'checked':''}>` : ''}
     ${!vm.proc && !vm.isPending ? `<button class="song-open" aria-label="Open ${esc(vm.title)}"></button>` : ''}
     ${artworkMarkup(vm, vm.thumbUrl, 'list-thumb')}
     <div class="list-main">
@@ -312,10 +323,13 @@ function wireCards(container, procBySong) {
     const proc = procBySong.get(id);
     if (!proc) {
       el.addEventListener('click', (e) => {
-        if (e.target.closest('.card-menu')) return;
+        if (e.target.closest('.card-menu,.song-select')) return;
+        if (selecting) { toggleSelected(id); return; }
         onOpenSong(song);
       });
     }
+    el.classList.toggle('is-selected', selecting && selected.has(id));
+    el.querySelector('.song-select')?.addEventListener('change', () => toggleSelected(id));
     el.querySelector('.card-menu')?.addEventListener('click', (e) => {
       e.stopPropagation();
       cardMenu(song, e.currentTarget);
@@ -367,7 +381,8 @@ function cardMenu(song, anchor) {
   const items = [
     { label: 'Play', action: () => onOpenSong(song) },
     { label: 'Reprocess…', action: () => reprocessDialog(song) },
-    { label: 'Rename…', action: () => renameSong(song) },
+    { label: 'Edit song…', action: () => editSongs([song]) },
+    { label: 'Select songs…', action: () => { selecting=true; selected.add(song.id); renderLibrary(currentFilter()); } },
     ...(url ? [{ label: 'Open original source', action: () => backend.openExternal(url) }] : []),
     { label: 'Delete', danger: true, action: () => deleteSong(song) },
   ];
@@ -396,11 +411,6 @@ function cardMenu(song, anchor) {
   document.addEventListener('keydown', onMenuKey, true);
 }
 
-async function renameSong(song) {
-  const name = await promptModal('Rename song', song.title);
-  if (name && name.trim()) await backend.renameSong(song.id, name.trim());
-}
-
 async function deleteSong(song) {
   const ok = await confirmModal('Delete song?', `"${song.title}" will be permanently removed.`, 'Delete');
   if (ok) await backend.deleteSong(song.id);
@@ -409,7 +419,7 @@ async function deleteSong(song) {
 function reprocessDialog(song) {
   const presets = [...Object.values(config.presets), { id: 'custom', label: 'Custom' }];
   const m = buildDialog('Reprocess song', `
-    <p class="dlg-msg">Split “${esc(song.title)}” again. New stems replace the current ones; your beat track and title are kept.</p>
+    <p class="dlg-msg">Split “${esc(song.title)}” again. New stems replace the current ones; your beat track and song details are kept.</p>
     <label class="field"><span>Quality preset</span>
       <select id="rp-preset">${presets.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
     </label>
@@ -562,6 +572,7 @@ function setupGlobalDrop() {
   let depth = 0;
   window.addEventListener('dragenter', (e) => {
     if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    if (document.querySelector('.metadata-modal')) return;
     depth++;
     overlay.classList.remove('hidden');
   });
@@ -573,6 +584,7 @@ function setupGlobalDrop() {
     overlay.classList.add('hidden');
     // If the add modal is open it handles its own drop.
     if (!document.getElementById('add-modal').classList.contains('hidden')) return;
+    if (document.querySelector('.metadata-modal')) return;
     const files = audioFiles(e.dataTransfer.files);
     if (files.length) await uploadAndQueue(files, config.settings);
   });
@@ -595,29 +607,6 @@ function esc(s) {
 }
 
 // ---------- Lightweight dialogs ----------
-function promptModal(title, value = '') {
-  return new Promise((resolve) => {
-    const m = buildDialog(title, `
-      <input id="dlg-input" class="dlg-input" type="text" aria-label="${esc(title)}" />
-      <div class="modal-actions">
-        <button class="btn-ghost" data-cancel>Cancel</button>
-        <button class="btn-primary" data-ok>Save</button>
-      </div>`);
-    const input = m.querySelector('#dlg-input');
-    input.value = value;
-    const done = (v) => { m.remove(); resolve(v); };
-    m.querySelector('[data-cancel]').onclick = () => done(null);
-    m.querySelector('[data-ok]').onclick = () => done(input.value);
-    m.addEventListener('click', (e) => { if (e.target === m) done(null); });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') done(input.value);
-      if (e.key === 'Escape') done(null);
-    });
-    input.focus();
-    input.select();
-  });
-}
-
 function confirmModal(title, message, okLabel = 'OK') {
   return new Promise((resolve) => {
     const m = buildDialog(title, `
@@ -643,4 +632,24 @@ function buildDialog(title, innerHtml) {
   document.body.appendChild(m);
   focusModal(m, () => { const cancel = m.querySelector('[data-cancel]'); if (cancel) cancel.click(); else m.remove(); });
   return m;
+}
+
+function wireSelection() {
+  let bar=document.querySelector('.library-selection');
+  if(!bar){bar=document.createElement('div');bar.className='library-selection';document.getElementById('library-grid').before(bar);}
+  bar.innerHTML='<button class="btn-ghost" data-select>Select songs</button><span data-count></span><button class="btn-ghost" data-all hidden>Select visible</button><button class="btn-primary" data-edit hidden>Edit selected</button>';
+  bar.querySelector('[data-select]').onclick=()=>{selecting=!selecting;if(!selecting)selected.clear();renderLibrary(currentFilter());};
+  bar.querySelector('[data-all]').onclick=()=>{const all=shownIds.every(id=>selected.has(id));if(all)shownIds.forEach(id=>selected.delete(id));else shownIds.slice(0,100).forEach(id=>{if(selected.size<100)selected.add(id);});renderLibrary(currentFilter());};
+  bar.querySelector('[data-edit]').onclick=()=>editSongs(songs.filter(s=>selected.has(s.id)));
+  syncSelection();
+}
+function toggleSelected(id){if(selected.has(id))selected.delete(id);else if(selected.size<100)selected.add(id);renderLibrary(currentFilter());}
+function syncSelection(){
+  const bar=document.querySelector('.library-selection');if(!bar)return;
+  bar.querySelector('[data-select]').textContent=selecting?'Done selecting':'Select songs';
+  bar.querySelector('[data-count]').textContent=selecting?`${selected.size} selected${selected.size===100?' (maximum 100)':''}`:'';
+  bar.querySelector('[data-all]').hidden=!selecting;
+  bar.querySelector('[data-all]').textContent=shownIds.length&&shownIds.every(id=>selected.has(id))?'Deselect visible':'Select visible';
+  bar.querySelector('[data-edit]').hidden=!selecting;
+  bar.querySelector('[data-edit]').disabled=!selected.size;
 }

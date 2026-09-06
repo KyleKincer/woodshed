@@ -19,7 +19,7 @@ export const authorizedKeys = internalQuery({
     const missing = args.keys.filter(k => !allowed.includes(k));
     if (missing.length) {
       const songs = await ctx.db.query('songs').withIndex('by_user', q => q.eq('userId', userId)).take(1000);
-      const owned = new Set(songs.flatMap(s => [...s.stems.map(t => t.key), ...(s.coverKey ? [s.coverKey] : [])]));
+      const owned = new Set(songs.flatMap(s => [...s.stems.map(t => t.key), ...(s.coverKey ? [s.coverKey] : []), ...(s.artwork?.kind === 'upload' ? [s.artwork.key] : [])]));
       for (const key of missing) if (owned.has(key)) allowed.push(key);
     }
     return allowed;
