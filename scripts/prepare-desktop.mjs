@@ -13,6 +13,6 @@ await writeFile('build/THIRD-PARTY-NOTICES.txt',`Woodshed includes Electron, Nod
 console.log('Bundled Node, FFmpeg, ffprobe, and local service.');
 
 await mkdir('build/licenses',{recursive:true});
-for(const [source,name] of [['node_modules/ffmpeg-static/ffmpeg.LICENSE','FFmpeg-LICENSE'],['node_modules/ffmpeg-static/ffmpeg.README','FFmpeg-build-info'],['node_modules/ffprobe-static/LICENSE','ffprobe-static-LICENSE'],['LICENSE','Woodshed-LICENSE']]){
+for(const [source,name] of [['public/licenses/lucide.txt','Lucide-LICENSE'],['node_modules/ffmpeg-static/ffmpeg.LICENSE','FFmpeg-LICENSE'],['node_modules/ffmpeg-static/ffmpeg.README','FFmpeg-build-info'],['node_modules/ffprobe-static/LICENSE','ffprobe-static-LICENSE'],['LICENSE','Woodshed-LICENSE']]){
   try{await copyFile(source,path.join('build/licenses',name));}catch(error){if(error.code!=='ENOENT')throw error;}
 }
