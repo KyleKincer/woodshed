@@ -50,6 +50,12 @@ async function connect(url) {
   client = next; identity = who; config.convexUrl = url;
   await fs.mkdir(accountDir(), { recursive: true, mode: 0o700 });
   await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
+  const cancellation = path.join(accountDir(), 'update-cancellation.json');
+  try {
+    const {jobId} = JSON.parse(await fs.readFile(cancellation, 'utf8'));
+    await client.mutation(api.worker.cancelForUpdate,{token:config.token,jobId});
+    await fs.unlink(cancellation);
+  } catch(error) { if(error.code !== 'ENOENT') throw error; }
   stopSubscription = client.onUpdate(api.worker.next, {token: config.token}, job => {
     pending = job;
     if (current && (!job || job._id !== current.id)) killCurrent();
@@ -229,9 +235,18 @@ server.listen(port,'127.0.0.1',()=>{
   console.log(`Local originals and stems: ${data}`);
 });
 if(config.convexUrl) connect(config.convexUrl).catch(error=>console.error('Desktop processor connection:',error.message));
-async function shutdown(){acceptingJobs=false;killCurrent();stopSubscription?.();await client?.close();server.close();process.exit(0);}
-for(const signal of ['SIGINT','SIGTERM']) process.on(signal,shutdown);
+async function shutdown(forUpdate = false){acceptingJobs=false;
+  const jobId = current?.id;
+  const cancellation = identity ? path.join(accountDir(), 'update-cancellation.json') : null;
+  if(forUpdate && jobId && cancellation) await fs.writeFile(cancellation,JSON.stringify({jobId}));
+  killCurrent();
+  if(forUpdate && jobId && client) {
+    try { await Promise.race([client.mutation(api.worker.cancelForUpdate,{token:config.token,jobId}).then(()=>cancellation && fs.unlink(cancellation)),new Promise(resolve=>setTimeout(resolve,1500))]); } catch {}
+  }
+stopSubscription?.();await client?.close();server.close();process.exit(0);}
+for(const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>void shutdown());
 process.parentPort?.on('message',event=>{
-  if(event.data?.type==='quiesce'){if(!busy)acceptingJobs=false;process.parentPort.postMessage({type:'quiesced',busy});}
-  if(event.data?.type==='shutdown')void shutdown();
+  if(event.data?.type==='quiesce'){acceptingJobs=false;process.parentPort.postMessage({type:'quiesced',busy});}
+  if(event.data?.type==='resume'){acceptingJobs=true;void drain();}
+  if(event.data?.type==='shutdown')void shutdown(event.data.forUpdate === true);
 });

@@ -1,15 +1,16 @@
-const { app, BrowserWindow, ipcMain, shell, utilityProcess, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, utilityProcess, dialog, Menu, powerMonitor } = require('electron');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
-const { canRestart, publicUpdateState } = require('./update-policy.cjs');
+const { publicUpdateState } = require('./update-policy.cjs');
+const { createUpdateController } = require('./update-controller.cjs');
 const {createMediaProxy}=require('./media-proxy.cjs');
 const smokeTest = process.argv.includes('--smoke-test');
 const UI_ORIGIN = smokeTest ? 'http://127.0.0.1:47833' : 'http://127.0.0.1:47832';
 const mediaProxy=createMediaProxy({origin:UI_ORIGIN});
 if(smokeTest)app.setPath('userData',fs.mkdtempSync(path.join(app.getPath('temp'),'woodshed-smoke-')));
-let window, webServer, companion, companionInfo, playing = false, closing = false;
+let window, webServer, companion, companionInfo, closing = false, updates;
 let updateState = publicUpdateState('idle');
 const resources = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'build');
 const webRoot = path.join(__dirname, '..', 'dist');
@@ -53,42 +54,38 @@ function startCompanion() {
     companion.stderr?.on('data',data=>console.error(String(data)));
   });
 }
-async function stopCompanion(){
+async function stopCompanion(forUpdate = false){
   if(!companion)return;
   const child=companion;companion=null;
-  await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve();},2500);child.once('exit',()=>{clearTimeout(timer);resolve();});child.postMessage({type:'shutdown'});});
+  await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve();},2500);child.once('exit',()=>{clearTimeout(timer);resolve();});child.postMessage({type:'shutdown',forUpdate});});
+}
+async function quiesceCompanion() {
+  if (!companion) return {busy:false};
+  const child = companion;
+  return new Promise(resolve => {
+    const listener = message => { if (message.type === 'quiesced') {clearTimeout(timer);child.off('message',listener);resolve(message);} };
+    const timer = setTimeout(() => {child.off('message',listener);resolve({busy:true});},3000);
+    child.on('message',listener);child.postMessage({type:'quiesce'});
+  });
 }
 function setupUpdates() {
-  autoUpdater.autoDownload=false;
-  autoUpdater.autoInstallOnAppQuit=false;
-  autoUpdater.allowPrerelease=false;
-  autoUpdater.on('checking-for-update',()=>emit('checking'));
-  autoUpdater.on('update-available',info=>emit('available',info));
-  autoUpdater.on('update-not-available',()=>emit('current',{version:app.getVersion()}));
-  autoUpdater.on('download-progress',info=>emit('downloading',{...info,version:updateState.version}));
-  autoUpdater.on('update-downloaded',info=>emit('ready',info));
-  autoUpdater.on('error',error=>emit('error',{message: error.message.includes('404')?'No published update is available yet.':'Could not check or download the update. Try again later.'}));
-  if(app.isPackaged){setTimeout(()=>autoUpdater.checkForUpdates().catch(()=>{}),15000).unref();setInterval(()=>{if(!['downloading','ready'].includes(updateState.status))autoUpdater.checkForUpdates().catch(()=>{});},6*60*60*1000).unref();}
+  updates = createUpdateController({updater:autoUpdater,publish:next=>{updateState=next;window?.webContents.send('desktop:update-state',next);},
+    showDialog:options=>dialog.showMessageBox(window,options),quiesce:quiesceCompanion,resume:()=>companion?.postMessage({type:'resume'}),
+    install:async()=>{closing=true;await stopCompanion(true);autoUpdater.quitAndInstall(false,true);},
+    isFocused:()=>window?.isFocused(),version:app.getVersion(),packaged:app.isPackaged});
+  window.on('focus',()=>void updates.focus());
+  powerMonitor.on('resume',()=>updates.wake());
 }
 ipcMain.handle('desktop:media-url',(event,url)=>{if(!trusted(event))throw Error('Untrusted window');return mediaProxy.register(url);});
 ipcMain.handle('desktop:info',event=>{
   if(!trusted(event))throw new Error('Untrusted window');
   return {version:app.getVersion(),companion:companionInfo,update:updateState};
 });
-ipcMain.on('desktop:playing',(event,value)=>{if(trusted(event))playing=!!value;});
 ipcMain.handle('desktop:update',async(event,action)=>{
   if(!trusted(event))throw new Error('Untrusted window');
-  if(!app.isPackaged)return {message:'Updates are available in installed builds.'};
-  if(action==='check' && !['downloading','ready'].includes(updateState.status))await autoUpdater.checkForUpdates();
-  else if(action==='download' && updateState.status==='available'){emit('downloading',{version:updateState.version});await autoUpdater.downloadUpdate();}
-  else if(action==='install' && updateState.status==='ready'){
-    const status=await localStatus();
-    if(!canRestart({playing,processing:status.busy}))throw new Error('Stop playback and wait for processing to finish before updating.');
-    const quiesced=await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Could not pause the processor. Try again.')),3000);const listener=message=>{if(message.type==='quiesced'){clearTimeout(timeout);companion.off('message',listener);resolve(message);}};companion.on('message',listener);companion.postMessage({type:'quiesce'});});
-    if(quiesced.busy)throw new Error('A processing job just started. Wait for it to finish before updating.');
-    closing=true;await stopCompanion();autoUpdater.quitAndInstall(false,true);
-  }
-  return updateState;
+  if(action !== 'show')throw new Error('Unknown update action');
+  await updates.show();
+  return updates.getState();
 });
 if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.on('second-instance',()=>{window?.show();window?.focus();});

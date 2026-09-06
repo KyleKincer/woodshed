@@ -10,10 +10,14 @@ MAC_CSC_LINK, MAC_CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
 APPLE_TEAM_ID secrets. macOS release builds fail if these are missing.
 Windows is unsigned until a Windows certificate is configured.
 
-Updates use electron-updater and public GitHub Releases. The app checks after
-startup and every six hours. Downloads require a click, and installing requires
-an explicit restart. Playback and local processing block the restart; quitting
-does not silently install. Settings and the native menu offer update checks.
+Updates use electron-updater and public GitHub Releases. The app checks 15 seconds after startup, every six hours, and after an overdue
+wake from sleep. A native prompt appears once per available version and again
+when its download is ready; prompts wait until Woodshed is focused. Dismissing
+the prompt keeps the header update icon available. Downloads require a click,
+and restart requires a separate confirmation. Playback and processing do not
+block updates. The restart dialog warns when processing will be cancelled;
+that cancellation is recorded locally and synced before processing resumes
+after relaunch, including after an offline restart. Quitting does not silently install. Settings and the native menu offer update checks.
 Draft releases are invisible to installed clients. The release collector merges
 both Mac architectures into latest-mac.yml and verifies every listed SHA-512.
 

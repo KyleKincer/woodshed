@@ -202,7 +202,6 @@ export function closePlayer() {
   playerGeneration++;
   const songHeader = document.getElementById('header-song');
   if (songHeader) { songHeader.replaceChildren(); songHeader.classList.add('hidden'); }
-  window.woodshedDesktop?.setPlaying(false);
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   cleanupFns.forEach((fn) => fn());
@@ -738,7 +737,7 @@ export async function openPlayer(song) {
   // ---- transport ----
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.playing?'Pause':'Play'); window.woodshedDesktop?.setPlaying(engine.playing); }
+  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.playing?'Pause':'Play'); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
 
