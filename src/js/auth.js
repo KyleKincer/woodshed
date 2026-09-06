@@ -173,9 +173,7 @@ export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
     photo.src = currentUser.picture;
     avatar.append(photo);
   }
-  const name = document.createElement('span');
-  name.className = 'account-name'; name.textContent = label;
-  trigger.append(avatar, name);
+  trigger.append(avatar);
   const panel = document.createElement('div');
   panel.className = 'account-panel';
   const email = document.createElement('div');
