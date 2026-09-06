@@ -2,9 +2,12 @@
 // delivery format, and the local stem cache. Persists on every change.
 
 import * as backend from './backend.js';
-import { localRequest, desktopStatus, initializeLocalDesktop, legacyLibraries, importLegacy } from './companion.js';
+import { localRequest, legacyLibraries, importLegacy } from './companion.js';
 import { exportLibrary } from './export.js';
 import { clearStemCache, stemCacheSize } from './stemcache.js';
+
+import { notify, withButtonProgress } from './feedback.js';
+import { version as webVersion } from '../../package.json';
 
 let config = null;
 
@@ -21,7 +24,9 @@ function fmtBytes(n) {
 export function renderSettings() {
   const root = document.getElementById('settings-root');
   const s = config.settings;
-  const presets = Object.values(config.presets);
+  const presets = ['fast', 'balanced', 'studio'].map(id => config.presets[id]);
+  const effective = config.presets[s.preset] || s.custom;
+  const presetIndex = Math.max(0, presets.findIndex(p => p.id === s.preset));
 
   root.innerHTML = `
     <section class="settings-section" aria-labelledby="song-defaults-title">
@@ -29,34 +34,34 @@ export function renderSettings() {
       <p class="desc">Applied to new songs. You can choose a different quality or stem layout for each song.</p>
       <h3>Separation quality</h3>
       <p class="hint">Higher quality takes longer to process on your computer.</p>
-      <div class="preset-grid" id="preset-grid" role="group" aria-label="Separation quality">
-        ${presets.map((p) => presetCard(p, s.preset === p.id)).join('')}
-        ${presetCard({ id: 'custom', label: 'Custom', description: 'Choose advanced parameters.' }, s.preset === 'custom')}
-      </div>
-    <div class="settings-subsection ${s.preset === 'custom' ? '' : 'hidden'}" id="custom-section">
-      <h3>Custom parameters</h3>
+      <div class="quality-heading"><label for="quality-preset">Quality preset</label><span id="quality-label">${s.preset === 'custom' ? 'Custom' : effective.label}</span></div>
+      <input type="range" id="quality-preset" min="0" max="2" step="1" value="${presetIndex}" aria-valuetext="${s.preset === 'custom' ? 'Custom — choose a preset to reset' : effective.label}" />
+      <div class="preset-labels">${presets.map((p, i) => `<button type="button" data-preset-index="${i}" aria-pressed="${s.preset === p.id}">${p.label}</button>`).join('')}</div>
+      <p class="hint" id="quality-description">${s.preset === 'custom' ? 'Using your advanced parameters. Choose a preset to reset them.' : effective.description}</p>
+    <details class="settings-subsection" id="custom-section" ${s.preset === 'custom' ? 'open' : ''}>
+      <summary>Advanced</summary>
 
       <div class="row">
         <div><label for="c-model">Model</label><div class="sub">More accurate, but slower.</div></div>
         <select id="c-model" aria-label="Model">
-          ${config.models.map((m) => `<option value="${m.id}" ${s.custom.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
+          ${config.models.map((m) => `<option value="${m.id}" ${effective.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
       <div class="row">
         <div><label for="c-shifts">Quality passes</label><div class="sub">Higher values take longer to process.</div></div>
         <div class="range-wrap">
-          <input type="range" id="c-shifts" aria-label="Quality passes" min="0" max="10" step="1" value="${s.custom.shifts}" />
-          <span id="c-shifts-val">${s.custom.shifts}</span>
+          <input type="range" id="c-shifts" aria-label="Quality passes" min="0" max="10" step="1" value="${effective.shifts}" />
+          <span id="c-shifts-val">${effective.shifts}</span>
         </div>
       </div>
       <div class="row">
         <div><label for="c-overlap">Overlap</label><div class="sub">Usually leave at the default.</div></div>
         <div class="range-wrap">
-          <input type="range" id="c-overlap" aria-label="Overlap" min="0.1" max="0.75" step="0.05" value="${s.custom.overlap}" />
-          <span id="c-overlap-val">${s.custom.overlap}</span>
+          <input type="range" id="c-overlap" aria-label="Overlap" min="0.1" max="0.75" step="0.05" value="${effective.overlap}" />
+          <span id="c-overlap-val">${effective.overlap}</span>
         </div>
       </div>
-    </div>
+    </details>
 
     <div class="settings-subsection">
       <h3>Stems &amp; audio</h3>
@@ -80,14 +85,12 @@ export function renderSettings() {
       <p class="hint">Changing this affects newly processed songs. Reprocess a song to convert it.</p>
     </div>
 
-    <p id="saved-flash" class="settings-save-status" role="status">Changes save automatically.</p>
     </section>
 
-    <section class="settings-section" aria-labelledby="desktop-title">
-      <h2 id="desktop-title">Desktop connection</h2>
-      <p class="connection-status" id="desktop-status" role="status">${window.woodshedDesktop ? 'Checking local processor…' : 'Using the web player'}</p>
-      <p class="desc">${window.woodshedDesktop ? 'Downloading and processing happen on this computer. Your library syncs through your signed-in account.' : 'Play your synced library here. To add and process songs, open Woodshed for desktop and sign in with the same account.'}</p>
-      <div class="settings-actions">${window.woodshedDesktop ? '<button class="btn-ghost" id="desktop-retry">Retry connection</button><button class="btn-ghost" id="desktop-updates">App updates</button>' : '<a href="/download" class="btn-ghost">Download desktop app</a>'}</div>
+    <section class="settings-section" aria-labelledby="version-title">
+      <h2 id="version-title">App Version</h2>
+      <p class="desc" id="app-version">${window.woodshedDesktop ? 'Loading version…' : `Web app · ${webVersion}`}</p>
+      ${window.woodshedDesktop ? '<div class="settings-actions"><button class="btn-ghost" id="desktop-updates">Check for updates</button></div>' : '<p class="hint">The web app updates automatically.</p>'}
     </section>
 
     <section class="settings-section" aria-labelledby="storage-title">
@@ -108,13 +111,11 @@ export function renderSettings() {
         <h3>Synced library archive</h3>
         <p class="desc">Download a ZIP with synced audio, cover art, song metadata, practice settings, and your song defaults. Original audio files are exported separately.</p>
         <div class="settings-actions"><button class="btn-ghost" id="export-library">Export synced library ZIP</button></div>
-        <p class="hint" id="export-message" role="status"></p>
       </div>
       <div class="management-item">
         <h3>Original audio files</h3>
         <p class="desc">Copy locally stored source audio and stems (WAV and FLAC) to an export folder in Downloads on the computer that processed them. Requires Woodshed for desktop on that computer.</p>
         <div class="settings-actions"><button class="btn-ghost" id="export-originals" ${window.woodshedDesktop ? '' : 'disabled'}>Export original audio files</button></div>
-        <p class="hint" id="originals-message" role="status"></p>
       </div>
       <details class="management-item">
         <summary>Import an old Woodshed library</summary>
@@ -123,32 +124,20 @@ export function renderSettings() {
         <input id="legacy-dir" type="text" placeholder="Leave blank to detect automatically" aria-describedby="legacy-hint" ${window.woodshedDesktop ? '' : 'disabled'} />
         <p class="hint" id="legacy-hint">If more than one library is found, enter the full path to the one you want.</p>
         <div class="settings-actions"><button class="btn-ghost" id="import-legacy" ${window.woodshedDesktop ? '' : 'disabled'}>Import old library</button></div>
-        <p class="hint" id="import-message" role="status"></p>
       </details>
     </section>
   `;
-  const status = root.querySelector('#desktop-status');
-  const checkDesktop = async () => {
-    try {
-      const info = await desktopStatus();
-      status.textContent = info.connected ? (info.busy ? 'Connected · Processing a song' : 'Connected · Ready to process songs') : 'Local processor is not connected. Retry the connection.';
-      root.querySelector('#desktop-retry').hidden = info.connected;
-    } catch (error) { status.textContent = error.message; }
-  };
   if (window.woodshedDesktop) {
-    checkDesktop();
-    root.querySelector('#desktop-updates').onclick = () => document.dispatchEvent(new Event('woodshed:show-updates'));
-    root.querySelector('#desktop-retry').onclick = async event => {
-      const button = event.currentTarget; button.disabled = true;
-      try { await initializeLocalDesktop(); await checkDesktop(); }
-      catch (error) { status.textContent = error.message; }
-      finally { button.disabled = false; }
-    };
+    const version = root.querySelector('#app-version');
+    window.woodshedDesktop.info().then(info => {
+      version.textContent = `Version ${info.version}`;
+    }).catch(() => { version.textContent = 'Version unavailable'; });
+    root.querySelector('#desktop-updates').onclick = event => withButtonProgress(
+      event.currentTarget, 'Checking for updates…', () => window.woodshedDesktop.update('show'),
+    );
   }
-  root.querySelector('#import-legacy').onclick = async event => {
-    const button = event.currentTarget; button.disabled = true;
-    const message = root.querySelector('#import-message');
-    try {
+  root.querySelector('#import-legacy').onclick = event => withButtonProgress(
+    event.currentTarget, 'Importing library…', async () => {
       let directory = root.querySelector('#legacy-dir').value.trim();
       if (!directory) {
         const found = await legacyLibraries();
@@ -156,10 +145,9 @@ export function renderSettings() {
         directory = found[0].directory;
       }
       const result = await importLegacy(directory);
-      message.textContent = `Queued ${result.count} songs. Existing files are preserved.${result.remaining ? ` Import again after these finish for ${result.remaining} remaining songs.` : ''}`;
-    } catch (error) { message.textContent = error.message; }
-    finally { button.disabled = false; }
-  };
+      notify(`Queued ${result.count} songs. Existing files are preserved.${result.remaining ? ` Import again after these finish for ${result.remaining} remaining songs.` : ''}`);
+    },
+  );
   root.querySelector('#settings-upgrade').onclick = () => document.dispatchEvent(new Event('woodshed:billing'));
   const usage = root.querySelector('#cloud-usage');
   backend.cloudUsage().then(u => {
@@ -167,20 +155,18 @@ export function renderSettings() {
     const meter = root.querySelector('#storage-meter');
     meter.max = Math.max(1, u.limitBytes); meter.value = u.usedBytes; meter.classList.remove('hidden');
   }).catch(error => { usage.textContent = error.message; });
-  root.querySelector('#export-originals').onclick = async event => {
-    const button = event.currentTarget; button.disabled = true;
-    const message = root.querySelector('#originals-message');
-    try { const result = await localRequest('/export-originals', {}); message.textContent = `Exported ${result.count} files to ${result.directory}`; }
-    catch (error) { message.textContent = error.message; }
-    finally { button.disabled = false; }
-  };
-  root.querySelector('#export-library').onclick = async event => {
-    const button = event.currentTarget; button.disabled = true;
-    const message = root.querySelector('#export-message');
-    try { await exportLibrary(text => { message.textContent = text; }); }
-    catch (error) { message.textContent = error.message; }
-    finally { button.disabled = false; }
-  };
+  root.querySelector('#export-originals').onclick = event => withButtonProgress(
+    event.currentTarget, 'Exporting originals…', async () => {
+      const result = await localRequest('/export-originals', {});
+      notify(`Exported ${result.count} files to ${result.directory}`);
+    },
+  );
+  root.querySelector('#export-library').onclick = event => withButtonProgress(
+    event.currentTarget, 'Preparing export…', async progress => {
+      await exportLibrary(progress);
+      notify('Library export downloaded.');
+    },
+  );
   wireSettings();
   refreshCacheSize();
 }
@@ -192,63 +178,69 @@ async function refreshCacheSize() {
   catch { el.textContent = 'Unavailable in this browser'; }
 }
 
-function presetCard(p, selected) {
-  const cost = p.estCostUsd ? ` <span class="pcost">~$${p.estCostUsd.toFixed(2)}/song</span>` : '';
-  return `<button type="button" class="preset-card ${selected ? 'selected' : ''}" data-preset="${p.id}" aria-pressed="${selected}">
-    <div class="pname">${p.label}</div>
-    <div class="pdesc">${p.description}${cost}</div>
-  </button>`;
-}
-
-function flashSaved() {
-  const f = document.getElementById('saved-flash');
-  if (!f) return;
-  f.textContent = '✓ Changes saved';
-}
-
-async function persist() {
-  const status = document.getElementById('saved-flash');
-  try {
-    await backend.saveSettings(config.settings);
-    flashSaved();
-    return true;
-  } catch (error) {
-    if (status) status.textContent = `Could not save changes: ${error.message}. Change the setting again to retry.`;
-    return false;
-  }
+// Serialize snapshots so a slow save cannot overwrite a more recent choice.
+let saveQueue = Promise.resolve();
+function persist() {
+  const snapshot = structuredClone(config.settings);
+  saveQueue = saveQueue.then(() => backend.saveSettings(snapshot)).catch(error => {
+    notify(`Could not save changes: ${error.message}. Change the setting again to retry.`, { error: true });
+  });
+  return saveQueue;
 }
 
 function wireSettings() {
   const s = config.settings;
-  document.querySelectorAll('.preset-card').forEach((card) => {
-    card.onclick = async () => {
-      s.preset = card.dataset.preset;
-      if (await persist()) {
-        document.querySelectorAll('.preset-card').forEach(button => {
-          const selected = button.dataset.preset === s.preset;
-          button.classList.toggle('selected', selected);
-          button.setAttribute('aria-pressed', String(selected));
-        });
-        document.getElementById('custom-section').classList.toggle('hidden', s.preset !== 'custom');
-      }
-    };
+  const presets = ['fast', 'balanced', 'studio'].map(id => config.presets[id]);
+  const slider = document.getElementById('quality-preset');
+  const updateQuality = () => {
+    const preset = config.presets[s.preset];
+    const effective = preset || s.custom;
+    document.getElementById('quality-label').textContent = preset?.label || 'Custom';
+    document.getElementById('quality-description').textContent = preset?.description || 'Using your advanced parameters. Choose a preset to reset them.';
+    slider.setAttribute('aria-valuetext', preset?.label || 'Custom — choose a preset to reset');
+    slider.classList.toggle('is-custom', !preset);
+    document.querySelectorAll('[data-preset-index]').forEach(button => {
+      button.setAttribute('aria-pressed', String(presets[button.dataset.presetIndex].id === s.preset));
+    });
+    document.getElementById('c-model').value = effective.model;
+    for (const key of ['shifts', 'overlap']) {
+      document.getElementById(`c-${key}`).value = effective[key];
+      document.getElementById(`c-${key}-val`).textContent = effective[key];
+    }
+  };
+  const choosePreset = index => {
+    const preset = presets[index];
+    s.preset = preset.id;
+    s.custom = { model: preset.model, shifts: preset.shifts, overlap: preset.overlap };
+    slider.value = index;
+    updateQuality();
+    persist();
+  };
+  slider.oninput = event => choosePreset(Number(event.target.value));
+  document.querySelectorAll('[data-preset-index]').forEach(button => {
+    button.onclick = () => choosePreset(Number(button.dataset.presetIndex));
   });
-
   const bind = (id, handler) => { const el = document.getElementById(id); if (el) el.oninput = handler; };
-
-  bind('c-model', (e) => { s.custom.model = e.target.value; persist(); });
-  bind('c-shifts', (e) => { s.custom.shifts = parseInt(e.target.value, 10); document.getElementById('c-shifts-val').textContent = e.target.value; persist(); });
-  bind('c-overlap', (e) => { s.custom.overlap = parseFloat(e.target.value); document.getElementById('c-overlap-val').textContent = e.target.value; persist(); });
+  for (const key of ['model', 'shifts', 'overlap']) {
+    bind(`c-${key}`, event => {
+      const effective = config.presets[s.preset] || s.custom;
+      s.custom = { model: effective.model, shifts: effective.shifts, overlap: effective.overlap };
+      s.custom[key] = key === 'model' ? event.target.value : Number(event.target.value);
+      s.preset = 'custom';
+      updateQuality();
+      persist();
+    });
+  }
+  updateQuality();
   bind('s-stemmode', (e) => { s.stemMode = e.target.value; persist(); });
   bind('s-bitrate', (e) => { s.bitrate = parseInt(e.target.value, 10); persist(); });
 
   const clearBtn = document.getElementById('cache-clear');
   if (clearBtn) {
-    clearBtn.onclick = async () => {
-      clearBtn.disabled = true;
-      try { await clearStemCache(); await refreshCacheSize(); }
-      catch (error) { document.getElementById('cache-size').textContent = error.message; }
-      finally { clearBtn.disabled = false; }
-    };
+    clearBtn.onclick = () => withButtonProgress(clearBtn, 'Clearing cache…', async () => {
+      await clearStemCache();
+      await refreshCacheSize();
+      notify('Playback cache cleared.');
+    });
   }
 }
