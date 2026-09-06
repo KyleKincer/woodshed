@@ -33,3 +33,15 @@ From this checkout, install dependencies with `npm ci --ignore-scripts`, configu
 - Audio files, auth credentials, processing APIs, Convex functions, playback engine implementation and desktop update behavior were not changed. No merge or deployment was performed.
 
 Local OAuth requires an origin in AUTH_ALLOWED_ORIGINS. The deployment allows localhost:5173 and 127.0.0.1:5173; the original preview on 5190 was rejected. Vite now uses strictPort to prevent automatic fallback to an unauthorized port. No deployment allowlist was changed. Sign-in status appears in a fixed bottom notice outside the card flow, so there is no blank space while empty and progress/errors do not move the controls.
+
+The account menu displays the Google profile picture returned by `users.me`,
+with initials retained underneath as a fallback for missing or failed images.
+The settings gear uses a symmetric SVG with fixed dimensions.
+
+For local desktop testing, run `npm run desktop:dev` from this worktree. It builds
+and serves the redesigned UI at the desktop OAuth origin (127.0.0.1:47832) and
+starts the bundled local processor. The local runtime here reuses the existing
+processor and Electron binaries from `/home/kck/src/woodshed`; a fresh checkout
+still requires the desktop build prerequisites in `docs/desktop-releases.md`.
+The dev backend has its own library; add a song or use Settings to import an
+older local Woodshed library before testing the waveform player.

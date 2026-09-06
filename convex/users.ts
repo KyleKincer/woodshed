@@ -32,11 +32,12 @@ export const me = query({
     status: v.string(),
     name: v.optional(v.string()),
     email: v.optional(v.string()),
+    picture: v.optional(v.string()),
   })),
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
     const user = await ctx.db.get('users', userId);
-    return user ? { id: user._id, name: user.name, email: user.email, status: (await accountControl(ctx, user._id))?.status ?? 'active' } : null;
+    return user ? { id: user._id, name: user.name, email: user.email, picture: user.picture, status: (await accountControl(ctx, user._id))?.status ?? 'active' } : null;
   },
 });

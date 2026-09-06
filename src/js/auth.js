@@ -164,6 +164,14 @@ export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
   avatar.className = 'account-avatar';
   avatar.textContent = (currentUser.name || 'Account').split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase();
   avatar.setAttribute('aria-hidden', 'true');
+  if (currentUser.picture) {
+    const photo = document.createElement('img');
+    photo.alt = ''; photo.width = 30; photo.height = 30;
+    photo.referrerPolicy = 'no-referrer';
+    photo.addEventListener('error', () => photo.remove(), { once: true });
+    photo.src = currentUser.picture;
+    avatar.append(photo);
+  }
   const name = document.createElement('span');
   name.className = 'account-name'; name.textContent = label;
   trigger.append(avatar, name);
@@ -189,7 +197,7 @@ export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
   if (!window.woodshedDesktop) item('Download desktop app', () => { location.href='/download'; });
   panel.append(button); menu.append(trigger, panel);
   const settings=document.createElement('button');settings.className='account-settings';settings.title='Settings';settings.setAttribute('aria-label','Settings');
-  settings.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 2 2h3l1-3 3-1 2-3-2-2 1-3-2-3-3 1-2-2Z"/><circle cx="11" cy="11" r="3"/></svg>';
+  settings.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M19.391,8.939 L19.807,10.255 L21.851,10.281 L21.851,13.719 L19.807,13.745 L19.391,15.061 L18.755,16.287 L20.181,17.750 L17.750,20.181 L16.287,18.755 L15.061,19.391 L13.745,19.807 L13.719,21.851 L10.281,21.851 L10.255,19.807 L8.939,19.391 L7.713,18.755 L6.250,20.181 L3.819,17.750 L5.245,16.287 L4.609,15.061 L4.193,13.745 L2.149,13.719 L2.149,10.281 L4.193,10.255 L4.609,8.939 L5.245,7.713 L3.819,6.250 L6.250,3.819 L7.713,5.245 L8.939,4.609 L10.255,4.193 L10.281,2.149 L13.719,2.149 L13.745,4.193 L15.061,4.609 L16.287,5.245 L17.750,3.819 L20.181,6.250 L18.755,7.713 Z"/><circle cx="12" cy="12" r="3.5"/></svg>';
   settings.onclick=()=>{menu.open=false;navigate('settings');};
   el.replaceChildren(menu,settings);
   document.addEventListener('click', event => { if (!el.contains(event.target)) menu.open = false; });
