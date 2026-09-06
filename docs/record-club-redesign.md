@@ -7,7 +7,7 @@ The selected decision is Record Club's visual aesthetic, with the real app's DAW
 
 ## Run and review
 
-From this checkout, install dependencies with `npm ci --ignore-scripts`, configure `VITE_CONVEX_URL` as usual, and run `npm run dev:web -- --port 5190`. The preview at `http://localhost:5190/` is the real app, including normal Google authentication, Convex subscriptions and companion integration. No backend deployment is needed for these frontend changes.
+From this checkout, install dependencies with `npm ci --ignore-scripts`, configure `VITE_CONVEX_URL` as usual, and run `npm run dev:web -- --port 5173`. The preview at `http://localhost:5173/` is the real app, including normal Google authentication, Convex subscriptions and companion integration. No backend deployment is needed for these frontend changes.
 
 ## Changes
 
@@ -27,7 +27,9 @@ From this checkout, install dependencies with `npm ci --ignore-scripts`, configu
 - `npm run test:desktop`: 10 existing desktop tests passed.
 - `npm run test:artwork`: 2 tests covering stable album fallback identity and real-image priority/attribute escaping passed.
 - `git diff --check`: passed.
-- The actual app was opened at port 5190 and reached its real sign-in screen. The browser had no authenticated session on that origin. Live account mutations, account sync, billing and local companion processing were not exercised.
+- The actual app was opened at port 5173 and reached its real sign-in screen. The browser had no authenticated session on that origin. Live account mutations, account sync, billing and local companion processing were not exercised.
 - A separate, ignored integration fixture on port 5191 imports the **production** library/player/settings modules and real Web Audio engine. Only backend/auth adapters are replaced for that fixture. Four local WAV files were fetched and decoded; playback advanced the real engine clock. Mute, zoom, metronome, six-track layout, artwork success/failure, modal cancellation, settings rendering and the companion setup gate were exercised. This is test evidence, not a replacement app or deliverable preview.
 - Desktop and mobile views were visually inspected. A compact-status-row overflow found at 390px was fixed; player content fits the mobile width. Browser screenshots in ignored `artifacts/redesign/` are native viewport captures encoded as actual PNG files. Player/library images use the clearly named integration fixture; `sign-in.png` is the real app.
 - Audio files, auth credentials, processing APIs, Convex functions, playback engine implementation and desktop update behavior were not changed. No merge or deployment was performed.
+
+Local OAuth requires an origin in AUTH_ALLOWED_ORIGINS. The deployment allows localhost:5173 and 127.0.0.1:5173; the original preview on 5190 was rejected. Vite now uses strictPort to prevent automatic fallback to an unauthorized port. No deployment allowlist was changed. Sign-in status reserves a fixed three-line region, including while empty, so progress/errors do not move the controls.

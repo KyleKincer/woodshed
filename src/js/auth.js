@@ -108,9 +108,13 @@ function waitForSession() {
   const showError = () => {
     const error = values.get('flowError');
     if (error) {
-      message.textContent = error.message || (error.code === 'access_denied'
-        ? 'Sign-in was canceled. You can try again.'
-        : 'Sign-in could not finish. Please try again.');
+      const messages = {
+        access_denied: 'Sign-in was canceled. You can try again.',
+        expired: 'This sign-in link expired. Please sign in again.',
+        invalid_flow: 'Sign-in must finish in the same browser where it started. Please try again here.',
+        oauth_error: 'Google sign-in could not finish. Please try again.',
+      };
+      message.textContent = error.message || messages[error.code] || 'Sign-in could not finish. Please try again.';
       button.disabled = false;
     }
   };
@@ -127,6 +131,7 @@ function waitForSession() {
       }, { redirectTo: window.woodshedDesktop ? window.location.origin + '/oauth/callback' : window.location.origin + window.location.pathname });
     } catch {
       showError();
+      if (!values.get('flowError')) message.textContent = 'Could not start Google sign-in. Check your connection and try again.';
       button.disabled = false;
     }
   });
