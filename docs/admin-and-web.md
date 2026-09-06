@@ -3,17 +3,13 @@
 Chosen address: **https://woodshed.kylekincer.com**. This subdomain already
 belongs to the Vercel `woodshed` project. No domain purchase is needed.
 
-The web player and desktop companion share the same interface and account.
-Browser-only users can play and manage their synced library. Adding a song
-without a paired companion opens a desktop setup dialog. `/download` is public,
-including before sign-in; it offers a real ZIP setup package built from the
-companion sources. The package requires Node.js 22+, Python 3.11, FFmpeg, Git,
-and C++ build tools for BeatNet. It is not a signed native installer. Linux
-processing has been tested; macOS and Windows setup still need end-to-end tests.
-
-`npm run build` generates the ZIP. `WOODSHED_WEB_URL` controls its pairing
-origin and defaults to the chosen public address. No credentials, local library,
-Python runtime, or environment files are included in the ZIP.
+The web player and desktop app share the same account. Browser users can play,
+manage, and export their synced library. Adding a song opens a desktop setup
+dialog. `/download` is public and links to native desktop releases on GitHub.
+The desktop app starts a local processor and connects it to the signed-in account
+automatically, using a credential supplied through its preload bridge. Manual
+browser pairing is no longer supported. Original audio exports and old-library
+imports require the desktop app on the computer holding those files.
 
 ## Admin access
 

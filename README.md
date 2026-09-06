@@ -99,26 +99,24 @@ setup installs CPU PyTorch; NVIDIA systems can use CUDA. CPU processing is
 supported everywhere, but is slower. The first separation downloads model
 weights. Rerun setup to update yt-dlp when extractors change.
 
-```sh
-npm run companion
-```
+Use Woodshed for desktop and sign in with the same account as the web player.
+The desktop app starts its processor and registers it to your account automatically;
+there is no pairing link or code to copy. For desktop development, use
+`npm run desktop:dev` with the prepared desktop runtime.
 
-Open the URL printed by the companion, sign in, and go to **Settings → This
-computer → Connect**. Alternatively paste the printed pairing code there.
-The browser may ask permission to access the local network. Keep the companion
-running while processing; the website can close after a job starts.
+The processor binds only `127.0.0.1` and verifies Host/Origin and a random local
+credential supplied through the desktop preload bridge. Convex binds that device
+to the signed-in account and checks ownership for processing jobs. Browser-only
+sessions cannot access the processor; use the desktop app for adding songs,
+importing old libraries, and exporting original audio.
 
-For a hosted website set `WOODSHED_WEB_URL` before starting the companion to
-that exact origin. Bash: `WOODSHED_WEB_URL=https://woodshed.kylekincer.com npm run companion`.
-PowerShell: `$env:WOODSHED_WEB_URL='https://woodshed.kylekincer.com'; npm run companion`.
-The companion binds only `127.0.0.1`, verifies Host/Origin and a random pairing
-credential, and never accepts arbitrary shell commands.
-
-Optional environment variables: `WOODSHED_DATA_DIR` (default
-`~/.woodshed-companion`), `WOODSHED_PYTHON` (alternate prepared interpreter),
-and `WOODSHED_COMPANION_PORT` (default 47831; the website currently uses that
-standard port). `node companion/server.mjs --reset-pairing` creates a new local
-credential. Revoke the old device from its account before resetting it.
+The standalone `npm run companion` entry point is for processor development.
+It no longer provides a browser pairing workflow. Its optional environment
+variables include `WOODSHED_DATA_DIR` (default `~/.woodshed-companion`),
+`WOODSHED_PYTHON`, `WOODSHED_WEB_URL` (allowed UI origin), and
+`WOODSHED_COMPANION_PORT` (default 47831). The desktop app supplies its own data
+directory, UI origin, and an available port. Device credentials stay bound to
+the original account; signing in as another account does not transfer local access.
 
 One companion processes one job at a time. Restarting resumes the active job
 from completed source/separation/result files. **Retry** on a failed job reuses

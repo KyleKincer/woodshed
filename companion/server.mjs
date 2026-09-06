@@ -174,7 +174,7 @@ const server = http.createServer(async (req,res)=>{
   res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
   if (req.method==='OPTIONS') { res.writeHead(204,{'Access-Control-Allow-Methods':'GET,POST','Access-Control-Allow-Headers':'authorization,content-type,x-filename','Access-Control-Allow-Private-Network':'true'});res.end();return; }
   const expected = Buffer.from(`Bearer ${config.token}`), supplied = Buffer.from(req.headers.authorization || '');
-  if (expected.length!==supplied.length || !crypto.timingSafeEqual(expected,supplied)) {json(res,401,{error:'Invalid pairing code.'});return;}
+  if (expected.length!==supplied.length || !crypto.timingSafeEqual(expected,supplied)) {json(res,401,{error:'Invalid local processor credential.'});return;}
   try {
     if (req.url==='/status' && req.method==='GET') {json(res,200,{name:os.hostname(),connected:!!identity,deviceId:identity?.deviceId, userId:identity?.userId,busy});return;}
     if (req.url==='/connect' && req.method==='POST') {const input=await body(req);await connect(input.convexUrl);json(res,200,identity);return;}
@@ -225,10 +225,10 @@ server.listen(port,'127.0.0.1',()=>{
   port = server.address().port;
   if (process.parentPort) { process.parentPort.postMessage({port,token:config.token}); return; }
   console.log(`Woodshed companion listening on 127.0.0.1:${port}`);
-  console.log(`Open ${webOrigin}/#companion=${config.token}`);
+  console.log('Open Woodshed for desktop and sign in to connect the local processor.');
   console.log(`Local originals and stems: ${data}`);
 });
-if(config.convexUrl) connect(config.convexUrl).catch(error=>console.error('Reconnect in Settings:',error.message));
+if(config.convexUrl) connect(config.convexUrl).catch(error=>console.error('Desktop processor connection:',error.message));
 async function shutdown(){acceptingJobs=false;killCurrent();stopSubscription?.();await client?.close();server.close();process.exit(0);}
 for(const signal of ['SIGINT','SIGTERM']) process.on(signal,shutdown);
 process.parentPort?.on('message',event=>{
