@@ -126,6 +126,6 @@ body.in-player #content{overflow:auto;padding:0}
 .pending-section{margin-bottom:28px}.pending-section .section-head{margin-top:0;border-bottom:0;margin-bottom:0;padding-bottom:8px}.pending-section .section-title{font-size:15px;letter-spacing:0}.pending-section .list-row{background:var(--bg-3);padding:12px 16px;border:1px solid var(--border)}.pending-section .list-thumb{width:38px;height:38px}.pending-section .list-title{font-size:14px}.card-proc .cp-btn{margin:4px;display:inline-block}.card-proc{backdrop-filter:none;background:var(--bg)}.card-proc.error{background:#fff4ee}
 .metro-close{align-self:flex-end}.loop-readout button.lr-val{background:transparent;border:0;padding:4px;min-height:28px;color:var(--text)}
 @media(max-width:700px){.proc-inline{margin-left:0;min-width:0;max-width:100%;flex-basis:100%}.transport{position:sticky;bottom:0;z-index:8}}
-/* Reserve status space even before OAuth starts; longer errors scroll in place. */
-.signin-card .signin-status,
-.signin-card .signin-status:empty{display:block;block-size:4.8em;min-block-size:4.8em;overflow-y:auto;overflow-wrap:anywhere;line-height:1.6;margin:18px 0 0}
+/* Status sits outside the card flow: no empty gap and no layout shift. */
+.signin-card .signin-status{position:fixed;inset:auto 20px 20px;z-index:301;width:fit-content;max-width:min(460px,calc(100vw - 40px));max-height:25dvh;margin:0 auto;padding:12px 16px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:3px;background:var(--bg-2);color:var(--text);overflow-y:auto;overflow-wrap:anywhere;line-height:1.6;text-align:left;box-shadow:0 4px 18px #17211d12}
+.signin-card .signin-status:empty{display:none}
