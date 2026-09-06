@@ -1,3 +1,5 @@
+import { setArtwork } from './artwork.js';
+import { arrangePlayerControls } from './player-layout.js';
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
@@ -54,10 +56,10 @@ function createTrackRow(t) {
       <div class="track-ctrl">
         <div class="track-name"><span class="track-dot" style="background:${t.color}"></span>${escapeHtml(prettyStem(t.name))}</div>
         <div class="track-buttons">
-          <button class="tbtn mute ${t.muted ? 'on' : ''}" data-stem="${escapeHtml(t.name)}">Mute</button>
-          <button class="tbtn solo ${t.soloed ? 'on' : ''}" data-stem="${escapeHtml(t.name)}">Solo</button>
+          <button class="tbtn mute ${t.muted ? 'on' : ''}" data-stem="${escapeHtml(t.name)}" aria-label="Mute ${escapeHtml(prettyStem(t.name))}" aria-pressed="${!!t.muted}">Mute</button>
+          <button class="tbtn solo ${t.soloed ? 'on' : ''}" data-stem="${escapeHtml(t.name)}" aria-label="Solo ${escapeHtml(prettyStem(t.name))}" aria-pressed="${!!t.soloed}">Solo</button>
         </div>
-        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="${t.volume}" data-stem="${escapeHtml(t.name)}" />
+        <input class="track-vol" type="range" min="0" max="1" step="0.01" value="${t.volume}" data-stem="${escapeHtml(t.name)}" aria-label="${escapeHtml(prettyStem(t.name))} volume" />
       </div>
       <div class="track-wave"><canvas></canvas></div>`;
   return row;
@@ -96,11 +98,11 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
         <div class="t-group loop-readout" id="loop-readout">
           <button class="toggle-btn sm" id="loop-toggle" title="Toggle A–B loop (L)">Loop</button>
           <button class="nudge" data-edge="a" data-d="-0.05" title="Nudge A back">−</button>
-          <span class="lr-val" id="lr-a">—</span>
+          <button class="lr-val" id="lr-a" aria-label="Jump to loop start">—</button>
           <button class="nudge" data-edge="a" data-d="0.05" title="Nudge A forward">+</button>
           <span class="lr-sep">→</span>
           <button class="nudge" data-edge="b" data-d="-0.05" title="Nudge B back">−</button>
-          <span class="lr-val" id="lr-b">—</span>
+          <button class="lr-val" id="lr-b" aria-label="Jump to loop end">—</button>
           <button class="nudge" data-edge="b" data-d="0.05" title="Nudge B forward">+</button>
           <span class="lr-len" id="lr-len"></span>
           <button class="toggle-btn sm" id="set-a" title="Set A at playhead ([)">A⇤</button>
@@ -134,10 +136,10 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
         </div>
 
         <div class="t-divider"></div>
-        <button class="toggle-btn sm" id="metro-btn" title="Metronome (M)">♩ Metro</button>
+        <button class="toggle-btn sm" id="metro-btn" title="Metronome (M)">Metronome</button>
 
         <div class="t-spacer"></div>
-        <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">⟲ Mix</button>
+        <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">Reset mix</button>
         <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · G grid · S snap · M metronome · 1–9 mute · 0 reset">?</button>
       </div>
 
@@ -161,7 +163,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
           <input type="range" id="m-vol" min="0" max="1" step="0.01" value="0.7" />
         </div>
         <div class="mp-row mp-detect">
-          <button class="toggle-btn" id="m-detect">✨ Auto-detect beats</button>
+          <button class="toggle-btn" id="m-detect">Detect beats</button>
           <span class="mp-detect-status" id="m-detect-status">Manual tempo</span>
           <button class="toggle-btn sm hidden" id="m-edit-toggle">✎ Edit beats</button>
           <button class="toggle-btn sm hidden" id="m-detect-clear">Use manual</button>
@@ -214,12 +216,15 @@ export function closePlayer() {
 export async function openPlayer(song) {
   closePlayer();
   const root = document.getElementById('player-root');
+  root.style.setProperty('--track-count', song.stems.length);
   const songHeader = document.getElementById('header-song');
   songHeader.classList.remove('hidden');
   songHeader.innerHTML = `<div class="pt-cover"></div><div class="pt-meta"><div class="ptitle">${escapeHtml(song.title)}</div><div class="psub">${escapeHtml([song.artist || song.uploader, `${song.stems.length} stems`].filter(Boolean).join(' · '))}</div></div>`;
   const generation = playerGeneration;
   const isCurrent = () => generation === playerGeneration;
   root.innerHTML = playerMarkup(song);
+  arrangePlayerControls(root);
+  setArtwork(songHeader.querySelector('.pt-cover'), song);
   root.setAttribute('aria-busy', 'true');
   root.querySelector('.player').classList.add('is-loading');
   const loadingTracks = root.querySelector('#tracks');
@@ -253,7 +258,7 @@ export async function openPlayer(song) {
   try { urls = await backend.signKeys(keys); }
   catch (e) { showLoadError(`Couldn't reach storage: ${e.message}`); return; }
   if (!isCurrent()) return;
-  if (song.coverKey && urls[song.coverKey]) songHeader.querySelector('.pt-cover').style.backgroundImage = `url("${urls[song.coverKey]}")`;
+  if (song.coverKey && urls[song.coverKey]) setArtwork(songHeader.querySelector('.pt-cover'), song, urls[song.coverKey]);
 
   const stems = song.stems.map((s) => ({
     name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
@@ -295,6 +300,7 @@ export async function openPlayer(song) {
   const grid = { ...loadGridSettings(), ...(song.practice?.grid || {}) };
 
   root.innerHTML = playerMarkup(song, {duration, rate:engine.rate});
+  arrangePlayerControls(root);
   root.removeAttribute('aria-busy');
 
   const tracksEl = document.getElementById('tracks');
@@ -402,17 +408,20 @@ export async function openPlayer(song) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     tempoMarkers.innerHTML = '';
+    const ruler = root.querySelector('.ruler-scale');
+    const count = Math.max(2, Math.floor(w / 110));
+    ruler.innerHTML = Array.from({length:count+1}, (_,i) => `<span style="left:${i/count*100}%">${span()<10?fmt2(view.start+span()*i/count):fmt(view.start+span()*i/count)}</span>`).join('');
     if (!grid.visible || !metronome) return;
     for (const tick of gridTicksForView(view.start, view.end)) {
       const x = timeToX(tick.time);
       const sel = beatEditing && tick.beat && tick.beat === selectedBeat;
-      ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)'
-        : tick.subdivision ? 'rgba(255,255,255,0.045)'
-          : tick.downbeat ? 'rgba(124,91,255,0.55)' : 'rgba(255,255,255,0.10)';
+      ctx.strokeStyle = sel ? cssVar('--accent')
+        : tick.subdivision ? 'rgba(23,32,31,0.08)'
+          : tick.downbeat ? 'rgba(23,75,209,0.45)' : 'rgba(23,32,31,0.17)';
       ctx.lineWidth = sel ? 2 : tick.downbeat ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
       if (beatEditing && tick.beat) { // grab handle at the top of each beat
-        ctx.fillStyle = sel ? '#fff' : tick.downbeat ? 'rgba(124,91,255,0.9)' : 'rgba(255,255,255,0.4)';
+        ctx.fillStyle = sel ? cssVar('--accent') : tick.downbeat ? cssVar('--accent') : cssVar('--muted');
         ctx.fillRect(x - 3, 0, 6, 6);
       }
     }
@@ -706,10 +715,10 @@ export async function openPlayer(song) {
 
   // ---- track controls ----
   tracksEl.querySelectorAll('.tbtn.mute').forEach((btn) => {
-    btn.onclick = () => { btn.classList.toggle('on', engine.toggleMute(btn.dataset.stem)); drawWaveforms(); };
+    btn.onclick = () => { const on = engine.toggleMute(btn.dataset.stem); btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); drawWaveforms(); };
   });
   tracksEl.querySelectorAll('.tbtn.solo').forEach((btn) => {
-    btn.onclick = () => { btn.classList.toggle('on', engine.toggleSolo(btn.dataset.stem)); drawWaveforms(); };
+    btn.onclick = () => { const on = engine.toggleSolo(btn.dataset.stem); btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); drawWaveforms(); };
   });
   tracksEl.querySelectorAll('.track-vol').forEach((sl) => {
     sl.oninput = () => engine.setVolume(sl.dataset.stem, parseFloat(sl.value));
@@ -718,13 +727,13 @@ export async function openPlayer(song) {
   // ---- transport ----
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; window.woodshedDesktop?.setPlaying(engine.playing); }
+  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.playing?'Pause':'Play'); window.woodshedDesktop?.setPlaying(engine.playing); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
 
   // Loop controls
   const loopToggle = document.getElementById('loop-toggle');
-  function setLoopBtn(on) { loopToggle.classList.toggle('on', on); }
+  function setLoopBtn(on) { loopToggle.classList.toggle('on', on); loopToggle.setAttribute('aria-pressed',String(on)); }
   loopToggle.onclick = () => {
     const willEnable = !engine.loop.enabled;
     if (willEnable && engine.loop.b <= engine.loop.a) engine.setLoop(true, view.start, view.end);
@@ -763,7 +772,7 @@ export async function openPlayer(song) {
 
   document.getElementById('mixer-reset').onclick = () => {
     engine.resetMixer();
-    tracksEl.querySelectorAll('.tbtn').forEach((b) => b.classList.remove('on'));
+    tracksEl.querySelectorAll('.tbtn').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed','false'); });
     tracksEl.querySelectorAll('.track-vol').forEach((s) => (s.value = 1));
     drawWaveforms();
   };
@@ -840,7 +849,7 @@ export async function openPlayer(song) {
   }
   metronome.onChange = () => { refreshMetroUI(); drawGrid(); persistTempo(); };
 
-  metroBtn.onclick = () => { metroPop.classList.toggle('hidden'); if (!metroPop.classList.contains('hidden')) refreshMetroUI(); };
+  metroBtn.onclick = () => { const open = metroPop.classList.toggle('hidden') === false; metroBtn.setAttribute('aria-expanded',String(open)); if (open) { metroPop.style.bottom = (root.querySelector('.transport').offsetHeight + 8) + 'px'; refreshMetroUI(); } };
   mOnoff.onclick = () => metronome.setEnabled(!metronome.enabled);
 
   const setBpm = (v) => metronome.setSection(engine.getPosition(), { bpm: clamp(Math.round(v), 20, 400) });
@@ -981,7 +990,9 @@ export async function openPlayer(song) {
 
   // ---- keyboard ----
   keyHandler = (e) => {
-    if ((e.target.tagName === 'INPUT' && e.target.type !== 'range') || e.target.tagName === 'SELECT') return;
+    if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
+    if (e.target.closest('input,select,textarea,[contenteditable]')) return;
+    if (e.target.closest('button') && (e.code === 'Space' || e.key === 'Enter')) return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
@@ -989,8 +1000,8 @@ export async function openPlayer(song) {
     else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (k.toLowerCase() === 'g') gridToggle.click();
     else if (k.toLowerCase() === 's') gridSnap.click();
-    else if (e.code === 'ArrowLeft') seekTo(engine.getPosition() - (e.shiftKey ? 1 : 5));
-    else if (e.code === 'ArrowRight') seekTo(engine.getPosition() + (e.shiftKey ? 1 : 5));
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); seekTo(engine.getPosition() - (e.shiftKey ? 1 : 5)); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); seekTo(engine.getPosition() + (e.shiftKey ? 1 : 5)); }
     else if (k === ',') seekTo(engine.getPosition() - (e.shiftKey ? 0.01 : 0.05));
     else if (k === '.') seekTo(engine.getPosition() + (e.shiftKey ? 0.01 : 0.05));
     else if (k === '[') { const t = snapTime(engine.getPosition()); engine.setLoop(true, t, Math.max(engine.loop.b, t + 0.1)); setLoopBtn(true); updateLoopOverlay(); }
@@ -1004,7 +1015,7 @@ export async function openPlayer(song) {
     else if (k === '0') document.getElementById('mixer-reset').click();
     else if (/^[1-9]$/.test(k)) {
       const row = trackRows[parseInt(k, 10) - 1];
-      if (row) { row.row.querySelector('.tbtn.mute').classList.toggle('on', engine.toggleMute(row.track.name)); drawWaveforms(); }
+      if (row) row.row.querySelector('.tbtn.mute').click();
     }
   };
   window.addEventListener('keydown', keyHandler);

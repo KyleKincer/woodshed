@@ -1,3 +1,5 @@
+import { focusModal } from './modal-focus.js';
+import { artworkMarkup, wireArtwork } from './artwork.js';
 import { hasCompanionCode } from './companion.js';
 import { showDesktopSetup } from './desktop.js';
 // Library grid: renders processed songs (and in-progress ones, as cards with a
@@ -57,7 +59,7 @@ function wireViewControls() {
   const gs = document.getElementById('group-seg');
   const ls = document.getElementById('layout-seg');
   const sync = () => {
-    gs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.group === view.group));
+    gs.querySelectorAll('button').forEach((b) => { const active = b.dataset.group === view.group; b.classList.toggle('active', active); b.setAttribute('aria-pressed', String(active)); });
     ls.querySelectorAll('button').forEach((b) => {
       const on = b.dataset.layout === view.layout;
       b.classList.toggle('active', on);
@@ -117,7 +119,7 @@ export async function renderLibrary(filter = '') {
   empty.classList.toggle('hidden', shown.length + newCards.length > 0);
 
   const sections = [];
-  if (newCards.length) sections.push({ title: 'In progress', items: newCards.map(vmPending) });
+  if (newCards.length) sections.push({ title: 'In progress', pending: true, items: newCards.map(vmPending) });
 
   if (view.group === 'songs') {
     sections.push({ title: null, items: shown.map((s) => vmSong(s, procBySong.get(s.id))) });
@@ -137,12 +139,14 @@ export async function renderLibrary(filter = '') {
         sections.push({
           title, count: list.length,
           coverUrl: art ? coverUrls[art.coverKey] : null,
+          coverSong: art || list[0],
           items: list.map((s) => vmSong(s, procBySong.get(s.id))),
         });
       });
   }
 
   container.innerHTML = sections.map(sectionHtml).join('');
+  wireArtwork(container);
   wireCards(container, procBySong);
 }
 
@@ -202,26 +206,23 @@ function subFor(vm) { return view.group === 'artists' ? vm.album : vm.artist; }
 function sectionHtml(sec) {
   const header = sec.title
     ? `<div class="section-head">
-        ${sec.coverUrl ? `<div class="section-cover" style="background-image:url('${sec.coverUrl}')"></div>` : ''}
+        ${sec.pending ? '' : artworkMarkup(sec.coverSong || {album:sec.title}, sec.coverUrl, 'section-cover')}
         <div class="section-title">${esc(sec.title)}</div>
         ${sec.count ? `<div class="section-count">${sec.count} song${sec.count > 1 ? 's' : ''}</div>` : ''}
       </div>`
     : '';
-  const body = view.layout === 'list'
+  const body = sec.pending || view.layout === 'list'
     ? `<div class="library-list">${sec.items.map(listRow).join('')}</div>`
     : `<div class="library-grid">${sec.items.map(gridCard).join('')}</div>`;
-  return `<section class="lib-section">${header}${body}</section>`;
-}
-
-function coverAttr(thumbUrl) {
-  return thumbUrl ? `style="background-image:url('${thumbUrl}')"` : '';
+  return `<section class="lib-section ${sec.pending ? 'pending-section' : ''}">${header}${body}</section>`;
 }
 
 function gridCard(vm) {
   return `<div class="card ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
+    ${!vm.proc && !vm.isPending ? `<button class="song-open" aria-label="Open ${esc(vm.title)}"></button>` : ''}
     ${vm.stemLabel ? `<div class="badges"><span class="badge">${vm.stemLabel}</span></div>` : ''}
-    ${vm.proc || vm.isPending ? '' : '<button class="card-menu">⋯</button>'}
-    <div class="cover" ${coverAttr(vm.thumbUrl)}>${vm.thumbUrl ? '' : '♪'}</div>
+    ${vm.proc || vm.isPending ? '' : `<button class="card-menu" aria-label="Actions for ${esc(vm.title)}">⋯</button>`}
+    ${artworkMarkup(vm, vm.thumbUrl, 'cover')}
     <div class="meta">
       <div class="title">${esc(vm.title)}</div>
       <div class="sub"><span>${esc(subFor(vm) || '')}</span><span>${fmtDur(vm.duration)}</span></div>
@@ -232,13 +233,14 @@ function gridCard(vm) {
 
 function listRow(vm) {
   return `<div class="list-row ${vm.proc ? 'is-processing' : ''}" ${vm.id ? `data-id="${vm.id}"` : ''} ${vm.jobId ? `data-job="${vm.jobId}"` : ''}>
-    <div class="list-thumb" ${coverAttr(vm.thumbUrl)}>${vm.thumbUrl ? '' : '♪'}</div>
+    ${!vm.proc && !vm.isPending ? `<button class="song-open" aria-label="Open ${esc(vm.title)}"></button>` : ''}
+    ${artworkMarkup(vm, vm.thumbUrl, 'list-thumb')}
     <div class="list-main">
       <div class="list-title">${esc(vm.title)}</div>
       <div class="list-sub">${esc(subFor(vm) || '')}</div>
     </div>
     ${vm.stemLabel ? `<div class="list-badge">${vm.stemLabel}</div>` : ''}
-    ${vm.proc ? procInlineHtml(vm.proc) : `<div class="list-dur">${fmtDur(vm.duration)}</div>${vm.isPending ? '' : '<button class="card-menu list-menu">⋯</button>'}`}
+    ${vm.proc ? procInlineHtml(vm.proc) : `<div class="list-dur">${fmtDur(vm.duration)}</div>${vm.isPending ? '' : `<button class="card-menu list-menu" aria-label="Actions for ${esc(vm.title)}">⋯</button>`}`}
   </div>`;
 }
 
@@ -481,6 +483,7 @@ function wireAddModal() {
     urlInput.value = '';
     syncDesc();
     modal.classList.remove('hidden');
+    focusModal(modal, close);
     urlInput.focus();
   };
   const close = () => modal.classList.add('hidden');
@@ -595,7 +598,7 @@ function esc(s) {
 function promptModal(title, value = '') {
   return new Promise((resolve) => {
     const m = buildDialog(title, `
-      <input id="dlg-input" class="dlg-input" type="text" />
+      <input id="dlg-input" class="dlg-input" type="text" aria-label="${esc(title)}" />
       <div class="modal-actions">
         <button class="btn-ghost" data-cancel>Cancel</button>
         <button class="btn-primary" data-ok>Save</button>
@@ -638,5 +641,6 @@ function buildDialog(title, innerHtml) {
   m.className = 'modal';
   m.innerHTML = `<div class="modal-card"><h2>${esc(title)}</h2>${innerHtml}</div>`;
   document.body.appendChild(m);
+  focusModal(m, () => { const cancel = m.querySelector('[data-cancel]'); if (cancel) cancel.click(); else m.remove(); });
   return m;
 }

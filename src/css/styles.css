@@ -1,23 +1,23 @@
 :root {
-  --bg: #0e0f13;
-  --bg-2: #15171e;
-  --bg-3: #1c1f29;
-  --panel: #191c25;
-  --border: #2a2e3b;
-  --text: #e6e8ee;
-  --muted: #8a90a2;
-  --accent: #5b8cff;
-  --accent-2: #7c5bff;
-  --good: #3ecf8e;
-  --warn: #ffb454;
-  --bad: #ff6b6b;
-  --drums: #ff6b6b;
-  --bass: #ffb454;
-  --vocals: #5b8cff;
-  --other: #3ecf8e;
-  --guitar: #c77dff;
-  --piano: #4dd2c0;
-  --radius: 12px;
+  --bg: #f8f7f1;
+  --bg-2: #ffffff;
+  --bg-3: #eeeee5;
+  --panel: #ffffff;
+  --border: #ced1c7;
+  --text: #18211f;
+  --muted: #61685f;
+  --accent: #174bd1;
+  --accent-2: #174bd1;
+  --good: #28704b;
+  --warn: #b25a23;
+  --bad: #b13a30;
+  --drums: #b13a30;
+  --bass: #b25a23;
+  --vocals: #174bd1;
+  --other: #28704b;
+  --guitar: #703d84;
+  --piano: #21726f;
+  --radius: 3px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --titlebar-h: 38px;
   --shell-pad: 12px;
@@ -63,7 +63,7 @@ body.in-player #content { padding:0; overflow:hidden; }
 .account-trigger::-webkit-details-marker { display: none; }
 .account-trigger:hover, .account-menu[open] .account-trigger { background: var(--bg-3); }
 .account-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.account-avatar { display: flex; align-items: center; justify-content: center; flex: 0 0 30px; height: 30px; border-radius: 50%; background: #293451; color: #b6caff; font-size: 11px; font-weight: 700; letter-spacing: .4px; }
+.account-avatar { display: flex; align-items: center; justify-content: center; flex: 0 0 30px; height: 30px; border-radius: 50%; background: #e9efff; color: #174bd1; font-size: 11px; font-weight: 700; letter-spacing: .4px; }
 .account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; flex: 1; min-width: 0; }
 .account-more { color: var(--muted); font-size: 18px; letter-spacing: 1px; }
 .account-panel { position: absolute; z-index: 80; top: calc(100% + 8px); right: 0; width: 230px; padding: 6px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 36px #0006; }
@@ -71,7 +71,7 @@ body.in-player #content { padding:0; overflow:hidden; }
 .account-signout { display: block; width: 100%; padding: 9px 10px; text-align: left; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
 .account-signout:hover { background: var(--panel); }
 .add-btn, .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   color: white; border: none; font: inherit; font-weight: 600;
   padding: 10px 14px; border-radius: 9px; cursor: pointer;
 }
@@ -161,7 +161,7 @@ body.in-player #content { padding:0; overflow:hidden; }
 .list-row.is-processing:hover { background: transparent; }
 .proc-inline { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .proc-inline .cp-bar { width: 90px; height: 5px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
-.proc-inline .cp-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .25s; }
+.proc-inline .cp-fill { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
 .proc-inline .cp-title { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 96px; }
 .proc-inline .cp-btn { background: var(--bg-3); border: 1px solid var(--border); color: var(--muted); font: inherit; font-size: 11px; padding: 4px 10px; border-radius: 7px; cursor: pointer; }
 .proc-inline .cp-btn:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
@@ -191,7 +191,7 @@ body.in-player #content { padding:0; overflow:hidden; }
 .card-proc .cp-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .card-proc .cp-sub { font-size: 11px; color: var(--muted); max-width: 90%; line-height: 1.4; }
 .card-proc .cp-bar { width: 78%; height: 5px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
-.card-proc .cp-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .25s; }
+.card-proc .cp-fill { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
 .card-proc .cp-btn {
   margin-top: 4px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
   color: var(--text); font: inherit; font-size: 12px; padding: 6px 14px; border-radius: 7px; cursor: pointer;
@@ -220,7 +220,7 @@ body.in-player #content { padding:0; overflow:hidden; }
   border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px;
   color: var(--muted); font-size: 13px; margin-bottom: 16px; transition: border-color .12s, background .12s;
 }
-.file-drop.over { border-color: var(--accent); background: #1a2030; color: var(--text); }
+.file-drop.over { border-color: var(--accent); background: #e8edfa; color: var(--text); }
 .drop-overlay {
   position: fixed; inset: 0; z-index: 200; background: rgba(14,15,19,.85);
   display: flex; align-items: center; justify-content: center; pointer-events: none;
@@ -268,7 +268,7 @@ body.in-player #content { padding:0; overflow:hidden; }
 .settings-section .desc { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
 .preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .preset-card { background: var(--bg-3); border: 1.5px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; }
-.preset-card.selected { border-color: var(--accent); background: #1a2030; }
+.preset-card.selected { border-color: var(--accent); background: #e8edfa; }
 .preset-card .pname { font-weight: 600; font-size: 14px; margin-bottom: 5px; }
 .preset-card .pdesc { font-size: 12px; color: var(--muted); line-height: 1.4; }
 /* GPU cost estimate — separation is billed per second now, so make it visible. */
@@ -316,7 +316,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .track-wave canvas { width: 100%; height: 100%; display: block; }
 .player.is-loading :is(button:disabled, input:disabled, select:disabled) { opacity:.35; cursor:default; }
 .player.is-loading .timeline, .player.is-loading .overview > * { visibility:hidden; pointer-events:none; }
-.wave-skeleton::before { content:''; position:absolute; inset:28% 20px; border-radius:6px; background:linear-gradient(100deg, #ffffff04 20%, #ffffff0b 45%, #ffffff04 70%); background-size:220% 100%; animation:wave-loading 1.8s ease-in-out infinite; }
+.wave-skeleton::before { content:''; position:absolute; inset:28% 20px; border-radius:6px; background:var(--bg-3); animation:wave-loading 1.8s ease-in-out infinite; }
 .player-load-error { margin:auto; padding:32px; max-width:56ch; text-align:center; color:var(--muted); line-height:1.6; }
 .player-load-error button { margin-top:18px; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
@@ -358,7 +358,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
   flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
   background: var(--bg-2); border-top: 1px solid var(--border); padding: 12px 22px;
 }
-.play-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
+.play-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
 .play-btn:hover { filter: brightness(1.1); }
 .time { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--text); min-width: 128px; }
 .t-group { display: flex; align-items: center; gap: 7px; }
@@ -413,7 +413,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 .mp-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow-y: auto; }
 .mp-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
 .mp-item:hover { background: var(--bg-3); }
-.mp-item.active { background: #1a2030; }
+.mp-item.active { background: #e8edfa; }
 .mp-item .mp-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 54px; }
 .mp-item .mp-info { flex: 1; }
 .mp-item .mp-del { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 12px; border-radius: 5px; padding: 2px 6px; }
@@ -428,7 +428,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px;
 
 /* Sign-in gate. No card of our own — Clerk's component brings its own
    surface, and wrapping it in a second panel just double-frames it. */
-.signin { position: fixed; inset: 0; z-index: 300; background: radial-gradient(ellipse at 50% 40%, #5b8cff0c, transparent 60%), var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; overflow:auto; }
+.signin { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 40px; overflow:auto; }
 .signin-inner { display: flex; flex-direction: column; align-items: center; gap: 28px; margin:auto; }
 .signin-brand { padding: 0; font-size: 19px; letter-spacing: -.3px; }
 .setup-card { width: 620px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 34px; -webkit-app-region: no-drag; }
@@ -558,7 +558,7 @@ a.btn-primary, a.btn-ghost { display:inline-block; text-decoration:none; text-al
 .billing-plans { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
 .billing-plan { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-2); }
 .billing-plan h2 { margin: 0 0 20px; }
-.billing-plus { border-color: #6871e5; }
+.billing-plus { border-color: #174bd1; }
 .billing-price { font-size: 36px; font-weight: 700; }
 .billing-price span { font-size: 16px; font-weight: 400; }
 .billing-plan li { margin: 12px 0; }

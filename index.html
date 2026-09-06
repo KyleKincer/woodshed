@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Woodshed</title>
   <link rel="stylesheet" href="/src/css/styles.css" />
+  <link rel="stylesheet" href="/src/css/record-club.css" />
 </head>
 <body>
 
@@ -12,10 +13,10 @@
   <div id="deps-banner" class="deps-banner hidden"></div>
 
   <header id="app-header">
-    <button class="brand brand-home" data-view="library" title="Open library"><span class="logo">◐</span><span class="brand-name">Woodshed</span></button>
+    <button class="brand brand-home" data-view="library" title="Open library"><span class="brand-name">Woodshed</span></button>
     <div id="header-song" class="header-song hidden"></div>
     <div class="header-actions">
-      <button id="add-btn" class="add-btn"><span aria-hidden="true">＋</span><span class="add-label"> Add song</span></button>
+      <button id="add-btn" class="add-btn" aria-label="Add song"><span aria-hidden="true">＋</span><span class="add-label"> Add song</span></button>
       <div id="user-button" class="user-button"></div>
     </div>
   </header>
@@ -48,7 +49,7 @@
               </svg>
             </button>
           </div>
-          <input id="lib-search" class="search" type="search" placeholder="Search…" />
+          <input id="lib-search" class="search" type="search" placeholder="Search songs, artists, albums" aria-label="Search library" />
         </div>
       </header>
       <div id="library-grid"></div>
@@ -109,7 +110,7 @@
   <!-- Account sign-in gate. -->
   <div id="signin" class="signin hidden">
     <div class="signin-inner">
-      <div class="brand signin-brand"><span class="logo">◐</span><span class="brand-name">Woodshed</span></div>
+      <div class="brand signin-brand"><span class="brand-name">Woodshed</span></div>
       <div id="signin-mount"></div>
     </div>
   </div>

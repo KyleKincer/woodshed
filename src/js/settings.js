@@ -44,30 +44,30 @@ export function renderSettings() {
       <p class="desc">Default for new songs — you can pick a different one per song. Higher quality takes longer to process on your computer.</p>
       <div class="preset-grid" id="preset-grid">
         ${presets.map((p) => presetCard(p, s.preset === p.id)).join('')}
-        ${presetCard({ id: 'custom', label: 'Custom', description: 'Tweak the advanced settings yourself.' }, s.preset === 'custom')}
+        ${presetCard({ id: 'custom', label: 'Custom', description: 'Advanced separation parameters.' }, s.preset === 'custom')}
       </div>
     </div>
 
     <div class="settings-section ${s.preset === 'custom' ? '' : 'hidden'}" id="custom-section">
       <h3>Custom parameters</h3>
-      <p class="desc">Advanced separation settings.</p>
+
       <div class="row">
         <div><label>Model</label><div class="sub">More accurate, but slower.</div></div>
-        <select id="c-model">
+        <select id="c-model" aria-label="Model">
           ${config.models.map((m) => `<option value="${m.id}" ${s.custom.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
       <div class="row">
         <div><label>Quality passes</label><div class="sub">Higher values take longer to process.</div></div>
         <div class="range-wrap">
-          <input type="range" id="c-shifts" min="0" max="10" step="1" value="${s.custom.shifts}" />
+          <input type="range" id="c-shifts" aria-label="Quality passes" min="0" max="10" step="1" value="${s.custom.shifts}" />
           <span id="c-shifts-val">${s.custom.shifts}</span>
         </div>
       </div>
       <div class="row">
         <div><label>Overlap</label><div class="sub">Usually leave at the default.</div></div>
         <div class="range-wrap">
-          <input type="range" id="c-overlap" min="0.1" max="0.75" step="0.05" value="${s.custom.overlap}" />
+          <input type="range" id="c-overlap" aria-label="Overlap" min="0.1" max="0.75" step="0.05" value="${s.custom.overlap}" />
           <span id="c-overlap-val">${s.custom.overlap}</span>
         </div>
       </div>
@@ -75,10 +75,10 @@ export function renderSettings() {
 
     <div class="settings-section">
       <h3>Default stems</h3>
-      <p class="desc">Split the full band, or isolate one part.</p>
+
       <div class="row">
         <div><label>Stem layout</label></div>
-        <select id="s-stemmode">
+        <select id="s-stemmode" aria-label="Stem layout">
           ${Object.values(config.stemModes).map((m) => `<option value="${m.id}" ${s.stemMode === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
@@ -89,14 +89,14 @@ export function renderSettings() {
       <p class="desc">Stems are compressed so a song downloads in seconds rather than minutes. Original WAV stems remain on the processing computer.</p>
       <div class="row">
         <div><label>Format</label><div class="sub">Sync copies use Opus; local WAVs preserve the separation output.</div></div>
-        <select id="s-format">
+        <select id="s-format" aria-label="Format">
           <option value="opus" ${s.format === 'opus' ? 'selected' : ''}>Compressed (recommended)</option>
 
         </select>
       </div>
       <div class="row " id="bitrate-row">
         <div><label>Bitrate</label><div class="sub">Per stem. Higher bitrates use more cloud storage.</div></div>
-        <select id="s-bitrate">
+        <select id="s-bitrate" aria-label="Bitrate">
           ${config.bitrates.map((b) => `<option value="${b.id}" ${Number(s.bitrate) === b.id ? 'selected' : ''}>${b.label}</option>`).join('')}
         </select>
       </div>
@@ -164,10 +164,10 @@ async function refreshCacheSize() {
 
 function presetCard(p, selected) {
   const cost = p.estCostUsd ? ` <span class="pcost">~$${p.estCostUsd.toFixed(2)}/song</span>` : '';
-  return `<div class="preset-card ${selected ? 'selected' : ''}" data-preset="${p.id}">
+  return `<button type="button" class="preset-card ${selected ? 'selected' : ''}" data-preset="${p.id}" aria-pressed="${selected}">
     <div class="pname">${p.label}</div>
     <div class="pdesc">${p.description}${cost}</div>
-  </div>`;
+  </button>`;
 }
 
 function flashSaved() {

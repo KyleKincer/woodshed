@@ -9,7 +9,7 @@ export function renderBilling() {
   root.innerHTML = '<p role="status">Checking your plan…</p>';
   unsubscribe = convex.onUpdate(api.billingData.status, {}, state => {
     const paid = state.access === 'paid';
-    root.innerHTML = `<div class="billing-intro"><h1>Room for more music</h1><p class="hint">Your practice tools stay free. Plus gives your cloud library more space.</p></div>
+    root.innerHTML = `<div class="billing-intro"><h1>Plan & billing</h1></div>
       <p class="billing-usage">${bytes(state.usedBytes)} of ${bytes(state.limitBytes)} used</p>
       <div class="billing-plans"><article class="billing-plan"><h2>Free</h2><div class="billing-price">$0</div><p>${bytes(state.freeBytes)} cloud storage</p><p class="hint">About ${Math.floor(state.freeBytes / 24e6)} songs with four stems.</p><ul><li>Local downloads and stem separation</li><li>Playback and practice tools</li><li>Library export</li></ul></article>
       <article class="billing-plan billing-plus"><h2>Plus ${paid ? '<span class="hint">· Your plan</span>' : ''}</h2><div class="billing-price">$2<span> / month</span></div><p>or $20 / year — save $4</p><p><strong>${bytes(state.proBytes)} cloud storage</strong></p><p class="hint">About ${Math.floor(state.proBytes / 24e6)} songs with four stems. Actual capacity depends on length, stem count, and quality.</p><div class="billing-actions">${paid ? '' : '<button class="btn-primary" data-interval="month">Choose monthly</button><button class="btn-ghost" data-interval="year">Choose yearly</button>'}</div></article></div>

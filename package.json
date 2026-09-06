@@ -16,6 +16,7 @@
     "companion": "node companion/server.mjs",
     "companion:setup": "python3.11 companion/setup.py --beats",
     "test": "vitest run",
+    "test:artwork": "node --test tests/artwork.test.mjs",
     "typecheck": "tsc --noEmit -p convex/tsconfig.json",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",

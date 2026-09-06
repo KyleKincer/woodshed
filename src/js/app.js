@@ -24,6 +24,7 @@ function showView(name) {
 }
 
 async function openSong(song) {
+  document.getElementById('content').scrollTop = 0;
   // The player shares the app header and fills the remaining viewport.
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));

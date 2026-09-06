@@ -88,10 +88,7 @@ function waitForSession() {
   const card = document.createElement('div');
   card.className = 'setup-card signin-card';
   const title = document.createElement('h2');
-  title.textContent = 'Your practice library, anywhere';
-  const description = document.createElement('p');
-  description.className = 'setup-desc';
-  description.textContent = 'Keep your songs and practice settings in sync, wherever you play.';
+  title.textContent = 'Sign in';
   const button = document.createElement('button');
   button.className = 'google-signin';
   button.setAttribute('aria-label', 'Sign in with Google');
@@ -105,7 +102,7 @@ function waitForSession() {
   const note = document.createElement('p');
   note.className = 'signin-note';
   note.textContent = 'New here? Signing in creates your free account.';
-  card.append(title, description, button, message, note);
+  card.append(title, button, message, note);
   target.append(card);
   const values = auth.ambientSignInValues('oauth');
   const showError = () => {
