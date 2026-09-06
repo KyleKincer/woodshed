@@ -11,6 +11,7 @@
   #app-header .brand { view-transition-name: wordmark; }
   #app-header .header-actions { view-transition-name: header-actions; }
   #header-song { view-transition-name: header-song; }
+  .header-back { view-transition-name: header-back; }
 
   ::view-transition { pointer-events: none; }
   ::view-transition-group(*) {
@@ -25,20 +26,21 @@
   ::view-transition-group(root) { animation: none; }
   ::view-transition-old(root) { animation: motion-out 100ms ease-out both; }
   ::view-transition-new(root) { animation: motion-in var(--motion-nav) var(--motion-ease) both; }
-  ::view-transition-new(header-song):only-child {
+  ::view-transition-new(header-song):only-child,
+  ::view-transition-new(header-back):only-child {
     animation: motion-enter var(--motion-nav) var(--motion-ease) both;
   }
 
   :is(.add-btn, .btn-primary, .btn-ghost, .toggle-btn, .tbtn, .play-btn,
       .segmented button, .layout-toggle button, .billing-interval button,
       .preset-labels button, .preset-card, .card-menu,
-      .account-settings, .account-trigger) {
+      .account-settings, .account-trigger, .header-back) {
     transition: background-color var(--motion-fast), color var(--motion-fast),
       border-color var(--motion-fast), box-shadow var(--motion-fast),
       transform var(--motion-fast) var(--motion-ease);
   }
   :is(.add-btn, .btn-primary, .btn-ghost, .toggle-btn, .tbtn, .play-btn,
-      .card-menu):active:not(:disabled) { transform: scale(.97); }
+      .card-menu, .header-back):active:not(:disabled) { transform: scale(.97); }
   .card .cover { transition: transform var(--motion-enter) var(--motion-ease); }
   .list-row { transition: background-color var(--motion-fast); }
   @media (hover: hover) and (pointer: fine) {

@@ -17,10 +17,12 @@ initializeInteractions();
 let config = null;
 
 function showView(name) {
+  const focusHome = document.activeElement?.id === 'header-back';
   transitionView(() => {
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
     document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     document.body.classList.toggle('in-player', name === 'player');
+    if (focusHome) document.querySelector('.brand-home').focus({ preventScroll: true });
     if (name !== 'player') closePlayer();
     if (name === 'billing') renderBilling();
     if (name === 'admin') renderAdmin();
