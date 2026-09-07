@@ -15,24 +15,40 @@ function createUpdateController({
 }) {
   let state = publicUpdateState("idle"),
     dialogOpen = false,
-    lastCheck = 0;
+    lastCheck = 0,
+    checkPromise = null;
   const prompted = new Set();
   function emit(status, info) {
     state = publicUpdateState(status, info);
     publish(state);
   }
-  async function check() {
+  function check() {
+    if (checkPromise) return checkPromise;
     if (
       !packaged ||
       ["checking", "available", "downloading", "ready"].includes(state.status)
     )
       return;
     lastCheck = now();
-    try {
-      await updater.checkForUpdates();
-    } catch {
-      /* The updater error event reports this. */
-    }
+    // Clear an earlier successful result even if the updater rejects or is disabled
+    // before emitting checking-for-update. Manual checks also await background checks.
+    emit("checking");
+    checkPromise = Promise.resolve().then(async () => {
+      try {
+        await updater.checkForUpdates();
+        if (state.status === "checking")
+          emit("error", {
+            message: "Could not check for updates. Open the installed app and try again.",
+          });
+      } catch {
+        emit("error", {
+          message: "Could not check for updates. Check your connection and try again.",
+        });
+      } finally {
+        checkPromise = null;
+      }
+    });
+    return checkPromise;
   }
   async function show(automatic = false) {
     if (dialogOpen || (automatic && !isFocused())) return;
@@ -69,7 +85,13 @@ function createUpdateController({
         });
         if (result.response === 0 && state.status === "available") {
           emit("downloading", { version: state.version });
-          await updater.downloadUpdate();
+          try {
+            await updater.downloadUpdate();
+          } catch (error) {
+            // A rejected download is retryable even without an updater error event.
+            emit("available", { version: state.version });
+            throw error;
+          }
         }
       } else if (state.status === "ready") {
         prompted.add(`ready:${state.version}`);

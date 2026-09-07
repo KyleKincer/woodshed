@@ -20,11 +20,16 @@ that cancellation is recorded locally and synced before processing resumes
 after relaunch, including after an offline restart. Quitting does not silently install. Settings and the native menu offer update checks.
 Draft releases are invisible to installed clients. The release collector merges
 both Mac architectures into latest-mac.yml and verifies every listed SHA-512.
+After upload, tag builds publish the complete release and verify all three public
+update feeds through electron-updater's GitHub provider, including installer
+availability and sizes. Publication verification uses no GitHub credentials,
+retries briefly for propagation, and fails CI if clients cannot see the release.
 
 Build a release/** branch first to inspect CI artifacts. Set package.json and
 package-lock.json to the desired version, then tag that commit vX.Y.Z. The tag
-workflow creates a draft release. Review platform validation and publish the
-draft once ready. Do not reuse published version numbers. A release replaces
+workflow stages assets in a draft, then publishes automatically only after all
+platform tests, packaged launch checks, and checksum verification pass. Use
+release/** branches for review before tagging. Do not reuse published version numbers. A release replaces
 the complete app, including the bundled downloader and processing libraries.
 
 Local build: install the source prerequisites in README, run
