@@ -157,3 +157,73 @@ test("a failed download remains available for retry and reports the error", asyn
   assert.equal(h.controller.getState().version, "1.3.1");
   assert.equal(h.dialogs.at(-1).type, "error");
 });
+
+test("a rejected check cannot reuse an earlier up-to-date result", async () => {
+  const h = setup();
+  await h.controller.show();
+  assert.equal(h.controller.getState().status, "current");
+  h.updater.checkForUpdates = async () => { throw new Error("offline"); };
+  await h.controller.show();
+  assert.equal(h.controller.getState().status, "error");
+  assert.equal(h.dialogs.at(-1).type, "error");
+  assert.doesNotMatch(h.dialogs.at(-1).message, /up to date/);
+  h.updater.checkForUpdates = async () => h.updater.emit("update-not-available");
+  await h.controller.show();
+  assert.equal(h.controller.getState().status, "current");
+});
+
+test("a disabled updater cannot reuse an earlier up-to-date result", async () => {
+  const h = setup();
+  await h.controller.show();
+  h.updater.checkForUpdates = async () => null;
+  await h.controller.show();
+  assert.equal(h.controller.getState().status, "error");
+  assert.equal(h.dialogs.at(-1).type, "error");
+});
+
+test("manual checks await a background check and show its completed result", async () => {
+  const h = setup();
+  let finish;
+  h.updater.checkForUpdates = () => new Promise(resolve => { finish = resolve; });
+  h.scheduled[0].fn();
+  await tick();
+  const shown = h.controller.show();
+  await tick();
+  assert.equal(h.dialogs.length, 0);
+  h.updater.emit("update-available", { version: "1.4.0" });
+  finish();
+  await shown;
+  assert.equal(h.dialogs.length, 1);
+  assert.match(h.dialogs[0].message, /1.4.0 is available/);
+});
+
+test("a download rejection without an error event still allows retry", async () => {
+  const h = setup({ focused: false, answers: [0] });
+  h.updater.emit("update-available", { version: "1.4.0" });
+  h.updater.downloadUpdate = async () => { throw new Error("offline"); };
+  await h.controller.show();
+  assert.equal(h.controller.getState().status, "available");
+  assert.equal(h.controller.getState().version, "1.4.0");
+  assert.equal(h.dialogs.at(-1).type, "error");
+});
+
+test("overlapping wake and manual checks share a handled failure", async () => {
+  const h = setup();
+  let fail;
+  let calls = 0;
+  h.updater.checkForUpdates = () => {
+    calls++;
+    return new Promise((_resolve, reject) => { fail = reject; });
+  };
+  h.scheduled[0].fn();
+  await tick();
+  h.advance(CHECK_INTERVAL);
+  h.controller.wake();
+  const shown = h.controller.show();
+  fail(new Error("offline"));
+  await shown;
+  await tick();
+  assert.equal(calls, 1);
+  assert.equal(h.controller.getState().status, "error");
+  assert.match(h.dialogs.at(-1).message, /Check your connection/);
+});
