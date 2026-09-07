@@ -6,6 +6,7 @@
   <title>Woodshed</title>
   <link rel="stylesheet" href="/src/css/styles.css" />
   <link rel="stylesheet" href="/src/css/record-club.css" />
+  <link rel="stylesheet" href="/src/css/motion.css" />
 </head>
 <body>
 
@@ -13,7 +14,12 @@
   <div id="deps-banner" class="deps-banner hidden"></div>
 
   <header id="app-header">
-    <button class="brand brand-home" data-view="library" title="Open library"><span class="brand-name">Woodshed</span></button>
+    <div class="header-home">
+      <button id="header-back" class="header-back" type="button" data-view="library" aria-label="Back to library" title="Back to library">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+      </button>
+      <button class="brand brand-home" data-view="library" title="Open library"><span class="brand-name">Woodshed</span></button>
+    </div>
     <div id="header-song" class="header-song hidden"></div>
     <div class="header-actions">
       <button id="add-btn" class="add-btn" aria-label="Add song"><span aria-hidden="true">＋</span><span class="add-label"> Add song</span></button>

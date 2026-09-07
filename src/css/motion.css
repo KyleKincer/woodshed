@@ -1,0 +1,66 @@
+/* One quiet motion vocabulary: quick feedback, slightly longer navigation. */
+:root {
+  --motion-fast: 120ms;
+  --motion-enter: 160ms;
+  --motion-nav: 220ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #app-header { view-transition-name: app-header; }
+  #app-header .brand { view-transition-name: wordmark; }
+  #app-header .header-actions { view-transition-name: header-actions; }
+  #header-song { view-transition-name: header-song; }
+  .header-back { view-transition-name: header-back; }
+
+  ::view-transition { pointer-events: none; }
+  ::view-transition-group(*) {
+    animation-duration: var(--motion-nav);
+    animation-timing-function: var(--motion-ease);
+  }
+  ::view-transition-old(*), ::view-transition-new(*) {
+    animation-duration: var(--motion-nav);
+    animation-timing-function: var(--motion-ease);
+  }
+  /* Crossfade the content without stretching the library into the timeline. */
+  ::view-transition-group(root) { animation: none; }
+  ::view-transition-old(root) { animation: motion-out 100ms ease-out both; }
+  ::view-transition-new(root) { animation: motion-in var(--motion-nav) var(--motion-ease) both; }
+  ::view-transition-new(header-song):only-child,
+  ::view-transition-new(header-back):only-child {
+    animation: motion-enter var(--motion-nav) var(--motion-ease) both;
+  }
+
+  :is(.add-btn, .btn-primary, .btn-ghost, .toggle-btn, .tbtn, .play-btn,
+      .segmented button, .layout-toggle button, .billing-interval button,
+      .preset-labels button, .preset-card, .card-menu,
+      .account-settings, .account-trigger, .header-back) {
+    transition: background-color var(--motion-fast), color var(--motion-fast),
+      border-color var(--motion-fast), box-shadow var(--motion-fast),
+      transform var(--motion-fast) var(--motion-ease);
+  }
+  :is(.add-btn, .btn-primary, .btn-ghost, .toggle-btn, .tbtn, .play-btn,
+      .card-menu, .header-back):active:not(:disabled) { transform: scale(.97); }
+  .card .cover { transition: transform var(--motion-enter) var(--motion-ease); }
+  .list-row { transition: background-color var(--motion-fast); }
+  @media (hover: hover) and (pointer: fine) {
+    .card:has(.song-open):hover .cover { transform: translateY(-2px); }
+  }
+  .modal:not(.hidden), .drop-overlay:not(.hidden), .app-notification {
+    animation: motion-in var(--motion-fast) ease-out;
+  }
+  .modal:not(.hidden) > .modal-card,
+  .desktop-dialog,
+  .account-menu[open] .account-panel,
+  .ctx-menu,
+  .metro-pop:not(.hidden) {
+    animation: motion-enter var(--motion-enter) var(--motion-ease);
+  }
+}
+
+@keyframes motion-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes motion-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}

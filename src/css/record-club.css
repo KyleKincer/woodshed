@@ -215,3 +215,22 @@ button, a, summary, input[type=range] { touch-action:manipulation; }
 .app-notification.is-error { border-left-color:var(--bad); }
 .app-notification button { flex-shrink:0; }
 @media(prefers-reduced-motion:reduce) { [aria-busy=true]::before { animation:none; } }
+
+/* Keep the return affordance beside the wordmark, including on narrow screens. */
+.header-home { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.header-back { display:none; align-items:center; justify-content:center; flex:none; width:36px; height:40px; padding:0; border:0; border-radius:4px; background:transparent; color:#ffffffc7; cursor:pointer; }
+body:has(.view.active):not(:has(#view-library.active)) .header-back { display:inline-flex; }
+.header-back:hover { color:white; background:#ffffff14; }
+.header-back:focus-visible { outline-color:white; }
+body:has(:is(#view-billing, #view-admin).active) #app-header { min-height:76px; padding:16px 28px; }
+body:has(:is(#view-billing, #view-admin).active) #app-header .brand { font-size:34px; letter-spacing:-1.5px; }
+@media(max-width:700px) {
+  .header-home { gap:4px; }
+  .header-back { width:32px; }
+  body:has(:is(#view-billing, #view-admin).active) #app-header { padding:14px 16px; }
+  body:has(:is(#view-billing, #view-admin).active) #app-header .brand { font-size:26px; }
+}
+@media(max-width:380px) {
+  body:not(:has(#view-library.active)) #app-header { flex-wrap:wrap; gap:8px; }
+  body:not(:has(#view-library.active)) #app-header .brand { font-size:24px; }
+}

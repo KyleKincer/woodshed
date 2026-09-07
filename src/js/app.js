@@ -1,4 +1,5 @@
 import { initializeInteractions } from './interactions.js';
+import { transitionView } from './motion.js';
 import { renderBilling } from './billing.js';
 import { renderDownload } from './desktop.js';
 import { renderAdmin } from './admin.js';
@@ -16,23 +17,30 @@ initializeInteractions();
 let config = null;
 
 function showView(name) {
-  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
-  document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
-  document.body.classList.toggle('in-player', name === 'player');
-  if (name !== 'player') closePlayer();
-  if (name === 'billing') renderBilling();
-  if (name === 'admin') renderAdmin();
-  if (name === 'settings') renderSettings();
-  if (name === 'library') renderLibrary(document.getElementById('lib-search').value);
+  const focusHome = document.activeElement?.id === 'header-back';
+  transitionView(() => {
+    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
+    document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+    document.body.classList.toggle('in-player', name === 'player');
+    if (focusHome) document.querySelector('.brand-home').focus({ preventScroll: true });
+    if (name !== 'player') closePlayer();
+    if (name === 'billing') renderBilling();
+    if (name === 'admin') renderAdmin();
+    if (name === 'settings') renderSettings();
+    if (name === 'library') renderLibrary(document.getElementById('lib-search').value);
+  });
 }
 
-async function openSong(song) {
-  document.getElementById('content').scrollTop = 0;
-  // The player shares the app header and fills the remaining viewport.
-  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
-  document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
-  document.body.classList.add('in-player');
-  await openPlayer(song);
+function openSong(song) {
+  transitionView(() => {
+    document.getElementById('content').scrollTop = 0;
+    // The player shares the app header and fills the remaining viewport.
+    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-player'));
+    document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
+    document.body.classList.add('in-player');
+    // Paint the header and loading tracks now; audio resolves independently.
+    void openPlayer(song);
+  });
 }
 
 // Warn before a user downloads 20 MB they can't play. This is only a hint —
