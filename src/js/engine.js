@@ -1,4 +1,5 @@
-// All stems share an output-time transport and pitch-preserving worklet schedules.
+// Native playback is transparent at 1x. Time stretching links every stem channel
+// in one processor so spectral phase changes remain coherent across the mix.
 import SignalsmithStretch from 'signalsmith-stretch';
 import stretchModuleUrl from 'signalsmith-stretch?url';
 // Load an emitted same-origin module; do not stringify bundled code into a blob.
@@ -11,7 +12,10 @@ export class MultitrackEngine {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
     this.master.connect(this.ctx.destination);
-    this.tracks = []; // { name, buffer, gain, source, volume, muted, soloed }
+    this.tracks = [];
+    this.stretch = null;
+    this.pitchGate = null;
+    this.splitter = null;
     this.duration = 0;
 
     this.playing = false;
@@ -58,24 +62,45 @@ export class MultitrackEngine {
     );
     if (this.destroyed) return;
     this.duration = Math.max(0, ...loaded.map((l) => l.buffer.duration));
+    const frames = Math.max(...loaded.map(l => l.buffer.length));
     this.tracks = loaded.map((l) => {
+      // A short stem must contribute silence, including within a longer loop.
+      if (l.buffer.length < frames) {
+        const padded = this.ctx.createBuffer(l.buffer.numberOfChannels, frames, this.ctx.sampleRate);
+        for (let c = 0; c < l.buffer.numberOfChannels; c++) padded.copyToChannel(l.buffer.getChannelData(c), c);
+        l.buffer = padded;
+      }
       const gain = this.ctx.createGain();
       gain.connect(this.master);
-      return { name: l.name, color: l.color, buffer: l.buffer, gain, source: null, volume: 1, muted: false, soloed: false };
+      return { name: l.name, color: l.color, buffer: l.buffer, gain, nativeSources: new Set(), merger: null, volume: 1, muted: false, soloed: false };
     });
     this.loop.b = this.duration;
-    // Buffered worklets compensate their own algorithm latency. Use one shared
-    // output timestamp for every stem, including later speed/loop changes.
-    await Promise.all(this.tracks.map(async (track) => {
-      const source = await SignalsmithStretch(this.ctx);
-      if (this.destroyed) { source.disconnect(); source.port.close(); return; }
-      track.source = source;
-      source.connect(track.gain);
-      const channels = Array.from({length: track.buffer.numberOfChannels},
-        (_, c) => track.buffer.getChannelData(c).slice());
-      await source.addBuffers(channels, channels.map(c => c.buffer));
-      this.lookahead = Math.max(this.lookahead, await source.latency() + 0.02);
-    }));
+    // One multichannel analysis links phase across all stems. Independent
+    // stereo stretchers can smear shared transients and comb-filter the mix.
+    const channels = this.tracks.length * 2;
+    const source = await SignalsmithStretch(this.ctx, {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [channels],
+      channelCount: channels, channelCountMode: 'explicit', channelInterpretation: 'discrete',
+    });
+    if (this.destroyed) { source.disconnect(); source.port.close(); return; }
+    this.stretch = source;
+    this.pitchGate = this.ctx.createGain();
+    this.pitchGate.channelCount = channels;
+    this.pitchGate.channelCountMode = 'explicit';
+    this.pitchGate.channelInterpretation = 'discrete';
+    this.pitchGate.gain.value = 0;
+    this.splitter = this.ctx.createChannelSplitter(channels);
+    source.connect(this.pitchGate).connect(this.splitter);
+    const buffers = [];
+    this.tracks.forEach((track, i) => {
+      track.merger = this.ctx.createChannelMerger(2);
+      this.splitter.connect(track.merger, i * 2, 0);
+      this.splitter.connect(track.merger, i * 2 + 1, 1);
+      track.merger.connect(track.gain);
+      for (let c = 0; c < 2; c++) buffers.push(track.buffer.getChannelData(Math.min(c, track.buffer.numberOfChannels - 1)).slice());
+    });
+    await source.addBuffers(buffers, buffers.map(buffer => buffer.buffer));
+    this.lookahead = Math.max(this.lookahead, await source.latency() + 0.02);
     if (this.destroyed) return;
     this._applyGains();
     return { duration: this.duration, tracks: this.tracks };
@@ -137,15 +162,46 @@ export class MultitrackEngine {
     const seekOffset = offset ?? pending?.seekOffset;
     let position = seekOffset ?? (current ? this._positionIn(current, when) : this.pausedAt);
     if (this.loop.enabled && position >= this.loop.b) position = this.loop.a;
-    const segment = { when, offset: position, seekOffset, rate: this.rate, loop: {...this.loop} };
+    const processing = this.preservePitch && this.rate !== 1;
+    const segment = { when, offset: position, seekOffset, rate: this.rate, loop: {...this.loop}, processing };
     this.segments = current && current.when <= now ? [current, segment] : [segment];
     const change = {
-      active: true, output: when, input: position, rate: this.rate,
-      semitones: this.preservePitch ? 0 : 12 * Math.log2(this.rate),
+      active: processing, output: when, input: position, rate: this.rate, semitones: 0,
       loopStart: this.loop.enabled ? this.loop.a : 0,
       loopEnd: this.loop.enabled ? this.loop.b : 0,
     };
-    for (const track of this.tracks) track.source.schedule(change);
+    this.stretch.schedule(change);
+    // The processed and native paths are mutually exclusive at the same output
+    // timestamp. Gate the processor tail too, so it cannot comb with dry audio.
+    this.pitchGate.gain.cancelScheduledValues(now);
+    this.pitchGate.gain.setValueAtTime(current?.when <= now && current.processing ? 1 : 0, now);
+    this.pitchGate.gain.setValueAtTime(processing ? 1 : 0, when);
+    for (const track of this.tracks) {
+      for (const entry of track.nativeSources) {
+        if (entry.when > now) {
+          entry.source.stop(now);
+          entry.source.disconnect();
+          track.nativeSources.delete(entry);
+        } else {
+          // A scheduled stop can be moved when a pending control change is
+          // replaced. Sources which have ended remove themselves below.
+          entry.source.stop(when);
+        }
+      }
+      if (!processing) {
+        const native = this.ctx.createBufferSource();
+        native.buffer = track.buffer;
+        native.playbackRate.value = this.rate;
+        native.loop = this.loop.enabled;
+        native.loopStart = this.loop.a;
+        native.loopEnd = this.loop.b;
+        native.connect(track.gain);
+        const entry = {source: native, when};
+        track.nativeSources.add(entry);
+        native.onended = () => { native.disconnect(); track.nativeSources.delete(entry); };
+        native.start(when, position);
+      }
+    }
     this.revision++;
     return when;
   }
@@ -168,12 +224,17 @@ export class MultitrackEngine {
   pause() {
     this.playRequest++;
     if (!this.playing) return;
-    this.pausedAt = this.getPosition();
+    const pendingSeek = this.segments.find(s => s.when > this.ctx.currentTime && s.seekOffset != null);
+    this.pausedAt = pendingSeek ? pendingSeek.offset : this.getPosition();
     this.playing = false;
     this.segments = [];
     this.master.gain.cancelScheduledValues(this.ctx.currentTime);
     this.master.gain.setValueAtTime(0, this.ctx.currentTime);
-    for (const track of this.tracks) track.source?.stop(this.ctx.currentTime);
+    this.stretch?.stop(this.ctx.currentTime);
+    for (const track of this.tracks) {
+      for (const {source} of track.nativeSources) { source.stop(); source.disconnect(); }
+      track.nativeSources.clear();
+    }
     this.revision++;
   }
 
@@ -245,10 +306,13 @@ export class MultitrackEngine {
     this.pause();
     this.destroyed = true;
     for (const track of this.tracks) {
-      track.source?.disconnect();
-      track.source?.port.close();
+      track.merger?.disconnect();
       track.gain.disconnect();
     }
+    this.stretch?.disconnect();
+    this.stretch?.port.close();
+    this.pitchGate?.disconnect();
+    this.splitter?.disconnect();
     this.master.disconnect();
     void this.ctx.close().catch(() => {});
   }

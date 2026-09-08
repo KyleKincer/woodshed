@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { expect, test } from 'vitest';
 const rateHz = 48000;
-async function processor() {
+async function processor(channels = 2) {
   let Processor, ready;
   const initialized = new Promise(resolve => { ready = resolve; });
   const scope = {console, WebAssembly, TextDecoder, atob, setTimeout, clearTimeout, sampleRate:rateHz, currentTime:0,
@@ -12,7 +12,7 @@ async function processor() {
     registerProcessor: (_, Class) => { Processor = Class; }};
   const source = (await readFile(new URL('../node_modules/signalsmith-stretch/SignalsmithStretch.mjs', import.meta.url), 'utf8')).replace('export default _export;', '');
   vm.runInNewContext(source, scope);
-  const node = new Processor({numberOfOutputs:1,outputChannelCount:[2]});
+  const node = new Processor({numberOfOutputs:1,outputChannelCount:[channels]});
   await initialized;
   const send = (method, value) => node.port.onmessage({data:[0, method, value]});
   return {node,scope,send};
@@ -61,3 +61,27 @@ test('audio events follow the media clock at half speed, including loop disable'
   expect(peaks).toHaveLength(3);
   for(let i=0;i<3;i++)expect(Math.abs(peaks[i]-(0.7+i*2))).toBeLessThan(0.035);
 });
+
+for (const rate of [0.75, 1, 1.5]) {
+  test(`shared processing preserves inter-stem phase at ${rate}x`, async () => {
+    const {node,scope,send}=await processor(4);
+    const count=rateHz*4;
+    let seed=1;
+    const noise=Float32Array.from({length:count},()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return (seed/2**32-0.5)*0.15;});
+    const a=Float32Array.from(noise,(v,i)=>v+Math.sin(2*Math.PI*440*i/rateHz)*0.2);
+    const b=Float32Array.from(noise,(v,i)=>-v+Math.sin(2*Math.PI*880*i/rateHz)*0.2);
+    const mix=Float32Array.from(a,(v,i)=>v+b[i]);
+    send('addBuffers',[a,b,mix,new Float32Array(count)]);
+    send('schedule',{active:true,output:0.2,input:0,rate,semitones:0});
+    let difference=0, energy=0;
+    for(let frame=0;frame<rateHz*2;frame+=128){
+      scope.currentTime=frame/rateHz;
+      const output=Array.from({length:4},()=>new Float32Array(128));node.process([[]],[output]);
+      if(scope.currentTime>0.7)for(let i=0;i<128;i++){
+        difference+=(output[0][i]+output[1][i]-output[2][i])**2;
+        energy+=output[2][i]**2;
+      }
+    }
+    expect(Math.sqrt(difference/energy)).toBeLessThan(0.001);
+  });
+}
