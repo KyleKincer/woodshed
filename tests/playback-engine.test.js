@@ -1,20 +1,27 @@
 // @vitest-environment node
 import { beforeEach, expect, test, vi } from 'vitest';
 vi.mock('signalsmith-stretch', () => ({default: vi.fn()}));
+import SignalsmithStretch from 'signalsmith-stretch';
+vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuffer(0))}));
 import { MultitrackEngine } from '../src/js/engine.js';
 import { buildBarIndex, barPosition } from '../src/js/musical-position.js';
 let engine;
 beforeEach(() => {
   const param = () => ({cancelScheduledValues:vi.fn(), setValueAtTime:vi.fn(), setTargetAtTime:vi.fn()});
   globalThis.AudioContext = class {
-    currentTime = 0; state = 'running';
-    createGain() { return {gain:param(), connect:vi.fn(), disconnect:vi.fn()}; }
+    currentTime = 0; state = 'running'; sampleRate=48000;
+    createGain() { return {gain:param(), connect:vi.fn(target=>target), disconnect:vi.fn()}; }
+    createChannelSplitter() { return {connect:vi.fn(),disconnect:vi.fn()}; }
+    createChannelMerger() { return {connect:vi.fn(),disconnect:vi.fn()}; }
+    createBufferSource() { return {playbackRate:param(),connect:vi.fn(),disconnect:vi.fn(),start:vi.fn(),stop:vi.fn()}; }
     close = vi.fn().mockResolvedValue();
   };
   engine = new MultitrackEngine();
   engine.duration = 100;
   engine.loop.b = 100;
-  engine.tracks = ['drums', 'bass'].map(name => ({name, source:{schedule:vi.fn(),stop:vi.fn()},gain:engine.ctx.createGain()}));
+  engine.stretch = {schedule:vi.fn(),stop:vi.fn()};
+  engine.pitchGate = engine.ctx.createGain();
+  engine.tracks = ['drums', 'bass'].map(name => ({name,buffer:{},nativeSources:new Set(),gain:engine.ctx.createGain()}));
 });
 function advance(seconds) { engine.ctx.currentTime += seconds; }
 function settle() { advance(engine.lookahead); }
@@ -34,7 +41,7 @@ test('speed changes, clearing and editing loops stay on the same timeline as eve
   engine.setLoop(true, 1, 2); settle(); expect(engine.getPosition()).toBeCloseTo(1);
   advance(3); expect(engine.getPosition()).toBeCloseTo(1.5);
   engine.setLoop(false, 0, 100); settle(); expect(engine.getPosition()).toBeCloseTo(1.525);
-  expect(engine.tracks[0].source.schedule.mock.calls).toEqual(engine.tracks[1].source.schedule.mock.calls);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.5,loopStart:0,loopEnd:0});
 });
 test('pre-roll never moves backwards and a pending seek survives rapid rate and pitch changes', async () => {
   engine.seek(20); await engine.play(); expect(engine.getPosition()).toBe(20);
@@ -48,11 +55,11 @@ test('pre-roll never moves backwards and a pending seek survives rapid rate and 
 });
 test('pitch is preserved by default, with explicit varispeed and normal speed reset', async () => {
   engine.setSpeed(0.5); await engine.play();
-  expect(engine.tracks[0].source.schedule.mock.lastCall[0]).toMatchObject({rate:0.5,semitones:0});
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.5,semitones:0});
   engine.setPreservePitch(false);
-  expect(engine.tracks[0].source.schedule.mock.lastCall[0]).toMatchObject({rate:0.5,semitones:-12});
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.5,active:false});
   engine.setSpeed(1);
-  expect(engine.tracks[0].source.schedule.mock.lastCall[0]).toMatchObject({rate:1,semitones:0});
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:1,active:false});
 });
 test('seeking to the loop end wraps, seeking before A plays the lead-in, invalid loops disable', async () => {
   engine.setLoop(true, 10, 12); engine.seek(12); expect(engine.getPosition()).toBe(10);
@@ -88,4 +95,42 @@ test('bar progress follows irregular detected downbeats, pickups, and partial fi
   expect(barPosition(index, 2)).toMatchObject({bar:1,beat:3});
   expect(barPosition(index, 2.5)).toMatchObject({bar:2,beat:1});
   expect(barPosition(index, 10)).toMatchObject({bar:2,beat:2});
+});
+
+test('normal speed bypasses DSP with sample-locked original buffers and no processed tail', async () => {
+  engine.seek(10); await engine.play();
+  const entries=engine.tracks.map(track=>[...track.nativeSources][0]);
+  expect(entries[0].source.start.mock.calls).toEqual(entries[1].source.start.mock.calls);
+  entries.forEach((entry,i)=>expect(entry.source.buffer).toBe(engine.tracks[i].buffer));
+  expect(engine.stretch.schedule.mock.lastCall[0].active).toBe(false);
+  expect(engine.pitchGate.gain.setValueAtTime.mock.lastCall[0]).toBe(0);
+  settle();engine.setSpeed(0.75);
+  expect(engine.stretch.schedule.mock.lastCall[0].active).toBe(true);
+  expect(entries[0].source.stop.mock.lastCall[0]).toBeCloseTo(engine.ctx.currentTime+engine.lookahead);
+  settle();engine.setSpeed(1);
+  expect(engine.stretch.schedule.mock.lastCall[0].active).toBe(false);
+  expect(engine.pitchGate.gain.setValueAtTime.mock.lastCall[0]).toBe(0);
+  const newest=engine.tracks.map(track=>[...track.nativeSources].at(-1));
+  expect(newest[0].source.start.mock.calls).toEqual(newest[1].source.start.mock.calls);
+});
+test('pausing during a pending seek retains the requested destination', async () => {
+  await engine.play();settle();advance(1);engine.seek(42);engine.pause();
+  expect(engine.getPosition()).toBe(42);
+});
+
+test('loading creates one discrete phase-linked processor with separate stereo routes for each stem', async () => {
+  const data=Float32Array.from({length:64},(_,i)=>i/64);
+  engine.ctx.decodeAudioData=async()=>({duration:64/48000,length:64,numberOfChannels:1,getChannelData:()=>data});
+  const node={connect:vi.fn(target=>target),addBuffers:vi.fn(async()=>{}),latency:vi.fn(async()=>0.1)};
+  SignalsmithStretch.mockResolvedValue(node);
+  await engine.loadStems([{name:'drums',key:'load-a',url:'a'},{name:'bass',key:'load-b',url:'b'}]);
+  expect(SignalsmithStretch).toHaveBeenCalledTimes(1);
+  expect(SignalsmithStretch.mock.lastCall[1]).toMatchObject({outputChannelCount:[4],channelInterpretation:'discrete'});
+  expect(node.addBuffers.mock.lastCall[0]).toHaveLength(4);
+  expect(engine.pitchGate.channelCount).toBe(4);
+  expect(engine.pitchGate.gain.value).toBe(0);
+  expect(engine.splitter.connect.mock.calls).toEqual([
+    [engine.tracks[0].merger,0,0],[engine.tracks[0].merger,1,1],
+    [engine.tracks[1].merger,2,0],[engine.tracks[1].merger,3,1],
+  ]);
 });

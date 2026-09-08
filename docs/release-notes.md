@@ -1,10 +1,11 @@
-Woodshed 1.4.1 improves playback accuracy and the song loading experience.
+Woodshed 1.4.2 fixes phasey, comb-filtered playback and improves the practice player.
 
-- Keeps the playhead aligned with playback when disabling or editing a loop, changing speed, seeking, pausing, and replaying a finished song. The metronome follows the same timeline, including loop downbeats.
-- Preserves the original pitch when changing playback speed. The Keep pitch button beside Speed switches to varispeed when desired and remembers the preference on this device.
-- Double-clicking the speed slider restores 1.00×.
-- Shows the current bar, total bars, and beat beside the playback time, using the detected beat grid or manual tempo map, including time-signature changes.
-- Keeps the song layout steady while audio loads, with waveform skeletons and progress inside the track panel. Removes the stray page-shifting spinner and keeps retry available if loading fails.
+- Plays the original audio without time-stretch processing at 1.00×. Disabling Keep pitch also uses native varispeed playback.
+- Keeps stems phase-coherent when preserving pitch at other speeds by processing all channels together. Switching back to normal speed silences the processed tail so it cannot overlap the original audio.
+- Keeps the playhead and metronome aligned through loop changes, seeks, pauses, and speed changes. Disabling a loop continues from the current song position rather than accumulated loop time.
+- Double-clicking the speed slider restores 1.00×. Keep pitch is enabled by default, with a remembered toggle beside Speed.
+- Shows the current bar, total bars, and beat beside the playback time, following the detected beat grid or manual tempo map.
+- Keeps the song layout steady while audio loads, with waveform skeletons, progress inside the track panel, and retry on failure. Removes the stray page-shifting spinner.
 
 Existing desktop users can select **Check for Updates** from Settings or the Woodshed menu.
 

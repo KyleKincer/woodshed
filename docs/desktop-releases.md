@@ -56,4 +56,4 @@ https://developers.google.com/identity/branding-guidelines.
 Pitch preservation uses the bundled, same-origin Signalsmith Stretch AudioWorklet
 and WASM module (MIT). Web and desktop CSP permit WASM compilation through
 `wasm-unsafe-eval`; JavaScript eval remains disabled. The packaged launch gate
-loads this asset under the real desktop CSP and checks a 440 Hz tone at 0.75x.
+loads this asset under the real desktop CSP and renders multichannel audio offline, checking a 440 Hz tone at 0.75x without requiring physical audio hardware on CI. Normal-speed and varispeed playback use native buffer sources; pitch-preserving speed changes use one shared, phase-linked multichannel processor.

@@ -117,25 +117,26 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
         const url = '/assets/' + ${JSON.stringify(stretchFile)};
         const {default: Stretch} = await import(url);
         Stretch.moduleUrl = url;
-        const ctx = new AudioContext();
-        try {
-          await ctx.resume();
-          const source = await Stretch(ctx);
-          const tone = Float32Array.from({length:ctx.sampleRate*3},(_,i)=>Math.sin(2*Math.PI*440*i/ctx.sampleRate)*0.2);
-          await source.addBuffers([tone]);
-          const analyser = ctx.createAnalyser(); analyser.fftSize = 8192;
-          const silent = ctx.createGain(); silent.gain.value = 0;
-          source.connect(analyser).connect(silent).connect(ctx.destination);
-          await source.schedule({active:true,input:0,output:ctx.currentTime+0.15,rate:0.75,semitones:0});
-          await new Promise(resolve=>setTimeout(resolve,700));
-          const samples = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(samples);
-          let energy=0, crossings=0;
-          samples.forEach((v,i)=>{energy+=v*v;if(i && samples[i-1]<=0 && v>0)crossings++;});
-          const rms = Math.sqrt(energy/samples.length), hz = crossings*ctx.sampleRate/samples.length;
-          if(rms<0.05 || Math.abs(hz-440)>8)throw Error('Pitch playback smoke failed: '+JSON.stringify({rms,hz}));
-          source.disconnect(); source.port.close();
-          return {rms,hz};
-        } finally { await ctx.close(); }
+        // Offline rendering verifies PCM without depending on a CI runner's
+        // physical audio device (Intel macOS runners may have none).
+        const ctx = new OfflineAudioContext(2, 96000, 48000);
+        const source = await Stretch(ctx, {numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[6],channelCount:6,channelCountMode:'explicit',channelInterpretation:'discrete'});
+        const tone = Float32Array.from({length:ctx.sampleRate*3},(_,i)=>Math.sin(2*Math.PI*440*i/ctx.sampleRate)*0.2);
+        const inverted = Float32Array.from(tone,v=>-v);
+        await source.addBuffers([tone,tone,inverted,inverted,tone,tone]);
+        const splitter = ctx.createChannelSplitter(6), merger = ctx.createChannelMerger(2);
+        source.connect(splitter);
+        for(let channel=0;channel<6;channel++)splitter.connect(merger,channel,channel%2);
+        merger.connect(ctx.destination);
+        await source.schedule({active:true,input:0,output:ctx.currentTime+0.15,rate:0.75,semitones:0});
+        const rendered = await ctx.startRendering();
+        const samples = rendered.getChannelData(0).subarray(48000);
+        let energy=0, crossings=0;
+        samples.forEach((v,i)=>{energy+=v*v;if(i && samples[i-1]<=0 && v>0)crossings++;});
+        const rms = Math.sqrt(energy/samples.length), hz = crossings*ctx.sampleRate/samples.length;
+        if(rms<0.05 || Math.abs(hz-440)>8)throw Error('Pitch playback smoke failed: '+JSON.stringify({rms,hz}));
+        source.disconnect(); source.port.close();
+        return {rms,hz};
       })()`, true);
       console.log(JSON.stringify({audioSmoke:audio}));
       console.log(JSON.stringify({smoke:'passed',page,processorReady:typeof info.busy==='boolean'}));
