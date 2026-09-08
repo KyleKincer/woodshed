@@ -118,7 +118,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
         const {default: Stretch} = await import(url);
         Stretch.moduleUrl = url;
         // Offline rendering verifies PCM without depending on a CI runner's
-        // physical audio device (Intel macOS runners may have none).
+        // physical audio device on CI runners.
         const ctx = new OfflineAudioContext(2, 96000, 48000);
         const source = await Stretch(ctx, {numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[6],channelCount:6,channelCountMode:'explicit',channelInterpretation:'discrete'});
         const tone = Float32Array.from({length:ctx.sampleRate*3},(_,i)=>Math.sin(2*Math.PI*440*i/ctx.sampleRate)*0.2);

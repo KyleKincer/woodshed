@@ -20,9 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.platforms || '[{"os":"ubuntu-22.04","platform":"linux","arch":"x64"},{"os":"windows-2022","platform":"win","arch":"x64"},{"os":"macos-14","platform":"mac","arch":"arm64"},{"os":"macos-15-intel","platform":"mac","arch":"x64"}]') }}
+        include: ${{ fromJSON(inputs.platforms || '[{"os":"ubuntu-22.04","platform":"linux","arch":"x64"},{"os":"windows-2022","platform":"win","arch":"x64"},{"os":"macos-14","platform":"mac","arch":"arm64"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Validate supported architecture
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: test '${{ matrix.arch }}' = 'arm64'
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

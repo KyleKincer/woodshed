@@ -10,7 +10,7 @@ const collector=path.resolve(__dirname,'../scripts/collect-release.mjs');
 function fixture(){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'woodshed-release-test-'));
   const source=path.join(root,'artifacts');
-  for(const [platform,arch,extension,manifest] of [['mac','arm64','zip','latest-mac.yml'],['mac','x64','zip','latest-mac.yml'],['linux','x64','AppImage','latest-linux.yml'],['win','x64','exe','latest.yml']]){
+  for(const [platform,arch,extension,manifest] of [['mac','arm64','zip','latest-mac.yml'],['linux','x64','AppImage','latest-linux.yml'],['win','x64','exe','latest.yml']]){
     const dir=path.join(source,platform+'-'+arch);fs.mkdirSync(dir,{recursive:true});
     const name=`Woodshed-1.1.0-${platform}-${arch}.${extension}`;
     const data=Buffer.from(name);fs.writeFileSync(path.join(dir,name),data);
@@ -18,18 +18,24 @@ function fixture(){
   }
   return {root,source,target:path.join(root,'release')};
 }
-test('release metadata keeps both Mac architectures with verified installers',()=>{
+test('release metadata keeps the Apple Silicon installer with verified installers',()=>{
   const f=fixture();try{
     execFileSync(process.execPath,[collector,f.source,f.target]);
     const mac=yaml.load(fs.readFileSync(path.join(f.target,'latest-mac.yml'),'utf8'));
-    assert.equal(mac.files.length,2);
+    assert.equal(mac.files.length,1);
     assert(mac.files.some(file=>file.url.includes('arm64')));
-    assert(mac.files.some(file=>file.url.includes('x64')));
+    assert(!mac.files.some(file=>file.url.includes('x64')));
   }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
 test('release collection refuses an installer that disagrees with its update checksum',()=>{
   const f=fixture();try{
     fs.appendFileSync(path.join(f.source,'win-x64','Woodshed-1.1.0-win-x64.exe'),'tampered');
     assert.throws(()=>execFileSync(process.execPath,[collector,f.source,f.target],{stdio:'pipe'}),/Update checksum mismatch/);
+  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('release collection refuses stale Intel Mac installers',()=>{
+  const f=fixture();try{
+    fs.writeFileSync(path.join(f.source,'mac-arm64','Woodshed-1.4.3-mac-x64.zip'),'stale');
+    assert.throws(()=>execFileSync(process.execPath,[collector,f.source,f.target],{stdio:'pipe'}),/Intel macOS installers are no longer supported/);
   }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });

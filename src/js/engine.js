@@ -27,6 +27,7 @@ export class MultitrackEngine {
     this.playRequest = 0;
     this.revision = 0;
     this.pausedAt = 0;
+    this.countIn = null;
 
     this.loop = { enabled: false, a: 0, b: 0 };
     this.onEnded = null;
@@ -147,16 +148,20 @@ export class MultitrackEngine {
 
   getPositionAt(time) {
     if (!this.playing || !this.segments.length) return this.pausedAt;
+    if (this.countIn && time < this.countIn.endWhen) {
+      const c = this.countIn;
+      return c.audible ? Math.max(0, c.target - c.duration + Math.max(0, time - c.startWhen) * c.rate) : c.target;
+    }
     return this._positionIn(this._segmentAt(time), time);
   }
 
   getPosition() { return this.getPositionAt(this.ctx.currentTime); }
+  get countingIn() { return this.playing && !!this.countIn && this.ctx.currentTime < this.countIn.endWhen; }
 
   // Cancel an unrendered change when a control is moved again. Project the
   // currently audible segment forward, never accumulated time from old loops.
-  _schedule(offset) {
+  _schedule(offset, when = this.ctx.currentTime + this.lookahead) {
     const now = this.ctx.currentTime;
-    const when = now + this.lookahead;
     const current = this._segmentAt(now);
     const pending = this.segments.find(s => s.when > now);
     const seekOffset = offset ?? pending?.seekOffset;
@@ -206,7 +211,7 @@ export class MultitrackEngine {
     return when;
   }
 
-  async play() {
+  async play({countIn = null, audiblePreRoll = false} = {}) {
     if (this.playing || this.destroyed || !this.tracks.length) return;
     const request = ++this.playRequest;
     if (this.ctx.state === 'suspended') await this.ctx.resume();
@@ -214,7 +219,17 @@ export class MultitrackEngine {
     let offset = this.pausedAt;
     if (offset >= this.duration) offset = 0;
     this.segments = [];
-    const when = this._schedule(offset);
+    this.countIn = null;
+    let when = this.ctx.currentTime + this.lookahead;
+    if (countIn?.duration > 0) {
+      const startWhen = when;
+      const endWhen = startWhen + countIn.duration / this.rate;
+      this.countIn = {...countIn, target: offset, startWhen, endWhen, rate: this.rate, audible: audiblePreRoll};
+      const startOffset = offset - countIn.duration;
+      when = audiblePreRoll ? startWhen + Math.max(0, -startOffset) / this.rate : endWhen;
+      offset = audiblePreRoll ? Math.max(0, startOffset) : offset;
+    }
+    this._schedule(offset, when);
     this.master.gain.cancelScheduledValues(this.ctx.currentTime);
     this.master.gain.setValueAtTime(0, this.ctx.currentTime);
     this.master.gain.setValueAtTime(1, when);
@@ -225,7 +240,8 @@ export class MultitrackEngine {
     this.playRequest++;
     if (!this.playing) return;
     const pendingSeek = this.segments.find(s => s.when > this.ctx.currentTime && s.seekOffset != null);
-    this.pausedAt = pendingSeek ? pendingSeek.offset : this.getPosition();
+    this.pausedAt = this.countingIn ? this.countIn.target : pendingSeek ? pendingSeek.offset : this.getPosition();
+    this.countIn = null;
     this.playing = false;
     this.segments = [];
     this.master.gain.cancelScheduledValues(this.ctx.currentTime);
@@ -242,6 +258,7 @@ export class MultitrackEngine {
 
   seek(time) {
     if (!Number.isFinite(time)) return;
+    if (this.countingIn) this.pause();
     let position = Math.max(0, Math.min(time, this.duration));
     if (this.loop.enabled && position >= this.loop.b) position = this.loop.a;
     if (this.playing) this._schedule(position);
@@ -251,17 +268,20 @@ export class MultitrackEngine {
 
   setSpeed(rate) {
     if (!Number.isFinite(rate)) return;
+    if (this.countingIn) this.pause();
     this.rate = Math.max(0.5, Math.min(1.5, rate));
     if (this.playing) this._schedule();
   }
 
   setPreservePitch(enabled) {
+    if (this.countingIn) this.pause();
     this.preservePitch = !!enabled;
     if (this.playing) this._schedule();
   }
 
   setLoop(enabled, a = this.loop.a, b = this.loop.b) {
     if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+    if (this.countingIn) this.pause();
     a = Math.max(0, Math.min(a, this.duration));
     b = Math.max(0, Math.min(b, this.duration));
     this.loop = { enabled: !!enabled && b - a >= 0.02, a, b };
@@ -295,7 +315,7 @@ export class MultitrackEngine {
 
   tickEnd() {
     const segment = this._segmentAt(this.ctx.currentTime);
-    if (this.playing && segment && !segment.loop.enabled && this.getPosition() >= this.duration) {
+    if (this.playing && !this.countingIn && segment && !segment.loop.enabled && this.getPosition() >= this.duration) {
       this.pause();
       this.pausedAt = this.duration;
       this.onEnded?.();

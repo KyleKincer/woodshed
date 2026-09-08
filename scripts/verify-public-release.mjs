@@ -10,7 +10,7 @@ const yaml = require('js-yaml');
 
 const installers = {
   linux: [/-linux-(?:x64|x86_64)\.AppImage$/],
-  darwin: [/-mac-arm64\.zip$/, /-mac-x64\.zip$/],
+  darwin: [/-mac-arm64\.zip$/],
   win32: [/-win-x64\.exe$/],
 };
 
