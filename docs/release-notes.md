@@ -1,4 +1,11 @@
-Woodshed 1.4.3 improves timeline navigation, count-in, and keyboard transport.
+Woodshed 1.4.4 refreshes the app icon and desktop download experience.
+
+- A new cobalt-blue and ivory W icon matches Woodshed’s current styling across the desktop app, browser tab, and saved web shortcuts.
+- The download page detects macOS, Windows, and Linux and offers the matching installer directly. All supported installers, including the Mac ZIP, appear on the Woodshed site with file sizes and version details.
+- Phones and tablets open the web player by default, with desktop downloads available on the same page. Mac downloads clearly require Apple Silicon.
+- Downloads follow the current published release, with a saved set of verified installers available if the release lookup is temporarily unavailable.
+
+Includes the navigation, count-in, and keyboard improvements from 1.4.3:
 
 - macOS releases now support Apple Silicon (arm64) only. Windows and Linux builds continue.
 - Panning stops cleanly at either song boundary without changing zoom. Horizontal trackpad gestures retain their direction through momentum, and wheel units are normalized across devices.

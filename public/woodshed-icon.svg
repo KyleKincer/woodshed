@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Woodshed</title>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="#174bd1"/>
+  <path d="M202 304h128l62 286 64-232h112l64 232 62-286h128L704 720H570l-58-211-58 211H320Z" fill="#f8f7f1"/>
+</svg>

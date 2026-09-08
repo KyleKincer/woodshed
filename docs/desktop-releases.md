@@ -10,6 +10,15 @@ MAC_CSC_LINK, MAC_CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
 APPLE_TEAM_ID secrets. macOS release builds fail if these are missing.
 Windows is unsigned until a Windows certificate is configured.
 
+The `/download` page uses the same-origin `/api/downloads` endpoint to find the
+latest public release, cached for one minute. `public/downloads.json` is the
+verified fallback manifest; update it from a published release when needed.
+Installer links point directly to GitHub’s attachment URLs. macOS browsers do
+not reliably expose CPU architecture, so the page explicitly labels Apple Silicon.
+
+The icon source is `public/woodshed-icon.svg`. Desktop uses the matching 1024px
+`desktop/icon.png`; the browser uses the SVG plus PNG and Apple touch fallbacks.
+
 Updates use electron-updater and public GitHub Releases. The app checks 15 seconds after startup, every six hours, and after an overdue
 wake from sleep. A native prompt appears once per available version and again
 when its download is ready; prompts wait until Woodshed is focused. Dismissing

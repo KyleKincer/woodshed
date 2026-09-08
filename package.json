@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "type": "module",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
