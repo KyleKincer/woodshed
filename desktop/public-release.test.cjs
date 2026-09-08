@@ -5,7 +5,7 @@ async function fixture() {
   const { verifyPublicRelease } = await import('../scripts/verify-public-release.mjs');
   const names = {
     linux: ['Woodshed-1.4.0-linux-x86_64.AppImage'],
-    darwin: ['Woodshed-1.4.0-mac-arm64.zip', 'Woodshed-1.4.0-mac-x64.zip'],
+    darwin: ['Woodshed-1.4.0-mac-arm64.zip'],
     win32: ['Woodshed-1.4.0-win-x64.exe'],
   };
   const feeds = Object.fromEntries(Object.entries(names).map(([platform, files]) => [platform, {
@@ -26,7 +26,7 @@ test('public verification requires the new release on every platform', async () 
   await assert.rejects(f.verify(), /public updater sees 1.3.0, expected 1.4.0/);
 });
 
-test('public verification rejects a missing Mac updater architecture', async () => {
+test('public verification rejects a missing Apple Silicon updater installer', async () => {
   const f = await fixture();
   f.feeds.darwin.files.pop();
   await assert.rejects(f.verify(), /missing updater installer/);

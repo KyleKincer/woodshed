@@ -5,6 +5,7 @@ import SignalsmithStretch from 'signalsmith-stretch';
 vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuffer(0))}));
 import { MultitrackEngine } from '../src/js/engine.js';
 import { buildBarIndex, barPosition } from '../src/js/musical-position.js';
+import { Metronome } from '../src/js/metronome.js';
 let engine;
 beforeEach(() => {
   const param = () => ({cancelScheduledValues:vi.fn(), setValueAtTime:vi.fn(), setTargetAtTime:vi.fn()});
@@ -133,4 +134,84 @@ test('loading creates one discrete phase-linked processor with separate stereo r
     [engine.tracks[0].merger,0,0],[engine.tracks[0].merger,1,1],
     [engine.tracks[1].merger,2,0],[engine.tracks[1].merger,3,1],
   ]);
+});
+
+test('silent count-in schedules playback exactly after its clicks at the current rate', async () => {
+  engine.seek(10); engine.setSpeed(0.5);
+  await engine.play({countIn:{duration:4,beats:[{offset:0,downbeat:true}]}});
+  const start = engine.lookahead, end = start + 8;
+  expect(engine.countingIn).toBe(true);
+  expect(engine.getPosition()).toBe(10);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({input:10,output:end,rate:0.5});
+  engine.ctx.currentTime = end;
+  expect(engine.countingIn).toBe(false);
+  expect(engine.getPosition()).toBe(10);
+  advance(2); expect(engine.getPosition()).toBe(11);
+});
+test('audible pre-roll plays into a loop without changing its boundaries', async () => {
+  engine.setLoop(true,10,12); engine.seek(10);
+  await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+  settle(); expect(engine.getPosition()).toBe(6);
+  expect([...engine.tracks[0].nativeSources][0].source.start.mock.lastCall).toEqual([engine.lookahead,6]);
+  advance(4); expect(engine.getPosition()).toBe(10);
+  advance(3); expect(engine.getPosition()).toBe(11);
+  expect(engine.loop).toEqual({enabled:true,a:10,b:12});
+});
+test('pre-roll before song start retains a full count-in with silence for unavailable audio', async () => {
+  engine.seek(1);
+  await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+  expect([...engine.tracks[0].nativeSources][0].source.start.mock.lastCall).toEqual([engine.lookahead+3,0]);
+  settle(); advance(2); expect(engine.getPosition()).toBe(0);
+  advance(2); expect(engine.getPosition()).toBe(1);
+});
+test('cancel, seek, and speed changes during count-in cannot leave a delayed start armed', async () => {
+  engine.seek(10);
+  await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+  settle();advance(1);engine.pause();
+  expect(engine.getPosition()).toBe(10);expect(engine.countIn).toBeNull();
+  advance(10); expect(engine.playing).toBe(false);
+  await engine.play({countIn:{duration:4,beats:[]}}); engine.seek(30);
+  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
+  await engine.play({countIn:{duration:4,beats:[]}});engine.setSpeed(0.75);
+  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
+});
+test('count-in supports bars and beats, legacy defaults, and persisted audible pre-roll', () => {
+  const metro = new Metronome(engine);
+  metro.load({countIn:true,map:[{t:0,bpm:120,beatsPerBar:3,unit:4}]});
+  expect(metro.countInPlan()).toEqual({duration:1.5,beats:[{offset:0,downbeat:true},{offset:0.5,downbeat:false},{offset:1,downbeat:false}]});
+  expect(metro.audiblePreRoll).toBe(false);
+  metro.setCountInLength(2);
+  expect(metro.countInPlan().duration).toBe(3);
+  metro.setCountInUnit('beats');metro.setAudiblePreRoll(true);
+  expect(metro.countInPlan().duration).toBe(1);
+  const other = new Metronome(engine);other.load(metro.serialize());
+  expect(other.serialize()).toMatchObject({countInLength:2,countInUnit:'beats',audiblePreRoll:true});
+  metro.destroy();other.destroy();
+});
+test('count-in clicks work with the metronome off and stop immediately on cancellation', async () => {
+  const metro = new Metronome(engine);
+  metro._click = vi.fn();
+  await engine.play({countIn:metro.countInPlan()});
+  metro.tick();expect(metro._click).toHaveBeenCalledWith(engine.lookahead,true);
+  metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
+  const stop = vi.fn();metro._scheduledClicks.add({stop});engine.pause();metro.tick();
+  expect(stop).toHaveBeenCalled();
+  advance(3);metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
+  metro.destroy();
+});
+test('detected count-in at the end uses the final local tempo and meter', () => {
+  const metro = new Metronome(engine);
+  metro.setDetected([[1,1],[1.5,2],[2,3],[2.5,1],[2.75,2],[3,3],[3.25,1],[3.5,2],[3.75,3]]);
+  engine.seek(3.8);
+  expect(metro.countInPlan().duration).toBe(0.75);
+  metro.destroy();
+});
+test('count-in follows tempo changes and extrapolates clicks beyond a detected grid', () => {
+  const metro = new Metronome(engine);
+  metro.setDetected([[0,1],[0.5,2],[1,3],[1.5,1],[2.5,2],[3.5,3],[4.5,1]]);
+  metro.setCountInUnit('beats');metro.setCountInLength(4);engine.seek(4.5);
+  expect(metro.countInPlan().duration).toBe(3.5);
+  engine.seek(10.5);
+  expect(metro.countInPlan().beats).toHaveLength(4);
+  metro.destroy();
 });

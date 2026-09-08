@@ -2,7 +2,7 @@
 
 The Electron app includes a frozen Python 3.11 CPU processing runtime, yt-dlp,
 Demucs, BeatNet, Node.js, FFmpeg and ffprobe. Model weights download on first
-use. Linux AppImage, macOS DMG + updater ZIP (Intel and Apple Silicon), and
+use. Linux AppImage, macOS DMG + updater ZIP (Apple Silicon only), and
 Windows NSIS installers are built on their native GitHub Actions runners.
 
 Apple Developer ID signing and notarization use the repository's existing
@@ -18,8 +18,7 @@ and restart requires a separate confirmation. Playback and processing do not
 block updates. The restart dialog warns when processing will be cancelled;
 that cancellation is recorded locally and synced before processing resumes
 after relaunch, including after an offline restart. Quitting does not silently install. Settings and the native menu offer update checks.
-Draft releases are invisible to installed clients. The release collector merges
-both Mac architectures into latest-mac.yml and verifies every listed SHA-512.
+Draft releases are invisible to installed clients. The release collector writes the Apple Silicon installer to latest-mac.yml and verifies every listed SHA-512. Intel macOS builds are no longer supported starting with 1.4.3.
 After upload, tag builds publish the complete release and verify all three public
 update feeds through electron-updater's GitHub provider, including installer
 availability and sizes. Publication verification uses no GitHub credentials,

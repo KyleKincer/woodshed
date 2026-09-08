@@ -8,6 +8,7 @@ await mkdir(target,{recursive:true});
 const metadata=new Map();
 for(const dir of await readdir(source)){
   for(const name of await readdir(path.join(source,dir))){
+    if (/-mac-x64\./.test(name)) throw Error('Intel macOS installers are no longer supported');
     const file=path.join(source,dir,name);
     if(/^latest.*\.yml$/.test(name)){
       const next=yaml.load(await readFile(file,'utf8'));

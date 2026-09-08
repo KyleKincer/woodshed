@@ -4,6 +4,8 @@ import { arrangePlayerControls } from './player-layout.js';
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
 import { buildBarIndex, barPosition } from './musical-position.js';
+import { boundedView, wheelNavigation } from './timeline-navigation.js';
+import { isPointerControl } from './interactions.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
 import * as backend from './backend.js';
 import { codecErrorMessage, isDecodeError } from './stemcache.js';
@@ -126,6 +128,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
           <button class="toggle-btn sm" id="zoom-out">−</button>
           <button class="toggle-btn sm" id="zoom-in">+</button>
           <button class="toggle-btn sm" id="zoom-fit">Fit</button>
+          <button class="toggle-btn sm on" id="follow-playhead" aria-pressed="true" title="Follow the playhead during playback; scrolling pauses follow">Follow</button>
           <button class="toggle-btn sm ${overviewOpen ? 'on' : ''}" id="mini-toggle" title="Toggle song overview">Overview</button>
         </div>
 
@@ -162,10 +165,19 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
         <div class="mp-row">
           <button class="toggle-btn sm" id="m-setdown">Set downbeat at playhead</button>
           <label class="mp-check"><input type="checkbox" id="m-accent" checked /> Accent</label>
-          <label class="mp-check"><input type="checkbox" id="m-countin" /> Count-in</label>
           <span class="t-label">Vol</span>
           <input type="range" id="m-vol" min="0" max="1" step="0.01" value="0.7" />
         </div>
+        <fieldset class="mp-countin">
+          <legend>Count-in &amp; pre-roll</legend>
+          <div class="mp-row">
+            <label class="mp-check"><input type="checkbox" id="m-countin" /> Count-in</label>
+            <input id="m-countin-length" aria-label="Count-in length" type="number" min="1" max="16" step="1" value="1" />
+            <select id="m-countin-unit" aria-label="Count-in unit"><option value="bars">Bars</option><option value="beats">Beats</option></select>
+            <label class="mp-check"><input type="checkbox" id="m-preroll" /> Audible pre-roll</label>
+          </div>
+          <p>Hear the song leading up to your start point. Off gives clicks only. Space cancels the count-in.</p>
+        </fieldset>
         <div class="mp-row mp-detect">
           <button class="toggle-btn" id="m-detect">Detect beats</button>
           <span class="mp-detect-status" id="m-detect-status">Manual tempo</span>
@@ -421,7 +433,7 @@ export async function openPlayer(song) {
     }
     return clamp(best, 0, duration);
   }
-  function seekTo(t) { engine.seek(snapTime(t)); }
+  function seekTo(t) { engine.seek(snapTime(t)); setFollow(true); }
   function tipText(t) { return shouldSnapToGrid() ? `${fmt2(t)} grid` : fmt2(t); }
   function drawGrid() {
     if (!isCurrent()) return;
@@ -526,10 +538,7 @@ export async function openPlayer(song) {
 
   // ---- zoom & pan ----
   function setView(start, end) {
-    let s = clamp(start, 0, duration);
-    let e = clamp(end, s + MIN_SPAN, duration);
-    if (e - s < MIN_SPAN) s = clamp(e - MIN_SPAN, 0, duration);
-    view.start = s; view.end = e;
+    Object.assign(view, boundedView(start, end, duration, MIN_SPAN));
     scheduleWaveforms();
     updateLoopOverlay();
   }
@@ -540,6 +549,14 @@ export async function openPlayer(song) {
   }
   function panBy(dt) { const sp = span(); setView(view.start + dt, view.start + dt + sp); }
   function fit() { setView(0, duration); }
+  let follow = true;
+  const followButton = document.getElementById('follow-playhead');
+  function setFollow(enabled) {
+    follow = enabled;
+    followButton.classList.toggle('on', enabled);
+    followButton.setAttribute('aria-pressed', String(enabled));
+  }
+  followButton.onclick = () => setFollow(!follow);
 
   document.getElementById('zoom-in').onclick = () => zoomAt((view.start + view.end) / 2, 0.5);
   document.getElementById('zoom-out').onclick = () => zoomAt((view.start + view.end) / 2, 2);
@@ -574,13 +591,18 @@ export async function openPlayer(song) {
   refreshGridUI();
 
   // Wheel: zoom at cursor; shift / horizontal = pan.
+  const interpretWheel = wheelNavigation();
+  interact.title = 'Scroll to zoom · horizontal scroll or Shift-scroll to pan · pinch to zoom';
   interact.addEventListener('wheel', (e) => {
     e.preventDefault();
-    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-      panBy(((e.deltaX || e.deltaY) / waveW()) * span());
+    const {mode, delta} = interpretWheel(e, waveW());
+    if (!delta) return;
+    if (engine.playing) setFollow(false);
+    if (mode === 'pan') {
+      panBy((delta / waveW()) * span());
     } else {
       const r = interact.getBoundingClientRect();
-      zoomAt(xToTime(e.clientX - r.left), Math.exp(e.deltaY * 0.0015));
+      zoomAt(xToTime(e.clientX - r.left), Math.exp(delta * 0.0015));
     }
   }, { passive: false });
 
@@ -715,6 +737,7 @@ export async function openPlayer(song) {
   });
   function onMiniMove(e) {
     if (!mdrag) return;
+    if (engine.playing) setFollow(false);
     const r = overview.getBoundingClientRect();
     const w = overview.clientWidth;
     const x = clamp(e.clientX - r.left, 0, w);
@@ -724,8 +747,8 @@ export async function openPlayer(song) {
       const dt = ((x - mdrag.startX) / w) * duration;
       const sp = mdrag.ve - mdrag.vs;
       setView(mdrag.vs + dt, mdrag.vs + dt + sp);
-    } else if (mdrag.mode === 'vstart') setView(t, view.end);
-    else if (mdrag.mode === 'vend') setView(view.start, t);
+    } else if (mdrag.mode === 'vstart') setView(Math.min(t, view.end - MIN_SPAN), view.end);
+    else if (mdrag.mode === 'vend') setView(view.start, Math.max(t, view.start + MIN_SPAN));
   }
   function onMiniUp(e) {
     if (!mdrag) return;
@@ -754,7 +777,7 @@ export async function openPlayer(song) {
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
   const barEl = document.getElementById('bar-position');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.playing?'Pause':'Play'); }
+  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.countingIn?'Cancel count-in':engine.playing?'Pause':'Play'); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
 
@@ -842,12 +865,24 @@ export async function openPlayer(song) {
   const mSig = document.getElementById('m-sig');
   const mAccent = document.getElementById('m-accent');
   const mCountin = document.getElementById('m-countin');
+  const mCountinLength = document.getElementById('m-countin-length');
+  const mCountinUnit = document.getElementById('m-countin-unit');
+  const mPreroll = document.getElementById('m-preroll');
   const mVol = document.getElementById('m-vol');
   const mList = document.getElementById('m-list');
   mSig.innerHTML = TIME_SIGS.map((s) => `<option value="${s}">${s}</option>`).join('');
 
   let saveTimer = null;
-  function persistTempo() { clearTimeout(saveTimer); saveTimer = setTimeout(() => backend.saveTempo(song.id, metronome.serialize()), 400); }
+  const songMetronome = metronome;
+  let tempoDirty = false;
+  function flushTempo() {
+    clearTimeout(saveTimer);
+    if (!tempoDirty) return;
+    tempoDirty = false;
+    backend.saveTempo(song.id, songMetronome.serialize()).catch(error => console.error('Could not sync count-in and tempo settings:', error));
+  }
+  function persistTempo() { tempoDirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(flushTempo, 400); }
+  cleanupFns.push(flushTempo);
   const activeSection = () => metronome.sectionAt(engine.getPosition());
   const metroActiveIndex = () => { const t = engine.getPosition(); let idx = 0; metronome.map.forEach((s, i) => { if (s.t <= t + 1e-6) idx = i; }); return idx; };
 
@@ -857,6 +892,10 @@ export async function openPlayer(song) {
     mSig.value = `${s.beatsPerBar}/${s.unit}`;
     mAccent.checked = metronome.accent;
     mCountin.checked = metronome.countIn;
+    mCountinLength.value = metronome.countInLength;
+    mCountinUnit.value = metronome.countInUnit;
+    mPreroll.checked = metronome.audiblePreRoll;
+    for (const control of [mCountinLength, mCountinUnit, mPreroll]) control.disabled = !metronome.countIn;
     mVol.value = metronome.volume;
     mOnoff.textContent = metronome.enabled ? 'On' : 'Off';
     mOnoff.classList.toggle('on', metronome.enabled);
@@ -905,6 +944,9 @@ export async function openPlayer(song) {
   document.getElementById('m-setdown').onclick = () => metronome.setDownbeatAt(engine.getPosition());
   mAccent.onchange = () => metronome.setAccent(mAccent.checked);
   mCountin.onchange = () => metronome.setCountIn(mCountin.checked);
+  mCountinLength.onchange = () => metronome.setCountInLength(mCountinLength.value);
+  mCountinUnit.onchange = () => metronome.setCountInUnit(mCountinUnit.value);
+  mPreroll.onchange = () => metronome.setAudiblePreRoll(mPreroll.checked);
   mVol.oninput = () => metronome.setVolume(parseFloat(mVol.value));
   document.getElementById('m-add').onclick = () => { const s = activeSection(); metronome.addChangeAt(engine.getPosition(), s.bpm, s.beatsPerBar, s.unit); };
 
@@ -975,12 +1017,18 @@ export async function openPlayer(song) {
   document.getElementById('be-shl').onclick = () => metronome.shiftAll(-0.01);
   document.getElementById('be-shr').onclick = () => metronome.shiftAll(0.01);
 
+  let startingPlayback = false, playAction = 0;
   async function doPlayPause() {
-    if (engine.playing) { engine.pause(); setPlayIcon(); return; }
-    if (metronome.enabled && metronome.countIn) {
-      playBtn.disabled = true;
-      metronome.countInThenPlay(async () => { await engine.play(); playBtn.disabled = false; setPlayIcon(); });
-    } else { await engine.play(); setPlayIcon(); }
+    const active = engine, metro = metronome;
+    if (active.playing || startingPlayback) { ++playAction; startingPlayback = false; active.pause(); metro.tick(); setPlayIcon(); return; }
+    setFollow(true);
+    const action = ++playAction;
+    startingPlayback = true;
+    try { await active.play({countIn: metro.countIn ? metro.countInPlan() : null, audiblePreRoll: metro.audiblePreRoll}); }
+    finally { if (action === playAction) startingPlayback = false; }
+    if (!isCurrent() || action !== playAction) return;
+    if (metro.countIn || metro.enabled) metro.start();
+    setPlayIcon();
   }
   playBtn.onclick = doPlayPause;
 
@@ -1011,7 +1059,7 @@ export async function openPlayer(song) {
   function frame() {
     const pos = engine.getPosition();
     // auto-scroll the view to keep the playhead visible while playing
-    if (engine.playing && (pos < view.start || pos > view.end)) {
+    if (engine.playing && follow && (pos < view.start || pos > view.end)) {
       const sp = span();
       setView(pos - sp * 0.1, pos - sp * 0.1 + sp);
     }
@@ -1020,7 +1068,8 @@ export async function openPlayer(song) {
     playhead.style.display = pos >= view.start && pos <= view.end ? 'block' : 'none';
     playhead.style.left = clamp(x, 0, w) + 'px';
     miniPlay.style.left = (pos / duration) * overview.clientWidth + 'px';
-    timeEl.textContent = `${fmt2(pos)} / ${fmt(duration)}`;
+    timeEl.textContent = engine.countingIn ? `Count-in · ${Math.max(1, Math.ceil(engine.countIn.endWhen - engine.ctx.currentTime))}s` : `${fmt2(pos)} / ${fmt(duration)}`;
+    setPlayIcon();
     updateBarPosition(pos);
     // Keep the metronome popover's active-section display in sync as the
     // playhead crosses tempo changes (cheap; only when the popover is open).
@@ -1036,15 +1085,18 @@ export async function openPlayer(song) {
 
   // ---- keyboard ----
   keyHandler = (e) => {
-    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
+    if (e.code === 'Space' && isPointerControl(e.target) && !e.target.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),textarea,[contenteditable]')) {
+      e.preventDefault(); if (!e.repeat) doPlayPause(); return;
+    }
     if (e.target.closest('input,select,textarea,[contenteditable]')) return;
     if (e.target.closest('button,a[href],summary,[role="button"]') && (e.code === 'Space' || e.key === 'Enter')) return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
-    if (e.code === 'Space') { e.preventDefault(); doPlayPause(); }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) doPlayPause(); }
     else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (k.toLowerCase() === 'g') gridToggle.click();
     else if (k.toLowerCase() === 's') gridSnap.click();
@@ -1055,8 +1107,8 @@ export async function openPlayer(song) {
     else if (k === '[') { const t = snapTime(engine.getPosition()); engine.setLoop(true, t, Math.max(engine.loop.b, t + 0.1)); setLoopBtn(true); updateLoopOverlay(); }
     else if (k === ']') { const t = snapTime(engine.getPosition()); engine.setLoop(true, Math.min(engine.loop.a, t - 0.1), t); setLoopBtn(true); updateLoopOverlay(); }
     else if (k.toLowerCase() === 'l') loopToggle.click();
-    else if (k === 'Home') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) seekTo(engine.loop.a); }
-    else if (k === 'End') { if (engine.loop.enabled && engine.loop.b > engine.loop.a) seekTo(engine.loop.b); }
+    else if (k === 'Home') { e.preventDefault(); seekTo(engine.loop.enabled ? engine.loop.a : 0); }
+    else if (k === 'End') { e.preventDefault(); seekTo(engine.loop.enabled ? Math.max(engine.loop.a, engine.loop.b - 0.001) : duration); }
     else if (k === '-' || k === '_') zoomAt(engine.getPosition(), 2);
     else if (k === '=' || k === '+') zoomAt(engine.getPosition(), 0.5);
     else if (k === '\\') fit();

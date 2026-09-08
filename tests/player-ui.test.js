@@ -11,17 +11,21 @@ vi.mock('../src/js/engine.js', () => ({MultitrackEngine:class {
   constructor(){state.engines.push(this);}
   async loadStems(){await state.load;return {duration:10,tracks:this.tracks};}
   getPosition=()=>0; tickEnd=()=>{}; destroy=vi.fn();
+  play=vi.fn(async()=>{this.playing=true;}); pause=vi.fn(()=>{this.playing=false;});
   setSpeed(value){this.rate=value;} setPreservePitch(value){this.preservePitch=value;}
   setLoop(enabled,a,b){this.loop={enabled,a,b};}
   setVolume(){} toggleMute(){} toggleSolo(){}
 }}));
 import {openPlayer,closePlayer} from '../src/js/player.js';
+import {initializeInteractions} from '../src/js/interactions.js';
+initializeInteractions();
 const song={id:'s',title:'Song',duration:10,stems:[{name:'drums',key:'d'}],practice:{rate:0.75}};
 beforeEach(()=>{
   document.body.innerHTML='<div id="header-song"></div><div id="player-root"></div>';
   song.practice={rate:0.75};
   localStorage.clear();state.engines=[];state.load=Promise.resolve();
   globalThis.ResizeObserver=class {observe(){}disconnect(){}};
+  HTMLCanvasElement.prototype.getContext=()=>new Proxy({}, {get:(target,key)=>target[key]??(()=>{}),set:(target,key,value)=>{target[key]=value;return true;}});
   globalThis.requestAnimationFrame=()=>1;globalThis.cancelAnimationFrame=()=>{};
 });
 afterEach(()=>closePlayer());
@@ -74,4 +78,45 @@ test('busy song containers cannot acquire an in-flow action spinner',()=>{
   const rules=css.split('}').filter(rule=>rule.includes('[aria-busy=true]::before'));
   expect(rules.length).toBeGreaterThan(0);
   expect(rules.every(rule=>rule.includes('button[aria-busy=true]::before'))).toBe(true);
+});
+
+test('pointer-clicked checkboxes and sliders release Space to transport, without key-repeat toggling',async()=>{
+  await openPlayer(song);
+  for (const id of ['m-accent','speed','preserve-pitch']) {
+    const control=document.getElementById(id);
+    control.focus();control.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
+    await Promise.resolve();
+    const e=new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:' ',code:'Space'});
+    document.activeElement.dispatchEvent(e);await Promise.resolve();
+    expect(e.defaultPrevented).toBe(true);
+    const repeat=new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:' ',code:'Space',repeat:true});
+    document.activeElement.dispatchEvent(repeat);await Promise.resolve();
+  }
+  expect(state.engines[0].play).toHaveBeenCalledTimes(2);
+  expect(state.engines[0].pause).toHaveBeenCalledTimes(1);
+});
+test('text entry, dialogs, and keyboard-focused checkboxes retain their keyboard behavior',async()=>{
+  await openPlayer(song);
+  for (const id of ['m-bpm','m-accent']) {
+    document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));
+    const control=document.getElementById(id);control.focus();
+    const e=new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:' ',code:'Space'});
+    control.dispatchEvent(e);expect(e.defaultPrevented).toBe(false);
+  }
+  document.body.insertAdjacentHTML('beforeend','<div role="dialog"></div>');
+  document.body.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:' ',code:'Space'}));
+  expect(state.engines[0].play).not.toHaveBeenCalled();
+});
+test('count-in controls default to silent, allow custom units, and persist on immediate navigation',async()=>{
+  const backend=await import('../src/js/backend.js');
+  await openPlayer(song);document.getElementById('metro-btn').click();
+  const enabled=document.getElementById('m-countin');
+  expect(document.getElementById('m-preroll').checked).toBe(false);
+  enabled.checked=true;enabled.dispatchEvent(new Event('change'));
+  const length=document.getElementById('m-countin-length'), unit=document.getElementById('m-countin-unit');
+  expect(length.disabled).toBe(false);
+  length.value='3';length.dispatchEvent(new Event('change'));
+  unit.value='beats';unit.dispatchEvent(new Event('change'));
+  closePlayer();
+  expect(backend.saveTempo).toHaveBeenLastCalledWith('s',expect.objectContaining({countIn:true,countInLength:3,countInUnit:'beats',audiblePreRoll:false}));
 });

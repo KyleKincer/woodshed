@@ -18,6 +18,9 @@ export class Metronome {
     this.accent = true;
     this.volume = 0.7;
     this.countIn = false;
+    this.countInLength = 1;
+    this.countInUnit = 'bars';
+    this.audiblePreRoll = false;
     this.map = [{ t: 0, bpm: 120, beatsPerBar: 4, unit: 4 }];
     this.source = 'map';   // 'map' (manual tempo map) | 'detected' (BeatNet)
     this.detected = null;  // [{ time, downbeat }]
@@ -38,6 +41,9 @@ export class Metronome {
     if (typeof tempo.accent === 'boolean') this.accent = tempo.accent;
     if (typeof tempo.volume === 'number') this.volume = tempo.volume;
     if (typeof tempo.countIn === 'boolean') this.countIn = tempo.countIn;
+    this.countInLength = Math.max(1, Math.min(16, Math.round(+tempo.countInLength || 1)));
+    this.countInUnit = tempo.countInUnit === 'beats' ? 'beats' : 'bars';
+    this.audiblePreRoll = tempo.audiblePreRoll === true;
     if (Array.isArray(tempo.detected) && tempo.detected.length) this.detected = tempo.detected;
     if (tempo.source === 'detected' && this.detected) this.source = 'detected';
     this.recompute();
@@ -47,6 +53,7 @@ export class Metronome {
   serialize() {
     return {
       map: this.map, accent: this.accent, volume: this.volume, countIn: this.countIn,
+      countInLength: this.countInLength, countInUnit: this.countInUnit, audiblePreRoll: this.audiblePreRoll,
       enabled: this.enabled, source: this.source, detected: this.detected,
     };
   }
@@ -142,23 +149,30 @@ export class Metronome {
   // Re-anchor the active section's downbeat to time t (keeps its tempo/sig).
   setDownbeatAt(t) { this.setSection(t, {}); const s = this.sectionAt(t); s.t = Math.max(0, t); this.recompute(); this._notify(); }
 
-  setAccent(b) { this.accent = b; this._notify(); }
-  setVolume(v) { this.volume = v; this._notify(); }
+  setAccent(b) { this.accent = b; this._notify(false); }
+  setVolume(v) { this.volume = v; this._notify(false); }
   setCountIn(b) { this.countIn = b; this._notify(); }
+  setCountInLength(n) { this.countInLength = Math.max(1, Math.min(16, Math.round(+n || 1))); this._notify(); }
+  setCountInUnit(unit) { this.countInUnit = unit === 'beats' ? 'beats' : 'bars'; this._notify(); }
+  setAudiblePreRoll(b) { this.audiblePreRoll = !!b; this._notify(); }
 
-  _notify() { if (this.onChange) this.onChange(); }
+  _notify(cancelCountIn = true) {
+    if (cancelCountIn && this.engine.countingIn) { this.engine.pause(); this._cancelClicks(); }
+    if (this.onChange) this.onChange();
+  }
 
   // ---- enable + scheduling ------------------------------------------------
   setEnabled(b) {
     this.enabled = b;
-    if (b) this.start(); else this.stop();
-    this._notify();
+    if (b || this.engine.countingIn) this.start(); else this.stop();
+    this._notify(false);
   }
 
   start() {
     if (this._timer) return;
-    this._schedUntil = this.engine.getPosition();
+    this._schedUntil = this.ctx.currentTime;
     this._timer = setInterval(() => this.tick(), 25);
+    this.tick();
   }
   stop() { if (this._timer) clearInterval(this._timer); this._timer = null; this._cancelClicks(); }
 
@@ -174,36 +188,62 @@ export class Metronome {
       this._transportRevision = this.engine.revision;
       this._schedUntil = now;
     }
-    if (!this.enabled || !this.engine.playing) { this._schedUntil = now; return; }
+    if (!this.enabled && !this.engine.countingIn) { this.stop(); return; }
+    if (!this.engine.playing) { this._cancelClicks(); this._schedUntil = now; return; }
     const end = now + 0.12;
-    for (const beat of this.engine.beatsBetween(Math.max(now, this._schedUntil), end, this.beats)) {
-      this._click(beat.when, beat.downbeat && this.accent);
+    const start = Math.max(now, this._schedUntil);
+    const countIn = this.engine.countIn;
+    if (countIn) {
+      for (const beat of countIn.beats) {
+        const when = countIn.startWhen + beat.offset / countIn.rate;
+        if (when >= start && when < end) this._click(when, beat.downbeat && this.accent);
+      }
+    }
+    if (this.enabled) {
+      for (const beat of this.engine.beatsBetween(Math.max(start, countIn?.endWhen ?? start), end, this.beats)) {
+        this._click(beat.when, beat.downbeat && this.accent);
+      }
     }
     this._schedUntil = end;
   }
 
-  // One free bar of clicks before playback; calls onDone when the bar elapses.
-  countInThenPlay(onDone) {
-    const pos = this.engine.getPosition();
+  // Build a media-time lead-in; the engine schedules it on the audio clock.
+  countInPlan() {
+    const pos = this.engine.getPosition() >= this.engine.duration ? 0 : this.engine.getPosition();
     let interval, n;
     if (this.source === 'detected' && this.beats.length > 1) {
-      const idx = Math.max(0, this.beats.findIndex((b) => b.time >= pos));
-      const a = this.beats[idx], b = this.beats[idx + 1] || this.beats[idx];
+      const next = this.beats.findIndex((b) => b.time >= pos);
+      const idx = next < 0 ? this.beats.length - 1 : next;
+      const a = this.beats[Math.max(0, idx - 1)], b = this.beats[Math.max(1, idx)];
       interval = Math.max(0.15, b.time - a.time || 0.5);
       // beats per bar = gap between the two downbeats around the cursor (default 4)
       const dbs = this.beats.filter((x) => x.downbeat).map((x) => x.time);
-      const di = dbs.findIndex((t) => t >= pos);
-      n = di > 0 ? Math.max(1, Math.round((dbs[di] - dbs[di - 1]) / interval)) : 4;
+      const nextDb = dbs.findIndex((t) => t > pos + 1e-6);
+      const di = nextDb < 0 ? dbs.length - 1 : Math.max(1, nextDb);
+      n = di > 0 ? this.beats.filter(b => b.time >= dbs[di - 1] && b.time < dbs[di]).length : this.sectionAt(pos).beatsPerBar;
     } else {
       const s = this.sectionAt(pos);
       interval = 60 / Math.max(20, Math.min(400, s.bpm));
       n = Math.max(1, s.beatsPerBar | 0);
     }
-    interval /= this.engine.rate || 1;
-    const now = this.ctx.currentTime + 0.12;
-    for (let k = 0; k < n; k++) this._click(now + k * interval, k === 0 && this.accent);
-    clearTimeout(this._countInTimer);
-    this._countInTimer = setTimeout(onDone, n * interval * 1000);
+    const count = this.countInLength * (this.countInUnit === 'bars' ? n : 1);
+    const grid = this.beats.length ? this.beats : [{time:pos,downbeat:true}];
+    const firstInterval = grid.length > 1 ? Math.max(0.15, grid[1].time - grid[0].time) : interval;
+    const lastInterval = grid.length > 1 ? Math.max(0.15, grid.at(-1).time - grid.at(-2).time) : interval;
+    const lastDownbeat = grid.findLastIndex(b => b.downbeat);
+    const at = i => i < 0 ? {time:grid[0].time + i * firstInterval,downbeat:i % n === 0}
+      : i >= grid.length ? {time:grid.at(-1).time + (i - grid.length + 1) * lastInterval,downbeat:(i - Math.max(0,lastDownbeat)) % n === 0} : grid[i];
+    let index = grid.findLastIndex(b => b.time <= pos + 1e-6);
+    if (index < 0) index = Math.floor((pos - grid[0].time) / firstInterval);
+    else if (index === grid.length - 1) index += Math.floor((pos - grid.at(-1).time) / lastInterval);
+    const fraction = (pos - at(index).time) / Math.max(0.001, at(index+1).time - at(index).time);
+    const start = at(index-count).time + fraction * (at(index-count+1).time - at(index-count).time);
+    const beats = [];
+    for (let i = index-count; i <= index; i++) {
+      const beat = at(i);
+      if (beat.time >= start - 1e-6 && beat.time < pos - 1e-6) beats.push({offset:Math.max(0,beat.time-start),downbeat:beat.downbeat});
+    }
+    return {duration:pos-start, beats};
   }
 
   _click(ctxTime, accent) {
@@ -223,7 +263,7 @@ export class Metronome {
 
   beatsForView(t0, t1) { return this.beats.filter((b) => b.time >= t0 && b.time <= t1); }
 
-  destroy() { clearTimeout(this._countInTimer); this.stop(); try { this.out.disconnect(); } catch {} }
+  destroy() { this.stop(); try { this.out.disconnect(); } catch {} }
 }
 
 function normSection(s) {

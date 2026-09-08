@@ -174,7 +174,7 @@ npm run build
 npx convex dev --once
 ```
 
-Linux is the initial end-to-end validation target. Native platform CI builds installers for Linux, macOS and Windows. Native mobile clients are future work.
+Linux is the initial end-to-end validation target. Native platform CI builds installers for Linux, macOS on Apple Silicon, and Windows. Native mobile clients are future work.
 
 The existing Vercel integration deploys on pushes to `main`; production
 credentials, allowed auth origins, Google redirect URL and R2 CORS must all

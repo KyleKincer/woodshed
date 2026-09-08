@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-const executable=process.platform==='win32'?'release/win-unpacked/Woodshed.exe':process.platform==='darwin'?`release/mac${process.arch==='arm64'?'-arm64':''}/Woodshed.app/Contents/MacOS/Woodshed`:'release/linux-unpacked/woodshed';
+const executable=process.platform==='win32'?'release/win-unpacked/Woodshed.exe':process.platform==='darwin'?'release/mac-arm64/Woodshed.app/Contents/MacOS/Woodshed':'release/linux-unpacked/woodshed';
 const headless=process.platform==='linux'&&!!process.env.CI;
 const childEnv={...process.env};delete childEnv.ELECTRON_RUN_AS_NODE;
 const child=spawn(headless?'xvfb-run':path.resolve(executable),headless?['-a',path.resolve(executable),'--no-sandbox','--smoke-test']:['--smoke-test'],{stdio:'inherit',env:childEnv});
