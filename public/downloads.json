@@ -1,0 +1,25 @@
+{
+  "assets": [
+    {
+      "browser_download_url": "https://github.com/KyleKincer/woodshed/releases/download/v1.4.3/Woodshed-1.4.3-linux-x86_64.AppImage",
+      "name": "Woodshed-1.4.3-linux-x86_64.AppImage",
+      "size": 633659949
+    },
+    {
+      "browser_download_url": "https://github.com/KyleKincer/woodshed/releases/download/v1.4.3/Woodshed-1.4.3-mac-arm64.dmg",
+      "name": "Woodshed-1.4.3-mac-arm64.dmg",
+      "size": 454684574
+    },
+    {
+      "browser_download_url": "https://github.com/KyleKincer/woodshed/releases/download/v1.4.3/Woodshed-1.4.3-mac-arm64.zip",
+      "name": "Woodshed-1.4.3-mac-arm64.zip",
+      "size": 457540024
+    },
+    {
+      "browser_download_url": "https://github.com/KyleKincer/woodshed/releases/download/v1.4.3/Woodshed-1.4.3-win-x64.exe",
+      "name": "Woodshed-1.4.3-win-x64.exe",
+      "size": 391547033
+    }
+  ],
+  "tag_name": "v1.4.3"
+}
