@@ -29,7 +29,7 @@ Build a release/** branch first to inspect CI artifacts. Set package.json and
 package-lock.json to the desired version, then tag that commit vX.Y.Z. The tag
 workflow stages assets in a draft, then publishes automatically only after all
 platform tests, packaged launch checks, and checksum verification pass. Use
-release/** branches for review before tagging. Do not reuse published version numbers. A release replaces
+release/** branches for review before tagging. A `release/publish-vX.Y.Z` branch is an explicit publication request: after the same gates pass, the workflow creates the matching tag at that exact commit and publishes it. Ordinary `release/**` branches remain artifact-only. The branch/tag version must match package.json. Do not reuse published version numbers. A release replaces
 the complete app, including the bundled downloader and processing libraries.
 
 Local build: install the source prerequisites in README, run
@@ -52,3 +52,8 @@ user's audio quota.
 
 The Google sign-in button is an unmodified pre-approved PNG from
 https://developers.google.com/identity/branding-guidelines.
+
+Pitch preservation uses the bundled, same-origin Signalsmith Stretch AudioWorklet
+and WASM module (MIT). Web and desktop CSP permit WASM compilation through
+`wasm-unsafe-eval`; JavaScript eval remains disabled. The packaged launch gate
+loads this asset under the real desktop CSP and checks a 440 Hz tone at 0.75x.

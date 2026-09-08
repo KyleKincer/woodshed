@@ -38,8 +38,8 @@ function startWeb() {
     const file=path.resolve(webRoot,relative);
     if (!file.startsWith(webRoot+path.sep)) {res.writeHead(403);res.end();return;}
       const data=fs.readFileSync(file);
-      const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};
-      res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* https://*.convex.cloud wss://*.convex.cloud https://*.convex.site https://*.r2.cloudflarestorage.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"});res.end(data);
+      const types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};
+      res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* https://*.convex.cloud wss://*.convex.cloud https://*.convex.site https://*.r2.cloudflarestorage.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"});res.end(data);
     }catch{res.writeHead(404);res.end('Not found');}
   });
   return new Promise((resolve,reject)=>{webServer.once('error',reject);webServer.listen(Number(new URL(UI_ORIGIN).port),'127.0.0.1',resolve);});
@@ -109,6 +109,35 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       const info=await localStatus();
       const page=await window.webContents.executeJavaScript(`({title:document.title,bridge:!!window.woodshedDesktop,header:!!document.querySelector('#app-header'),sidebar:!!document.querySelector('#sidebar')})`);
       if(!page.bridge||!page.header||page.sidebar)throw Error('Desktop UI smoke check failed');
+      // Check the packaged module, MIME type, CSP, WASM compilation and actual
+      // audio output in Chromium on every release platform.
+      const stretchFile = fs.readdirSync(path.join(webRoot,'assets')).find(name=>/^SignalsmithStretch-.*\.mjs$/.test(name));
+      if (!stretchFile) throw Error('Pitch worklet missing from desktop bundle');
+      const audio = await window.webContents.executeJavaScript(`(async () => {
+        const url = '/assets/' + ${JSON.stringify(stretchFile)};
+        const {default: Stretch} = await import(url);
+        Stretch.moduleUrl = url;
+        const ctx = new AudioContext();
+        try {
+          await ctx.resume();
+          const source = await Stretch(ctx);
+          const tone = Float32Array.from({length:ctx.sampleRate*3},(_,i)=>Math.sin(2*Math.PI*440*i/ctx.sampleRate)*0.2);
+          await source.addBuffers([tone]);
+          const analyser = ctx.createAnalyser(); analyser.fftSize = 8192;
+          const silent = ctx.createGain(); silent.gain.value = 0;
+          source.connect(analyser).connect(silent).connect(ctx.destination);
+          await source.schedule({active:true,input:0,output:ctx.currentTime+0.15,rate:0.75,semitones:0});
+          await new Promise(resolve=>setTimeout(resolve,700));
+          const samples = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(samples);
+          let energy=0, crossings=0;
+          samples.forEach((v,i)=>{energy+=v*v;if(i && samples[i-1]<=0 && v>0)crossings++;});
+          const rms = Math.sqrt(energy/samples.length), hz = crossings*ctx.sampleRate/samples.length;
+          if(rms<0.05 || Math.abs(hz-440)>8)throw Error('Pitch playback smoke failed: '+JSON.stringify({rms,hz}));
+          source.disconnect(); source.port.close();
+          return {rms,hz};
+        } finally { await ctx.close(); }
+      })()`, true);
+      console.log(JSON.stringify({audioSmoke:audio}));
       console.log(JSON.stringify({smoke:'passed',page,processorReady:typeof info.busy==='boolean'}));
       if(!process.env.CI)fs.writeFileSync(path.join(app.getPath('temp'),'woodshed-desktop-smoke.png'),(await window.capturePage()).toPNG());
       closing=true;app.quit();

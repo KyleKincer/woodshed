@@ -26,6 +26,8 @@ export class Metronome {
     this._timer = null;
     this._schedUntil = 0;
     this._lastPos = 0;
+    this._scheduledClicks = new Set();
+    this._transportRevision = -1;
     this.onChange = null; // notified when the map/settings change (for persistence + redraw)
     this.recompute();
   }
@@ -158,28 +160,26 @@ export class Metronome {
     this._schedUntil = this.engine.getPosition();
     this._timer = setInterval(() => this.tick(), 25);
   }
-  stop() { if (this._timer) clearInterval(this._timer); this._timer = null; }
+  stop() { if (this._timer) clearInterval(this._timer); this._timer = null; this._cancelClicks(); }
+
+  _cancelClicks() {
+    for (const osc of this._scheduledClicks) { try { osc.stop(); } catch {} }
+    this._scheduledClicks.clear();
+  }
 
   tick() {
-    if (!this.enabled || !this.engine.playing) { this._schedUntil = this.engine.getPosition(); return; }
-    const pos = this.engine.getPosition();
     const now = this.ctx.currentTime;
-    const rate = this.engine.rate || 1;
-    // Reset the scheduling cursor when the playhead jumps (loop wrap / seek).
-    if (pos < this._lastPos - 0.05 || pos > this._schedUntil + 1) this._schedUntil = pos;
-    this._lastPos = pos;
-
-    const loop = this.engine.loop;
-    const maxMedia = loop.enabled && loop.b > loop.a ? loop.b : (this.engine.duration || 1e9);
-    const windowEnd = Math.min(pos + 0.12 * rate, maxMedia);
-
-    for (const b of this.beats) {
-      if (b.time > this._schedUntil && b.time <= windowEnd) {
-        const ctxTime = now + (b.time - pos) / rate;
-        if (ctxTime >= now) this._click(ctxTime, b.downbeat && this.accent);
-      }
+    if (this._transportRevision !== this.engine.revision) {
+      this._cancelClicks();
+      this._transportRevision = this.engine.revision;
+      this._schedUntil = now;
     }
-    if (windowEnd > this._schedUntil) this._schedUntil = windowEnd;
+    if (!this.enabled || !this.engine.playing) { this._schedUntil = now; return; }
+    const end = now + 0.12;
+    for (const beat of this.engine.beatsBetween(Math.max(now, this._schedUntil), end, this.beats)) {
+      this._click(beat.when, beat.downbeat && this.accent);
+    }
+    this._schedUntil = end;
   }
 
   // One free bar of clicks before playback; calls onDone when the bar elapses.
@@ -199,9 +199,11 @@ export class Metronome {
       interval = 60 / Math.max(20, Math.min(400, s.bpm));
       n = Math.max(1, s.beatsPerBar | 0);
     }
+    interval /= this.engine.rate || 1;
     const now = this.ctx.currentTime + 0.12;
     for (let k = 0; k < n; k++) this._click(now + k * interval, k === 0 && this.accent);
-    setTimeout(onDone, n * interval * 1000);
+    clearTimeout(this._countInTimer);
+    this._countInTimer = setTimeout(onDone, n * interval * 1000);
   }
 
   _click(ctxTime, accent) {
@@ -213,13 +215,15 @@ export class Metronome {
     g.gain.exponentialRampToValueAtTime(v, ctxTime + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, ctxTime + 0.05);
     osc.connect(g).connect(this.out);
+    this._scheduledClicks.add(osc);
+    osc.onended = () => { this._scheduledClicks.delete(osc); osc.disconnect(); g.disconnect(); };
     osc.start(ctxTime);
     osc.stop(ctxTime + 0.06);
   }
 
   beatsForView(t0, t1) { return this.beats.filter((b) => b.time >= t0 && b.time <= t1); }
 
-  destroy() { this.stop(); try { this.out.disconnect(); } catch {} }
+  destroy() { clearTimeout(this._countInTimer); this.stop(); try { this.out.disconnect(); } catch {} }
 }
 
 function normSection(s) {

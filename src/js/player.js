@@ -3,6 +3,7 @@ import { setArtwork } from './artwork.js';
 import { arrangePlayerControls } from './player-layout.js';
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
+import { buildBarIndex, barPosition } from './musical-position.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
 import * as backend from './backend.js';
 import { codecErrorMessage, isDecodeError } from './stemcache.js';
@@ -33,9 +34,10 @@ function fmt(t) {
 }
 function fmt2(t) { // m:ss.cc (centiseconds) for precise readouts
   if (!isFinite(t) || t < 0) t = 0;
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  const cs = Math.round((t - Math.floor(t)) * 100);
+  const ticks = Math.floor(t * 100);
+  const m = Math.floor(ticks / 6000);
+  const s = Math.floor(ticks / 100) % 60;
+  const cs = ticks % 100;
   return `${m}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -93,7 +95,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
 
       <div class="transport">
         <button class="play-btn" id="play">▶</button>
-        <div class="time" id="time">0:00.00 / ${fmt(duration)}</div>
+        <div class="playback-position"><div class="time" id="time">0:00.00 / ${fmt(duration)}</div><div class="bar-position" id="bar-position">Bar —</div></div>
 
         <div class="t-divider"></div>
         <div class="t-group loop-readout" id="loop-readout">
@@ -114,8 +116,9 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
         <div class="t-divider"></div>
         <div class="t-group">
           <span class="t-label">Speed</span>
-          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="${rate}" />
+          <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="${rate}" title="Playback speed · double-click to reset to 1.00×" />
           <span class="speed-val" id="speed-val">${rate.toFixed(2)}×</span>
+          <button class="toggle-btn sm" id="preserve-pitch" title="Keep the original pitch when changing speed" aria-pressed="true">Keep pitch</button>
         </div>
 
         <div class="t-divider"></div>
@@ -245,11 +248,14 @@ export async function openPlayer(song) {
     loadingTracks.insertBefore(row, loadingTracks.querySelector('.timeline'));
   }
   for (const control of root.querySelectorAll('button, input, select')) control.disabled = true;
-  const progressEl = document.createElement('span');
-  progressEl.className = 'sr-only';
+  const progressEl = document.createElement('div');
+  progressEl.className = 'player-load-progress';
   progressEl.setAttribute('role', 'status');
-  progressEl.textContent = `Loading ${song.stems.length} audio tracks`;
-  root.append(progressEl);
+  progressEl.innerHTML = '<strong>Preparing your song</strong><span class="load-detail"></span><progress aria-label="Audio tracks ready"></progress>';
+  const loadDetail = progressEl.querySelector('.load-detail');
+  const loadProgress = progressEl.querySelector('progress');
+  loadDetail.textContent = `Loading ${song.stems.length} audio tracks…`;
+  loadingTracks.append(progressEl);
   const showLoadError = message => {
     if (!isCurrent()) return;
     root.removeAttribute('aria-busy');
@@ -258,6 +264,7 @@ export async function openPlayer(song) {
     loadingTracks.querySelector('p').textContent = message;
     loadingTracks.querySelector('button').onclick = () => openPlayer(song);
     progressEl.remove();
+    loadingEngine.destroy();
   };
   const loadingEngine = new MultitrackEngine();
   engine = loadingEngine;
@@ -284,9 +291,13 @@ export async function openPlayer(song) {
     info = await loadingEngine.loadStems(stems, (done, total, bytes) => {
       if (!isCurrent()) return;
       const mb = (n) => (n / 1048576).toFixed(1);
-      progressEl.textContent = bytes.total
-        ? `Loading stems… ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
-        : `Loading stems… ${done}/${total}`;
+      loadDetail.textContent = done === total
+        ? 'Preparing pitch-preserving playback…'
+        : bytes.total && bytes.loaded < bytes.total
+          ? `Loading audio · ${mb(bytes.loaded)} / ${mb(bytes.total)} MB`
+          : `Decoding audio · ${done} of ${total} tracks ready`;
+      loadProgress.max = total;
+      loadProgress.value = done;
     });
   } catch (e) {
     const msg = isDecodeError(e) ? codecErrorMessage : `Couldn't load audio: ${e.message}`;
@@ -296,6 +307,7 @@ export async function openPlayer(song) {
 
   if (!isCurrent()) return;
 
+  engine.setPreservePitch(localStorage.getItem('ws.preservePitch') !== '0');
   if (song.practice) {
     const p = song.practice;
     if (p.loop) engine.setLoop(p.loop.enabled, p.loop.a, p.loop.b);
@@ -343,6 +355,7 @@ export async function openPlayer(song) {
     requestAnimationFrame(() => { wfPending = false; drawWaveforms(); });
   }
   function drawWaveforms() {
+    if (!isCurrent()) return;
     const anySolo = engine.tracks.some((t) => t.soloed);
     for (const { track, canvas } of trackRows) {
       const w = Math.max(200, Math.floor(canvas.clientWidth));
@@ -411,6 +424,7 @@ export async function openPlayer(song) {
   function seekTo(t) { engine.seek(snapTime(t)); }
   function tipText(t) { return shouldSnapToGrid() ? `${fmt2(t)} grid` : fmt2(t); }
   function drawGrid() {
+    if (!isCurrent()) return;
     const dpr = window.devicePixelRatio || 1;
     const w = timeline.clientWidth, h = timeline.clientHeight;
     gridCanvas.width = w * dpr; gridCanvas.height = h * dpr;
@@ -454,6 +468,7 @@ export async function openPlayer(song) {
   const miniView = document.getElementById('mini-view');
   const miniPlay = document.getElementById('mini-playhead');
   function drawMini() {
+    if (!isCurrent()) return;
     if (overview.classList.contains('hidden')) return;
     const w = Math.max(200, overview.clientWidth);
     const src = trackRows[0]?.track.buffer;
@@ -474,6 +489,7 @@ export async function openPlayer(song) {
 
   // ---- overlay (playhead + loop region + handles) within the zoom window ----
   function updateLoopOverlay() {
+    if (!isCurrent()) return;
     const { enabled, a, b } = engine.loop;
     const w = waveW();
     if (enabled && b > a) {
@@ -737,6 +753,7 @@ export async function openPlayer(song) {
   // ---- transport ----
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
+  const barEl = document.getElementById('bar-position');
   function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.playing?'Pause':'Play'); }
   playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
   engine.onEnded = () => setPlayIcon();
@@ -779,6 +796,18 @@ export async function openPlayer(song) {
   const speed = document.getElementById('speed');
   const speedVal = document.getElementById('speed-val');
   speed.oninput = () => { const r = parseFloat(speed.value); engine.setSpeed(r); speedVal.textContent = r.toFixed(2) + '×'; };
+  speed.ondblclick = () => { speed.value = '1'; speed.oninput(); };
+  const pitchButton = document.getElementById('preserve-pitch');
+  const updatePitchButton = () => {
+    pitchButton.classList.toggle('on', engine.preservePitch);
+    pitchButton.setAttribute('aria-pressed', String(engine.preservePitch));
+  };
+  pitchButton.onclick = () => {
+    engine.setPreservePitch(!engine.preservePitch);
+    localStorage.setItem('ws.preservePitch', engine.preservePitch ? '1' : '0');
+    updatePitchButton();
+  };
+  updatePitchButton();
 
   document.getElementById('mixer-reset').onclick = () => {
     engine.resetMixer();
@@ -799,6 +828,12 @@ export async function openPlayer(song) {
   // ---- metronome ----
   metronome = new Metronome(engine);
   metronome.load(song.tempo);
+  let barIndex = buildBarIndex(metronome.beats);
+  function updateBarPosition(pos) {
+    const {bar, beat} = barPosition(barIndex, pos);
+    barEl.textContent = bar ? `Bar ${bar} / ${barIndex.total} · Beat ${beat}` : `Bar — / ${barIndex.total || '—'}`;
+    barEl.title = metronome.source === 'detected' ? 'Position in the detected beat grid' : 'Position in the manual tempo grid';
+  }
 
   const metroPop = document.getElementById('metro-pop');
   const metroBtn = document.getElementById('metro-btn');
@@ -857,7 +892,7 @@ export async function openPlayer(song) {
       if (beatEditing) { beatEditing = false; document.getElementById('mp-edit').classList.add('hidden'); editToggle.classList.remove('on'); }
     }
   }
-  metronome.onChange = () => { refreshMetroUI(); drawGrid(); persistTempo(); };
+  metronome.onChange = () => { barIndex = buildBarIndex(metronome.beats); refreshMetroUI(); drawGrid(); persistTempo(); };
 
   metroBtn.onclick = () => { const open = metroPop.classList.toggle('hidden') === false; metroBtn.setAttribute('aria-expanded',String(open)); if (open) { metroPop.style.bottom = (root.querySelector('.transport').offsetHeight + 8) + 'px'; refreshMetroUI(); } };
   mOnoff.onclick = () => metronome.setEnabled(!metronome.enabled);
@@ -986,6 +1021,7 @@ export async function openPlayer(song) {
     playhead.style.left = clamp(x, 0, w) + 'px';
     miniPlay.style.left = (pos / duration) * overview.clientWidth + 'px';
     timeEl.textContent = `${fmt2(pos)} / ${fmt(duration)}`;
+    updateBarPosition(pos);
     // Keep the metronome popover's active-section display in sync as the
     // playhead crosses tempo changes (cheap; only when the popover is open).
     if (!metroPop.classList.contains('hidden')) {
