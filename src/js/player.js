@@ -1,3 +1,4 @@
+import { showShareDialog } from './share-dialog.js';
 import { returnOnStop } from './preferences.js';
 import { editSongs, artistLabel } from './song-metadata.js';
 import { setArtwork } from './artwork.js';
@@ -231,8 +232,9 @@ export function closePlayer() {
   cleanupFns = [];
 }
 
-export async function openPlayer(song) {
+export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheNamespace=''} = {}) {
   closePlayer();
+  let saveForShare=async()=>{};
   const root = document.getElementById('player-root');
   root.style.setProperty('--track-count', song.stems.length);
   const songHeader = document.getElementById('header-song');
@@ -246,13 +248,17 @@ export async function openPlayer(song) {
     const url = updated.coverUrl || (updated.coverKey ? await backend.signKey(updated.coverKey).catch(() => null) : null);
     if (isCurrent() && currentMetadata === updated) setArtwork(songHeader.querySelector('.pt-cover'),updated,url);
   };
-  const editButton = document.createElement('button'); editButton.className='header-edit-song'; editButton.type='button'; editButton.title='Edit song'; editButton.setAttribute('aria-label','Edit song'); editButton.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5"/></svg>'; editButton.onclick=()=>editSongs([currentMetadata]); songHeader.append(editButton);
+  const editButton = document.createElement('button'); editButton.className='header-edit-song'; editButton.type='button'; editButton.title='Edit song'; editButton.setAttribute('aria-label','Edit song'); editButton.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z"/><path d="m14 5 5 5"/></svg>'; editButton.onclick=()=>editSongs([currentMetadata]); if (!readOnly) songHeader.append(editButton);
+  if (!readOnly) {
+    const shareButton=document.createElement('button');shareButton.className='header-share-song';shareButton.textContent='Share';shareButton.title='Share song';
+    shareButton.onclick=()=>{void showShareDialog(currentMetadata,{beforeShare:()=>saveForShare()});};songHeader.append(shareButton);
+  }
   const generation = playerGeneration;
   const isCurrent = () => generation === playerGeneration;
   root.innerHTML = playerMarkup(song);
   arrangePlayerControls(root);
   setArtwork(songHeader.querySelector('.pt-cover'), song);
-  cleanupFns.push(backend.onSong(song.id, updated => { if (updated && isCurrent()) renderHeader(updated); }));
+  if (!readOnly) cleanupFns.push(backend.onSong(song.id, updated => { if (updated && isCurrent()) renderHeader(updated); }));
   root.setAttribute('aria-busy', 'true');
   root.querySelector('.player').classList.add('is-loading');
   const loadingTracks = root.querySelector('#tracks');
@@ -277,7 +283,7 @@ export async function openPlayer(song) {
     root.querySelector('.player').classList.remove('is-loading');
     loadingTracks.innerHTML = '<div class="player-load-error" role="alert"><p></p><button class="btn-ghost">Try again</button></div>';
     loadingTracks.querySelector('p').textContent = message;
-    loadingTracks.querySelector('button').onclick = () => openPlayer(song);
+    loadingTracks.querySelector('button').onclick = () => openPlayer(song, {readOnly,resolveUrls,cacheNamespace});
     progressEl.remove();
     loadingEngine.destroy();
   };
@@ -287,13 +293,13 @@ export async function openPlayer(song) {
   // Stems and cover live in R2; resolve every key to a signed URL in one call.
   const keys = song.stems.map((s) => s.key).concat(song.coverKey ? [song.coverKey] : []);
   let urls;
-  try { urls = await backend.signKeys(keys); }
+  try { urls = await (resolveUrls ? resolveUrls() : backend.signKeys(keys)); }
   catch (e) { showLoadError(`Couldn't reach storage: ${e.message}`); return; }
   if (!isCurrent()) return;
   if (currentMetadata === song) setArtwork(songHeader.querySelector('.pt-cover'), song, song.coverUrl || urls[song.coverKey]);
 
   const stems = song.stems.map((s) => ({
-    name: s.name, key: s.key, url: urls[s.key], color: colorFor(s.name),
+    name: s.name, key: cacheNamespace + s.key, url: urls[s.key], color: colorFor(s.name),
   }));
   const unresolved = stems.filter((s) => !s.url).map((s) => s.name);
   if (unresolved.length) {
@@ -894,7 +900,7 @@ export async function openPlayer(song) {
   let tempoDirty = false;
   function flushTempo() {
     clearTimeout(saveTimer);
-    if (!tempoDirty) return;
+    if (readOnly || !tempoDirty) return;
     tempoDirty = false;
     backend.saveTempo(song.id, songMetronome.serialize()).catch(error => console.error('Could not sync count-in and tempo settings:', error));
   }
@@ -995,8 +1001,9 @@ export async function openPlayer(song) {
   const mDetectStatus = document.getElementById('m-detect-status');
   const mDetectClear = document.getElementById('m-detect-clear');
   let detecting = false;
+  if (readOnly) { mDetect.disabled=true; mDetect.title='Add this song to your library to run beat detection'; }
   mDetect.onclick = async () => {
-    if (detecting) return;
+    if (readOnly || detecting) return;
     detecting = true;
     mDetect.disabled = true;
     mDetectStatus.textContent = 'Starting…';
@@ -1073,6 +1080,7 @@ export async function openPlayer(song) {
   let lastPractice = JSON.stringify(song.practice || null);
   const flushPractice = () => {
     clearTimeout(practiceTimer);
+    if (readOnly) return;
     const practice = { loop: {...activeEngine.loop}, rate: activeEngine.rate, grid: {...grid}, tracks: activeEngine.tracks.map(t => ({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed})) };
     const serialized = JSON.stringify(practice);
     if (serialized === lastPractice) return;
@@ -1082,6 +1090,12 @@ export async function openPlayer(song) {
   const schedulePractice = () => { clearTimeout(practiceTimer); practiceTimer = setTimeout(flushPractice, 600); };
   for (const event of ['input','click','pointerup']) root.addEventListener(event, schedulePractice);
   window.addEventListener('keyup', schedulePractice);
+  saveForShare=async()=>{
+    clearTimeout(practiceTimer);clearTimeout(saveTimer);tempoDirty=false;
+    const practice={loop:{...activeEngine.loop},rate:activeEngine.rate,grid:{...grid},tracks:activeEngine.tracks.map(t=>({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed}))};
+    await Promise.all([backend.saveTempo(song.id,songMetronome.serialize()),backend.savePractice(song.id,practice)]);
+    song.practice=practice;lastPractice=JSON.stringify(practice);
+  };
   cleanupFns.push(() => { flushPractice(); for (const event of ['input','click','pointerup']) root.removeEventListener(event, schedulePractice); window.removeEventListener('keyup',schedulePractice); });
 
   // ---- animation loop (playhead + auto-follow) ----

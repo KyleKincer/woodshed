@@ -31,6 +31,8 @@ import type * as metadataLookup from "../metadataLookup.js";
 import type * as migrate from "../migrate.js";
 import type * as r2 from "../r2.js";
 import type * as renditions from "../renditions.js";
+import type * as sharing from "../sharing.js";
+import type * as shareAudio from "../shareAudio.js";
 import type * as settings from "../settings.js";
 import type * as songs from "../songs.js";
 import type * as songsInternal from "../songsInternal.js";
@@ -68,6 +70,8 @@ declare const fullApi: ApiFromModules<{
   migrate: typeof migrate;
   r2: typeof r2;
   renditions: typeof renditions;
+  sharing: typeof sharing;
+  shareAudio: typeof shareAudio;
   settings: typeof settings;
   songs: typeof songs;
   songsInternal: typeof songsInternal;

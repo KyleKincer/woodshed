@@ -1,3 +1,11 @@
+Woodshed 1.5.0 adds song sharing.
+
+- Choose Share in the player or Share song from a library card to create an unlisted link. Anyone with the link can listen and practice in their browser; signing in lets them add the song to their library.
+- Shared songs include their audio stems, artwork, song metadata, tempo maps, time signatures, downbeats and beat corrections, loop, playback speed, mixer, grid, and count-in settings. Private notes, personal tags, account details, and original file paths stay private.
+- Add to library creates an independent copy without processing the audio again. Your copy and practice settings remain yours if the sender changes or deletes the original or stops sharing. Copies count toward your cloud storage.
+- Stop sharing disables the link. Creating another link produces a new address. Existing saved copies are retained.
+- Duplicate saves, interrupted copies, unavailable audio, and storage limits are handled without creating partial library entries. Signing in returns you to the shared song and finishes the requested save.
+
 Woodshed 1.4.5 adds system-aware dark mode, a repeatable practice transport, and a stable startup.
 
 - Appearance follows your system by default and updates when the system changes. Choose System, Light, or Dark in Settings, on sign-in, or on the download page. Choices are remembered on the current device. Waveforms, loading states, dialogs, and native desktop windows follow the same appearance.

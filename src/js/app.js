@@ -1,3 +1,4 @@
+import { renderSharedSong } from './shared-song.js';
 import { finishStartup } from './startup.js';
 import { initializeInteractions } from './interactions.js';
 import { transitionView } from './motion.js';
@@ -81,6 +82,11 @@ async function boot() {
     document.addEventListener('woodshed:billing', () => showView('billing'));
     if (location.pathname === '/admin' && admin) showView('admin');
     finishStartup();
+    const requestedSong = new URLSearchParams(location.search).get('song');
+    if (requestedSong) {
+      const song = await convex.query(api.songs.get,{id:requestedSong}).catch(() => null);
+      if (song) openSong(song);
+    }
     if (window.woodshedDesktop) {
       const { initializeDesktop } = await import('./desktop-client.js');
       initializeDesktop();
@@ -95,4 +101,5 @@ async function boot() {
 }
 
 if (location.pathname === '/download') renderDownload();
+else if (location.pathname.startsWith('/share/')) renderSharedSong();
 else boot();

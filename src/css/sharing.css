@@ -1,0 +1,20 @@
+.header-share-song { padding:7px 12px; border:1px solid #ffffff70; border-radius:4px; color:white; background:transparent; cursor:pointer; font:inherit; font-size:12px; }
+.header-share-song:hover { background:#ffffff20; }
+.header-share-song:focus-visible { outline-color:white; }
+.share-song-title { font-size:17px; font-weight:600; margin-bottom:16px; overflow-wrap:anywhere; }
+.share-status { min-height:3em; margin:16px 0; }
+.share-link-field input { width:100%; font-size:12px; }
+.shared-page .brand { text-decoration:none; }
+.shared-page #app-header .theme-control { color:white; }
+.shared-page .share-banner { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 24px; background:var(--bg-2); border-bottom:1px solid var(--border); }
+.share-banner > div { flex:1; min-width:180px; }
+.share-banner strong { display:block; font-size:13px; }
+.share-message { display:block; font-size:12px; color:var(--muted); line-height:1.6; margin-top:4px; }
+.share-banner a { text-decoration:none; }
+.shared-placeholder { position:relative; min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:40px 24px; text-align:center; }
+.shared-placeholder .wave-skeleton { position:absolute; inset:0; opacity:.3; }
+.shared-placeholder p { color:var(--muted); line-height:1.6; }
+#share-dialog .modal-actions { flex-wrap:wrap; }
+@media(max-width:700px) { .shared-page .share-banner { padding:14px 12px; } }
+
+.share-banner small { display:block; color:var(--muted); font-size:11px; margin-top:4px; }

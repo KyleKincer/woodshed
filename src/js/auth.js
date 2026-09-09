@@ -18,7 +18,11 @@ export function ensureSignedIn() {
   return (boot ??= initialize());
 }
 
-async function initialize() {
+export function restoreSignIn() {
+  return (boot ??= initialize({optional:true}));
+}
+
+async function initialize({optional=false} = {}) {
   if (!CONVEX_URL) {
     showFatal('Not configured', 'Set VITE_CONVEX_URL in .env.local and restart the website.');
     throw new Error('Missing VITE_CONVEX_URL.');
@@ -44,6 +48,14 @@ async function initialize() {
     },
   });
   await auth.init();
+  if (optional) {
+    await new Promise(resolve => {
+      let stop = () => {};
+      const check = () => { if (!auth.getSnapshot().isLoading) { stop(); resolve(); } };
+      stop = auth.subscribe(check); check();
+    });
+    if (!auth.getSnapshot().isAuthenticated) return null;
+  }
   await waitForSession();
   // Wait for the backend's verdict before starting library subscriptions.
   await new Promise((resolve, reject) => {
@@ -128,7 +140,7 @@ function waitForSession() {
         providerName: 'google',
         startSignIn: api.auth.startSignInGoogle,
         completeSignIn: api.auth.completeSignInGoogle,
-      }, { redirectTo: window.woodshedDesktop ? window.location.origin + '/oauth/callback' : window.location.origin + window.location.pathname });
+      }, { redirectTo: window.woodshedDesktop ? window.location.origin + '/oauth/callback' : window.location.origin + window.location.pathname + window.location.search });
     } catch {
       showError();
       if (!values.get('flowError')) message.textContent = 'Could not start Google sign-in. Check your connection and try again.';

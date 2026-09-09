@@ -2,7 +2,7 @@
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 const state = vi.hoisted(() => ({engines:[],load:null}));
-vi.mock('../src/js/backend.js', () => ({onSong:()=>()=>{},signKeys:vi.fn(async()=>({d:'test.wav'})),savePractice:vi.fn(async()=>{}),saveTempo:vi.fn(async()=>{})}));
+vi.mock('../src/js/backend.js', () => ({onSong:vi.fn(()=>()=>{}),signKeys:vi.fn(async()=>({d:'test.wav'})),savePractice:vi.fn(async()=>{}),saveTempo:vi.fn(async()=>{})}));
 vi.mock('../src/js/waveform.js', () => ({computePeaksRange:()=>[],drawWaveform:()=>{}}));
 vi.mock('../src/js/engine.js', () => ({MultitrackEngine:class {
   rate=1; preservePitch=true; duration=10; playing=false; loop={enabled:false,a:0,b:10};
@@ -135,4 +135,15 @@ test('Space stops at the edit cursor by default; Enter pauses and resumes withou
   expect(active.stop).toHaveBeenLastCalledWith({returnToEdit:false});
   expect(document.querySelector('.transport-main #pause')).not.toBeNull();
   expect(document.querySelector('#edit-cursor')).not.toBeNull();
+});
+
+test('shared playback uses scoped media and cache identities, with no owner mutation or subscription',async()=>{
+  const backend=await import('../src/js/backend.js');vi.clearAllMocks();
+  const resolveUrls=vi.fn(async()=>({d:'https://storage.test/audio'}));
+  await openPlayer(song,{readOnly:true,resolveUrls,cacheNamespace:'share:token:revision:'});
+  expect(resolveUrls).toHaveBeenCalledTimes(1);expect(backend.onSong).not.toHaveBeenCalled();
+  expect(document.querySelector('.header-edit-song')).toBeNull();expect(document.querySelector('.header-share-song')).toBeNull();
+  expect(document.getElementById('m-detect').disabled).toBe(true);
+  const countIn=document.getElementById('m-countin');countIn.checked=true;countIn.dispatchEvent(new Event('change'));
+  closePlayer();expect(backend.saveTempo).not.toHaveBeenCalled();expect(backend.savePractice).not.toHaveBeenCalled();
 });
