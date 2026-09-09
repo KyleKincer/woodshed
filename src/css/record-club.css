@@ -246,3 +246,9 @@ body:has(:is(#view-billing, #view-admin).active) #app-header .brand { font-size:
 .player-load-progress progress::-webkit-progress-value { background:var(--accent); }
 .wave-skeleton::before { background:linear-gradient(100deg,var(--bg-3) 30%,var(--bg-2) 50%,var(--bg-3) 70%); background-size:250% 100%; }
 @media(max-width:700px) { .playback-position { flex-direction:column; align-items:flex-start; gap:3px; } .bar-position { font-size:11px; } .player-load-progress { padding:16px 10px; } }
+.workspace-nav{display:flex;align-items:center;gap:6px;padding:0 24px;border-bottom:1px solid var(--border);background:var(--bg)}
+.workspace-nav button{font:600 13px var(--font);padding:14px 16px;background:none;border:0;border-bottom:3px solid transparent;color:var(--muted);cursor:pointer}
+.workspace-nav button[aria-pressed=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.notation-workspace[hidden]{display:none}.notation-loading{min-height:430px;padding:60px 24px;text-align:center;color:var(--muted)}
+
+.notation-share-option{display:flex;align-items:center;gap:8px;font-size:13px;margin:16px 0}

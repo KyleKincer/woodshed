@@ -244,3 +244,29 @@ test('stopping audible pre-roll and a pending start cannot leak sound or move th
   const pending=engine.play();engine.stop();resume();await pending;
   expect(engine.playing).toBe(false);expect(engine.editPosition).toBe(20);
 });
+
+test('notation uses engine loop segments without duplicate boundary hits or cumulative drift', async () => {
+  const {DrumAudio}=await import('../src/js/notation/audio.js');
+  const {emptyScore,fraction,durationOf}=await import('../shared/notation.ts');
+  const score=emptyScore(100);score.bars=[{measureId:score.timeline.measures[0].id,coverage:'progress',hits:[{id:'kick',instrument:'kick',offset:fraction(2),duration:durationOf(8),voice:2,value:8,dotted:false,tuplet:1,accent:false,ghost:false,flam:false,sticking:'',velocity:.75}]}];
+  const audio=new DrumAudio(engine),played=vi.spyOn(audio,'play').mockImplementation(()=>{});
+  try{
+    audio.setScore(score);audio.setMode('both');engine.setLoop(true,1,2);engine.seek(1);await engine.play();
+    for(let i=0;i<800;i++){audio.tick();advance(.025);}
+    const onsets=played.mock.calls.map(c=>c[1]);expect(onsets).toHaveLength(21);onsets.forEach((t,i)=>expect(t).toBeCloseTo(engine.lookahead+i,8));
+    const cancel=vi.spyOn(audio,'cancel');engine.setSpeed(.5);expect(cancel).toHaveBeenCalledTimes(1);engine.seek(1.5);expect(cancel).toHaveBeenCalledTimes(2);engine.pause();expect(cancel).toHaveBeenCalledTimes(3);
+    played.mockClear();audio.tick();expect(played).not.toHaveBeenCalled();
+  }finally{audio.destroy();}
+});
+
+test('notation preview is not canceled by its first scheduler tick and hats choke at the scheduled onset', async () => {
+  const {DrumAudio}=await import('../src/js/notation/audio.js');
+  engine.ctx.createBuffer=(_channels,length)=>({getChannelData:()=>new Float32Array(length)});
+  engine.ctx.createBufferSource=()=>({playbackRate:{},connect:vi.fn(target=>target),disconnect:vi.fn(),start:vi.fn(),stop:vi.fn()});
+  const audio=new DrumAudio(engine);
+  try{
+    audio.play({instrument:'openHat',velocity:.7},0,true);const open=[...audio.active][0];audio.tick();expect(open.source.stop).not.toHaveBeenCalled();
+    audio.play({instrument:'closedHat',velocity:.7},.1);expect(open.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0,.1,.01);expect(open.source.stop).toHaveBeenCalledWith(.16);
+    await engine.play();expect(open.source.stop).toHaveBeenLastCalledWith(.025);engine.pause();
+  }finally{audio.destroy();}
+});

@@ -6,6 +6,7 @@ import {internal} from './_generated/api';
 import {requireUserId,requireWritableUserId,getUserId,accountControl} from './lib/auth';
 import {coverKeyOf} from './lib/songMetadata';
 import {adjust,limits,used,retireKey} from './storage';
+import {capturePart,deletePart} from './notation';
 
 const unavailable = () => new ConvexError('This share link is unavailable. It may have been stopped or the song removed.');
 const tokenValid = (token:string) => /^[a-f0-9]{64}$/.test(token);
@@ -56,20 +57,20 @@ export const status=query({
     const userId=await requireUserId(ctx),song=await ctx.db.get(id);
     if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');
     const share=await ctx.db.query('songShares').withIndex('by_songId',q=>q.eq('songId',id)).unique();
-    return share?.active?{token:share.token}:null;
+    return share?.active?{token:share.token,includeNotation:share.includeNotation!==false}:null;
   },
 });
 export const create=mutation({
-  args:{id:v.id('songs')},handler:async(ctx,{id})=>{
+  args:{id:v.id('songs'),includeNotation:v.optional(v.boolean())},handler:async(ctx,{id,includeNotation})=>{
     const userId=await requireWritableUserId(ctx),song=await ctx.db.get(id);
     if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');
     if(!song.stems.length||song.stems.length>8)throw new ConvexError('Finish processing this song before sharing it.');
     for(const stem of song.stems){const o=await ctx.db.query('audioObjects').withIndex('by_key',q=>q.eq('key',stem.key)).unique();if(o&&o.status!=='ready')throw new ConvexError('Finish syncing this song before sharing it.');}
     const existing=await ctx.db.query('songShares').withIndex('by_songId',q=>q.eq('songId',id)).unique();
-    if(existing?.active)return {token:existing.token};
+    if(existing?.active){if(includeNotation!==undefined)await ctx.db.patch(existing._id,{includeNotation});return {token:existing.token};}
     const token=(crypto.randomUUID()+crypto.randomUUID()).replaceAll('-','');
-    if(existing)await ctx.db.patch(existing._id,{token,active:true,createdAt:Date.now()});
-    else await ctx.db.insert('songShares',{songId:id,userId,token,active:true,createdAt:Date.now()});
+    if(existing)await ctx.db.patch(existing._id,{token,active:true,createdAt:Date.now(),includeNotation:includeNotation!==false});
+    else await ctx.db.insert('songShares',{songId:id,userId,token,active:true,createdAt:Date.now(),includeNotation:includeNotation!==false});
     return {token};
   },
 });
@@ -136,7 +137,9 @@ export const beginImport=internalMutation({
       const objectId=await ctx.db.insert('audioObjects',{userId,key,name:`shared-${i}`,bytes:h.bytes,mime:h.mime,checksum:'',expiresAt,status:'reserved'});
       files.push({...h,key,objectId});
     }
-    const row={userId,sourceSongId:song._id,token,attempt,status:'copying' as const,snapshot,expiresAt,files,songId:undefined};
+    if(existing?.notationPartId)await deletePart(ctx,existing.notationPartId);
+    const notationPartId=await capturePart(ctx,song._id,userId);
+    const row={userId,sourceSongId:song._id,token,attempt,status:'copying' as const,snapshot,expiresAt,files,songId:undefined,notationPartId};
     let id=existing?existing._id:await ctx.db.insert('shareImports',row);
     if(existing)await ctx.db.replace(id,row);
     await ctx.scheduler.runAt(expiresAt,internal.sharing.failImport,{id,attempt});
@@ -156,13 +159,15 @@ export const finishImport=internalMutation({
       stems:snapshot.stems.map((s:{name:string,key:string})=>{const f=row.files.find(f=>f.sourceKey===s.key)!;return {name:s.name,key:f.key,bytes:f.bytes,mime:f.mime};}),
       coverKey:snapshot.coverKey?keyMap.get(snapshot.coverKey):undefined});
     for(const f of row.files){const object=await ctx.db.get(f.objectId);if(object?.status!=='reserved')throw new ConvexError('Import expired.');await ctx.db.patch(f.objectId,{status:'ready',songId,verified:true});}
-    await ctx.db.patch(id,{status:'ready',songId,snapshot:null,files:[]});return songId;
+    if(row.notationPartId)await ctx.db.patch(row.notationPartId,{songId});
+    await ctx.db.patch(id,{status:'ready',songId,snapshot:null,files:[],notationPartId:undefined});return songId;
   },
 });
 export const failImport=internalMutation({
   args:{id:v.id('shareImports'),attempt:v.string()},handler:async(ctx,{id,attempt})=>{
     const row=await ctx.db.get(id);if(!row||row.attempt!==attempt||row.status!=='copying')return null;
     for(const f of row.files)await retireKey(ctx,f.key);
-    await ctx.db.patch(id,{status:'failed',snapshot:null,files:[]});return null;
+    if(row.notationPartId)await deletePart(ctx,row.notationPartId);
+    await ctx.db.patch(id,{status:'failed',snapshot:null,files:[],notationPartId:undefined});return null;
   },
 });

@@ -92,6 +92,7 @@ export class Metronome {
 
   // ---- tempo map ----------------------------------------------------------
   recompute() {
+    if(this.notationBeats){this.beats=this.notationBeats;return;}
     if (this.source === 'detected' && this.detected && this.detected.length) {
       this.beats = this.detected.filter((b) => b.time >= 0).sort((a, b) => a.time - b.time);
       return;
@@ -113,10 +114,15 @@ export class Metronome {
   }
 
   sectionAt(t) {
+    if(this.notationSections){let section=this.notationSections[0];for(const s of this.notationSections)if(s.t<=t+1e-6)section=s;else break;return section;}
     let s = this.map[0];
     for (const sec of this.map) if (sec.t <= t + 1e-6) s = sec; else break;
     return s;
   }
+
+  // A transient shared musical map while transcribing. The legacy tempo map
+  // remains intact; notation persists its authoritative alignment separately.
+  setNotationTiming(beats=null,sections=null,notify=true){this.notationBeats=beats;this.notationSections=sections;this._cancelClicks();this._schedUntil=this.ctx.currentTime;this.recompute();if(notify)this._notify(false);}
 
   setMap(map) { this.map = map.map(normSection); this.recompute(); this._notify(); }
 
@@ -211,7 +217,7 @@ export class Metronome {
   countInPlan() {
     const pos = this.engine.getPosition() >= this.engine.duration ? 0 : this.engine.getPosition();
     let interval, n;
-    if (this.source === 'detected' && this.beats.length > 1) {
+    if ((this.notationBeats || this.source === 'detected') && this.beats.length > 1) {
       const next = this.beats.findIndex((b) => b.time >= pos);
       const idx = next < 0 ? this.beats.length - 1 : next;
       const a = this.beats[Math.max(0, idx - 1)], b = this.beats[Math.max(1, idx)];

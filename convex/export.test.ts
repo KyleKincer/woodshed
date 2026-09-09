@@ -1,8 +1,9 @@
 import { expect, test, vi, afterEach } from 'vitest';
 import { unzipSync, strFromU8 } from 'fflate';
-vi.mock('../src/js/backend.js', () => ({exportPage:vi.fn(),getConfig:vi.fn(),signKeys:vi.fn()}));
+vi.mock('../src/js/backend.js', () => ({exportPage:vi.fn(),getConfig:vi.fn(),signKeys:vi.fn(),getNotation:vi.fn(async()=>null)}));
 import * as backend from '../src/js/backend.js';
 import { exportLibrary } from '../src/js/export.js';
+import {emptyScore} from '../shared/notation';
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 test('whole-library streaming export creates readable audio and settings archive',async()=>{
  const chunks:Uint8Array[]=[];
@@ -14,12 +15,14 @@ test('whole-library streaming export creates readable audio and settings archive
  vi.mocked(backend.exportPage).mockResolvedValue({page:[song],isDone:true,continueCursor:''});
  vi.mocked(backend.getConfig).mockResolvedValue({settings:{bitrate:192}});
  vi.mocked(backend.signKeys).mockResolvedValue({'users/owner/drums.webm':'https://example.test/audio'});
+ const score=emptyScore(20);vi.mocked(backend.getNotation).mockResolvedValueOnce({score,revision:1});
  await exportLibrary();
  const bytes=new Uint8Array(chunks.reduce((sum,c)=>sum+c.length,0));let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
  const archive=unzipSync(bytes);
  expect(archive['Practice-song1/drums.webm']).toEqual(audio);
  expect(JSON.parse(strFromU8(archive['manifest.json'])).songs[0].practice).toEqual(song.practice);
  expect(JSON.parse(strFromU8(archive['settings.json']))).toEqual({bitrate:192});
+ expect(JSON.parse(strFromU8(archive['Practice-song1/drums.woodshed.json']))).toMatchObject({format:'woodshed-notation',score});
  expect(close).toHaveBeenCalledOnce();expect(abort).not.toHaveBeenCalled();
 });
 test('failed download aborts the destination instead of reporting a complete export',async()=>{

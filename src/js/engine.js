@@ -12,6 +12,7 @@ export class MultitrackEngine {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
     this.master.connect(this.ctx.destination);
+    this.recordingAudible = true;
     this.tracks = [];
     this.stretch = null;
     this.pitchGate = null;
@@ -26,6 +27,7 @@ export class MultitrackEngine {
     this.destroyed = false;
     this.playRequest = 0;
     this.revision = 0;
+    this.transportListeners = new Set();
     this.pausedAt = 0;
     this.editPosition = 0;
     this.paused = false;
@@ -113,7 +115,7 @@ export class MultitrackEngine {
     const anySolo = this.tracks.some((t) => t.soloed);
     for (const t of this.tracks) {
       const audible = anySolo ? t.soloed : !t.muted;
-      const target = audible ? t.volume : 0;
+      const target = audible && this.recordingAudible ? t.volume : 0;
       t.gain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.012);
     }
   }
@@ -122,6 +124,7 @@ export class MultitrackEngine {
     const t = this.tracks.find((x) => x.name === name);
     if (t) { t.volume = v; this._applyGains(); }
   }
+  setRecordingAudible(enabled) { this.recordingAudible=enabled; this._applyGains(); }
   toggleMute(name) {
     const t = this.tracks.find((x) => x.name === name);
     if (t) { t.muted = !t.muted; this._applyGains(); }
@@ -210,6 +213,7 @@ export class MultitrackEngine {
       }
     }
     this.revision++;
+    for(const listener of this.transportListeners)listener();
     return when;
   }
 
@@ -256,7 +260,9 @@ export class MultitrackEngine {
       track.nativeSources.clear();
     }
     this.revision++;
+    for(const listener of this.transportListeners)listener();
   }
+  subscribeTransport(listener){this.transportListeners.add(listener);return ()=>this.transportListeners.delete(listener);}
 
   // Stop returns to the selected edit cursor. Pause preserves the audible
   // position without moving that cursor, so auditioning a passage is repeatable.
@@ -316,7 +322,12 @@ export class MultitrackEngine {
         const boundary = segment.loop.enabled ? segment.loop.b : this.duration;
         const until = Math.min(limit, cursor + (boundary - pos) / segment.rate);
         if (until <= cursor + 1e-8) break;
-        for (const beat of beats) {
+        // Sorted event lookup also supports dense notation without rescanning
+        // the entire song for every scheduler window and loop occurrence.
+        let low=0,high=beats.length;
+        while(low<high){const mid=(low+high)>>1;if(beats[mid].time<pos-1e-8)low=mid+1;else high=mid;}
+        for (let index=low;index<beats.length;index++) {
+          const beat=beats[index];
           const when = cursor + (beat.time - pos) / segment.rate;
           if (when >= cursor - 1e-8 && when < until - 1e-8) events.push({...beat, when});
           if (when >= until) break;
@@ -340,6 +351,7 @@ export class MultitrackEngine {
   destroy() {
     this.pause();
     this.destroyed = true;
+    this.transportListeners.clear();
     for (const track of this.tracks) {
       track.merger?.disconnect();
       track.gain.disconnect();

@@ -7,7 +7,7 @@
   "author": "Kyle Kincer",
   "license": "MIT",
   "scripts": {
-    "dev": "concurrently -n convex,vite -c blue,green \"convex dev\" \"vite\"",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:convex": "convex dev",
     "build": "vite build",
@@ -35,7 +35,8 @@
     "fflate": "^0.8.3",
     "react": "^19.2.8",
     "signalsmith-stretch": "1.3.2",
-    "stripe": "^22.6.1"
+    "stripe": "^22.6.1",
+    "vexflow": "^5.0.0"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

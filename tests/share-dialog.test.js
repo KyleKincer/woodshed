@@ -23,3 +23,9 @@ test('a failed practice save does not create or copy a stale share setup',async(
   document.querySelector('[data-copy]').click();await vi.waitFor(()=>expect(document.querySelector('[data-copy]').disabled).toBe(false));
   expect(convex.mutation).not.toHaveBeenCalled();expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
 });
+test('changing notation inclusion on an active link saves immediately and rolls back a failed update',async()=>{
+  convex.query.mockResolvedValue({token:'a'.repeat(64),includeNotation:true});await showShareDialog({id:'song',title:'Practice'});
+  const checkbox=document.querySelector('[data-notation]');checkbox.click();await vi.waitFor(()=>expect(document.querySelector('.share-status').textContent).toContain('no longer included'));
+  expect(convex.mutation.mock.lastCall[1]).toEqual({id:'song',includeNotation:false});expect(checkbox.checked).toBe(false);
+  convex.mutation.mockRejectedValueOnce(new Error('connection lost'));checkbox.click();await vi.waitFor(()=>expect(document.querySelector('.share-status').textContent).toContain('connection lost'));expect(checkbox.checked).toBe(false);
+});

@@ -27,6 +27,9 @@ export function arrangePlayerControls(root) {
   ruler.className = 'time-ruler';
   ruler.innerHTML = '<span>Tracks</span><div class="ruler-scale" aria-label="Timeline times"></div>';
   player.prepend(tools, ruler);
+  const workspace=document.createElement('nav');workspace.className='workspace-nav';workspace.setAttribute('aria-label','Song workspace');
+  workspace.innerHTML='<button data-workspace="practice" aria-pressed="true">Practice</button><button data-workspace="transcribe" aria-pressed="false">Transcribe</button>';
+  player.prepend(workspace);
   const labels = {play:'Play',speed:'Playback speed','grid-division':'Grid subdivision','m-bpm':'Tempo in beats per minute','m-sig':'Time signature','m-vol':'Metronome volume',help:'Keyboard shortcuts','zoom-in':'Zoom in','zoom-out':'Zoom out','zoom-fit':'Fit whole song','mini-toggle':'Song overview','mixer-reset':'Reset mixer'};
   for (const [id,label] of Object.entries(labels)) root.querySelector('#'+id)?.setAttribute('aria-label',label);
   const metro = root.querySelector('#metro-btn');
