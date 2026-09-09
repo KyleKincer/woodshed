@@ -61,10 +61,10 @@ export async function createNotationWorkspace({host,song,engine,metronome,getVie
     if(layout!=='expanded'&&(time<view.start||time>view.end)){const width=view.end-view.start;setView(time-.1*width,time+.9*width);}
     render();
   }
-  function insert(instrument=piece){
+  function insert(instrument=piece,{preview=false}={}){
     const kit=KIT.find(k=>k.id===instrument);piece=instrument==='rest'?piece:instrument;
     const a=active(),hit={id:id(),instrument,offset:subtract(cursor,a.startPosition),duration:step(),voice:voice==='auto'?(kit?.voice||1):Number(voice),value,dotted,tuplet,...expression};
-    if(readOnly||auditionPads){ensureAudio().play(hit,engine.ctx.currentTime,true);message(`Preview · ${kit?.name||'Rest'}`);return;}
+    if(readOnly||preview){ensureAudio().play(hit,engine.ctx.currentTime,true);message(`Preview · ${kit?.name||'Rest'}`);return;}
     selectionKind='notes';selected=new Set([editor.insert(a.index,hit)]);barRange=[a.index,a.index];changed();ensureAudio().play(selectedHits()[0],engine.ctx.currentTime,true);
   }
   function setDuration(v=value,d=dotted,t=tuplet){
@@ -201,7 +201,7 @@ export async function createNotationWorkspace({host,song,engine,metronome,getVie
     for(const el of host.querySelectorAll('button'))el.addEventListener('click',e=>{attempt(()=>{
       if(el.dataset.view){layout=el.dataset.view;render();}
       else if(el.dataset.duration)setDuration(Number(el.dataset.duration));
-      else if(el.dataset.kit)insert(el.dataset.kit);
+      else if(el.dataset.kit)insert(el.dataset.kit,{preview:auditionPads});
       else if(el.dataset.auditionKit){const kit=KIT.find(k=>k.id===el.dataset.auditionKit);piece=kit.id;ensureAudio().play({instrument:kit.id,velocity:.75},engine.ctx.currentTime,true);render();}
       else if(el.dataset.bar)navigate(musicalStarts(editor.score.timeline)[Number(el.dataset.bar)]);
       else if(el.dataset.hit){selectionKind='notes';selected=new Set([el.dataset.hit]);const bar=editor.score.bars.find(b=>b.hits.some(h=>h.id===el.dataset.hit)),index=editor.score.timeline.measures.findIndex(m=>m.id===bar.measureId),hit=bar.hits.find(h=>h.id===el.dataset.hit);cursor=add(musicalStarts(editor.score.timeline)[index],hit.offset);barRange=[index,index];piece=hit.instrument==='rest'?piece:hit.instrument;value=hit.value;dotted=hit.dotted;tuplet=hit.tuplet;render();}
