@@ -1,6 +1,6 @@
 # Drum transcription implementation and review guide
 
-The approved scope includes all three design concepts: integrated staff, expanded score, and drum lanes with a linked staff preview. This branch implements those workflows for manual transcription against an existing recording. It has not been deployed or published as a desktop release.
+The approved scope includes all three design concepts: integrated staff, expanded score, and drum lanes with a linked staff preview. This branch implements those workflows for manual transcription against an existing recording. This document records the implementation review before web publication; GitHub/Vercel track deployment status. Desktop publication is separate.
 
 ## What is implemented
 
@@ -39,7 +39,7 @@ Copy acts on selected notes when a note selection is active, and on whole bars a
 
 ## Validation completed
 
-- 148 Vitest tests pass, including musical timing, engraving geometry, note movement, interrupted-save replay, ownership, share exclusion/revocation/deletion, coherent import snapshots and library export.
+- 149 Vitest tests pass, including musical timing, engraving geometry, note movement, interrupted-save replay, ownership, share exclusion/revocation/deletion, coherent import snapshots and library export.
 - Audio scheduler tests cover repeated loop boundaries without duplicate hits or accumulated drift, immediate cancellation on rate/seek/stop, first-preview continuity, and hi-hat choke scheduling.
 - TypeScript backend/shared-model check and production Vite build pass.
 - 26 existing desktop tests pass. The desktop CSP now explicitly allows the bundled font data URLs; scripts remain under the existing policy.
@@ -58,3 +58,11 @@ The first version supports one drum part per song, 512 measures, 256 hits per me
 ## Local development fixture
 
 `npm run dev:web` serves `/tests/notation-demo.html`. It uses the real workspace with an injected in-memory store, a synthetic recording and the native playback path. It performs no account writes. The fixture is not an input to the production Vite build. HTTP preview environments do not expose AudioWorklet, so pitch-preserving DSP is covered separately by the existing audio tests.
+
+## Separate web and desktop publication
+
+The web feature can ship ahead of desktop 1.5.0. Desktop serves its bundled UI, and the shared backend change adds tables and optional fields without removing or requiring new arguments on existing APIs. A compatibility regression test exercises the 1.5 request shapes for tempo saves, practice saves and share creation: notation and its inclusion preference remain intact.
+
+Desktop 1.5.0 cannot display, edit or export the new notation; use the web for those actions until desktop is updated. Normal desktop practice edits preserve the score and its separate alignment.
+
+The Vercel integration publishes pushes to main. Its configured build command deploys Convex and builds the web client with the deployment URL. The desktop workflow runs on version tags, release branches or explicit dispatch, so merging this feature to main does not publish installers or alter updater feeds.

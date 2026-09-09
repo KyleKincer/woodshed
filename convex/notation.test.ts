@@ -25,3 +25,16 @@ test('sharing inclusion and revocation govern read-only score access',async()=>{
   await alice.mutation(api.sharing.create,{id:songId,includeNotation:true});await alice.mutation(api.sharing.revoke,{id:songId});expect(await t.query(api.notation.get,{token})).toBeNull();
   await alice.mutation(api.songs.remove,{id:songId});expect(await t.run(ctx=>ctx.db.query('notationParts').take(10))).toEqual([]);expect(await t.run(ctx=>ctx.db.query('notationBars').take(10))).toEqual([]);
 });
+test('desktop 1.5 request shapes preserve web notation and its sharing preference',async()=>{
+  const {t,alice,args,songId}=await setup();await alice.mutation(api.notation.save,args);
+  const before=await alice.query(api.notation.get,{songId});
+  // Existing desktop clients know only the original song settings and omit the
+  // new inclusion argument when retrieving or creating an active share link.
+  await alice.mutation(api.songs.saveTempo,{id:songId,tempo:{source:'manual',map:[{t:0,bpm:87,beatsPerBar:4,unit:4}]}});
+  await alice.mutation(api.songs.savePractice,{id:songId,practice:{rate:.75,loop:{enabled:true,a:1,b:4},tracks:[]}});
+  const {token}=await alice.mutation(api.sharing.create,{id:songId,includeNotation:false});
+  expect(await alice.mutation(api.sharing.create,{id:songId})).toEqual({token});
+  expect(await alice.query(api.notation.get,{songId})).toEqual(before);
+  expect(await t.query(api.notation.get,{token})).toBeNull();
+  expect((await alice.query(api.songs.get,{id:songId}))?.practice.rate).toBe(.75);
+});
