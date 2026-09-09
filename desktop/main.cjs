@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, utilityProcess, dialog, Menu, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, utilityProcess, dialog, Menu, powerMonitor, nativeTheme } = require('electron');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,6 +15,10 @@ let updateState = publicUpdateState('idle');
 const resources = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'build');
 const webRoot = path.join(__dirname, '..', 'dist');
 const companionEntry = app.isPackaged ? path.join(process.resourcesPath, 'companion', 'server.mjs') : path.join(resources, 'companion', 'server.mjs');
+const themeFile = path.join(app.getPath('userData'), 'appearance.json');
+try { const saved = JSON.parse(fs.readFileSync(themeFile, 'utf8')); if (['system','light','dark'].includes(saved.theme)) nativeTheme.themeSource = saved.theme; } catch {}
+const windowBackground = () => nativeTheme.shouldUseDarkColors ? '#171c1b' : '#f8f7f1';
+nativeTheme.on('updated', () => { if (window && !window.isDestroyed()) window.setBackgroundColor(windowBackground()); });
 function trusted(event) { return event.senderFrame === window?.webContents.mainFrame && new URL(event.senderFrame.url).origin === UI_ORIGIN; }
 function emit(status, info) { updateState = publicUpdateState(status, info); window?.webContents.send('desktop:update-state', updateState); }
 async function localStatus() {
@@ -31,14 +35,14 @@ function startWeb() {
     if(url.pathname === '/oauth/callback') {
       window?.loadURL(UI_ORIGIN+'/?'+url.searchParams.toString());window?.show();window?.focus();
       res.writeHead(200,{'Content-Type':'text/html','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"});
-      res.end('<html><title>Return to Woodshed</title><body style="font:18px system-ui;background:#0e0f13;color:#e6e8ee;padding:60px"><h1>Return to Woodshed</h1><p>Finish signing in in the desktop app. You can close this tab.</p></body></html>');return;
+      res.end('<html><title>Return to Woodshed</title><body style="font:18px system-ui;color-scheme:light dark;background:light-dark(#f8f7f1,#171c1b);color:light-dark(#18211f,#f0f1e9);padding:60px"><h1>Return to Woodshed</h1><p>Finish signing in in the desktop app. You can close this tab.</p></body></html>');return;
     }
     try {
-    const relative = url.pathname.startsWith('/assets/') ? decodeURIComponent(url.pathname.slice(1)) : 'index.html';
+    const relative = (url.pathname.startsWith('/assets/') || ['/theme-init.js','/woodshed-icon.svg','/favicon-32.png','/apple-touch-icon.png','/downloads.json'].includes(url.pathname)) ? decodeURIComponent(url.pathname.slice(1)) : 'index.html';
     const file=path.resolve(webRoot,relative);
     if (!file.startsWith(webRoot+path.sep)) {res.writeHead(403);res.end();return;}
       const data=fs.readFileSync(file);
-      const types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};
+      const types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.json':'application/json'};
       res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* https://*.convex.cloud wss://*.convex.cloud https://*.convex.site https://*.r2.cloudflarestorage.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"});res.end(data);
     }catch{res.writeHead(404);res.end('Not found');}
   });
@@ -77,6 +81,13 @@ function setupUpdates() {
   powerMonitor.on('resume',()=>updates.wake());
 }
 ipcMain.handle('desktop:media-url',(event,url)=>{if(!trusted(event))throw Error('Untrusted window');return mediaProxy.register(url);});
+ipcMain.handle('desktop:theme',(event,theme)=>{
+  if(!trusted(event))throw new Error('Untrusted window');
+  if(!['system','light','dark'].includes(theme))throw new Error('Unknown theme');
+  nativeTheme.themeSource=theme;
+  fs.mkdirSync(path.dirname(themeFile),{recursive:true});
+  fs.writeFileSync(themeFile,JSON.stringify({theme}));
+});
 ipcMain.handle('desktop:info',event=>{
   if(!trusted(event))throw new Error('Untrusted window');
   return {version:app.getVersion(),companion:companionInfo,update:updateState};
@@ -91,7 +102,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.on('second-instance',()=>{window?.show();window?.focus();});
   app.whenReady().then(async()=>{
     await startWeb();await startCompanion();
-    window=new BrowserWindow({icon:path.join(__dirname,'icon.png'),width:1280,height:850,minWidth:640,minHeight:480,backgroundColor:'#0e0f13',show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    window=new BrowserWindow({icon:path.join(__dirname,'icon.png'),width:1280,height:850,minWidth:640,minHeight:480,backgroundColor:windowBackground(),show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     const openExternal=url=>{try{const parsed=new URL(url);if(parsed.protocol==='https:')shell.openExternal(url);}catch{}};
     window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==UI_ORIGIN){event.preventDefault();openExternal(url);}});
     window.webContents.setWindowOpenHandler(({url})=>{openExternal(url);return {action:'deny'};});
@@ -109,6 +120,19 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       const info=await localStatus();
       const page=await window.webContents.executeJavaScript(`({title:document.title,bridge:!!window.woodshedDesktop,header:!!document.querySelector('#app-header'),sidebar:!!document.querySelector('#sidebar')})`);
       if(!page.bridge||!page.header||page.sidebar)throw Error('Desktop UI smoke check failed');
+      const appearance = await window.webContents.executeJavaScript(`(async () => {
+        if(!window.woodshedAppearance)throw Error('Appearance bootstrap missing');
+        for(const theme of ['dark','light']) {
+          window.woodshedAppearance.set(theme);
+          await window.woodshedDesktop.setTheme(theme);
+          if(document.documentElement.dataset.theme!==theme || getComputedStyle(document.body).colorScheme!==theme)throw Error('Theme did not apply: '+theme);
+        }
+        window.woodshedAppearance.set('system');
+        await window.woodshedDesktop.setTheme('system');
+        return document.documentElement.dataset.theme;
+      })()`);
+      if(nativeTheme.themeSource!=='system')throw Error('Native appearance did not return to system');
+      console.log(JSON.stringify({appearanceSmoke:appearance}));
       // Check the packaged module, MIME type, CSP, WASM compilation and actual
       // audio output in Chromium on every release platform.
       const stretchFile = fs.readdirSync(path.join(webRoot,'assets')).find(name=>/^SignalsmithStretch-.*\.mjs$/.test(name));

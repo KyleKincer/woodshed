@@ -1,3 +1,4 @@
+import { themeControl, returnOnStop, setStopBehavior } from './preferences.js';
 // Renders the Settings view: quality presets (+ custom knobs), stem layout,
 // delivery format, and the local stem cache. Persists on every change.
 
@@ -29,6 +30,18 @@ export function renderSettings() {
   const presetIndex = Math.max(0, presets.findIndex(p => p.id === s.preset));
 
   root.innerHTML = `
+    <section class="settings-section" aria-labelledby="appearance-title">
+      <h2 id="appearance-title">Appearance</h2>
+      <p class="desc">System follows your device’s light or dark appearance automatically. Your choice is remembered on this device.</p>
+      ${themeControl()}
+    </section>
+    <section class="settings-section" aria-labelledby="playback-title">
+      <h2 id="playback-title">Playback</h2>
+      <label for="stop-behavior">When playback stops</label>
+      <select id="stop-behavior"><option value="return" ${returnOnStop() ? 'selected' : ''}>Return to edit cursor (default)</option><option value="stay" ${returnOnStop() ? '' : 'selected'}>Stay at playback position</option></select>
+      <p class="hint">Click the waveform to place the edit cursor. Space plays or stops. Enter pauses or resumes in place. The dashed line marks your selected start. Remembered on this device.</p>
+    </section>
+
     <section class="settings-section" aria-labelledby="song-defaults-title">
       <h2 id="song-defaults-title">Song defaults</h2>
       <p class="desc">Applied to new songs. You can choose a different quality or stem layout for each song.</p>
@@ -167,6 +180,7 @@ export function renderSettings() {
       notify('Library export downloaded.');
     },
   );
+  root.querySelector('#stop-behavior').onchange = event => setStopBehavior(event.target.value);
   wireSettings();
   refreshCacheSize();
 }

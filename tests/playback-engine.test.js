@@ -215,3 +215,32 @@ test('count-in follows tempo changes and extrapolates clicks beyond a detected g
   expect(metro.countInPlan().beats).toHaveLength(4);
   metro.destroy();
 });
+
+test('stop returns to a stationary edit cursor over repeated plays, loops and rate changes', async () => {
+  engine.seek(10); engine.setLoop(true,10,12); await engine.play(); settle(); advance(101);
+  engine.setSpeed(.75);settle();engine.setLoop(false);settle();
+  expect(engine.editPosition).toBe(10);
+  engine.stop();expect(engine.getPosition()).toBe(10);expect(engine.playing).toBe(false);
+  await engine.play();settle();expect(engine.getPosition()).toBe(10);
+  advance(3);engine.stop();expect(engine.getPosition()).toBe(10);
+});
+test('pause resumes in place without moving the edit cursor; stop in place is explicit', async () => {
+  engine.seek(20);await engine.play();settle();advance(5);engine.pause();
+  expect(engine.paused).toBe(true);expect(engine.editPosition).toBe(20);
+  await engine.play();settle();expect(engine.getPosition()).toBe(25);
+  advance(2);engine.stop();expect(engine.getPosition()).toBe(20);
+  await engine.play();settle();advance(4);engine.stop({returnToEdit:false});
+  expect(engine.getPosition()).toBe(24);expect(engine.editPosition).toBe(24);
+});
+test('selecting during playback changes the edit cursor, including pending seeks', async () => {
+  engine.seek(10);await engine.play();settle();advance(3);
+  engine.seek(40);engine.stop();expect(engine.getPosition()).toBe(40);
+  await engine.play();settle();advance(1);engine.stop();expect(engine.getPosition()).toBe(40);
+});
+test('stopping audible pre-roll and a pending start cannot leak sound or move the edit cursor', async () => {
+  engine.seek(20);await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+  settle();advance(1);engine.stop();expect(engine.getPosition()).toBe(20);expect(engine.countIn).toBeNull();
+  let resume;engine.ctx.state='suspended';engine.ctx.resume=()=>new Promise(resolve=>{resume=resolve;});
+  const pending=engine.play();engine.stop();resume();await pending;
+  expect(engine.playing).toBe(false);expect(engine.editPosition).toBe(20);
+});

@@ -1,3 +1,10 @@
+Woodshed 1.4.5 adds system-aware dark mode, a repeatable practice transport, and a stable startup.
+
+- Appearance follows your system by default and updates when the system changes. Choose System, Light, or Dark in Settings, on sign-in, or on the download page. Choices are remembered on the current device. Waveforms, loading states, dialogs, and native desktop windows follow the same appearance.
+- The edit cursor is separate from the moving playback head. Click a waveform to select your start. Space plays or stops; stopping returns to that start by default. Enter or the Pause button pauses and resumes in place, without repeating count-in. Settings also offers “Stay at playback position.”
+- A dashed edit cursor and Start readout keep the selected position visible. Repeated playback, loop changes, seeks, rate changes, and canceled count-ins preserve the intended start.
+- Startup keeps the library skeleton in place while restoring the session and receiving the first library and job snapshots. Restored sessions skip sign-in, and the app no longer flashes an empty library. Independent startup reads run together, artwork loads without blocking song controls or replacing keyboard focus, and slow or failed connections offer retry.
+
 Woodshed 1.4.4 refreshes the app icon and desktop download experience.
 
 - A new cobalt-blue and ivory W icon matches Woodshed’s current styling across the desktop app, browser tab, and saved web shortcuts.

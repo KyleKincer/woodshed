@@ -20,7 +20,7 @@ export function fallbackArtwork(seed) {
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function artworkMarkup(song, url, className) {
   const fallback = fallbackArtwork(artworkSeed(song));
-  return `<div class="${className} artwork" style="background-image:url('${fallback}')" aria-hidden="true">${url ? `<img src="${escape(url)}" alt="" loading="lazy" decoding="async" data-artwork>` : ''}</div>`;
+  return `<div class="${className} artwork" ${song.coverKey ? `data-cover-key="${escape(song.coverKey)}"` : ''} style="background-image:url('${fallback}')" aria-hidden="true">${url ? `<img src="${escape(url)}" alt="" loading="lazy" decoding="async" data-artwork>` : ''}</div>`;
 }
 export function wireArtwork(root) {
   root.querySelectorAll('img[data-artwork]').forEach(img => {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-startup="loading">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,17 +8,19 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <meta name="theme-color" content="#174bd1" />
+  <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/src/css/styles.css" />
   <link rel="stylesheet" href="/src/css/record-club.css" />
   <link rel="stylesheet" href="/src/css/motion.css" />
   <link rel="stylesheet" href="/src/css/download.css" />
+  <link rel="stylesheet" href="/src/css/theme.css" />
 </head>
 <body>
 
   <!-- Advisory banner (codec support, etc.) -->
   <div id="deps-banner" class="deps-banner hidden"></div>
 
-  <header id="app-header">
+  <header id="app-header" inert>
     <div class="header-home">
       <button id="header-back" class="header-back" type="button" data-view="library" aria-label="Back to library" title="Back to library">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
@@ -32,7 +34,7 @@
     </div>
   </header>
 
-  <main id="content">
+  <main id="content" inert>
     <!-- LIBRARY VIEW -->
     <section id="view-library" class="view active">
       <header class="view-header">
@@ -63,7 +65,8 @@
           <input id="lib-search" class="search" type="search" placeholder="Search songs, artists, albums" aria-label="Search library" />
         </div>
       </header>
-      <div id="library-grid"></div>
+      <div class="library-selection startup-selection" aria-hidden="true"><span>Select songs</span></div>
+      <div id="library-grid"><div class="library-grid startup-skeleton" aria-hidden="true"><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div></div></div>
       <div id="library-empty" class="empty hidden">
         <p>No songs yet.</p>
         <button class="add-btn" data-add>＋ Add your first song</button>
@@ -84,6 +87,8 @@
       <div id="settings-root"></div>
     </section>
   </main>
+
+  <div id="startup-status" role="status"><span class="startup-pulse" aria-hidden="true"></span>Opening your library…<button type="button" class="btn-ghost" id="startup-retry">Taking longer than expected? Retry</button></div>
 
   <!-- ADD MODAL -->
   <div id="add-modal" class="modal hidden">
@@ -123,6 +128,7 @@
     <div class="signin-inner">
       <div class="brand signin-brand"><span class="brand-name">Woodshed</span></div>
       <div id="signin-mount"></div>
+      <label class="theme-control">Theme <select data-theme-choice aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
     </div>
   </div>
 

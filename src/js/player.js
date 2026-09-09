@@ -1,3 +1,4 @@
+import { returnOnStop } from './preferences.js';
 import { editSongs, artistLabel } from './song-metadata.js';
 import { setArtwork } from './artwork.js';
 import { arrangePlayerControls } from './player-layout.js';
@@ -82,6 +83,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
           <div class="loop-region" id="loop-region" style="display:none"></div>
           <div class="loop-handle" id="handle-a" style="display:none"></div>
           <div class="loop-handle" id="handle-b" style="display:none"></div>
+          <div class="edit-cursor" id="edit-cursor" aria-hidden="true"></div>
           <div class="playhead" id="playhead" style="left:0"></div>
           <div class="time-tip" id="time-tip" style="display:none"></div>
         </div>
@@ -92,12 +94,13 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
         <canvas id="mini-canvas"></canvas>
         <div class="mini-loop" id="mini-loop" style="display:none"></div>
         <div class="mini-view" id="mini-view"><span class="mv-edge l"></span><span class="mv-edge r"></span></div>
-        <div class="mini-playhead" id="mini-playhead"></div>
+        <div class="mini-edit-cursor" id="mini-edit-cursor" aria-hidden="true"></div><div class="mini-playhead" id="mini-playhead"></div>
       </div>
 
       <div class="transport">
-        <button class="play-btn" id="play">▶</button>
-        <div class="playback-position"><div class="time" id="time">0:00.00 / ${fmt(duration)}</div><div class="bar-position" id="bar-position">Bar —</div></div>
+        <button class="play-btn" id="play" title="Play / stop (Space)">▶</button>
+        <button class="toggle-btn pause-btn" id="pause" title="Pause / resume (Enter)" aria-label="Pause" aria-pressed="false">❚❚</button>
+        <div class="playback-position"><div class="time" id="time">0:00.00 / ${fmt(duration)}</div><div class="bar-position" id="bar-position">Bar —</div><div class="edit-position" id="edit-position" title="Selected playback start">Start 0:00.00</div></div>
 
         <div class="t-divider"></div>
         <div class="t-group loop-readout" id="loop-readout">
@@ -147,7 +150,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
 
         <div class="t-spacer"></div>
         <button class="toggle-btn sm" id="mixer-reset" title="Reset mixer (0)">Reset mix</button>
-        <button class="toggle-btn sm" id="help" title="space play · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · G grid · S snap · M metronome · 1–9 mute · 0 reset">?</button>
+        <button class="toggle-btn sm" id="help" title="Space play/stop · Enter pause/resume · ←/→ seek (shift=1s) · ,/. nudge (shift=.01s) · click waveform to set edit cursor and seek · [ ] set loop A/B · Home/End jump to A/B · L loop · −/= zoom · \\ fit · G grid · S snap · M metronome · 1–9 mute · 0 reset">?</button>
       </div>
 
       <div class="metro-pop hidden" id="metro-pop">
@@ -341,6 +344,9 @@ export async function openPlayer(song) {
   const timeline = document.getElementById('timeline');
   const interact = document.getElementById('timeline-interact');
   const playhead = document.getElementById('playhead');
+  const editCursor = document.getElementById('edit-cursor');
+  const miniEdit = document.getElementById('mini-edit-cursor');
+  const editReadout = document.getElementById('edit-position');
   const loopRegion = document.getElementById('loop-region');
   const handleA = document.getElementById('handle-a');
   const handleB = document.getElementById('handle-b');
@@ -373,7 +379,7 @@ export async function openPlayer(song) {
       const w = Math.max(200, Math.floor(canvas.clientWidth));
       const peaks = computePeaksRange(track.buffer, view.start, view.end, w);
       const audible = anySolo ? track.soloed : !track.muted;
-      drawWaveform(canvas, peaks, track.color, { dim: !audible });
+      drawWaveform(canvas, peaks, colorFor(track.name), { dim: !audible });
     }
     drawGrid();
   }
@@ -452,8 +458,8 @@ export async function openPlayer(song) {
       const x = timeToX(tick.time);
       const sel = beatEditing && tick.beat && tick.beat === selectedBeat;
       ctx.strokeStyle = sel ? cssVar('--accent')
-        : tick.subdivision ? 'rgba(23,32,31,0.08)'
-          : tick.downbeat ? 'rgba(23,75,209,0.45)' : 'rgba(23,32,31,0.17)';
+        : tick.subdivision ? cssVar('--grid-minor')
+          : tick.downbeat ? cssVar('--grid-bar') : cssVar('--grid-beat');
       ctx.lineWidth = sel ? 2 : tick.downbeat ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
       if (beatEditing && tick.beat) { // grab handle at the top of each beat
@@ -777,9 +783,20 @@ export async function openPlayer(song) {
   const playBtn = document.getElementById('play');
   const timeEl = document.getElementById('time');
   const barEl = document.getElementById('bar-position');
-  function setPlayIcon() { playBtn.textContent = engine.playing ? '❚❚' : '▶'; playBtn.setAttribute('aria-label',engine.countingIn?'Cancel count-in':engine.playing?'Pause':'Play'); }
-  playBtn.onclick = async () => { if (engine.playing) engine.pause(); else await engine.play(); setPlayIcon(); };
-  engine.onEnded = () => setPlayIcon();
+  const pauseBtn = document.getElementById('pause');
+  function setPlayIcon() {
+    playBtn.textContent = engine.playing ? '■' : '▶';
+    playBtn.setAttribute('aria-label', engine.countingIn ? 'Cancel count-in' : engine.playing ? 'Stop' : engine.paused ? 'Resume' : 'Play');
+    pauseBtn.setAttribute('aria-label', engine.paused ? 'Resume' : 'Pause');
+    pauseBtn.setAttribute('aria-pressed', String(!!engine.paused));
+    pauseBtn.disabled = !engine.playing && !engine.paused && !startingPlayback;
+  }
+  function stopPlayback() {
+    engine.stop({returnToEdit: returnOnStop()});
+    const position = engine.getPosition();
+    if (position < view.start || position > view.end) setView(position - span() * .1, position + span() * .9);
+  }
+  engine.onEnded = () => { if (returnOnStop()) stopPlayback(); setPlayIcon(); };
 
   // Loop controls
   const loopToggle = document.getElementById('loop-toggle');
@@ -1018,19 +1035,25 @@ export async function openPlayer(song) {
   document.getElementById('be-shr').onclick = () => metronome.shiftAll(0.01);
 
   let startingPlayback = false, playAction = 0;
-  async function doPlayPause() {
+  async function doPlayStop({pause = false} = {}) {
     const active = engine, metro = metronome;
-    if (active.playing || startingPlayback) { ++playAction; startingPlayback = false; active.pause(); metro.tick(); setPlayIcon(); return; }
+    if (active.playing || startingPlayback) {
+      ++playAction; startingPlayback = false;
+      if (pause) active.pause();
+      else stopPlayback();
+      metro.tick(); setPlayIcon(); return;
+    }
     setFollow(true);
     const action = ++playAction;
     startingPlayback = true;
-    try { await active.play({countIn: metro.countIn ? metro.countInPlan() : null, audiblePreRoll: metro.audiblePreRoll}); }
+    try { await active.play({countIn: metro.countIn && !active.paused ? metro.countInPlan() : null, audiblePreRoll: metro.audiblePreRoll}); }
     finally { if (action === playAction) startingPlayback = false; }
     if (!isCurrent() || action !== playAction) return;
     if (metro.countIn || metro.enabled) metro.start();
     setPlayIcon();
   }
-  playBtn.onclick = doPlayPause;
+  playBtn.onclick = () => doPlayStop();
+  pauseBtn.onclick = () => doPlayStop({pause: true});
 
   // ---- initial draw + resize ----
   requestAnimationFrame(() => { drawWaveforms(); drawMini(); updateLoopOverlay(); });
@@ -1038,6 +1061,12 @@ export async function openPlayer(song) {
   ro.observe(tracksEl);
   ro.observe(overview);
   cleanupFns.push(() => ro.disconnect());
+  const redrawTheme = () => {
+    trackRows.forEach(({track, row}) => { row.querySelector('.track-dot').style.background = colorFor(track.name); });
+    drawWaveforms(); drawMini();
+  };
+  window.addEventListener('woodshed:theme', redrawTheme);
+  cleanupFns.push(() => window.removeEventListener('woodshed:theme', redrawTheme));
 
   const activeEngine = engine;
   let practiceTimer;
@@ -1063,6 +1092,11 @@ export async function openPlayer(song) {
       const sp = span();
       setView(pos - sp * 0.1, pos - sp * 0.1 + sp);
     }
+    const selected = engine.editPosition;
+    editCursor.style.display = selected >= view.start && selected <= view.end ? 'block' : 'none';
+    editCursor.style.left = timeToX(selected) + 'px';
+    miniEdit.style.left = (selected / duration) * overview.clientWidth + 'px';
+    editReadout.textContent = `Start ${fmt2(selected)}`;
     const x = timeToX(pos);
     const w = waveW();
     playhead.style.display = pos >= view.start && pos <= view.end ? 'block' : 'none';
@@ -1089,14 +1123,15 @@ export async function openPlayer(song) {
     if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.code === 'Space' && isPointerControl(e.target) && !e.target.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),textarea,[contenteditable]')) {
-      e.preventDefault(); if (!e.repeat) doPlayPause(); return;
+      e.preventDefault(); if (!e.repeat) doPlayStop(); return;
     }
     if (e.target.closest('input,select,textarea,[contenteditable]')) return;
     if (e.target.closest('button,a[href],summary,[role="button"]') && (e.code === 'Space' || e.key === 'Enter')) return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
-    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) doPlayPause(); }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) doPlayStop(); }
+    else if (k === 'Enter') { e.preventDefault(); if (!e.repeat) doPlayStop({pause: true}); }
     else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (k.toLowerCase() === 'g') gridToggle.click();
     else if (k.toLowerCase() === 's') gridSnap.click();

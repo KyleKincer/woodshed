@@ -27,6 +27,8 @@ export class MultitrackEngine {
     this.playRequest = 0;
     this.revision = 0;
     this.pausedAt = 0;
+    this.editPosition = 0;
+    this.paused = false;
     this.countIn = null;
 
     this.loop = { enabled: false, a: 0, b: 0 };
@@ -234,6 +236,7 @@ export class MultitrackEngine {
     this.master.gain.setValueAtTime(0, this.ctx.currentTime);
     this.master.gain.setValueAtTime(1, when);
     this.playing = true;
+    this.paused = false;
   }
 
   pause() {
@@ -243,6 +246,7 @@ export class MultitrackEngine {
     this.pausedAt = this.countingIn ? this.countIn.target : pendingSeek ? pendingSeek.offset : this.getPosition();
     this.countIn = null;
     this.playing = false;
+    this.paused = true;
     this.segments = [];
     this.master.gain.cancelScheduledValues(this.ctx.currentTime);
     this.master.gain.setValueAtTime(0, this.ctx.currentTime);
@@ -254,13 +258,23 @@ export class MultitrackEngine {
     this.revision++;
   }
 
-  toggle() { return this.playing ? this.pause() : this.play(); }
+  // Stop returns to the selected edit cursor. Pause preserves the audible
+  // position without moving that cursor, so auditioning a passage is repeatable.
+  stop({returnToEdit = true} = {}) {
+    this.pause(); // also cancels a pending AudioContext.resume()
+    this.seek(returnToEdit ? this.editPosition : this.pausedAt);
+    this.paused = false;
+  }
+
+  toggle() { return this.playing ? this.stop() : this.play(); }
 
   seek(time) {
     if (!Number.isFinite(time)) return;
     if (this.countingIn) this.pause();
     let position = Math.max(0, Math.min(time, this.duration));
     if (this.loop.enabled && position >= this.loop.b) position = this.loop.a;
+    this.editPosition = position;
+    this.paused = false;
     if (this.playing) this._schedule(position);
     else this.pausedAt = position;
     this.revision++;
@@ -318,6 +332,7 @@ export class MultitrackEngine {
     if (this.playing && !this.countingIn && segment && !segment.loop.enabled && this.getPosition() >= this.duration) {
       this.pause();
       this.pausedAt = this.duration;
+      this.paused = false;
       this.onEnded?.();
     }
   }
