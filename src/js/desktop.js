@@ -1,3 +1,4 @@
+import { themeControl } from './preferences.js';
 import {detectPlatform, normalizeRelease, formatSize} from './download-release.js';
 export function showDesktopSetup(message = '') {
   let dialog=document.getElementById('desktop-dialog');
@@ -14,7 +15,7 @@ export async function renderDownload() {
   document.body.className='download-page';
   document.body.innerHTML=`
     <main class="download-content">
-      <nav class="download-nav" aria-label="Main"><a class="brand" href="/">Woodshed</a><a href="/">Open web player <span aria-hidden="true">↗</span></a></nav>
+      <nav class="download-nav" aria-label="Main"><a class="brand" href="/">Woodshed</a>${themeControl()}<a href="/">Open web player <span aria-hidden="true">↗</span></a></nav>
       <section class="download-hero" aria-labelledby="download-title">
         <div class="download-hero-copy"><p class="eyebrow">YOUR PRACTICE SPACE. ON YOUR DESKTOP.</p><h1 id="download-title">Download<br>Woodshed.</h1>
           <p class="download-lead">Break a song into its parts. Slow it down. Loop the tricky bit. Everything you need to make it your own.</p>

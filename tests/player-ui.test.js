@@ -10,8 +10,10 @@ vi.mock('../src/js/engine.js', () => ({MultitrackEngine:class {
   ctx={createGain:()=>({gain:{},connect(){},disconnect(){}})};
   constructor(){state.engines.push(this);}
   async loadStems(){await state.load;return {duration:10,tracks:this.tracks};}
+  editPosition=0; paused=false;
   getPosition=()=>0; tickEnd=()=>{}; destroy=vi.fn();
-  play=vi.fn(async()=>{this.playing=true;}); pause=vi.fn(()=>{this.playing=false;});
+  play=vi.fn(async()=>{this.playing=true;this.paused=false;}); pause=vi.fn(()=>{this.playing=false;this.paused=true;});
+  stop=vi.fn(()=>{this.playing=false;this.paused=false;});
   setSpeed(value){this.rate=value;} setPreservePitch(value){this.preservePitch=value;}
   setLoop(enabled,a,b){this.loop={enabled,a,b};}
   setVolume(){} toggleMute(){} toggleSolo(){}
@@ -93,7 +95,7 @@ test('pointer-clicked checkboxes and sliders release Space to transport, without
     document.activeElement.dispatchEvent(repeat);await Promise.resolve();
   }
   expect(state.engines[0].play).toHaveBeenCalledTimes(2);
-  expect(state.engines[0].pause).toHaveBeenCalledTimes(1);
+  expect(state.engines[0].stop).toHaveBeenCalledTimes(1);
 });
 test('text entry, dialogs, and keyboard-focused checkboxes retain their keyboard behavior',async()=>{
   await openPlayer(song);
@@ -119,4 +121,18 @@ test('count-in controls default to silent, allow custom units, and persist on im
   unit.value='beats';unit.dispatchEvent(new Event('change'));
   closePlayer();
   expect(backend.saveTempo).toHaveBeenLastCalledWith('s',expect.objectContaining({countIn:true,countInLength:3,countInUnit:'beats',audiblePreRoll:false}));
+});
+
+test('Space stops at the edit cursor by default; Enter pauses and resumes without count-in',async()=>{
+  await openPlayer(song);const active=state.engines[0];
+  const key=async(key,code=key)=>{document.body.dispatchEvent(new KeyboardEvent('keydown',{key,code,bubbles:true,cancelable:true}));await Promise.resolve();await Promise.resolve();};
+  await key(' ','Space');expect(active.play).toHaveBeenCalledTimes(1);
+  await key('Enter');expect(active.pause).toHaveBeenCalledTimes(1);
+  await key('Enter');expect(active.play).toHaveBeenLastCalledWith(expect.objectContaining({countIn:null}));
+  await key(' ','Space');expect(active.stop).toHaveBeenLastCalledWith({returnToEdit:true});
+  localStorage.setItem('ws.stopBehavior','stay');
+  await key(' ','Space');await key(' ','Space');
+  expect(active.stop).toHaveBeenLastCalledWith({returnToEdit:false});
+  expect(document.querySelector('.transport-main #pause')).not.toBeNull();
+  expect(document.querySelector('#edit-cursor')).not.toBeNull();
 });

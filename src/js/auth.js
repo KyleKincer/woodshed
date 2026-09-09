@@ -1,3 +1,4 @@
+import { showStartup, showSignIn, waitForAuthSession } from './startup.js';
 import settingsIcon from '../assets/settings.svg?raw';
 import googleSignInButton from '../assets/google-signin.png';
 import { AuthClient, defaultStorage } from '@convex-dev/auth/browser';
@@ -71,7 +72,7 @@ async function initialize() {
   };
   if (!checkAccount(currentUser)) throw new Error('Account suspended');
   convex.onUpdate(api.users.me, {}, checkAccount);
-  document.getElementById('signin')?.classList.add('hidden');
+  showStartup();
   // Signing out in another tab must also clear this tab's library UI.
   auth.subscribe(() => {
     const state = auth.getSnapshot();
@@ -81,9 +82,7 @@ async function initialize() {
 }
 
 function waitForSession() {
-  const screen = document.getElementById('signin');
   const target = document.getElementById('signin-mount');
-  screen?.classList.remove('hidden');
   if (!target) throw new Error('Missing sign-in screen.');
   target.replaceChildren();
   const card = document.createElement('div');
@@ -136,19 +135,7 @@ function waitForSession() {
       button.disabled = false;
     }
   });
-  return new Promise((resolve) => {
-    let stop = () => {};
-    const update = () => {
-      const state = auth.getSnapshot();
-      if (!state.isLoading && state.isAuthenticated) {
-        stop();
-        stopErrors();
-        resolve();
-      }
-    };
-    stop = auth.subscribe(update);
-    update();
-  });
+  return waitForAuthSession(auth, {onSignedOut:showSignIn, onLoading:showStartup}).finally(stopErrors);
 }
 
 export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
@@ -207,7 +194,7 @@ export function mountUserButton({ admin = false, navigate = () => {} } = {}) {
 export function showFatal(title, message) {
   const screen = document.getElementById('signin');
   if (!screen) return;
-  screen.classList.remove('hidden');
+  showSignIn();
   const card = document.createElement('div');
   card.className = 'setup-card';
   const heading = document.createElement('h2');
@@ -216,5 +203,8 @@ export function showFatal(title, message) {
   description.className = 'setup-desc';
   description.textContent = message;
   card.append(heading, description);
+  const retry = document.createElement('button');
+  retry.className = 'btn-ghost'; retry.textContent = 'Retry';
+  retry.onclick = () => location.reload(); card.append(retry);
   screen.replaceChildren(card);
 }

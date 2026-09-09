@@ -1,3 +1,4 @@
+import { finishStartup } from './startup.js';
 import { initializeInteractions } from './interactions.js';
 import { transitionView } from './motion.js';
 import { renderBilling } from './billing.js';
@@ -59,43 +60,37 @@ function maybeCodecWarning() {
 }
 
 async function boot() {
-  // Gate the app on a signed-in session; everything below needs a user.
-  // A failure here has already painted its own explanation, so stop quietly
-  // rather than adding an unhandled rejection on top of it.
+  const retryTimer = setTimeout(() => document.getElementById('startup-status')?.classList.add('is-slow'), 12000);
+  const retry = document.getElementById('startup-retry');
+  if (retry) retry.onclick = () => location.reload();
   try {
     await ensureSignedIn();
-  } catch {
-    return;
-  }
-  const admin = await convex.query(api.admin.access, {});
-  mountUserButton({ admin, navigate: showView });
-
-  try {
-    config = await backend.getConfig();
-  } catch (e) {
-    showFatal(
-      "Couldn't reach the backend",
-      `${String(e.message || e)}<br><br>Check that <code>npx convex dev</code> is running.`
-    );
-    return;
-  }
-
-  initLibrary(config, openSong);
-  initSettings(config);
-
-  document.querySelectorAll('[data-view]').forEach((btn) => {
-    btn.addEventListener('click', () => showView(btn.dataset.view));
-  });
-
-
-  await renderLibrary();
-  maybeCodecWarning();
-  if (location.pathname === '/billing') showView('billing');
-  document.addEventListener('woodshed:billing', () => showView('billing'));
-  if (location.pathname === '/admin' && admin) showView('admin');
-  if (window.woodshedDesktop) {
-    const { initializeDesktop } = await import('./desktop-client.js');
-    initializeDesktop();
+    // These independent reads share the authenticated connection.
+    const [admin, loadedConfig] = await Promise.all([
+      convex.query(api.admin.access, {}), backend.getConfig(),
+    ]);
+    config = loadedConfig;
+    mountUserButton({ admin, navigate: showView });
+    initSettings(config);
+    document.querySelectorAll('[data-view]').forEach(btn => {
+      btn.addEventListener('click', () => showView(btn.dataset.view));
+    });
+    await initLibrary(config, openSong);
+    maybeCodecWarning();
+    if (location.pathname === '/billing') showView('billing');
+    document.addEventListener('woodshed:billing', () => showView('billing'));
+    if (location.pathname === '/admin' && admin) showView('admin');
+    finishStartup();
+    if (window.woodshedDesktop) {
+      const { initializeDesktop } = await import('./desktop-client.js');
+      initializeDesktop();
+    }
+  } catch (error) {
+    if (document.documentElement.dataset.startup !== 'signin') {
+      showFatal('Couldn’t open Woodshed', 'Check your connection and try again. ' + String(error.message || error));
+    }
+  } finally {
+    clearTimeout(retryTimer);
   }
 }
 

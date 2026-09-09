@@ -29,13 +29,13 @@ export function listLibrary() {
 }
 
 /** Subscribe to the library. Returns an unsubscribe function. */
-export function onLibrary(cb) {
-  return convex.onUpdate(api.songs.list, {}, cb);
+export function onLibrary(cb, onError) {
+  return convex.onUpdate(api.songs.list, {}, cb, onError);
 }
 
 /** Subscribe to in-flight jobs. Returns an unsubscribe function. */
-export function onJobs(cb) {
-  return convex.onUpdate(api.jobs.listActive, {}, cb);
+export function onJobs(cb, onError) {
+  return convex.onUpdate(api.jobs.listActive, {}, cb, onError);
 }
 
 export function renameSong(id, title) {

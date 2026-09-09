@@ -26,6 +26,9 @@ const uploads = new Map();
 // R2 cover key -> signed URL, filled in before each render.
 let coverUrls = {};
 let unsubscribers = [];
+let libraryLoaded = false, jobsLoaded = false;
+let readyResolve, readyReject;
+const coverPending = new Set();
 
 // View preferences (grouping + layout) persisted in localStorage.
 let view = loadView();
@@ -36,6 +39,8 @@ function loadView() {
 function saveView() { localStorage.setItem('ws.view', JSON.stringify(view)); }
 
 export function initLibrary(cfg, openSongCb) {
+  libraryLoaded = false; jobsLoaded = false;
+  const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
   config = cfg;
   onOpenSong = openSongCb;
   wireAddModal();
@@ -46,15 +51,18 @@ export function initLibrary(cfg, openSongCb) {
   unsubscribers.forEach((fn) => fn());
   unsubscribers = [
     backend.onLibrary((lib) => {
+      libraryLoaded = true;
       songs = lib?.songs || [];
       for (const id of selected) if (!songs.some(s => s.id === id)) selected.delete(id);
-      renderLibrary(currentFilter());
-    }),
+      renderLibrary(currentFilter()).catch(readyReject);
+    }, error => readyReject?.(error)),
     backend.onJobs((list) => {
+      jobsLoaded = true;
       jobs = (list || []).filter((j) => j.kind === 'separate');
-      renderLibrary(currentFilter());
-    }),
+      renderLibrary(currentFilter()).catch(readyReject);
+    }, error => readyReject?.(error)),
   ];
+  return ready;
 }
 
 export function teardownLibrary() {
@@ -98,6 +106,7 @@ const albumOf = (s) => s.album || '';
 let renderToken = 0;
 
 export async function renderLibrary(filter = '', { animate = false } = {}) {
+  if (!libraryLoaded || !jobsLoaded) return;
   const token = ++renderToken;
   const container = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
@@ -120,9 +129,23 @@ export async function renderLibrary(filter = '', { animate = false } = {}) {
     ...shown.map((s) => s.coverKey),
     ...newCards.map((p) => p.coverKey),
   ].filter(Boolean);
-  if (keys.length) {
-    try { coverUrls = { ...coverUrls, ...(await backend.signKeys(keys)) }; }
-    catch { /* covers are decorative; render without them */ }
+  // Cover dimensions and fallback artwork are already final. Signing images
+  // must not delay a usable library or cause its cards to move on arrival.
+  const missing = [...new Set(keys)].filter(key => !coverPending.has(key));
+  if (missing.length) {
+    missing.forEach(key => coverPending.add(key));
+    backend.signKeys(missing).then(urls => {
+      coverUrls = {...coverUrls, ...Object.fromEntries(missing.map(key => [key, urls[key] || null]))};
+      // Hydrate images in place: never replace focused song controls for artwork.
+      document.querySelectorAll('#library-grid [data-cover-key]').forEach(element => {
+        const url = coverUrls[element.dataset.coverKey];
+        if (!url || element.querySelector('img')?.getAttribute('src') === url) return;
+        const img = new Image(); img.alt = ''; img.loading = 'lazy'; img.decoding = 'async';
+        img.addEventListener('error', () => img.remove(), {once:true});
+        img.src = url; element.replaceChildren(img);
+      });
+    }).catch(() => { missing.forEach(key => { coverUrls[key] = null; }); })
+      .finally(() => missing.forEach(key => coverPending.delete(key)));
   }
   if (token !== renderToken) return; // a newer render already started
 
@@ -160,6 +183,7 @@ export async function renderLibrary(filter = '', { animate = false } = {}) {
     container.innerHTML = sections.map(sectionHtml).join('');
     wireArtwork(container);
     wireCards(container, procBySong);
+    readyResolve?.(); readyResolve = null;
   };
   // Only explicit layout/group changes animate, never live job updates.
   if (animate && document.getElementById('view-library').classList.contains('active')) {
@@ -202,7 +226,7 @@ function allPending() {
 function vmSong(s, proc) {
   return {
     id: s.id, jobId: proc?.jobId, title: s.title,
-    artist: artistOf(s), album: albumOf(s), duration: s.duration,
+    artist: artistOf(s), album: albumOf(s), duration: s.duration, coverKey: s.coverUrl ? null : s.coverKey,
     thumbUrl: s.coverUrl || (s.coverKey ? coverUrls[s.coverKey] || null : null),
     stemLabel: s.stems.length >= 4 ? `${s.stems.length} stems` : s.stems.map((x) => x.name).join(' / '),
     proc, isPending: false,
@@ -211,7 +235,7 @@ function vmSong(s, proc) {
 function vmPending(p) {
   return {
     id: p.songId, jobId: p.jobId, title: p.title || 'Processing…',
-    artist: p.artist || p.uploader || '', album: p.album || '', duration: p.duration,
+    artist: p.artist || p.uploader || '', album: p.album || '', duration: p.duration, coverKey:p.coverKey,
     thumbUrl: p.coverKey ? coverUrls[p.coverKey] || null : null,
     stemLabel: null, proc: p, isPending: true,
   };
@@ -645,6 +669,7 @@ function buildDialog(title, innerHtml) {
 function wireSelection() {
   let bar=document.querySelector('.library-selection');
   if(!bar){bar=document.createElement('div');bar.className='library-selection';document.getElementById('library-grid').before(bar);}
+  bar.classList.remove('startup-selection');bar.removeAttribute('aria-hidden');
   bar.innerHTML='<button class="btn-ghost" data-select>Select songs</button><span data-count></span><button class="btn-ghost" data-all hidden>Select visible</button><button class="btn-primary" data-edit hidden>Edit selected</button>';
   bar.querySelector('[data-select]').onclick=()=>{selecting=!selecting;if(!selecting)selected.clear();renderLibrary(currentFilter());};
   bar.querySelector('[data-all]').onclick=()=>{const all=shownIds.every(id=>selected.has(id));if(all)shownIds.forEach(id=>selected.delete(id));else shownIds.slice(0,100).forEach(id=>{if(selected.size<100)selected.add(id);});renderLibrary(currentFilter());};
