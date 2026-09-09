@@ -35,6 +35,8 @@ export async function exportLibrary(onProgress = () => {}) {
     const config=await backend.getConfig();await add('settings.json',encoder.encode(JSON.stringify(config.settings,null,2)));
     for(const [i,song] of songs.entries()) {
       onProgress(`Exporting ${i+1}/${songs.length}: ${song.title}`);
+      const notation=await backend.getNotation(song.id);
+      if(notation)await add(`${safe(song.title)}-${song.id}/drums.woodshed.json`,encoder.encode(JSON.stringify({format:'woodshed-notation',version:1,song:{title:song.title,artist:song.artist,duration:song.duration},score:notation.score},null,2)));
       const keys=[...song.stems.map(s=>s.key),...(song.coverKey?[song.coverKey]:[])];
       const urls=await backend.signKeys(keys);
       for(const key of keys) {

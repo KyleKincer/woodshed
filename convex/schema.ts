@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { metadataFields, fingerprintValidator } from './lib/songMetadata';
+import {headerValidator,barValidator} from './lib/notationValidators';
 
 // A source is how a song got here. `upload` carries an R2 key the browser
 // PUT the original file to; the others are handed straight to yt-dlp.
@@ -34,13 +35,15 @@ export const stemValidator = v.object({
 });
 
 export default defineSchema({
+  notationParts: defineTable({songId:v.optional(v.id('songs')),userId:v.string(),header:headerValidator,revision:v.number(),lastMutation:v.string(),hitCount:v.number()}).index('by_songId',['songId']),
+  notationBars: defineTable({partId:v.id('notationParts'),bar:barValidator}).index('by_partId',['partId']),
   songShares: defineTable({
-    songId:v.id('songs'), userId:v.string(), token:v.string(), active:v.boolean(), createdAt:v.number(),
+    songId:v.id('songs'), userId:v.string(), token:v.string(), active:v.boolean(), createdAt:v.number(),includeNotation:v.optional(v.boolean()),
   }).index('by_songId',['songId']).index('by_token',['token']),
   shareImports: defineTable({
     userId:v.string(), sourceSongId:v.id('songs'), token:v.string(), attempt:v.string(),
     status:v.union(v.literal('copying'),v.literal('ready'),v.literal('failed')),
-    songId:v.optional(v.id('songs')), snapshot:v.any(), expiresAt:v.number(),
+    songId:v.optional(v.id('songs')), snapshot:v.any(), expiresAt:v.number(),notationPartId:v.optional(v.id('notationParts')),
     files:v.array(v.object({sourceKey:v.string(), key:v.string(), objectId:v.id('audioObjects'), bytes:v.number(), mime:v.string(), etag:v.string()})),
   }).index('by_userId_and_sourceSongId',['userId','sourceSongId']),
   users: defineTable({ googleAccountId: v.optional(v.string()), email: v.optional(v.string()), emailVerified: v.boolean(), name: v.optional(v.string()), picture: v.optional(v.string()), createdAt: v.number() }).index('by_email', ['email']),

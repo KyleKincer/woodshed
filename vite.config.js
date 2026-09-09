@@ -11,7 +11,7 @@ export default defineConfig({
       void downloads(req,res);
     });
   }}],
-  server: { port: 5173, strictPort: true },
+  server: { port: 5173, strictPort: true, allowedHosts:['terminal.local'] },
   build: {
     outDir: 'dist',
     // Stems are decoded in a Worker-free main-thread path today; keep the

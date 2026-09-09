@@ -1,4 +1,5 @@
 import { showShareDialog } from './share-dialog.js';
+import { attachNotation } from './notation/launcher.js';
 import { returnOnStop } from './preferences.js';
 import { editSongs, artistLabel } from './song-metadata.js';
 import { setArtwork } from './artwork.js';
@@ -911,6 +912,8 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
 
   function refreshMetroUI() {
     const s = activeSection();
+    const notationTiming=!!metronome.notationBeats;
+    for(const id of ['m-bpm','m-sig','m-setdown','m-add','m-detect','m-detect-clear','m-edit-toggle','m-tap']){const control=document.getElementById(id);if(control)control.disabled=notationTiming;}
     if (document.activeElement !== mBpm) mBpm.value = s.bpm;
     mSig.value = `${s.beatsPerBar}/${s.unit}`;
     mAccent.checked = metronome.accent;
@@ -924,7 +927,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     mOnoff.classList.toggle('on', metronome.enabled);
     metroBtn.classList.toggle('on', metronome.enabled);
     const active = metroActiveIndex();
-    mList.innerHTML = metronome.map.map((sec, i) => `<div class="mp-item ${i === active ? 'active' : ''}" data-i="${i}">
+    mList.innerHTML = notationTiming ? '<p class="hint">Timing follows your drum part. Use Align / meter in Transcribe to edit it.</p>' : metronome.map.map((sec, i) => `<div class="mp-item ${i === active ? 'active' : ''}" data-i="${i}">
         <span class="mp-time">${fmt2(sec.t)}</span>
         <span class="mp-info">${sec.bpm} BPM · ${sec.beatsPerBar}/${sec.unit}</span>
         ${metronome.map.length > 1 ? `<button class="mp-del" data-i="${i}" title="Delete change">✕</button>` : ''}
@@ -954,7 +957,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
       if (beatEditing) { beatEditing = false; document.getElementById('mp-edit').classList.add('hidden'); editToggle.classList.remove('on'); }
     }
   }
-  metronome.onChange = () => { barIndex = buildBarIndex(metronome.beats); refreshMetroUI(); drawGrid(); persistTempo(); };
+  metronome.onChange = () => { if(metronome.notationBeats){beatEditing=false;selectedBeat=null;interact.style.cursor='text';} barIndex = buildBarIndex(metronome.beats); refreshMetroUI(); drawGrid(); persistTempo(); };
 
   metroBtn.onclick = () => { const open = metroPop.classList.toggle('hidden') === false; metroBtn.setAttribute('aria-expanded',String(open)); if (open) { metroPop.style.bottom = (root.querySelector('.transport').offsetHeight + 8) + 'px'; refreshMetroUI(); } };
   mOnoff.onclick = () => metronome.setEnabled(!metronome.enabled);
@@ -1076,6 +1079,8 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   cleanupFns.push(() => window.removeEventListener('woodshed:theme', redrawTheme));
 
   const activeEngine = engine;
+  const transcription=attachNotation({root,song,engine:activeEngine,metronome:songMetronome,getView:()=>({...view}),setView,setFollow,play:doPlayStop,readOnly,shareToken:location.pathname.match(/^\/share\/([a-f0-9]{64})/)?.[1],onLoopChange:updateLoopOverlay,onMixerChange:()=>{for(const {track,row} of trackRows){row.querySelector('.tbtn.mute').classList.toggle('on',track.muted);row.querySelector('.tbtn.mute').setAttribute('aria-pressed',String(track.muted));}drawWaveforms();}});
+  cleanupFns.push(()=>transcription.destroy());
   let practiceTimer;
   let lastPractice = JSON.stringify(song.practice || null);
   const flushPractice = () => {
@@ -1091,6 +1096,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   for (const event of ['input','click','pointerup']) root.addEventListener(event, schedulePractice);
   window.addEventListener('keyup', schedulePractice);
   saveForShare=async()=>{
+    await transcription.flush();
     clearTimeout(practiceTimer);clearTimeout(saveTimer);tempoDirty=false;
     const practice={loop:{...activeEngine.loop},rate:activeEngine.rate,grid:{...grid},tracks:activeEngine.tracks.map(t=>({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed}))};
     await Promise.all([backend.saveTempo(song.id,songMetronome.serialize()),backend.savePractice(song.id,practice)]);
@@ -1101,6 +1107,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   // ---- animation loop (playhead + auto-follow) ----
   function frame() {
     const pos = engine.getPosition();
+    transcription.tick(pos);
     // auto-scroll the view to keep the playhead visible while playing
     if (engine.playing && follow && (pos < view.start || pos > view.end)) {
       const sp = span();
@@ -1134,6 +1141,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   // ---- keyboard ----
   keyHandler = (e) => {
     if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if(e.target.closest('.notation-workspace'))return;
     if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.code === 'Space' && isPointerControl(e.target) && !e.target.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),textarea,[contenteditable]')) {

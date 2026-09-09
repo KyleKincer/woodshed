@@ -8,6 +8,7 @@ import { paginationOptsValidator } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { coverKeyOf, cleanMetadata } from './lib/songMetadata';
+import {readPart,deletePart} from './notation';
 
 /**
  * The whole library, newest first.
@@ -104,6 +105,7 @@ export const remove = mutation({
 });
 
 export async function deleteSongData(ctx: MutationCtx, song: Doc<'songs'>) {
+    const notation=await readPart(ctx,song._id);if(notation)await deletePart(ctx,notation.part._id);
     // Shared audio is freed by `release` only when this was the last song
     // holding it; `freeBlobs` is true only when this song owned its stems
     // outright, in which case clean them up here.

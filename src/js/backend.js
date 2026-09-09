@@ -209,6 +209,7 @@ export function openExternal(url) {
 
 export const cloudUsage = () => convex.query(api.storage.usage, {});
 export const savePractice = (id, practice) => convex.mutation(api.songs.savePractice, {id,practice});
+export const getNotation = songId => convex.query(api.notation.get,{songId});
 export const exportPage = cursor => convex.query(api.songs.exportPage, {paginationOpts:{numItems:50,cursor}});
 
 export async function retryJob(jobId) { const deviceId = await requireCompanion(); return convex.mutation(api.jobs.retry,{jobId,deviceId}); }

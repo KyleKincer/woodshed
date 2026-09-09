@@ -29,6 +29,8 @@ import type * as media from "../media.js";
 import type * as metadata from "../metadata.js";
 import type * as metadataLookup from "../metadataLookup.js";
 import type * as migrate from "../migrate.js";
+import type * as notation from "../notation.js";
+import type * as lib_notationValidators from "../lib/notationValidators.js";
 import type * as r2 from "../r2.js";
 import type * as renditions from "../renditions.js";
 import type * as sharing from "../sharing.js";
@@ -68,6 +70,8 @@ declare const fullApi: ApiFromModules<{
   metadata: typeof metadata;
   metadataLookup: typeof metadataLookup;
   migrate: typeof migrate;
+  notation: typeof notation;
+  "lib/notationValidators": typeof lib_notationValidators;
   r2: typeof r2;
   renditions: typeof renditions;
   sharing: typeof sharing;

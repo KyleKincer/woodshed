@@ -3,6 +3,7 @@ import {convexTest} from 'convex-test';
 import {expect,test,vi,beforeEach,afterEach} from 'vitest';
 import schema from './schema';
 import {api,internal} from './_generated/api';
+import {emptyScore} from '../shared/notation';
 const remote=vi.hoisted(()=>({objects:new Map<string,{ContentLength:number,ContentType:string,ETag:string}>(),copyHook:null as null|(()=>Promise<void>),copies:0}));
 vi.mock('./r2',()=>({r2:{config:{bucket:'test'},getUrl:vi.fn(async(key:string)=>'https://storage.test/'+key),deleteObject:vi.fn(async()=>{}),client:{send:vi.fn(async(command:any)=>{
   const {Key,CopySource,CopySourceIfMatch}=command.input;
@@ -144,4 +145,15 @@ test('expired imports release reserved files and stale cleanup cannot affect a l
   const saved=await bob.action(api.shareAudio.save,{token});
   await t.mutation(internal.sharing.failImport,{id:first.id,attempt:first.attempt!});
   expect(await bob.query(api.songs.get,{id:saved})).not.toBeNull();
+});
+
+test('recipient gets a coherent notation snapshot even when the sender edits while audio copies',async()=>{
+  const {t,alice,bob,songId,token}=await setup();const score=emptyScore(120),{bars,...header}=score;
+  bars.push({measureId:score.timeline.measures[0].id,coverage:'reviewed',hits:[]});
+  await alice.mutation(api.notation.save,{songId,baseRevision:0,mutationId:'initial-score',header,bars});
+  let edited=false;remote.copyHook=async()=>{if(edited)return;edited=true;await alice.mutation(api.notation.save,{songId,baseRevision:1,mutationId:'later-score',header:{...header,title:'Changed during copy'},bars:[]});};
+  const copyId=await bob.action(api.shareAudio.save,{token});const copied=await bob.query(api.notation.get,{songId:copyId});
+  expect(copied?.score.title).toBe('Drums');expect(copied?.score.timeline).toEqual(score.timeline);expect(copied?.score.bars[0].coverage).toBe('reviewed');
+  expect((await alice.query(api.notation.get,{songId}))?.score.title).toBe('Changed during copy');
+  await alice.mutation(api.songs.remove,{id:songId});expect((await bob.query(api.notation.get,{songId:copyId}))?.score.title).toBe('Drums');
 });
