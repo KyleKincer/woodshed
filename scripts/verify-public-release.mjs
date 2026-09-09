@@ -14,6 +14,25 @@ const installers = {
   win32: [/-win-x64\.exe$/],
 };
 
+export async function verifyGpuRelease(version, publish, fetchFile = fetch) {
+  if (semver.lt(version, '1.5.1')) return;
+  const base = `https://github.com/${publish.owner}/${publish.repo}/releases/download/v${version}/`;
+  await Promise.all(['linux','win32'].map(async platform => {
+    const response = await fetchFile(`${base}woodshed-cuda-${platform}-x64-${version}.json`, {signal:AbortSignal.timeout(30000)});
+    if (!response.ok) throw Error(`${platform}: NVIDIA manifest unavailable`);
+    const manifest = await response.json();
+    if (manifest.version !== version || manifest.platform !== platform || !manifest.parts?.length)
+      throw Error(`${platform}: invalid NVIDIA manifest`);
+    for (const part of manifest.parts) {
+      if (!/^woodshed-cuda-[a-z0-9.-]+\.part\d{3}$/.test(part.name) || !/^[a-f0-9]{64}$/.test(part.sha256))
+        throw Error(`${platform}: invalid NVIDIA part`);
+      const asset = await fetchFile(base + part.name, {method:'HEAD',signal:AbortSignal.timeout(30000)});
+      if (!asset.ok || Number(asset.headers.get('content-length')) !== part.size)
+        throw Error(`${platform}: NVIDIA part unavailable or incomplete: ${part.name}`);
+    }
+  }));
+}
+
 // Use the installed updater's public GitHub provider, without a GitHub token.
 // A successful upload alone does not prove that installed clients can see it.
 export async function verifyPublicRelease(version, publish, {
@@ -49,6 +68,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   for (let attempt = 1; ; attempt++) {
     try {
       await verifyPublicRelease(version, publish);
+      await verifyGpuRelease(version, publish);
       console.log(`Public update feeds and installer sizes verified for Woodshed ${version} on Linux, macOS, and Windows.`);
       break;
     } catch (error) {

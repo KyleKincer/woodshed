@@ -96,7 +96,8 @@ From this checkout, after `npm install`:
 Omit `--beats` to install separation first; rerun with it to add beat detection.
 The runtime is isolated in `companion/.venv`. On Linux without NVIDIA tools,
 setup installs CPU PyTorch; NVIDIA systems can use CUDA. CPU processing is
-supported everywhere, but is slower. The first separation downloads model
+supported everywhere. Windows/Linux apps download a verified NVIDIA runtime on first use when
+NVIDIA hardware is present, and Macs select Apple MPS when supported; unavailable accelerators fall back to CPU. The first separation downloads model
 weights. Rerun setup to update yt-dlp when extractors change.
 
 Use Woodshed for desktop and sign in with the same account as the web player.

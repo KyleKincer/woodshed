@@ -1,4 +1,4 @@
-import { readdir, mkdir, readFile, copyFile, writeFile } from 'node:fs/promises';
+import { readdir, mkdir, readFile, copyFile, writeFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
@@ -15,7 +15,10 @@ for(const dir of await readdir(source)){
       const previous=metadata.get(name);
       if(previous && previous.version!==next.version)throw Error('Mismatched release versions');
       metadata.set(name,previous?{...previous,files:[...previous.files,...next.files]}:next);
-    }else if(/\.(AppImage|exe|dmg|zip|blockmap)$/.test(name))await copyFile(file,path.join(target,name));
+    }else if(/\.(AppImage|exe|dmg|zip|blockmap)$/.test(name)||/^woodshed-cuda-.*\.(json|part\d{3})$/.test(name)){
+      if((await stat(file)).size>=2*1024**3)throw Error(`Release asset exceeds GitHub limit: ${name}`);
+      await copyFile(file,path.join(target,name));
+    }
   }
 }
 for(const [name,info] of metadata){
@@ -28,4 +31,16 @@ for(const [name,info] of metadata){
   await writeFile(path.join(target,name),yaml.dump(info));
 }
 for(const required of ['latest.yml','latest-linux.yml','latest-mac.yml'])if(!metadata.has(required))throw Error(`Missing ${required}`);
-console.log('Release files and updater checksums verified.');
+const version=metadata.get('latest.yml').version;
+for(const platform of ['linux','win32']){
+  const manifest=JSON.parse(await readFile(path.join(target,`woodshed-cuda-${platform}-x64-${version}.json`),'utf8'));
+  if(manifest.version!==version||manifest.platform!==platform||!manifest.parts?.length)throw Error('Invalid CUDA manifest');
+  for(const part of manifest.parts){
+    if(path.basename(part.name)!==part.name)throw Error('Unsafe CUDA asset name');
+    const file=path.join(target,part.name), hash=createHash('sha256');
+    if((await stat(file)).size!==part.size)throw Error(`CUDA part size mismatch: ${part.name}`);
+    for await(const data of createReadStream(file))hash.update(data);
+    if(hash.digest('hex')!==part.sha256)throw Error(`CUDA checksum mismatch: ${part.name}`);
+  }
+}
+console.log('Release files, CUDA parts, and updater checksums verified.');

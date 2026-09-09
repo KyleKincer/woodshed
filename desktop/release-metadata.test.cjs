@@ -15,6 +15,12 @@ function fixture(){
     const name=`Woodshed-1.1.0-${platform}-${arch}.${extension}`;
     const data=Buffer.from(name);fs.writeFileSync(path.join(dir,name),data);
     fs.writeFileSync(path.join(dir,manifest),yaml.dump({version:'1.1.0',files:[{url:name,sha512:createHash('sha512').update(data).digest('base64'),size:data.length}]}));
+    if(platform!=='mac'){
+      const gpuPlatform=platform==='win'?'win32':platform;
+      const prefix=`woodshed-cuda-${gpuPlatform}-x64-1.1.0`, name=prefix+'.part000', data=Buffer.from('runtime');
+      fs.writeFileSync(path.join(dir,name),data);
+      fs.writeFileSync(path.join(dir,prefix+'.json'),JSON.stringify({version:'1.1.0',platform:gpuPlatform,parts:[{name,size:data.length,sha256:createHash('sha256').update(data).digest('hex')}]}));
+    }
   }
   return {root,source,target:path.join(root,'release')};
 }
@@ -37,5 +43,18 @@ test('release collection refuses stale Intel Mac installers',()=>{
   const f=fixture();try{
     fs.writeFileSync(path.join(f.source,'mac-arm64','Woodshed-1.4.3-mac-x64.zip'),'stale');
     assert.throws(()=>execFileSync(process.execPath,[collector,f.source,f.target],{stdio:'pipe'}),/Intel macOS installers are no longer supported/);
+  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('release collection refuses corrupted NVIDIA runtime parts',()=>{
+  const f=fixture();try{
+    fs.writeFileSync(path.join(f.source,'linux-x64','woodshed-cuda-linux-x64-1.1.0.part000'),'corrupt');
+    assert.throws(()=>execFileSync(process.execPath,[collector,f.source,f.target],{stdio:'pipe'}),/CUDA checksum mismatch/);
+  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('release collection rejects files at the GitHub size limit before reading them',()=>{
+  const f=fixture();try{
+    const file=path.join(f.source,'linux-x64','oversized.AppImage');
+    fs.closeSync(fs.openSync(file,'w'));fs.truncateSync(file,2*1024**3);
+    assert.throws(()=>execFileSync(process.execPath,[collector,f.source,f.target],{stdio:'pipe'}),/exceeds GitHub limit/);
   }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });

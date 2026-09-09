@@ -43,12 +43,7 @@ class Reporter:
         self.last = value
         print(json.dumps({'stage':stage,'percent':percent,'message':message}), flush=True)
 
-def device():
-    import torch
-    if torch.cuda.is_available(): return 'cuda'
-    return 'cpu'
-
-def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
+def run(cmd, on_line=None, cwd=None, ok_codes=(0,), env=None):
     """Run a command, streaming combined output; raise with real output on failure.
 
     `ok_codes` exists for yt-dlp's --max-downloads, which reports 101 on success
@@ -57,6 +52,7 @@ def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -355,14 +351,22 @@ def expected_stems(stem_mode: str, model: str) -> list[str]:
 
 
 def module_command(module):
+    if module == 'separator' and not getattr(sys, 'frozen', False):
+        return [sys.executable, str(pathlib.Path(__file__).with_name('separator.py'))]
     return [sys.executable, '--module', module] if getattr(sys, 'frozen', False) else [sys.executable, '-m', module]
 
 
 def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode: str, rep: Reporter):
     model = quality["model"]
     shifts = int(quality.get("shifts") or 0)
+    command = module_command('separator')
+    accelerated = None
+    if getattr(sys, 'frozen', False):
+        from gpu_runtime import prepare
+        accelerated = prepare(rep)
+        if accelerated: command = [str(accelerated), '--module', 'separator']
     args = [
-        *module_command("demucs.separate"),
+        *command,
         "-n",
         model,
         "--shifts",
@@ -371,8 +375,6 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
         str(quality.get("overlap", 0.25)),
         "-o",
         str(out_dir),
-        "-d",
-        device(),
     ]
     focus = TWO_STEM_FOCUS.get(stem_mode)
     if stem_mode != "full" and focus:
@@ -384,8 +386,27 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
     model_count = 4 if model == "htdemucs_ft" else 1
     total_passes = model_count * max(1, shifts)
     state = {"last_bar": 0, "done": 0}
+    runtime = {'attempts': [], 'fallbacks': []}
+    backend = ''
 
     def on_line(line: str):
+        nonlocal backend
+        if line.startswith('WOODSHED_RUNTIME '):
+            info = json.loads(line.removeprefix('WOODSHED_RUNTIME '))
+            runtime['attempts'].append(info)
+            backend = {'cuda': 'NVIDIA GPU', 'mps': 'Apple GPU', 'cpu': 'CPU'}[info['device']]
+            if info['device'] == 'cpu': backend += f" · {info['threads']} threads"
+            state.update(last_bar=0, done=0)
+            rep.last = None
+            rep.progress('separate', 0, f'Loading model… ({backend})')
+            return
+        if line.startswith('WOODSHED_FALLBACK '):
+            runtime['fallbacks'].append(json.loads(line.removeprefix('WOODSHED_FALLBACK ')))
+            rep.progress('separate', 0, 'GPU unavailable; continuing on CPU…')
+            return
+        if line.startswith('WOODSHED_TIMING '):
+            runtime.update(json.loads(line.removeprefix('WOODSHED_TIMING ')))
+            return
         m = re.search(r"(\d{1,3})%\|", line)
         if m:
             bar = int(m.group(1))
@@ -396,13 +417,19 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
             rep.progress(
                 "separate",
                 overall,
-                f"Separating stems… (pass {min(state['done'] + 1, total_passes)}/{total_passes})",
+                f"Separating stems… ({backend}, pass {min(state['done'] + 1, total_passes)}/{total_passes})",
             )
         elif "Separating track" in line:
+            state.update(last_bar=0, done=0)
+            rep.last = None
             rep.progress("separate", 1, "Separating stems…")
 
     rep.progress("separate", 0, "Loading model…")
-    run(args, on_line=on_line)
+    if accelerated:
+        run(args, on_line=on_line, env={**os.environ, 'PYINSTALLER_RESET_ENVIRONMENT': '1'})
+    else:
+        run(args, on_line=on_line)
+    (out_dir.parent / 'separation-runtime.json').write_text(json.dumps(runtime, indent=2))
 
 
 def encode(src: pathlib.Path, dest: pathlib.Path, quality: dict):

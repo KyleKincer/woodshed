@@ -8,7 +8,12 @@ venv.create(runtime, with_pip=True)
 python = runtime / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 def pip(*args): subprocess.run([str(python), '-m', 'pip', *args], check=True)
 pip('install', '--upgrade', 'pip', 'setuptools', 'wheel')
-if sys.platform != 'darwin' and ('--cpu' in sys.argv or (sys.platform.startswith('linux') and not shutil.which('nvidia-smi'))):
+if '--cpu' in sys.argv and '--cuda' in sys.argv:
+    raise SystemExit('Choose either --cpu or --cuda.')
+if sys.platform != 'darwin' and '--cuda' in sys.argv:
+    # Build CUDA support even on a runner with no GPU; 12.8 supports RTX 50.
+    pip('install', 'torch==2.7.1', 'torchaudio==2.7.1', '--index-url', 'https://download.pytorch.org/whl/cu128')
+elif sys.platform != 'darwin' and ('--cpu' in sys.argv or (sys.platform.startswith('linux') and not shutil.which('nvidia-smi'))):
     pip('install', 'torch==2.7.1', 'torchaudio==2.7.1', '--index-url', 'https://download.pytorch.org/whl/cpu')
 pip('install', '-r', str(root / 'requirements.txt'))
 # Extractors change frequently; rerun setup to update yt-dlp.
