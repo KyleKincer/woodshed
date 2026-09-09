@@ -5,8 +5,8 @@ The approved scope includes all three design concepts: integrated staff, expande
 ## What is implemented
 
 - A lazy-loaded Transcribe workspace in the existing song player, with system-aware light and dark styling and the existing transport.
-- Stationary keyboard entry, named/remappable drum pads, Select / Write / Preview, two independent voices, whole through 64th durations, dots, 3:2 / 5:2 / 7:2 tuplets, explicit and derived rests, accents, ghosts, flams, sticking and velocity.
-- Exact rational note addresses, stable measure IDs, variable-tempo alignment, beat anchors, compound/odd-meter grouping, pickup setup, partial measure lengths, section labels and review coverage.
+- Stationary keyboard entry, named/remappable drum pads, unified selection and entry, optional pad audition, two independent voices, whole through 64th durations, dots, 3:2 / 5:2 / 7:2 tuplets, explicit and derived rests, accents, ghosts, flams, sticking and velocity.
+- Exact rational note addresses, stable measure IDs, variable-tempo alignment, beat anchors, compound/odd-meter grouping, pickup detection, partial measure lengths, section labels and review coverage.
 - Note selection, multi-selection, note or whole-bar copy/paste, independent repeated passages, deliberate note movement, collision rejection and undo/redo. Editing does not ripple later notes or alter the recording.
 - Staff, expanded score and lanes use the same score and commands. Staff noteheads have leading/trailing engraving space inside barlines; click targets and the moving notation cursor use the same geometry. Waveform bar boundaries stay aligned to the recording. Lane markers stay on their beat grid, as expected for an event view.
 - A single AudioContext and engine segment scheduler for recorded stems, metronome and notation. Recording / Notation / Both, notation volume, drum-stem mute, preview, hat choke, loop/rate/seek cancellation, count-in and audible pre-roll are integrated. Kit sounds are deterministic local synthesis, not a sampled acoustic drum library.
@@ -16,11 +16,11 @@ The approved scope includes all three design concepts: integrated staff, expande
 
 ## Quick review
 
-Open a song and choose **Transcribe → Create drum part**. Confirm the first downbeat, meter and the note value represented by the tempo pulse. For 6/8 counted in two, choose dotted quarter as the tempo beat unit. Follow existing beats when their pulse interpretation is known; otherwise begin with a steady map and refine it using Align beat / Align / meter.
+Open a song and choose **Transcribe**. A new draft opens directly from the existing beat map, retaining the exact downbeat and pulse timestamps. Nothing is saved until an edit is made. Existing parts keep their stored timing. Meter, grouping and alignment remain available under **••• → Bar properties / Align beat**.
 
 | Action | Keyboard / control |
 | --- | --- |
-| Write / select | N / Escape |
+| Add current drum / clear selection | N / Escape |
 | Add simultaneous hits | Drum letters; cursor stays put |
 | Advance / retreat | Right / Left Arrow |
 | Choose duration | 1–7, shortest to longest; + shortens, − lengthens |
@@ -35,7 +35,7 @@ Open a song and choose **Transcribe → Create drum part**. Confirm the first do
 
 Pointer-operated tools return focus to the editor. Keyboard-focused controls retain their normal semantics, and Tab exits the editor. The optional note list exposes individual notes with descriptions for keyboard and assistive access.
 
-Copy acts on selected notes when a note selection is active, and on whole bars after bar-header selection. Paste notes at the edit cursor. Whole-bar paste/repeat asks for the destination and requires explicit replacement when authored notes already exist. Alt-arrow movement uses the current duration and rejects collisions atomically.
+Copy acts on selected notes when a note selection is active, and on whole bars after bar-header selection. Paste notes at the edit cursor. Shift-click bar headers to extend a whole-bar selection. Whole-bar paste/repeat asks for the destination and requires explicit replacement when authored notes already exist. Alt-arrow movement uses the current duration and rejects collisions atomically.
 
 ## Validation completed
 
@@ -66,3 +66,52 @@ The web feature can ship ahead of desktop 1.5.0. Desktop serves its bundled UI, 
 Desktop 1.5.0 cannot display, edit or export the new notation; use the web for those actions until desktop is updated. Normal desktop practice edits preserve the score and its separate alignment.
 
 The Vercel integration publishes pushes to main. Its configured build command deploys Convex and builds the web client with the deployment URL. The desktop workflow runs on version tags, release branches or explicit dispatch, so merging this feature to main does not publish installers or alter updater feeds.
+
+
+## Web UX iteration: direct entry and lane editing
+
+The setup modal is removed, including the HTML numeric-step constraint that
+rejected its own high-precision downbeat. Duration and expression commands act
+on selected notes immediately after entry. Moving to an empty cursor position
+sets up the next note. There is no global Select/Write mode.
+
+- Click an empty position or an existing note to select and seek, even while playing.
+- Double-click empty space to add; in lanes, double-click a hit to delete it.
+- Staff double-click on an existing note opens Properties.
+- Drum keys enter at the cursor. `S` is Snare in Transcribe; waveform Snap is `Shift+S`.
+- Lane blocks display written duration. Drag the body in time or between drums;
+  drag its right edge to resize to a written value. A gesture is one undo step.
+- Drag empty space to select multiple notes; Shift-click toggles a note in the selection.
+- Lane arrow keys move selected notes; without selection they move the insertion cursor.
+- The lane grid is independent of note duration, with straight and triplet subdivisions.
+- Independent drums can have overlapping durations. Same-drum collisions and
+  explicit rests still validate atomically; edits cannot silently discard notes.
+- The two persistent tool rows contain views, duration, undo and navigation.
+  Kit, Properties and Listen are collapsible. File, bar and repeat commands are
+  in the overflow menu. Staff preview in lanes is optional.
+
+### Reference decisions
+
+[MuseScore's interface documentation](https://handbook.musescore.org/navigation/the-user-interface)
+describes a persistent note toolbar, optional side panels, and a small status bar.
+Its [percussion panel](https://handbook.musescore.org/idiomatic-notation/percussion/inputting-percussion-notation)
+provides direct pad entry, an audition option, and shortcut conflict detection.
+MuseScore itself retains note input modes; removing the global switch here is a
+Woodshed adaptation, not a claim about MuseScore's behavior.
+
+Visual review also used the [MuseScore 4 screenshot](https://commons.wikimedia.org/wiki/File:MuseScore_4_in_dark_mode.png): a thin note toolbar, tabbed left panels, collapsible palette groups and a separate optional keyboard panel. Handbook text supplied the current percussion behavior; the official video loaded captions but its video frames stalled here.
+
+The [GP5 manual](https://static.guitar-pro.com/gp5/GuitarPro_EN.pdf), particularly
+its Main Screen and Adding Notes pages, supports cursor-based selection and
+changing note duration at that cursor. Its screenshot shows a large score region
+with compact movable toolbars and a separate track overview.
+
+[Ableton's MIDI editor manual](https://www.ableton.com/en/manual/editing-midi/)
+provides the lane reference: double-click entry, note selection, dragging,
+resizing, and grid settings separate from note properties. Woodshed retains its
+musical fractions and shared recording clock underneath these interactions.
+
+Validation adds direct workspace interaction tests, exact-timing initialization,
+lane transactions, and backend round trips for independent drum durations. No
+schema migration or desktop release is required; desktop 1.5 request compatibility
+continues to be covered by the existing backend test.

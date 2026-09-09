@@ -71,18 +71,18 @@ export function renderStaff(host,{score,indices,width,timeRange=null,selected=ne
   return {targets,bars,qx,height,quarterAt};
 }
 
-export function renderLanes(host,{score,indices,width,timeRange,selected,cursor,voice='all'}) {
+export function renderLanes(host,{score,indices,width,timeRange,selected,cursor,voice='all',grid=.25}) {
   const positions=starts(score.timeline),height=KIT.length*30+34,qx=q=>(toTime(score.timeline,q)-timeRange.start)/(timeRange.end-timeRange.start)*width;
   const targets=[],bars=[];
   const bits=[`<svg width="${width}" height="${height}" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">`];
   for(let row=0;row<KIT.length;row++){const y=26+row*30;bits.push(`<path d="M0 ${y+15}H${width}" stroke="var(--border)" opacity=".5"/>`);}
   for(const index of indices){const m=score.timeline.measures[index],start=positions[index],left=qx(start),right=qx(start+number(m.length));bars.push({index,left,right});
     const bar=score.bars.find(b=>b.measureId===m.id);bits.push(`<path d="M${left} 0V${height}" stroke="var(--border)"/><text x="${left+6}" y="14" fill="var(--muted)" font-size="11">${index+1}</text>`);
-    if(!bar||bar.coverage==='unstarted')bits.push(`<rect x="${left}" y="20" width="${right-left}" height="${height-20}" fill="var(--grid-minor)"/><text x="${left+8}" y="${height-8}" fill="var(--muted)" font-size="10">Not transcribed</text>`);
-    for(let q=.25;q<number(m.length);q+=.25){const x=qx(start+q);bits.push(`<path d="M${x} 20V${height}" stroke="var(--grid-minor)"${Number.isInteger(q)?' stroke-width="2"':''}/>`);}
-    for(const hit of bar?.hits||[]){if(hit.instrument==='rest'||(voice!=='all'&&hit.voice!==Number(voice)))continue;const row=KIT.findIndex(k=>k.id===hit.instrument),x=qx(start+number(hit.offset)),y=26+row*30;
-      bits.push(`<rect x="${x-5}" y="${y-5}" rx="2" width="10" height="10" fill="${hit.ghost?'var(--bg-2)':selected.has(hit.id)?'var(--accent)':'var(--drums)'}" stroke="${selected.has(hit.id)?'var(--accent)':'var(--drums)'}" stroke-width="${hit.accent?3:1}"/>`);
-      if(hit.flam)bits.push(`<circle cx="${x-11}" cy="${y}" r="2" fill="var(--drums)"/>`);targets.push({hit,index,x,y});
+    if(!bar||bar.coverage==='unstarted')bits.push(`<rect x="${left}" y="20" width="${right-left}" height="${height-20}" fill="var(--grid-minor)"/>`);
+    for(let q=grid;q<number(m.length);q+=grid){const x=qx(start+q);bits.push(`<path d="M${x} 20V${height}" stroke="var(--grid-minor)"${Number.isInteger(q)?' stroke-width="2"':''}/>`);}
+    for(const hit of bar?.hits||[]){if(hit.instrument==='rest'||(voice!=='all'&&hit.voice!==Number(voice)))continue;const row=KIT.findIndex(k=>k.id===hit.instrument),x=qx(start+number(hit.offset)),y=26+row*30,right=Math.max(x+8,qx(start+number(add(hit.offset,hit.duration)))-2);
+      bits.push(`<rect x="${x}" y="${y-8}" rx="3" width="${right-x}" height="16" fill="${hit.ghost?'var(--bg-2)':selected.has(hit.id)?'var(--accent)':'var(--drums)'}" stroke="${selected.has(hit.id)?'var(--accent)':'var(--drums)'}" stroke-width="${hit.accent?3:1}"/>`);
+      if(hit.flam)bits.push(`<circle cx="${x-11}" cy="${y}" r="2" fill="var(--drums)"/>`);targets.push({hit,index,x,y,right});
     }
   }
   bits.push(`<path d="M${qx(cursor)} 20V${height}" stroke="var(--accent)" stroke-dasharray="4 3"/></svg>`);host.innerHTML=bits.join('');return {targets,bars,qx,height};
