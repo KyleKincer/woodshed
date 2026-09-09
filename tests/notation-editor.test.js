@@ -44,3 +44,9 @@ test('workspace routing claims drum keys after waveform focus and preserves text
   const before=persistence.set.mock.calls.length;const input=document.createElement('input');host.append(input);const textKey=new KeyboardEvent('keydown',{key:'s',cancelable:true});input.dispatchEvent(textKey);workspace.handleKey(textKey);expect(textKey.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
   const snap=new KeyboardEvent('keydown',{key:'S',shiftKey:true,cancelable:true});workspace.handleKey(snap);expect(snap.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
 });
+
+test('pad audition never turns keyboard entry into a hidden preview mode',async()=>{
+  await open();clickAction('panel-kit');const audition=host.querySelector('[data-field="audition"]');audition.checked=true;audition.dispatchEvent(new Event('change'));
+  host.querySelector('[data-kit="snare"]').click();expect(persistence.set).not.toHaveBeenCalled();
+  clickAction('panel-kit');key('s');expect(saved().bars[0].hits[0].instrument).toBe('snare');
+});
