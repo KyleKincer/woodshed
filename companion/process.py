@@ -1,5 +1,6 @@
 """One resumable local job. Emits JSON progress; keeps source and WAV stems."""
 import json, pathlib, sys, shutil
+from concurrent.futures import ThreadPoolExecutor
 from fingerprint import fingerprint
 from pipeline import Reporter, acquire, separate, encode, expected_stems, probe_duration, run
 
@@ -52,12 +53,17 @@ def process(job, root):
             (root / 'separation.complete').touch()
         sources = [(name, model_dir / f'{name}.wav') for name in wanted]
     rep.progress('finalize', 90, 'Encoding sync copies locally…')
-    files = []
+    # Join every independent encoder before committing result.json.
     for name, src in sources:
         if not src.is_file(): raise RuntimeError(f'Missing stem: {name}')
+    def encode_stem(item):
+        name, src = item
         dest = root / f'{name}.webm'
         encode(src, dest, quality)
-        files.append({'name': dest.name, 'stem': name, 'mime': 'audio/webm'})
+        return {'name': dest.name, 'stem': name, 'mime': 'audio/webm'}
+    from separator import cpu_budget
+    with ThreadPoolExecutor(max_workers=min(4, cpu_budget(), max(1, len(sources)))) as pool:
+        files = list(pool.map(encode_stem, sources))
     cover = root / 'cover.jpg'
     if cover.is_file() and 0 < cover.stat().st_size <= 2_000_000:
         files.append({'name':'cover.jpg','mime':'image/jpeg'})

@@ -43,11 +43,6 @@ class Reporter:
         self.last = value
         print(json.dumps({'stage':stage,'percent':percent,'message':message}), flush=True)
 
-def device():
-    import torch
-    if torch.cuda.is_available(): return 'cuda'
-    return 'cpu'
-
 def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
     """Run a command, streaming combined output; raise with real output on failure.
 
@@ -355,6 +350,8 @@ def expected_stems(stem_mode: str, model: str) -> list[str]:
 
 
 def module_command(module):
+    if module == 'separator' and not getattr(sys, 'frozen', False):
+        return [sys.executable, str(pathlib.Path(__file__).with_name('separator.py'))]
     return [sys.executable, '--module', module] if getattr(sys, 'frozen', False) else [sys.executable, '-m', module]
 
 
@@ -362,7 +359,7 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
     model = quality["model"]
     shifts = int(quality.get("shifts") or 0)
     args = [
-        *module_command("demucs.separate"),
+        *module_command("separator"),
         "-n",
         model,
         "--shifts",
@@ -371,8 +368,6 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
         str(quality.get("overlap", 0.25)),
         "-o",
         str(out_dir),
-        "-d",
-        device(),
     ]
     focus = TWO_STEM_FOCUS.get(stem_mode)
     if stem_mode != "full" and focus:
@@ -384,8 +379,27 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
     model_count = 4 if model == "htdemucs_ft" else 1
     total_passes = model_count * max(1, shifts)
     state = {"last_bar": 0, "done": 0}
+    runtime = {'attempts': [], 'fallbacks': []}
+    backend = ''
 
     def on_line(line: str):
+        nonlocal backend
+        if line.startswith('WOODSHED_RUNTIME '):
+            info = json.loads(line.removeprefix('WOODSHED_RUNTIME '))
+            runtime['attempts'].append(info)
+            backend = {'cuda': 'NVIDIA GPU', 'mps': 'Apple GPU', 'cpu': 'CPU'}[info['device']]
+            if info['device'] == 'cpu': backend += f" · {info['threads']} threads"
+            state.update(last_bar=0, done=0)
+            rep.last = None
+            rep.progress('separate', 0, f'Loading model… ({backend})')
+            return
+        if line.startswith('WOODSHED_FALLBACK '):
+            runtime['fallbacks'].append(json.loads(line.removeprefix('WOODSHED_FALLBACK ')))
+            rep.progress('separate', 0, 'GPU unavailable; continuing on CPU…')
+            return
+        if line.startswith('WOODSHED_TIMING '):
+            runtime.update(json.loads(line.removeprefix('WOODSHED_TIMING ')))
+            return
         m = re.search(r"(\d{1,3})%\|", line)
         if m:
             bar = int(m.group(1))
@@ -396,13 +410,14 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
             rep.progress(
                 "separate",
                 overall,
-                f"Separating stems… (pass {min(state['done'] + 1, total_passes)}/{total_passes})",
+                f"Separating stems… ({backend}, pass {min(state['done'] + 1, total_passes)}/{total_passes})",
             )
         elif "Separating track" in line:
             rep.progress("separate", 1, "Separating stems…")
 
     rep.progress("separate", 0, "Loading model…")
     run(args, on_line=on_line)
+    (out_dir.parent / 'separation-runtime.json').write_text(json.dumps(runtime, indent=2))
 
 
 def encode(src: pathlib.Path, dest: pathlib.Path, quality: dict):

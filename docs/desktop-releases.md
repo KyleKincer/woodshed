@@ -1,9 +1,29 @@
 # Desktop distribution
 
-The Electron app includes a frozen Python 3.11 CPU processing runtime, yt-dlp,
+The Electron app includes a frozen Python 3.11 processing runtime, yt-dlp,
 Demucs, BeatNet, Node.js, FFmpeg and ffprobe. Model weights download on first
 use. Linux AppImage, macOS DMG + updater ZIP (Apple Silicon only), and
 Windows NSIS installers are built on their native GitHub Actions runners.
+
+Windows and Linux installers include CUDA 12.8 PyTorch for compatible NVIDIA
+GPUs, with CPU execution on other hardware. Macs select Apple Metal (MPS)
+when available. An accelerator inference failure retries on CPU without changing
+the chosen model, shifts, overlap, or output format. GPU packaging increases
+the Windows/Linux download size.
+
+CPU inference uses physical cores (performance cores on Apple Silicon), honors
+affinity/container limits, and uses up to 16 threads by default. Override with
+`WOODSHED_CPU_THREADS`; existing `MKL_NUM_THREADS` and `OMP_NUM_THREADS` are also
+honored. `WOODSHED_DEVICE=cpu|cuda|mps|auto` can select a backend for diagnostics.
+Each completed separation writes `separation-runtime.json` beside its retained
+WAVs, recording the actual backend, thread count, inference time, and fallback
+reason if applicable. Stem encoders run concurrently, with at most four workers.
+The processor still handles one song at a time to bound model memory.
+
+Runtime unit tests and real frozen separation/encoding/beat tests run on every
+release platform. Hosted CI does not provide NVIDIA or Apple GPU hardware; its
+CPU fallback tests cannot establish GPU throughput. GPU errors are handled at
+runtime and remain visible in the local diagnostic file.
 
 Apple Developer ID signing and notarization use the repository's existing
 MAC_CSC_LINK, MAC_CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
@@ -41,7 +61,7 @@ release/** branches for review before tagging. A `release/publish-vX.Y.Z` branch
 the complete app, including the bundled downloader and processing libraries.
 
 Local build: install the source prerequisites in README, run
-`python3.11 companion/setup.py --beats --cpu`, install `pyinstaller==6.16.0`
+`python3.11 companion/setup.py --beats --cuda`, install `pyinstaller==6.16.0`
 in companion/.venv, then run `companion/.venv/bin/python scripts/build-processor.py`
 and `npm run desktop:package`. Use the equivalent Scripts/python.exe on Windows.
 

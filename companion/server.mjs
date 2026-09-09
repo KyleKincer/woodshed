@@ -25,7 +25,7 @@ await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
 let acceptingJobs = true;
 let client, identity, stopSubscription, busy = false, pending = null, current = null;
 const python = process.env.WOODSHED_PYTHON || path.join(here, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-const childEnv = { ...process.env, PATH: `${path.dirname(python)}${path.delimiter}${process.env.PATH}`, PYTHONUNBUFFERED: '1', OMP_NUM_THREADS: process.env.OMP_NUM_THREADS || String(Math.min(4, os.availableParallelism())) };
+const childEnv = { ...process.env, PATH: `${path.dirname(python)}${path.delimiter}${process.env.PATH}`, PYTHONUNBUFFERED: '1', PYTORCH_ENABLE_MPS_FALLBACK: process.env.PYTORCH_ENABLE_MPS_FALLBACK || '1' };
 const safe = value => String(value).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'untitled';
 const accountDir = () => path.join(data, 'accounts', crypto.createHash('sha256').update(`${config.convexUrl}:${identity.userId}`).digest('hex').slice(0, 24));
 const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
