@@ -9,6 +9,8 @@ files:
   - dist/**
   - package.json
 extraResources:
+  - from: build/gpu-runtime.json
+    to: gpu-runtime.json
   - from: build/processor
     to: processor
   - from: build/licenses

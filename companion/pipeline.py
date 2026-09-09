@@ -43,7 +43,7 @@ class Reporter:
         self.last = value
         print(json.dumps({'stage':stage,'percent':percent,'message':message}), flush=True)
 
-def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
+def run(cmd, on_line=None, cwd=None, ok_codes=(0,), env=None):
     """Run a command, streaming combined output; raise with real output on failure.
 
     `ok_codes` exists for yt-dlp's --max-downloads, which reports 101 on success
@@ -52,6 +52,7 @@ def run(cmd, on_line=None, cwd=None, ok_codes=(0,)):
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -358,8 +359,14 @@ def module_command(module):
 def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode: str, rep: Reporter):
     model = quality["model"]
     shifts = int(quality.get("shifts") or 0)
+    command = module_command('separator')
+    accelerated = None
+    if getattr(sys, 'frozen', False):
+        from gpu_runtime import prepare
+        accelerated = prepare(rep)
+        if accelerated: command = [str(accelerated), '--module', 'separator']
     args = [
-        *module_command("separator"),
+        *command,
         "-n",
         model,
         "--shifts",
@@ -413,10 +420,15 @@ def separate(wav: pathlib.Path, out_dir: pathlib.Path, quality: dict, stem_mode:
                 f"Separating stems… ({backend}, pass {min(state['done'] + 1, total_passes)}/{total_passes})",
             )
         elif "Separating track" in line:
+            state.update(last_bar=0, done=0)
+            rep.last = None
             rep.progress("separate", 1, "Separating stems…")
 
     rep.progress("separate", 0, "Loading model…")
-    run(args, on_line=on_line)
+    if accelerated:
+        run(args, on_line=on_line, env={**os.environ, 'PYINSTALLER_RESET_ENVIRONMENT': '1'})
+    else:
+        run(args, on_line=on_line)
     (out_dir.parent / 'separation-runtime.json').write_text(json.dumps(runtime, indent=2))
 
 

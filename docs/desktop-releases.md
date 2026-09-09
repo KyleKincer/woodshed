@@ -5,11 +5,18 @@ Demucs, BeatNet, Node.js, FFmpeg and ffprobe. Model weights download on first
 use. Linux AppImage, macOS DMG + updater ZIP (Apple Silicon only), and
 Windows NSIS installers are built on their native GitHub Actions runners.
 
-Windows and Linux installers include CUDA 12.8 PyTorch for compatible NVIDIA
-GPUs, with CPU execution on other hardware. Macs select Apple Metal (MPS)
-when available. An accelerator inference failure retries on CPU without changing
-the chosen model, shifts, overlap, or output format. GPU packaging increases
-the Windows/Linux download size.
+Windows and Linux installers bundle CPU processing. On an NVIDIA machine the
+first separation downloads a separate CUDA 12.8 processor from the same GitHub
+release. It is split into 512 MiB parts to stay below GitHub's 2 GiB asset limit.
+The app bundles the manifest and expected SHA-256 values; it verifies every part
+before safe extraction and an executable self-check. Completed parts resume
+after interruptions, and identical runtime bytes are reused across app-only
+updates. Machines without NVIDIA hardware do not download the component.
+Offline/setup failures continue on CPU and wait ten minutes before another
+setup attempt. The GPU runtime needs several GB of download and disk space.
+Macs select Apple Metal (MPS) when available, with no additional runtime download.
+Accelerator inference failures retry on CPU without changing the chosen model,
+shifts, overlap, or output format.
 
 CPU inference uses physical cores (performance cores on Apple Silicon), honors
 affinity/container limits, and uses up to 16 threads by default. Override with
@@ -21,8 +28,9 @@ reason if applicable. Stem encoders run concurrently, with at most four workers.
 The processor still handles one song at a time to bound model memory.
 
 Runtime unit tests and real frozen separation/encoding/beat tests run on every
-release platform. Hosted CI does not provide NVIDIA or Apple GPU hardware; its
-CPU fallback tests cannot establish GPU throughput. GPU errors are handled at
+release platform. Hosted CI does not provide an NVIDIA GPU, and its virtualized Mac GPU
+can reject allocations. These checks establish fallback behavior, not GPU
+throughput. Native CI also verifies CUDA archive reconstruction and cache reuse. GPU errors are handled at
 runtime and remain visible in the local diagnostic file.
 
 Apple Developer ID signing and notarization use the repository's existing

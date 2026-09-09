@@ -21,8 +21,8 @@ with tempfile.TemporaryDirectory(prefix='woodshed-runtime-test-') as folder:
     runtime=json.loads((work/'separation-runtime.json').read_text())
     assert runtime['device'] in ('cpu','cuda','mps') and runtime['seconds'] > 0
     print('Separation runtime:', json.dumps(runtime), flush=True)
-    if '--source' not in sys.argv and sys.platform != 'darwin':
-        assert runtime['attempts'][0]['cuda'], 'Distributed Windows/Linux PyTorch must include CUDA'
+    if '--expect-cuda' in sys.argv:
+        assert runtime['attempts'][0]['cuda'], 'Optional NVIDIA processor must include CUDA'
     result=json.loads((work/'result.json').read_text())
     stems=[f for f in result['files'] if f.get('stem')]
     assert len(stems)==4

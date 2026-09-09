@@ -1,10 +1,11 @@
 import './prepare-fingerprint.mjs';
-import { mkdir, copyFile, chmod, writeFile } from 'node:fs/promises';
+import { mkdir, copyFile, chmod, writeFile, access } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 import path from 'node:path';
 const require=createRequire(import.meta.url);
 await mkdir('build/bin',{recursive:true});
+try { await access('build/gpu-runtime.json'); } catch { await writeFile('build/gpu-runtime.json', '{}\n'); }
 for(const [source,name] of [[require('ffmpeg-static'),'ffmpeg'],[require('ffprobe-static').path,'ffprobe'],[process.execPath,'node']]){
   const destination=path.join('build/bin',name+(process.platform==='win32'?'.exe':''));
   await copyFile(source,destination);await chmod(destination,0o755);

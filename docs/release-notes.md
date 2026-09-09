@@ -4,7 +4,7 @@ Woodshed 1.5.1 speeds up local audio processing.
 - Uses more available CPU cores instead of the previous four-thread limit. Keeps your chosen separation model and quality settings.
 - Encodes stem files concurrently and avoids loading PyTorch twice before separation.
 - Shows the active processor during separation and records local runtime diagnostics for troubleshooting.
-- Windows and Linux installers include the GPU runtime, increasing their download size.
+- NVIDIA acceleration downloads a separate runtime on first use, then reuses it. CPU processing works without that download. Macs use their built-in GPU support.
 - Includes the drum transcription workspace and note-entry improvements already available on the web.
 
 Woodshed 1.5.0 adds song sharing.

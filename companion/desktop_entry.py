@@ -7,7 +7,7 @@ if __name__ == '__main__':
     multiprocessing.freeze_support()
     if sys.argv[1:2] == ['--module']:
         module = sys.argv[2]
-        if module not in ('separator', 'demucs.separate', 'yt_dlp'):
+        if module not in ('separator', 'gpu_runtime', 'demucs.separate', 'yt_dlp'):
             raise SystemExit('Unsupported processing module')
         sys.argv = [module, *sys.argv[3:]]
         runpy.run_module(module, run_name='__main__')
