@@ -1,3 +1,4 @@
+import { showShareDialog } from './share-dialog.js';
 import { transitionView } from './motion.js';
 import { editSongs, artistLabel } from './song-metadata.js';
 import { focusModal } from './modal-focus.js';
@@ -412,7 +413,8 @@ function cardMenu(song, anchor) {
   const url = sourceUrl(song);
   const items = [
     { label: 'Play', action: () => onOpenSong(song) },
-    { label: 'Reprocess…', action: () => reprocessDialog(song) },
+    { label: 'Share song…', action: () => showShareDialog(song) },
+    ...(song.source ? [{ label: 'Reprocess…', action: () => reprocessDialog(song) }] : []),
     { label: 'Edit song…', action: () => editSongs([song]) },
     { label: 'Select songs…', action: () => { selecting=true; selected.add(song.id); renderLibrary(currentFilter()); } },
     ...(url ? [{ label: 'Open original source', action: () => backend.openExternal(url) }] : []),

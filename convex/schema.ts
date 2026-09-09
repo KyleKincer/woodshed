@@ -34,6 +34,15 @@ export const stemValidator = v.object({
 });
 
 export default defineSchema({
+  songShares: defineTable({
+    songId:v.id('songs'), userId:v.string(), token:v.string(), active:v.boolean(), createdAt:v.number(),
+  }).index('by_songId',['songId']).index('by_token',['token']),
+  shareImports: defineTable({
+    userId:v.string(), sourceSongId:v.id('songs'), token:v.string(), attempt:v.string(),
+    status:v.union(v.literal('copying'),v.literal('ready'),v.literal('failed')),
+    songId:v.optional(v.id('songs')), snapshot:v.any(), expiresAt:v.number(),
+    files:v.array(v.object({sourceKey:v.string(), key:v.string(), objectId:v.id('audioObjects'), bytes:v.number(), mime:v.string(), etag:v.string()})),
+  }).index('by_userId_and_sourceSongId',['userId','sourceSongId']),
   users: defineTable({ googleAccountId: v.optional(v.string()), email: v.optional(v.string()), emailVerified: v.boolean(), name: v.optional(v.string()), picture: v.optional(v.string()), createdAt: v.number() }).index('by_email', ['email']),
   accountControls: defineTable({
     userId: v.string(),
