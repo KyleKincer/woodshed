@@ -144,7 +144,7 @@ function playerMarkup(song, {duration = song.duration || 0, rate = song.practice
           <select id="grid-division" title="Grid subdivision">
             ${GRID_DIVISIONS.map((d) => `<option value="${d.value}">${d.label}</option>`).join('')}
           </select>
-          <button class="toggle-btn sm" id="grid-snap" title="Snap seeks and loop edits to the grid (S)">Snap</button>
+          <button class="toggle-btn sm" id="grid-snap" title="Snap seeks and loop edits to the grid (Shift+S)">Snap</button>
         </div>
 
         <div class="t-divider"></div>
@@ -1140,8 +1140,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
 
   // ---- keyboard ----
   keyHandler = (e) => {
-    if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-    if(e.target.closest('.notation-workspace'))return;
+    if (e.defaultPrevented || e.isComposing) return;
     if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.code === 'Space' && isPointerControl(e.target) && !e.target.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),textarea,[contenteditable]')) {
@@ -1149,6 +1148,9 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     }
     if (e.target.closest('input,select,textarea,[contenteditable]')) return;
     if (e.target.closest('button,a[href],summary,[role="button"]') && (e.code === 'Space' || e.key === 'Enter')) return;
+    if(e.shiftKey&&e.key.toLowerCase()==='s'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();gridSnap.click();return;}
+    if(transcription.handleKey(e))return;
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
     const k = e.key;
     if (beatEditing && selectedBeat && (k === 'Delete' || k === 'Backspace')) { e.preventDefault(); metronome.removeBeat(selectedBeat); selectedBeat = null; drawGrid(); return; }
     if (beatEditing && selectedBeat && k.toLowerCase() === 'd') { metronome.toggleDownbeat(selectedBeat); drawGrid(); return; }
@@ -1156,7 +1158,6 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     else if (k === 'Enter') { e.preventDefault(); if (!e.repeat) doPlayStop({pause: true}); }
     else if (k.toLowerCase() === 'm') metroBtn.click();
     else if (k.toLowerCase() === 'g') gridToggle.click();
-    else if (k.toLowerCase() === 's') gridSnap.click();
     else if (e.code === 'ArrowLeft') { e.preventDefault(); seekTo(engine.getPosition() - (e.shiftKey ? 1 : 5)); }
     else if (e.code === 'ArrowRight') { e.preventDefault(); seekTo(engine.getPosition() + (e.shiftKey ? 1 : 5)); }
     else if (k === ',') seekTo(engine.getPosition() - (e.shiftKey ? 0.01 : 0.05));

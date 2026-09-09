@@ -38,3 +38,12 @@ test('desktop 1.5 request shapes preserve web notation and its sharing preferenc
   expect(await t.query(api.notation.get,{token})).toBeNull();
   expect((await alice.query(api.songs.get,{id:songId}))?.practice.rate).toBe(.75);
 });
+test('independent drum rhythms round-trip through saves and shared parts',async()=>{
+  const {t,alice,args,songId,score}=await setup();
+  const base={offset:fraction(0),voice:1,dotted:false,tuplet:1,accent:false,ghost:false,flam:false,sticking:'',velocity:.75};
+  const bar={measureId:score.timeline.measures[0].id,coverage:'progress',hits:[{...base,id:'hat',instrument:'closedHat',value:8,duration:durationOf(8)},{...base,id:'snare',instrument:'snare',value:4,duration:durationOf(4)}]};
+  await alice.mutation(api.notation.save,{...args,bars:[bar]});
+  expect((await alice.query(api.notation.get,{songId})).score.bars).toEqual([bar]);
+  const {token}=await alice.mutation(api.sharing.create,{id:songId});
+  expect((await t.query(api.notation.get,{token})).score.bars).toEqual([bar]);
+});

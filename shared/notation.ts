@@ -79,7 +79,9 @@ export function validateBar(bar:Bar,timeline:Timeline) {
   for(let i=0;i<bar.hits.length;i++)for(let j=i+1;j<bar.hits.length;j++){
     const a=bar.hits[i],b=bar.hits[j];
     if(a.voice!==b.voice||!overlaps(a,b))continue;
-    if(a.instrument==='rest'||b.instrument==='rest'||compare(a.offset,b.offset)!==0||compare(a.duration,b.duration)!==0)throw new Error('These rhythms overlap in one voice. Choose the other voice for an independent rhythm.');
+    // Drum lanes are independent instruments. A cymbal's written duration
+    // must not prevent a snare hit or force a voice change.
+    if(a.instrument==='rest'||b.instrument==='rest'||a.instrument===b.instrument)throw new Error('Notes overlap on the same drum or an explicit rest.');
   }
 }
 export function validateScore(score:Score){if(score.version!==1||!score.title.trim()||score.title.length>100)throw new Error('Invalid drum part.');validateTimeline(score.timeline);if(score.bars.length>MAX_MEASURES||new Set(score.bars.map(b=>b.measureId)).size!==score.bars.length||score.bars.reduce((n,b)=>n+b.hits.length,0)>MAX_HITS)throw new Error('This score exceeds its supported size.');for(const b of score.bars)validateBar(b,score.timeline);}
@@ -95,7 +97,7 @@ export class ScoreEditor {
   insert(index:number,hit:Hit){const existing=this.score.bars.find(b=>b.measureId===this.score.timeline.measures[index].id)?.hits.find(h=>h.instrument===hit.instrument&&compare(h.offset,hit.offset)===0);if(existing)return existing.id;
     this.transact(s=>{const bar=this.bar(index,s);if(hit.instrument==='rest'&&bar.hits.some(h=>h.voice===hit.voice&&overlaps(h,hit)))throw new Error('Delete the notes in this voice before writing a rest here.');if(bar.hits.some(h=>h.voice===hit.voice&&h.instrument==='rest'&&overlaps(h,hit)))throw new Error('Remove the explicit rest before adding a hit here.');bar.hits.push(hit);bar.coverage='progress';});return hit.id;}
   remove(ids:Set<string>){return this.transact(s=>{for(const b of s.bars){const hits=b.hits.filter(h=>!ids.has(h.id));if(hits.length!==b.hits.length){b.hits=hits;b.coverage='progress';}}});}
-  change(ids:Set<string>,patch:Partial<Hit>){return this.transact(s=>{for(const b of s.bars)for(const h of b.hits)if(ids.has(h.id)){const next={...h,...patch};if(patch.duration&&b.hits.some(other=>other.id!==h.id&&other.voice===h.voice&&compare(other.offset,h.offset)!==0&&overlaps(other,next)))throw new Error('That duration reaches another written beat. Shorten it or move the other beat first.');Object.assign(h,patch);b.coverage='progress';}});}
+  change(ids:Set<string>,patch:Partial<Hit>){return this.transact(s=>{for(const b of s.bars)for(const h of b.hits)if(ids.has(h.id)){const next={...h,...patch};if(patch.duration&&b.hits.some(other=>other.id!==h.id&&other.voice===h.voice&&(other.instrument===h.instrument||other.instrument==='rest'||h.instrument==='rest')&&compare(other.offset,h.offset)!==0&&overlaps(other,next)))throw new Error('That duration reaches another written beat. Shorten it or move the other beat first.');Object.assign(h,patch);b.coverage='progress';}});}
   move(ids:Set<string>,delta:Fraction){return this.transact(s=>{const positions=musicalStarts(s.timeline),moving:{hit:Hit;position:Fraction}[]=[];
     for(const bar of s.bars){const index=s.timeline.measures.findIndex(m=>m.id===bar.measureId);for(const hit of bar.hits)if(ids.has(hit.id))moving.push({hit,position:add(add(positions[index],hit.offset),delta)});if(bar.hits.some(h=>ids.has(h.id))){bar.hits=bar.hits.filter(h=>!ids.has(h.id));bar.coverage='progress';}}
     for(const {hit,position} of moving){if(number(position)<0||number(position)>=extent(s.timeline))throw new Error('The selected notes would move outside the song.');const target=locate(s.timeline,number(position)),bar=this.bar(target.index,s);bar.hits.push({...hit,offset:subtract(position,target.startPosition)});bar.coverage='progress';}
