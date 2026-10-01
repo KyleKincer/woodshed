@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
 import {fraction,number,validateTimeline,toTime} from '../shared/notation.ts';
-import {compile,timeAt,positionAt,velocityAt,beatsOf,fromSections,fromBeats,fromTimeline,toTimeline,defaultSongMap,pin,unpin,renumberPin,editBars,setMeter,meterRun,scaleTempo,validateSongMap,cleanSongMap,normalize,measureStarts,pulseOf} from '../shared/song-map.ts';
+import {rebarBars,beatsPinnedNear,compile,timeAt,positionAt,velocityAt,beatsOf,fromSections,fromBeats,fromTimeline,toTimeline,defaultSongMap,pin,unpin,renumberPin,editBars,setMeter,meterRun,scaleTempo,validateSongMap,cleanSongMap,normalize,measureStarts,pulseOf} from '../shared/song-map.ts';
 
 const map=(pins,measures=8,extra={})=>({version:1,measures:Array.from({length:measures},(_,i)=>({id:'m'+i,numerator:4,denominator:4,length:fraction(4),label:''})),pins,...extra});
 
@@ -101,4 +101,15 @@ test('stored maps are cleaned and validated; drum-part timelines are adopted as-
   const adopted=fromTimeline(timeline,10);
   expect(adopted.measures[0].id).toBe(data.measures[0].id);
   expect(measureStarts(adopted.measures).length).toBe(adopted.measures.length);
+});
+
+test('re-barring keeps every pin and beat time; only later bar lines move',()=>{
+  const data=map(Array.from({length:20},(_,i)=>({position:fraction(i),time:i*.5})),8);
+  const before=beatsOf(data,compile(data),20).map(b=>b.time);
+  expect(beatsPinnedNear(data,1,1)).toBe(true);
+  rebarBars(data,1,1,m=>setMeter(m,3,4));
+  const beats=beatsOf(data,compile(data),20);
+  expect(beats.map(b=>b.time).slice(0,20)).toEqual(before.slice(0,20));
+  expect(beats.find(b=>b.bar===2&&b.beat===1).time).toBeCloseTo(3.5); // bar 3 now starts a beat earlier
+  expect(beatsPinnedNear(map([{position:fraction(0),time:0},{position:fraction(16),time:8}]),0,2)).toBe(false);
 });

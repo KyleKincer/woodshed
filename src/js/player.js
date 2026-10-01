@@ -443,10 +443,13 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     ruler.innerHTML = Array.from({length:count+1}, (_,i) => `<span style="left:${i/count*100}%">${span()<10?fmt2(view.start+span()*i/count):fmt(view.start+span()*i/count)}</span>`).join('');
     mapMode?.renderLane(tempoMarkers, view);
     if (!grid.visible || !metronome) return;
+    // While mapping: the selected bar is tinted and pinned lines are solid.
+    const decor = mapMode?.gridDecor();
+    if (decor) { ctx.fillStyle = cssVar('--loop-fill'); ctx.fillRect(timeToX(decor.band[0]), 0, timeToX(decor.band[1]) - timeToX(decor.band[0]), h); }
     for (const tick of gridTicksForView(view.start, view.end)) {
-      const x = timeToX(tick.time);
-      ctx.strokeStyle = tick.subdivision ? cssVar('--grid-minor') : tick.downbeat ? cssVar('--grid-bar') : cssVar('--grid-beat');
-      ctx.lineWidth = tick.downbeat ? 1.5 : 1;
+      const x = timeToX(tick.time), pinned = decor && !tick.subdivision && decor.pinned.has(Math.round(tick.time * 1e4));
+      ctx.strokeStyle = pinned ? cssVar('--accent') : tick.subdivision ? cssVar('--grid-minor') : tick.downbeat ? cssVar('--grid-bar') : cssVar('--grid-beat');
+      ctx.lineWidth = pinned ? 2 : tick.downbeat ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
     }
   }
@@ -586,19 +589,17 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
 
   // ---- main waveform interaction (seek / loop create / edge drag / move) ----
   let drag = null;
-  let mapDragging = false;   // dragging a tempo-map pin
   const EDGE_PX = 7;
   function loopOrder(a, b) { return a <= b ? [a, b] : [b, a]; }
 
   interact.addEventListener('mousemove', (e) => {
-    if (drag || mapDragging) return;
+    if (drag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
     const rawT = xToTime(x);
     const t = snapTime(rawT);
     // hover cursor + time tooltip
     let cursor = 'text';
-    if (mapMode?.active() && metronome.songMap.pins.some((p) => Math.abs(timeToX(p.time) - x) <= 6)) cursor = 'ew-resize';
     const { enabled, a, b } = engine.loop;
     if (enabled && b > a) {
       if (Math.abs(x - timeToX(a)) <= EDGE_PX || Math.abs(x - timeToX(b)) <= EDGE_PX) cursor = 'ew-resize';
@@ -616,7 +617,6 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     const x = e.clientX - r.left;
     const rawT = xToTime(x);
     const t = snapTime(rawT);
-    if (mapMode?.pointerDown(x)) { mapDragging = true; return; }
     const { enabled, a, b } = engine.loop;
     let mode = 'new';
     if (enabled && b > a) {
@@ -632,16 +632,6 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   cleanupFns.push(() => { window.removeEventListener('mousemove', onDragMove); window.removeEventListener('mouseup', onDragUp); });
 
   function onDragMove(e) {
-    if (mapDragging) {
-      const r = interact.getBoundingClientRect();
-      const x = e.clientX - r.left;
-      const t = clamp(xToTime(x), 0, duration);
-      mapMode.pointerMove(x, t);
-      timeTip.style.display = 'block';
-      timeTip.style.left = clamp(x, 0, waveW()) + 'px';
-      timeTip.textContent = fmt2(t);
-      return;
-    }
     if (!drag) return;
     const r = interact.getBoundingClientRect();
     const x = e.clientX - r.left;
@@ -666,12 +656,6 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     updateLoopOverlay();
   }
   function onDragUp() {
-    if (mapDragging) {
-      mapDragging = false;
-      mapMode.pointerUp();
-      timeTip.style.display = 'none';
-      return;
-    }
     if (!drag) return;
     // A click (no drag) always seeks — even inside the loop or on a handle.
     if (!drag.moved) { seekTo(drag.startT); if (mapMode?.active()) mapMode.selectNear(drag.startT); }
@@ -911,6 +895,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
 
   mapMode = createMapMode({root, engine, songMap, metronome, readOnly, getView: () => ({...view}), setView, setFollow,
     timeToX, play: () => doPlayStop(), redraw: drawGrid, onLoopChange: updateLoopOverlay,
+    onDetect: readOnly ? null : (report) => detectBeats(report),
     setGridVisible: (visible) => { const before = grid.visible; if (grid.visible !== visible) gridToggle.click(); return before; }});
   cleanupFns.push(() => { mapMode.destroy(); releasePartGuard(); });
   document.getElementById('m-map').onclick = () => { metroBtn.click(); mapMode.enter(); };
@@ -922,28 +907,29 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   const mDetectStatus = document.getElementById('m-detect-status');
   let detecting = false;
   if (readOnly) { mDetect.disabled=true; mDetect.title='Add this song to your library to run beat detection'; }
-  mDetect.onclick = async () => {
+  // `report(text, tone)` mirrors progress into the tempo map when started there.
+  async function detectBeats(report = () => {}) {
     if (readOnly || detecting) return;
+    const status = (text, tone = 'info') => { mDetectStatus.textContent = text; report(text, tone); };
     detecting = true;
     mDetect.disabled = true;
-    mDetectStatus.textContent = 'Starting…';
+    status('Starting beat detection…');
     let res;
     try {
-      res = await backend.detectBeats(song.id, (msg) => {
-        mDetectStatus.textContent = String(msg).slice(0, 70);
-      });
+      res = await backend.detectBeats(song.id, (msg) => status(String(msg).slice(0, 70)));
     } catch (e) {
       res = { error: String(e.message || e) };
     }
     detecting = false;
     mDetect.disabled = false;
-    if (res.error) { mDetectStatus.textContent = '⚠ ' + res.error.split('\n')[0].slice(0, 64); return; }
+    if (res.error) { status(res.error.split('\n')[0].slice(0, 90), 'error'); return; }
     try { metronome.setDetected(res.beats); }
-    catch (e) { mDetectStatus.textContent = '⚠ ' + String(e.message || e).slice(0, 64); return; }
-    mDetectStatus.textContent = `Found ${res.beats.length} beats. Refine them in the tempo map (Shift+M); ⌘Z there undoes detection.`;
+    catch (e) { status(String(e.message || e).slice(0, 90), 'error'); return; }
+    status(`Found ${res.beats.length} beats. Refine them with the tempo map; ⌘Z there undoes detection.`, 'ok');
     if (!metronome.enabled) metronome.setEnabled(true);
     refreshMetroUI();
-  };
+  }
+  mDetect.onclick = () => detectBeats();
 
   let startingPlayback = false, playAction = 0;
   async function doPlayStop({pause = false} = {}) {

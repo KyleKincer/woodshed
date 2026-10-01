@@ -1,3 +1,14 @@
+Woodshed 1.6.1 redesigns the tempo map so it's easier to read and to use.
+
+- A tempo lane above your stems shows bar numbers, meter changes, section labels and a tempo curve. Steady stretches are flat steps and ramps are slopes. A stretch that disagrees with the stretches on both sides turns amber, which usually means a miscounted bar.
+- In the lane, drag a pin's handle to move it, hover to see its bar and time, and double-click to pin or unpin a line.
+- The selected bar is highlighted across the lane and the stems, and pinned beats are drawn solid through the waveform. The edit cursor is hidden while you map, so there's one less line to tell apart.
+- An inspector shows the bar, meter, tempo and pin at the selection. Pin, Tap along and Edit bar are one click away, with their keys printed on them. Less common tools are under More. The hints change with what you're doing, and ? shows every key.
+- Change a meter without moving any beats. When the beats around a bar are pinned (a tap-along or detected map), ↑/↓ and Edit bar keep every beat where it is and slide the later bar lines. When only downbeats are pinned, those bar lines stay and the beats between them re-spread. Edit bar lets you pick either one.
+- Edit bar works in place with labelled fields. Hidden fields can no longer block Apply.
+- Beat detection can be started from the tempo map and reports its progress there.
+- A song you haven't mapped yet opens with a one-line how-to, and its placeholder tempo is no longer shown as a pin.
+
 Woodshed 1.6.0 adds a keyboard-driven tempo map for lining the beat grid up with any recording, whether or not it was played to a click.
 
 - Press Shift+M, or choose Tempo map in the transport, to map the song. ←/→ moves bar by bar and Shift+←/→ beat by beat. The playhead follows the selection, and Cmd+←/→ jumps between pins and meter changes. Type a bar number and press Enter to jump to it.

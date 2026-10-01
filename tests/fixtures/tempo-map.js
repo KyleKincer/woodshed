@@ -35,3 +35,20 @@ window.fixtureTruth = beats;
 window.fixtureUrls = {'drums-key': URL.createObjectURL(wav(pcm))};
 const song = {id: 'fixture', title: 'Drift', artist: 'Fixture band', duration: seconds, stems: [{name: 'drums', key: 'drums-key'}], practice: {rate: 1}, tempo: null};
 openPlayer(song, {cacheNamespace: `fixture-${Date.now()}:`});
+
+// Map the fixture the way a person would: three pins, a 7/8 bar and a ramp.
+window.fixtureDemo = async () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  for (let i = 0; i < 100 && !(window.fixtureEngine?.duration && window.fixtureMap && document.querySelector('.map-lane')); i++) await wait(100);
+  await wait(300);
+  const E = window.fixtureEngine, T = beats.map((b) => b.time);
+  const key = (k, o = {}) => document.body.dispatchEvent(new KeyboardEvent('keydown', {key: k, code: o.code, altKey: !!o.alt, metaKey: !!o.meta, shiftKey: !!o.shift, bubbles: true, cancelable: true}));
+  if (document.getElementById('map-strip').hidden) key('M', {shift: true});
+  E.seek(T[0]); key('d'); E.seek(T[39]); key('d'); key('ArrowLeft', {alt: true}); E.seek(T[32]); key('d');
+  key('9'); key('Enter'); key('e');
+  const form = document.querySelector('.map-editor');
+  form.n.value = 7; form.d.value = '8'; form.querySelector('[name=scope][value=bar]').checked = true; form.label.value = 'Turnaround'; form.requestSubmit();
+  key('Home'); key('r'); key('8'); key('Enter');
+  return document.getElementById('map-note').textContent;
+};
+window.fixtureKey = (k, o = {}) => document.body.dispatchEvent(new KeyboardEvent('keydown', {key: k, code: o.code, altKey: !!o.alt, metaKey: !!o.meta, shiftKey: !!o.shift, bubbles: true, cancelable: true}));
