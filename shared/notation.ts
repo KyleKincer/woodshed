@@ -7,7 +7,7 @@ export type Hit = {id:string; offset:Fraction; duration:Fraction; instrument:str
   value:number; dotted:boolean; tuplet:number; accent:boolean; ghost:boolean; flam:boolean; sticking:''|'L'|'R'; velocity:number};
 export type Bar = {measureId:string; coverage:'unstarted'|'progress'|'reviewed'; hits:Hit[]};
 export type Score = {version:1; title:string; timeline:Timeline; bars:Bar[]};
-export const MAX_MEASURES=512, MAX_HITS_PER_BAR=256, MAX_HITS=16000;
+export const MAX_MEASURES=1024, MAX_HITS_PER_BAR=256, MAX_HITS=16000;
 export const KIT = [
   {id:'crash',name:'Crash',key:'c',midi:49,line:0,note:'a/5/x2',voice:1},
   {id:'ride',name:'Ride',key:'d',midi:51,line:1,note:'f/5/x2',voice:1},

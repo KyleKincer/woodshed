@@ -19,7 +19,7 @@ export function arrangePlayerControls(root) {
     if (element) target.append(group ? element.closest('.t-group') : element);
   };
   move('#play', primary); move('#pause', primary); move('.playback-position', primary); move('#speed', primary, true);
-  move('#metro-btn', primary); move('#mixer-reset', primary); move('#help', primary);
+  move('#metro-btn', primary); move('#map-btn', primary); move('#mixer-reset', primary); move('#help', primary);
   move('#loop-readout', practice);
   move('#zoom-fit', tools, true); move('#grid-toggle', tools, true);
   transport.replaceChildren(primary, practice);
