@@ -54,6 +54,8 @@ export class SongMapStore {
    */
   setGuard(name, guard) { this.guards.set(name, guard); return () => { if (this.guards.get(name) === guard) this.guards.delete(name); }; }
   _kept(id) { for (const guard of this.guards.values()) if (guard.keep?.(id)) return true; return false; }
+  /** Whether any bar after `index` holds drum notation (re-barring would shift it). */
+  notationAfter(index) { return this.data.measures.slice(index + 1).some((m) => this._kept(m.id)); }
   _emit(reason) { for (const listener of [...this.listeners]) listener(reason); }
 
   _set(data) {
@@ -137,6 +139,8 @@ export class SongMapStore {
   barStart(index) { return this.starts[index]; }
   /** Tempo in the bar's felt pulse (♩, ♩. or ♪) at a musical position. */
   bpmAt(q) { const m = this.measure(this.barIndexAt(q)); return velocityAt(this.compiled, q) * 60 / pulseOf(m); }
+  /** Quarter notes per minute at a recording time: continuous across meter changes. */
+  qpmAt(time) { return velocityAt(this.compiled, this.positionAt(time)) * 60; }
   pulseLabel(index) { const m = this.measure(index), p = pulseOf(m); return p === 1.5 ? '♩.' : p === 0.5 ? '♪' : p === 2 ? '𝅗𝅥' : p === 0.25 ? '𝅘𝅥𝅯' : p === 3 ? '𝅗𝅥.' : '♩'; }
   beatsPerBarAt(time) { return beatGroups(this.measure(this.barIndexAt(this.positionAt(time)))).length; }
 

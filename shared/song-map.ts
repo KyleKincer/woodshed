@@ -335,6 +335,24 @@ export function editBars(data:SongMapData, from:number, to:number, patch:(m:Meas
   return dropped;
 }
 
+/**
+ * Re-bar without moving any beat: bars change, every pin keeps its musical
+ * position (and so its time), and later bar lines slide to wherever the new
+ * bars put them. Use when the beats are right but a bar line is in the wrong place.
+ */
+export function rebarBars(data:SongMapData, from:number, to:number, patch:(m:Measure, index:number)=>void) {
+  for (let i = from; i <= to; i++) patch(data.measures[i], i);
+  return 0;
+}
+
+/** True when beats (not just bar lines) are pinned in or right after these bars. */
+export function beatsPinnedNear(data:SongMapData, from:number, to:number) {
+  const starts = measureStarts(data.measures), a = number(starts[from]), endBar = Math.min(data.measures.length - 1, to + 1);
+  const b = number(starts[endBar]) + number(data.measures[endBar].length);
+  const bars = new Set(starts.map((q) => number(q)));
+  return data.pins.some((p) => { const q = number(p.position); return q >= a - 1e-9 && q < b - 1e-9 && !bars.has(q); });
+}
+
 export const sameMeter = (a:Measure, b:Measure) => a.numerator === b.numerator && a.denominator === b.denominator && beatGroups(a).join('+') === beatGroups(b).join('+');
 
 /** Bars from `index` up to (not including) the next meter change. */

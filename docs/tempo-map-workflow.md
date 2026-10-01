@@ -1,6 +1,6 @@
 # Tempo and meter mapping
 
-Status: built for 1.6.0. The proposal below is kept as written. The final section records the decisions and what shipped.
+Status: built for 1.6.0; the interface was redesigned in 1.6.1. The proposal below is kept as written. The final sections record the decisions and what shipped.
 
 ## Intent
 
@@ -146,6 +146,24 @@ Two details make taps usable as data rather than rough hints:
   - Preview taps (D/T while the loop plays) re-pin the nearest line.
 - **Storage.** `song.tempo.songMap` holds `{version:1, measures, pins:[{position, time, ramp?}], tailQpm?}`. Each save also writes the map's pulses in the pre-1.6 `detected` shape, so older desktop builds keep the same clicks. An untouched pre-1.6 map is saved unchanged. The bar limit rose from 512 to 1024.
 - **Not built yet:** Simplify (thin pins on clicked songs) and re-detecting from the cursor onward.
+
+## 1.6.1 interface pass
+
+The first interface put ten equal buttons, fourteen key hints and a run-on status line in one strip, and floated labels over the waveform. 1.6.1 replaces it:
+
+- **Tempo lane** (`src/js/map-lane.js`), between the time ruler and the stems.
+  - A bar ruler shows bar numbers, meter chips and section labels.
+  - The tempo curve is plotted in quarter notes per minute, so it stays continuous across meter changes. Labels use the felt pulse.
+  - The vertical range ignores outliers, such as gaps between legacy sections.
+  - Steady spans that disagree with both neighbours by more than 6% are drawn amber.
+  - Pins are draggable handles. Dense maps draw smaller pins.
+- **Selection**: a cobalt line and bar band through the stems, with pinned grid lines drawn solid. The edit cursor is hidden while mapping.
+- **Inspector**: four readouts (bar, meter, tempo, pin), three primary actions with their keys, a More menu, contextual hints and a full key sheet behind ?.
+- **Keep in place** when changing a meter:
+  - *Beats* re-bars. Pins keep their musical positions, and later bar lines slide.
+  - *Bar lines* keeps bar-relative pins and re-spreads the beats between them.
+  - The default is Beats when beats are pinned near the bar, otherwise Bar lines.
+  - Keep beats is refused when later bars hold drum notation, because those notes are stored relative to their bars.
 
 ## Phases (original plan)
 
