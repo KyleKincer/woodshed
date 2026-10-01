@@ -1,0 +1,32 @@
+/* ---------- Tempo map (Shift+M) ---------- */
+.map-strip { flex-shrink:0; margin:0 24px 10px; padding:10px 14px 8px; background:var(--bg-2); border:1px solid var(--accent); border-radius:3px; display:flex; flex-direction:column; gap:6px; font-size:12px; }
+.map-strip[hidden] { display:none; }
+.map-head { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.map-title { font-size:13px; color:var(--accent); }
+.map-status { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 14px; flex:1; min-width:240px; font-variant-numeric:tabular-nums; color:var(--muted); }
+.map-status b { color:var(--text); }
+.map-status .map-tempo { color:var(--text); font-weight:650; }
+.map-status .map-live { color:var(--accent); font-weight:650; }
+.map-actions { display:flex; flex-wrap:wrap; gap:5px; }
+.map-note { min-height:16px; color:var(--text); }
+.map-hints { display:flex; flex-wrap:wrap; gap:3px 12px; color:var(--muted); font-size:11px; }
+.map-hints kbd { font:600 10px ui-monospace,monospace; color:var(--text); background:var(--bg-3); border:1px solid var(--border); border-radius:2px; padding:0 4px; }
+.map-editor { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:8px 10px; background:var(--bg); border:1px solid var(--border); }
+.map-editor[hidden] { display:none; }
+.map-editor label { display:flex; align-items:center; gap:5px; color:var(--muted); }
+.map-editor input:not([type=checkbox]), .map-editor select { background:var(--bg-3); border:1px solid var(--border); color:var(--text); font:inherit; font-size:12px; padding:4px 6px; border-radius:2px; }
+.map-editor input[type=number] { width:64px; }
+.map-editor input:disabled { opacity:.55; }
+.map-cursor { position:absolute; top:0; bottom:0; width:0; border-left:2px solid var(--warn); pointer-events:none; z-index:3; }
+.map-cursor::before { content:''; position:absolute; top:13px; left:-6px; border:5px solid transparent; border-top:7px solid var(--warn); }
+.player.mapping .tempo-markers { top:0; }
+.map-bar-num { position:absolute; top:1px; transform:translateX(3px); font:600 10px ui-monospace,monospace; color:var(--muted); pointer-events:none; }
+.map-pin { position:absolute; top:13px; width:9px; height:9px; margin-left:-4.5px; background:var(--accent); transform:rotate(45deg); border:1px solid var(--bg); }
+.map-pin.selected { background:var(--warn); }
+.map-bpm { position:absolute; top:24px; transform:translateX(-50%); font:600 10px ui-monospace,monospace; color:var(--accent); background:var(--bg); padding:0 3px; border-radius:2px; white-space:nowrap; opacity:.92; }
+.map-bpm.open { color:var(--muted); }
+.map-ramp { position:absolute; top:17px; height:0; border-top:2px dashed var(--accent); opacity:.7; }
+.player.mapping .tempo-flag { top:auto; bottom:0; border-radius:0 3px 0 0; }
+.mp-map { border-top:1px solid var(--border); padding-top:12px; display:flex; flex-direction:column; gap:10px; }
+.mp-map-now strong { font-variant-numeric:tabular-nums; }
+@media(max-width:700px) { .map-strip { margin:0 12px 8px; } .map-hints { display:none; } }

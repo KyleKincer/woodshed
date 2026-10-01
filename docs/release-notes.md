@@ -1,3 +1,15 @@
+Woodshed 1.6.0 adds a keyboard-driven tempo map for lining the beat grid up with any recording, whether or not it was played to a click.
+
+- Press Shift+M, or choose Tempo map in the transport, to map the song. ←/→ moves bar by bar and Shift+←/→ beat by beat. The playhead follows the selection, and Cmd+←/→ jumps between pins and meter changes. Type a bar number and press Enter to jump to it.
+- Pin bars instead of hunting for a BPM. Stop on a downbeat and press D, or press T for a beat. Tempo between pins is worked out exactly, to hundredths of a BPM. For a song played to a click, pin bar 1 and one late downbeat and you're done. If the bar number is off, Alt+←/→ renumbers the pin and the tempo re-solves.
+- Tap along with songs that weren't played to a click. Play and tap T on every beat (D on downbeats keeps the bar count in sync). Each tap pins the next beat. Taps are corrected for audio latency and snap to the nearest hit in the drum stem. You can also calibrate how early or late you tap. A whole tapping pass undoes in one step.
+- Fix meters without moving anything. ↑/↓ adds or removes a beat from the bar until the next meter change; Shift limits it to one bar. E edits the meter, beat grouping (such as 2+2+3), pickup length, section label and open-ended tempo. Pinned bars never move. A miscounted bar shows up as a stretch with an odd tempo.
+- Ramps. R turns the stretch between two pins into a gradual tempo change for accelerandos and ritardandos.
+- P loops the bars around the selection with the click. ,/. nudges the selected bar line by 10 ms (1 ms with Shift) while you listen, and ←/→ steps the loop through the song. Cmd+Z undoes any change.
+- The metronome, count-in, beat grid, snapping, bar readout and drum transcription all share this one map. Fixing the map fixes the drum part's timing too. Map edits that would strand written notes are refused, and Transcribe's bar and alignment commands open the tempo map.
+- Detected beats now feed the tempo map, so they can be refined with the same keys. Compound and odd meters click their felt pulse: dotted quarters in 6/8, 2+2+3 in 7/8.
+- Existing songs keep their clicks exactly where they were, including drum parts' timing. Shared songs include the full tempo map.
+
 Woodshed 1.5.1 speeds up local audio processing.
 
 - Uses Apple GPU acceleration on supported Macs and NVIDIA CUDA on supported Windows/Linux PCs. If the accelerator cannot process a track, Woodshed retries on CPU.

@@ -99,7 +99,7 @@ test('pointer-clicked checkboxes and sliders release Space to transport, without
 });
 test('text entry, dialogs, and keyboard-focused checkboxes retain their keyboard behavior',async()=>{
   await openPlayer(song);
-  for (const id of ['m-bpm','m-accent']) {
+  for (const id of ['m-countin-length','m-accent']) {
     document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));
     const control=document.getElementById(id);control.focus();
     const e=new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:' ',code:'Space'});

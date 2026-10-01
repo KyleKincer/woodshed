@@ -7,6 +7,7 @@ import {requireUserId,requireWritableUserId,getUserId,accountControl} from './li
 import {coverKeyOf} from './lib/songMetadata';
 import {adjust,limits,used,retireKey} from './storage';
 import {capturePart,deletePart} from './notation';
+import {cleanSongMap} from '../shared/song-map';
 
 const unavailable = () => new ConvexError('This share link is unavailable. It may have been stopped or the song removed.');
 const tokenValid = (token:string) => /^[a-f0-9]{64}$/.test(token);
@@ -38,7 +39,8 @@ function tempoSettings(value:unknown) {
   const t=value as Record<string,unknown>;
   return {...pick(t,['accent','volume','countIn','countInLength','countInUnit','audiblePreRoll','enabled','source']),
     map:Array.isArray(t.map)?t.map.slice(0,8192).map(s=>pick(s,['t','bpm','beatsPerBar','unit'])):[],
-    detected:Array.isArray(t.detected)?t.detected.slice(0,8192).map(b=>pick(b,['time','downbeat'])):null};
+    detected:Array.isArray(t.detected)?t.detected.slice(0,8192).map(b=>pick(b,['time','downbeat'])):null,
+    songMap:cleanSongMap(t.songMap)??undefined};
 }
 // Explicit allowlist: no notes, personal tags, source file paths or account IDs.
 export function sharedSnapshot(song:Doc<'songs'>) {

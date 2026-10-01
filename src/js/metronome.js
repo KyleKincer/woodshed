@@ -1,13 +1,14 @@
-// Tempo-map metronome. Clicks are synthesized on the engine's AudioContext and
+// Metronome. Clicks are synthesized on the engine's AudioContext and
 // scheduled in *media time* mapped through the engine's current playback rate,
 // so they stay locked to the audio at any speed and through loops/seeks.
 //
-// A tempo map is an ordered list of sections { t, bpm, beatsPerBar, unit }.
-// Each section's start time is a downbeat; beats run at 60/bpm until the next
-// section (or end of song). One section = a single fixed tempo.
+// Every click comes from the song map (see song-map.js): bars with meters,
+// some bar lines or beats pinned to the recording, tempo derived between pins.
+import { SongMapStore } from './song-map.js';
+import { defaultSongMap } from '../../shared/song-map.ts';
 
 export class Metronome {
-  constructor(engine) {
+  constructor(engine, songMap = null) {
     this.engine = engine;
     this.ctx = engine.ctx;
     this.out = this.ctx.createGain();
@@ -21,9 +22,6 @@ export class Metronome {
     this.countInLength = 1;
     this.countInUnit = 'bars';
     this.audiblePreRoll = false;
-    this.map = [{ t: 0, bpm: 120, beatsPerBar: 4, unit: 4 }];
-    this.source = 'map';   // 'map' (manual tempo map) | 'detected' (BeatNet)
-    this.detected = null;  // [{ time, downbeat }]
 
     this.beats = [];
     this._timer = null;
@@ -32,128 +30,52 @@ export class Metronome {
     this._scheduledClicks = new Set();
     this._transportRevision = -1;
     this.onChange = null; // notified when the map/settings change (for persistence + redraw)
+    // A song with no saved tempo has no map yet either: treat it like the legacy
+    // default so an existing drum part's timing can still be adopted.
+    this.songMap = songMap || new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1, {legacy: {map: null, detected: null, source: 'map'}});
+    this._unsubscribe = this.songMap.subscribe(() => { this.recompute(); this._notify(); });
     this.recompute();
   }
 
   load(tempo) {
     if (!tempo) return;
-    if (Array.isArray(tempo.map) && tempo.map.length) this.map = tempo.map.map(normSection);
     if (typeof tempo.accent === 'boolean') this.accent = tempo.accent;
     if (typeof tempo.volume === 'number') this.volume = tempo.volume;
     if (typeof tempo.countIn === 'boolean') this.countIn = tempo.countIn;
     this.countInLength = Math.max(1, Math.min(16, Math.round(+tempo.countInLength || 1)));
     this.countInUnit = tempo.countInUnit === 'beats' ? 'beats' : 'bars';
     this.audiblePreRoll = tempo.audiblePreRoll === true;
-    if (Array.isArray(tempo.detected) && tempo.detected.length) this.detected = tempo.detected;
-    if (tempo.source === 'detected' && this.detected) this.source = 'detected';
+    this.songMap.load(tempo);
     this.recompute();
     if (tempo.enabled) this.setEnabled(true);
   }
 
   serialize() {
-    return {
-      map: this.map, accent: this.accent, volume: this.volume, countIn: this.countIn,
+    const settings = {
+      accent: this.accent, volume: this.volume, countIn: this.countIn,
       countInLength: this.countInLength, countInUnit: this.countInUnit, audiblePreRoll: this.audiblePreRoll,
-      enabled: this.enabled, source: this.source, detected: this.detected,
+      enabled: this.enabled,
     };
+    // Untouched pre-1.6 maps are saved as they were. Otherwise save the song
+    // map, plus its pulses in the old detected-beat shape so earlier desktop
+    // versions still hear the same clicks.
+    if (this.songMap.legacy) return {...settings, ...this.songMap.legacy};
+    return {...settings, songMap: this.songMap.serialize(), source: 'detected', map: [],
+      detected: this.beats.map((b) => ({time: b.time, downbeat: b.downbeat}))};
   }
 
-  // BeatNet output: [[time, beatInBar], ...] where beatInBar === 1 is a downbeat.
+  // Detection output: [[time, beatInBar], ...] where beatInBar === 1 is a downbeat.
   setDetected(rawBeats) {
-    this.detected = rawBeats.map(([time, k]) => ({ time: +time, downbeat: +k === 1 }));
-    this.source = 'detected';
-    this.recompute();
-    this._notify();
-  }
-  clearDetected() { this.detected = null; this.source = 'map'; this.recompute(); this._notify(); }
-
-  // ---- per-beat manual correction (operates on the beat list) -------------
-  _ensureList() { if (!this.detected) this.detected = []; this.source = 'detected'; }
-  addBeat(t, downbeat = false) {
-    this._ensureList();
-    const o = { time: Math.max(0, t), downbeat: !!downbeat };
-    this.detected.push(o);
-    this.recompute(); this._notify();
-    return o;
-  }
-  removeBeat(o) {
-    if (!this.detected) return;
-    const i = this.detected.indexOf(o);
-    if (i >= 0) { this.detected.splice(i, 1); this.recompute(); this._notify(); }
-  }
-  moveBeat(o, t) { o.time = Math.max(0, t); this.recompute(); this._notify(); }
-  toggleDownbeat(o) { o.downbeat = !o.downbeat; this.recompute(); this._notify(); }
-  shiftAll(delta) { if (!this.detected) return; this.detected.forEach((b) => { b.time = Math.max(0, b.time + delta); }); this.recompute(); this._notify(); }
-  nearestBeat(t, maxDist) {
-    let best = null, bd = Infinity;
-    for (const b of this.beats) { const d = Math.abs(b.time - t); if (d < bd) { bd = d; best = b; } }
-    return best && bd <= maxDist ? best : null;
+    this.songMap.replaceFromBeats(rawBeats.map(([time, k]) => ({time: +time, downbeat: +k === 1})));
   }
 
-  // ---- tempo map ----------------------------------------------------------
-  recompute() {
-    if(this.notationBeats){this.beats=this.notationBeats;return;}
-    if (this.source === 'detected' && this.detected && this.detected.length) {
-      this.beats = this.detected.filter((b) => b.time >= 0).sort((a, b) => a.time - b.time);
-      return;
-    }
-    const dur = this.engine.duration || 0;
-    this.map.sort((a, b) => a.t - b.t);
-    const beats = [];
-    for (let i = 0; i < this.map.length; i++) {
-      const s = this.map[i];
-      const end = i + 1 < this.map.length ? this.map[i + 1].t : dur;
-      const interval = 60 / Math.max(20, Math.min(400, s.bpm));
-      const n = Math.max(1, s.beatsPerBar | 0);
-      let k = 0;
-      for (let t = s.t; t < end - 1e-6 && beats.length < 100000; t += interval, k++) {
-        if (t >= 0) beats.push({ time: t, downbeat: k % n === 0 });
-      }
-    }
-    this.beats = beats;
-  }
+  recompute() { this.beats = this.songMap.beats; }
 
+  /** Legacy section shape at a recording time: {t, bpm, beatsPerBar, unit}. */
   sectionAt(t) {
-    if(this.notationSections){let section=this.notationSections[0];for(const s of this.notationSections)if(s.t<=t+1e-6)section=s;else break;return section;}
-    let s = this.map[0];
-    for (const sec of this.map) if (sec.t <= t + 1e-6) s = sec; else break;
-    return s;
+    const map = this.songMap, q = map.positionAt(t), index = Math.max(0, map.barIndexAt(q)), m = map.measure(index);
+    return {t: map.timeAt(map.barStart(index)), bpm: map.bpmAt(q), beatsPerBar: map.beatsPerBarAt(t), unit: m.denominator};
   }
-
-  // A transient shared musical map while transcribing. The legacy tempo map
-  // remains intact; notation persists its authoritative alignment separately.
-  setNotationTiming(beats=null,sections=null,notify=true){this.notationBeats=beats;this.notationSections=sections;this._cancelClicks();this._schedUntil=this.ctx.currentTime;this.recompute();if(notify)this._notify(false);}
-
-  setMap(map) { this.map = map.map(normSection); this.recompute(); this._notify(); }
-
-  setSection(t, patch) {
-    const s = this.sectionAt(t);
-    Object.assign(s, patch);
-    this.recompute();
-    this._notify();
-  }
-
-  addChangeAt(t, bpm, beatsPerBar, unit) {
-    // Snap onto an existing section start if very close.
-    const existing = this.map.find((s) => Math.abs(s.t - t) < 0.04);
-    if (existing) { Object.assign(existing, { bpm, beatsPerBar, unit }); }
-    else this.map.push(normSection({ t: Math.max(0, t), bpm, beatsPerBar, unit }));
-    this.recompute();
-    this._notify();
-  }
-
-  removeSectionAt(t) {
-    if (this.map.length <= 1) return false;
-    const i = this.map.findIndex((s) => Math.abs(s.t - t) < 1e-6);
-    if (i === -1) return false;
-    this.map.splice(i, 1);
-    this.recompute();
-    this._notify();
-    return true;
-  }
-
-  // Re-anchor the active section's downbeat to time t (keeps its tempo/sig).
-  setDownbeatAt(t) { this.setSection(t, {}); const s = this.sectionAt(t); s.t = Math.max(0, t); this.recompute(); this._notify(); }
 
   setAccent(b) { this.accent = b; this._notify(false); }
   setVolume(v) { this.volume = v; this._notify(false); }
@@ -216,26 +138,12 @@ export class Metronome {
   // Build a media-time lead-in; the engine schedules it on the audio clock.
   countInPlan() {
     const pos = this.engine.getPosition() >= this.engine.duration ? 0 : this.engine.getPosition();
-    let interval, n;
-    if ((this.notationBeats || this.source === 'detected') && this.beats.length > 1) {
-      const next = this.beats.findIndex((b) => b.time >= pos);
-      const idx = next < 0 ? this.beats.length - 1 : next;
-      const a = this.beats[Math.max(0, idx - 1)], b = this.beats[Math.max(1, idx)];
-      interval = Math.max(0.15, b.time - a.time || 0.5);
-      // beats per bar = gap between the two downbeats around the cursor (default 4)
-      const dbs = this.beats.filter((x) => x.downbeat).map((x) => x.time);
-      const nextDb = dbs.findIndex((t) => t > pos + 1e-6);
-      const di = nextDb < 0 ? dbs.length - 1 : Math.max(1, nextDb);
-      n = di > 0 ? this.beats.filter(b => b.time >= dbs[di - 1] && b.time < dbs[di]).length : this.sectionAt(pos).beatsPerBar;
-    } else {
-      const s = this.sectionAt(pos);
-      interval = 60 / Math.max(20, Math.min(400, s.bpm));
-      n = Math.max(1, s.beatsPerBar | 0);
-    }
+    const n = Math.max(1, this.songMap.beatsPerBarAt(pos));
     const count = this.countInLength * (this.countInUnit === 'bars' ? n : 1);
     const grid = this.beats.length ? this.beats : [{time:pos,downbeat:true}];
-    const firstInterval = grid.length > 1 ? Math.max(0.15, grid[1].time - grid[0].time) : interval;
-    const lastInterval = grid.length > 1 ? Math.max(0.15, grid.at(-1).time - grid.at(-2).time) : interval;
+    const fallback = 60 / Math.max(20, Math.min(400, this.songMap.bpmAt(this.songMap.positionAt(pos)) || 120));
+    const firstInterval = grid.length > 1 ? Math.max(0.15, grid[1].time - grid[0].time) : fallback;
+    const lastInterval = grid.length > 1 ? Math.max(0.15, grid.at(-1).time - grid.at(-2).time) : fallback;
     const lastDownbeat = grid.findLastIndex(b => b.downbeat);
     const at = i => i < 0 ? {time:grid[0].time + i * firstInterval,downbeat:i % n === 0}
       : i >= grid.length ? {time:grid.at(-1).time + (i - grid.length + 1) * lastInterval,downbeat:(i - Math.max(0,lastDownbeat)) % n === 0} : grid[i];
@@ -252,7 +160,8 @@ export class Metronome {
     return {duration:pos-start, beats};
   }
 
-  _click(ctxTime, accent) {
+  // Untracked clicks (tap calibration) survive the transport's click cancellation.
+  _click(ctxTime, accent, tracked = true) {
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     osc.frequency.value = accent ? 1600 : 1050;
@@ -261,7 +170,7 @@ export class Metronome {
     g.gain.exponentialRampToValueAtTime(v, ctxTime + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, ctxTime + 0.05);
     osc.connect(g).connect(this.out);
-    this._scheduledClicks.add(osc);
+    if (tracked) this._scheduledClicks.add(osc);
     osc.onended = () => { this._scheduledClicks.delete(osc); osc.disconnect(); g.disconnect(); };
     osc.start(ctxTime);
     osc.stop(ctxTime + 0.06);
@@ -269,14 +178,5 @@ export class Metronome {
 
   beatsForView(t0, t1) { return this.beats.filter((b) => b.time >= t0 && b.time <= t1); }
 
-  destroy() { this.stop(); try { this.out.disconnect(); } catch {} }
-}
-
-function normSection(s) {
-  return {
-    t: Math.max(0, +s.t || 0),
-    bpm: Math.max(20, Math.min(400, Math.round(+s.bpm || 120))),
-    beatsPerBar: Math.max(1, Math.min(16, (s.beatsPerBar | 0) || 4)),
-    unit: [1, 2, 4, 8, 16].includes(s.unit) ? s.unit : 4,
-  };
+  destroy() { this.stop(); this._unsubscribe(); try { this.out.disconnect(); } catch {} }
 }

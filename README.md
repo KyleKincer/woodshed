@@ -1,7 +1,8 @@
 # Woodshed
 
 Practice along to songs with separated stems, per-stem mute/solo, waveforms,
-loops, speed control and a beat-locked metronome.
+loops, speed control and a beat-locked metronome. A keyboard-driven tempo map
+(Shift+M) lines the beat grid up with any recording, clicked or not.
 
 The website uses **Convex Auth v2 (Google)** and Convex for accounts, library
 metadata and practice settings. Audio syncs to private **Cloudflare R2** objects.
