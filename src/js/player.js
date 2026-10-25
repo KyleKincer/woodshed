@@ -10,6 +10,7 @@ import { createMapMode } from './map-mode.js';
 import { fromTimeline } from '../../shared/song-map.ts';
 import { validateBar } from '../../shared/notation.ts';
 import { boundedView, wheelNavigation } from './timeline-navigation.js';
+import {sameContent} from '../../shared/content.ts';
 import { isPointerControl } from './interactions.js';
 import { computePeaksRange, drawWaveform } from './waveform.js';
 import * as backend from './backend.js';
@@ -969,14 +970,13 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   const transcription=attachNotation({root,song,engine:activeEngine,metronome:songMetronome,songMap,mapActive:()=>mapMode.active(),openMap:(q,options)=>mapMode.enter(q,options),getView:()=>({...view}),setView,setFollow,play:doPlayStop,readOnly,shareToken,onLoopChange:updateLoopOverlay,onMixerChange:()=>{for(const {track,row} of trackRows){row.querySelector('.tbtn.mute').classList.toggle('on',track.muted);row.querySelector('.tbtn.mute').setAttribute('aria-pressed',String(track.muted));}drawWaveforms();}});
   cleanupFns.push(()=>transcription.destroy());
   let practiceTimer;
-  let lastPractice = JSON.stringify(song.practice || null);
+  let lastPractice = structuredClone(song.practice || null);
   const flushPractice = () => {
     clearTimeout(practiceTimer);
     if (readOnly) return;
     const practice = { loop: {...activeEngine.loop}, rate: activeEngine.rate, grid: {...grid}, tracks: activeEngine.tracks.map(t => ({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed})) };
-    const serialized = JSON.stringify(practice);
-    if (serialized === lastPractice) return;
-    lastPractice = serialized; song.practice = practice;
+    if (sameContent(practice, lastPractice)) return;
+    lastPractice = structuredClone(practice); song.practice = practice;
     backend.savePractice(song.id, practice).catch(error => console.error('Could not sync practice settings:', error));
   };
   const schedulePractice = () => { clearTimeout(practiceTimer); practiceTimer = setTimeout(flushPractice, 600); };
@@ -987,7 +987,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     clearTimeout(practiceTimer);clearTimeout(saveTimer);tempoDirty=false;
     const practice={loop:{...activeEngine.loop},rate:activeEngine.rate,grid:{...grid},tracks:activeEngine.tracks.map(t=>({name:t.name,volume:t.volume,muted:t.muted,soloed:t.soloed}))};
     await Promise.all([backend.saveTempo(song.id,songMetronome.serialize()),backend.savePractice(song.id,practice)]);
-    song.practice=practice;lastPractice=JSON.stringify(practice);
+    song.practice=practice;lastPractice=structuredClone(practice);
   };
   cleanupFns.push(() => { flushPractice(); for (const event of ['input','click','pointerup']) root.removeEventListener(event, schedulePractice); window.removeEventListener('keyup',schedulePractice); });
 

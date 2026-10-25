@@ -6,6 +6,7 @@ import {focusModal} from '../modal-focus.js';
 import {isPointerControl} from '../interactions.js';
 import {wheelNavigation} from '../timeline-navigation.js';
 import {scoreFromTiming,snapPosition,nearestDuration,moveLaneNotes} from './entry.js';
+import {sameContent} from '../../../shared/content.ts';
 import './notation.css';
 
 const btn=(action,label,title='')=>`<button type="button" data-action="${action}" title="${xml(title||label)}">${label}</button>`;
@@ -284,7 +285,7 @@ export async function createNotationWorkspace({host,song,engine,metronome,songMa
   updateTiming();render();
   // Follow tempo-map edits; undo history moves to the new timing too.
   const retime=(list,timeline)=>{const out=[];for(let i=list.length-1;i>=0;i--){const next={...list[i],timeline};try{validateScore(next);}catch{break;}out.unshift(next);}return out;};
-  const syncMap=()=>{if(!editor||disposed)return;const timeline=songMap.timeline();if(JSON.stringify(timeline)===JSON.stringify(editor.score.timeline))return;
+  const syncMap=()=>{if(!editor||disposed)return;const timeline=songMap.timeline();if(sameContent(timeline,editor.score.timeline))return;
     const next={...editor.score,timeline:structuredClone(timeline)};try{validateScore(next);}catch(error){message(error.message);return;}
     editor.score=next;editor.undoStack=retime(editor.undoStack,next.timeline);editor.redoStack=retime(editor.redoStack,next.timeline);changed();};
   const unsubscribeMap=songMap?songMap.subscribe(syncMap):()=>{};

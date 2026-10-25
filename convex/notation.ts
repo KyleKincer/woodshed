@@ -6,6 +6,7 @@ import {requireUserId,requireWritableUserId} from './lib/auth';
 import {barValidator,headerValidator} from './lib/notationValidators';
 import {validateTimeline,validateBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
+import {sameContent} from '../shared/content';
 
 export async function readPart(ctx:QueryCtx|MutationCtx,songId:Id<'songs'>){
   const part=await ctx.db.query('notationParts').withIndex('by_songId',q=>q.eq('songId',songId)).unique();
@@ -38,14 +39,23 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   if(args.mutationId.length>100||!args.mutationId||args.bars.length>16||!Number.isSafeInteger(args.baseRevision)||args.baseRevision<0||!args.header.title.trim()||args.header.title.length>100)throw new ConvexError('Invalid score update.');
   validateTimeline(args.header.timeline);for(const bar of args.bars)validateBar(bar,args.header.timeline);
   if(new Set(args.bars.map(b=>b.measureId)).size!==args.bars.length)throw new ConvexError('Duplicate bar update.');
-  const existing=await readPart(ctx,args.songId);
-  if(existing?.part.lastMutation===args.mutationId)return {revision:existing.part.revision};
-  if((existing?.part.revision??0)!==args.baseRevision)throw new ConvexError({code:'NOTATION_CONFLICT',message:'This part changed on another device. Your local edits are retained. Export them or load the saved version.'});
+  const part=await ctx.db.query('notationParts').withIndex('by_songId',q=>q.eq('songId',args.songId)).unique();
+  if(part?.lastMutation===args.mutationId)return {revision:part.revision};
+  if((part?.revision??0)!==args.baseRevision)throw new ConvexError({code:'NOTATION_CONFLICT',message:'This part changed on another device. Your local edits are retained. Export them or load the saved version.'});
+  // Older clients can loop on object-key ordering. Stop their drain loop with
+  // an error, before rereading every bar or invalidating shared subscriptions.
+  // Updated clients treat this specific response as an acknowledgement.
+  const unchanged=()=>{throw new ConvexError({code:'NOTATION_UNCHANGED',revision:part!.revision,message:'This part is already saved. Update Woodshed if saving continues. Your local edits are retained.'});};
+  if(part&&!args.bars.length&&sameContent(part.header,args.header))unchanged();
+  const rows=part?await ctx.db.query('notationBars').withIndex('by_partId',q=>q.eq('partId',part._id)).take(MAX_MEASURES+1):[];
+  if(rows.length>MAX_MEASURES)throw new ConvexError('Score is too large.');
+  const existing=part?{part,rows}:null;
   const measureIds=new Set(args.header.timeline.measures.map(m=>m.id));
-  const unchanged=(existing?.rows||[]).filter(r=>measureIds.has(r.bar.measureId)&&!args.bars.some(b=>b.measureId===r.bar.measureId));
-  for(const row of unchanged)validateBar(row.bar,args.header.timeline);
-  const hitCount=unchanged.reduce((n,r)=>n+r.bar.hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
+  const unchangedRows=rows.filter(r=>measureIds.has(r.bar.measureId)&&!args.bars.some(b=>b.measureId===r.bar.measureId));
+  for(const row of unchangedRows)validateBar(row.bar,args.header.timeline);
+  const hitCount=unchangedRows.reduce((n,r)=>n+r.bar.hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
   if(hitCount>MAX_HITS)throw new ConvexError(`A part can contain up to ${MAX_HITS} hits.`);
+  if(part&&sameContent(part.header,args.header)&&rows.every(r=>measureIds.has(r.bar.measureId))&&args.bars.every(bar=>sameContent(bar,rows.find(r=>r.bar.measureId===bar.measureId)?.bar)))unchanged();
   const revision=args.baseRevision+1, fields={userId,songId:args.songId,header:args.header,revision,lastMutation:args.mutationId,hitCount};
   const partId=existing?.part._id??await ctx.db.insert('notationParts',fields);
   if(existing)await ctx.db.patch(partId,fields);

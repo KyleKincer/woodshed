@@ -1,6 +1,7 @@
 // The song's single tempo/meter map, shared by the metronome, beat grid,
 // bar readout and drum transcription. Edits are transactions with undo.
 import {fraction, number, beatGroups, MAX_MEASURES} from '../../shared/notation.ts';
+import {sameContent} from '../../shared/content.ts';
 import {compile, timeAt, positionAt, velocityAt, beatsOf, linesOf, measureStarts, barIndexAt, pulseOf, normalize, MIN_QPM, MAX_QPM,
   validateSongMap, cleanSongMap, defaultSongMap, fromSections, fromBeats, fromTimeline, toTimeline} from '../../shared/song-map.ts';
 
@@ -77,7 +78,7 @@ export class SongMapStore {
       throw new Error('That tempo needs more than 1024 bars to cover the song.');
     const timeline = toTimeline(draft);
     for (const guard of this.guards.values()) guard(timeline, draft);
-    if (JSON.stringify(draft) === JSON.stringify(this.data)) return result;
+    if (sameContent(draft, this.data)) return result;
     if (!this.batch) { this.undoStack.push(this.data); if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift(); }
     else this.batch.changed = true;
     this.redoStack = [];

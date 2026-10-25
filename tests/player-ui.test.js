@@ -46,6 +46,16 @@ test('loading progress is contained inside the track panel and controls become r
   expect(root.querySelector('#speed').disabled).toBe(false);
   expect(root.querySelector('#bar-position').textContent).toBe('Bar 1 / 5 · Beat 1');
 });
+test('opening and closing server-ordered practice settings does not resave unchanged content',async()=>{
+  const backend=await import('../src/js/backend.js');
+  await openPlayer(song);closePlayer();
+  const saved=backend.savePractice.mock.lastCall[1];
+  const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,reorder(value[key])])):value;
+  backend.savePractice.mockClear();
+  await openPlayer({...song,practice:reorder(saved)});
+  document.getElementById('player-root').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  closePlayer();expect(backend.savePractice).not.toHaveBeenCalled();
+});
 test('double-click resets the speed and pitch preference can be toggled and restored',async()=>{
   await openPlayer(song);
   const speed=document.getElementById('speed');

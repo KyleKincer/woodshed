@@ -1,11 +1,15 @@
 import {convex} from '../auth.js';
 import {anyApi as api} from 'convex/server';
+import {sameContent as equal} from '../../../shared/content.ts';
 const openDB=()=>new Promise((resolve,reject)=>{const request=indexedDB.open('woodshed-notation',1);request.onupgradeneeded=()=>request.result.createObjectStore('drafts');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
 async function journal(key,value){const db=await openDB();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('drafts',value===undefined?'readonly':'readwrite'),store=tx.objectStore('drafts');const request=value===undefined?store.get(key):store.put(value,key);tx.oncomplete=()=>resolve(request.result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}finally{db.close();}}
 const clone=value=>structuredClone(value);
 const header=score=>({version:score.version,title:score.title,timeline:score.timeline});
-const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-const canonical=score=>score?{...clone(score),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).sort((a,b)=>a.measureId.localeCompare(b.measureId))}:null;
+const canonical=score=>score?{...header(clone(score)),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).sort((a,b)=>a.measureId.localeCompare(b.measureId))}:null;
+async function savePart(args){
+  try{return await convex.mutation(api.notation.save,args);}
+  catch(error){if(error.data?.code!=='NOTATION_UNCHANGED')throw error;return {revision:error.data.revision};}
+}
 
 /** Acknowledged revisions, a durable local journal, and serialized idempotent writes. */
 export class NotationStore {
@@ -14,10 +18,11 @@ export class NotationStore {
     const [remote,draft]=await Promise.all([convex.query(api.notation.get,{songId:this.songId}),this.storage(this.songId).catch(()=>null)]);
     if(remote)remote.score=canonical(remote.score);
     this.baseline=remote?.score??null;this.revision=remote?.revision??0;
-    if(draft?.score&&!equal(draft.score,draft.baseline)){
-      this.score=draft.score;this.baseline=draft.baseline;this.revision=draft.revision;this.pending=draft.pending;
+    if(draft?.score&&(draft.pending||!equal(canonical(draft.score),canonical(draft.baseline)))){
+      this.score=canonical(draft.score);this.baseline=canonical(draft.baseline);this.revision=draft.revision;this.pending=draft.pending;
+      if(this.pending)this.pending.nextBaseline=canonical(this.pending.nextBaseline);
       let replayed=false;
-      if(this.pending){try{const result=await convex.mutation(api.notation.save,this.pending.args);this.revision=result.revision;this.baseline=this.pending.nextBaseline;this.pending=null;replayed=true;await this.persist();}catch(error){if(error.data?.code==='NOTATION_CONFLICT')this.blocked=true;}}
+      if(this.pending){try{const result=await savePart(this.pending.args);this.revision=result.revision;this.baseline=this.pending.nextBaseline;this.pending=null;replayed=true;await this.persist();}catch(error){if(error.data?.code==='NOTATION_CONFLICT')this.blocked=true;}}
       // A successful replay is newer than the remote snapshot fetched above.
       if(!replayed&&!this.pending&&this.revision!==(remote?.revision??0)&&!equal(this.baseline,remote?.score))this.blocked=true;
       this.onStatus(this.blocked?'conflict':'local');
@@ -26,7 +31,7 @@ export class NotationStore {
     return this.score;
   }
   persist(){const value=clone({score:this.score,baseline:this.baseline,revision:this.revision,pending:this.pending});this.diskPending++;this.disk=this.disk.catch(()=>{}).then(()=>this.storage(this.songId,value)).then(result=>{this.diskFailed=false;return result;},error=>{this.diskFailed=true;throw error;}).finally(()=>{this.diskPending--;});return this.disk;}
-  set(score){this.score=canonical(score);this.onStatus(this.blocked?'conflict':'local');void this.persist().catch(()=>this.onStatus('storage-error'));clearTimeout(this.timer);this.timer=setTimeout(()=>void this.flush().catch(()=>{}),650);}
+  set(score){const next=canonical(score);if(equal(next,this.score))return;this.score=next;this.onStatus(this.blocked?'conflict':'local');void this.persist().catch(()=>this.onStatus('storage-error'));clearTimeout(this.timer);this.timer=setTimeout(()=>void this.flush().catch(()=>{}),650);}
   async flush(){clearTimeout(this.timer);if(this.running)return this.running;if(this.blocked)throw new Error('Resolve the notation conflict before sharing.');
     this.running=this.drain().finally(()=>{this.running=null;});return this.running;
   }
@@ -41,7 +46,8 @@ export class NotationStore {
           // Canonical ordering avoids writing forever after a bar edit.
           this.pending={args:{songId:this.songId,baseRevision:this.revision,mutationId:crypto.randomUUID(),header:header(score),bars:changed},nextBaseline:canonical(nextBaseline)};await this.persist();
         }
-        const result=await convex.mutation(api.notation.save,this.pending.args);this.revision=result.revision;this.baseline=this.pending.nextBaseline;this.pending=null;await this.persist();
+        const result=await savePart(this.pending.args);
+        this.revision=result.revision;this.baseline=this.pending.nextBaseline;this.pending=null;await this.persist();
       }
       this.onStatus('saved');
     }catch(error){if(error.data?.code==='NOTATION_CONFLICT'){this.blocked=true;this.onStatus('conflict');}else this.onStatus(this.diskFailed?'storage-error':'offline');throw error;}

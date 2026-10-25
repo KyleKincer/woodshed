@@ -53,3 +53,13 @@ test('keys go to the tempo map while it is active',async()=>{
   active=true;key('s');expect(persistence.set).not.toHaveBeenCalled();
   active=false;key('s');expect(persistence.set).toHaveBeenCalled();
 });
+test('map subscription echoes with reordered object fields never write notation',async()=>{
+  await open();key('s');
+  const before=persistence.set.mock.calls.length;
+  const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).reverse().map(key=>[key,reorder(value[key])])):value;
+  const timeline=reorder(songMap.timeline());
+  vi.spyOn(songMap,'timeline').mockReturnValue(timeline);
+  for(let i=0;i<5;i++)songMap._emit('load');
+  expect(persistence.set).toHaveBeenCalledTimes(before);
+  workspace.destroy();songMap._emit('edit');expect(persistence.set).toHaveBeenCalledTimes(before);
+});

@@ -1,3 +1,9 @@
+Woodshed 1.6.2 fixes repeated background saving in drum transcription.
+
+- Saving a drum part now stops after the server acknowledges its content, including parts loaded from another device or recovered after an interrupted save.
+- Unchanged tempo-map updates and practice settings no longer trigger redundant saves.
+- The server stops unchanged notation saves from older apps before reading the full part again. If an older app shows a connection warning after saving, update Woodshed. Its saved part and local draft are retained.
+
 Woodshed 1.6.1 redesigns the tempo map so it's easier to read and to use.
 
 - A tempo lane above your stems shows bar numbers, meter changes, section labels and a tempo curve. Steady stretches are flat steps and ramps are slopes. A stretch that disagrees with the stretches on both sides turns amber, which usually means a miscounted bar.

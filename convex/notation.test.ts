@@ -47,3 +47,18 @@ test('independent drum rhythms round-trip through saves and shared parts',async(
   const {token}=await alice.mutation(api.sharing.create,{id:songId});
   expect((await t.query(api.notation.get,{token})).score.bars).toEqual([bar]);
 });
+test('unchanged legacy saves stop without revising the part or rewriting bars',async()=>{
+  const {t,alice,args,songId,score}=await setup();
+  const bar={measureId:score.timeline.measures[0].id,coverage:'reviewed',hits:[]};
+  await alice.mutation(api.notation.save,{...args,bars:[bar]});
+  const before=await t.run(async ctx=>({parts:await ctx.db.query('notationParts').collect(),bars:await ctx.db.query('notationBars').collect()}));
+  for(const bars of [[],[bar]]){
+    const result=alice.mutation(api.notation.save,{...args,baseRevision:1,mutationId:'loop',bars});
+    await expect(result).rejects.toThrow('NOTATION_UNCHANGED');
+  }
+  const after=await t.run(async ctx=>({parts:await ctx.db.query('notationParts').collect(),bars:await ctx.db.query('notationBars').collect()}));
+  expect(after).toEqual(before);
+  expect((await alice.query(api.notation.get,{songId})).revision).toBe(1);
+  await alice.mutation(api.notation.save,{...args,baseRevision:1,mutationId:'edit',header:{...args.header,title:'Updated title'}});
+  expect((await alice.query(api.notation.get,{songId})).revision).toBe(2);
+});

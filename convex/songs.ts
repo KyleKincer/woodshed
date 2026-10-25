@@ -9,6 +9,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { coverKeyOf, cleanMetadata } from './lib/songMetadata';
 import {readPart,deletePart} from './notation';
+import {sameContent} from '../shared/content';
 
 /**
  * The whole library, newest first.
@@ -89,7 +90,7 @@ export const saveTempo = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
-    await ctx.db.patch(song._id, { tempo: args.tempo });
+    if (!sameContent(song.tempo, args.tempo)) await ctx.db.patch(song._id, { tempo: args.tempo });
     return null;
   },
 });
@@ -152,7 +153,7 @@ export const savePractice = mutation({
   handler: async (ctx, {id, practice}) => {
     const song = await requireOwned(ctx, id);
     if (JSON.stringify(practice).length > 10_000) throw new Error('Practice settings too large.');
-    await ctx.db.patch(song._id, {practice}); return null;
+    if (!sameContent(song.practice, practice)) await ctx.db.patch(song._id, {practice}); return null;
   },
 });
 export const exportPage = query({
