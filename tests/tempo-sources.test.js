@@ -185,6 +185,31 @@ test('file import exposes drum notation explicitly and failures leave the auditi
   expect(map.timeAt(0)).toBeCloseTo(2.1);
 });
 
+test('Guitar Pro files are selectable and use the same alignment and optional drum-import flow', async () => {
+  panel.destroy();
+  const importDrums = vi.fn(async () => {});
+  panel = createTempoSources({root: document.getElementById('source-root'), song: {title: 'Song'}, songMap: map, engine, search, load, onImportDrums: importDrums});
+  const fileInput = document.querySelector('[type=file]');
+  expect(fileInput.accept.split(',')).toEqual(expect.arrayContaining(['.gp3', '.gp4', '.gp5', '.gpx', '.gp']));
+  expect(document.querySelector('.ts-import').textContent).toContain('Guitar Pro');
+  expect(document.querySelector('.ts-elsewhere').textContent).not.toContain('exported as MIDI first');
+  const drums = {hits: [{q: 0, midi: 38, durationQ: .25, velocity: .8}], source: 'guitar-pro', warnings: []};
+  importTempoFile.mockResolvedValueOnce({map: data(2), format: 'guitar-pro', warnings: ['Timing follows score playback and repeats. Check alignment with the recording.'], drums});
+  panel.open(); await settle();
+  const file = new File(['guitar-pro'], 'song.gp5');
+  Object.defineProperty(fileInput, 'files', {configurable: true, value: [file]});
+  fileInput.dispatchEvent(new Event('change')); await settle();
+  expect(importTempoFile).toHaveBeenCalledWith(file, {duration: 20});
+  expect(el('current').textContent).toBe('song.gp5');
+  expect(el('warning').textContent).toContain('score playback and repeats');
+  expect(el('drums').hidden).toBe(false);
+  document.querySelector('[data-shift="100"]').click();
+  el('drums').click(); await settle();
+  expect(importDrums.mock.calls[0][0].map.pins[0].time).toBeCloseTo(2.1);
+  expect(importDrums.mock.calls[0][0].drums).toEqual(drums);
+  expect(panel.isOpen()).toBe(false);
+});
+
 test('drum import preview explains skipped notes before applying and disables empty drafts', async () => {
   panel.destroy();
   const previewDrums = vi.fn(() => ({importedCount: 0, skippedCount: 2, warnings: ['Two unsupported percussion notes were skipped.']}));

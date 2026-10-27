@@ -287,7 +287,8 @@ export function parseBeatText(text, {duration, denominator, meter} = {}) {
 
 export function parseTempoFile(value, {name='',duration,denominator,meter} = {}) {
   const extension=name.toLowerCase().split('.').at(-1);
-  if(['gp','gp3','gp4','gp5','gpx','musicxml','xml'].includes(extension))fail('Export the tempo map as MIDI from your score editor, then import the .mid file.');
+  if(['gp','gp3','gp4','gp5','gpx'].includes(extension))fail('Use Import a file to load a Guitar Pro score directly.');
+  if(['musicxml','xml'].includes(extension))fail('Export the tempo map as MIDI from your score editor, then import the .mid file.');
   if(typeof value!=='string') {
     const bytes=bytesOf(value);
     if(bytes.length>MAX_TEMPO_FILE_BYTES)fail('Choose a tempo file smaller than 10 MB.');
@@ -299,8 +300,9 @@ export function parseTempoFile(value, {name='',duration,denominator,meter} = {})
 }
 
 export async function importTempoFile(file, {duration,denominator,meter} = {}) {
-  if(!file||typeof file.arrayBuffer!=='function')fail('Choose a MIDI, Clone Hero chart, Chorus SNG/ZIP, or beat timestamp file.');
+  if(!file||typeof file.arrayBuffer!=='function')fail('Choose a Guitar Pro, MIDI, Clone Hero chart, Chorus SNG/ZIP, or beat timestamp file.');
   if(/\.(sng|zip)$/i.test(file.name))return (await import('./tempo-archive.js')).importTempoArchive(file,{duration,denominator,meter});
   if(file.size>MAX_TEMPO_FILE_BYTES)fail('Choose a tempo file smaller than 10 MB.');
+  if(/\.(gp3|gp4|gp5|gpx|gp)$/i.test(file.name))return (await import('./guitar-pro-import.js')).parseGuitarPro(await file.arrayBuffer(),{duration});
   return parseTempoFile(await file.arrayBuffer(),{name:file.name,duration,denominator,meter});
 }

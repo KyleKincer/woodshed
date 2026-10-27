@@ -157,10 +157,10 @@ describe('beat timestamp files and dispatch',()=>{
     for(const text of ['0 1\n0 2','1 1\n.5 2','0\n1','0 1\n1 0','0 1 x\n1 2 1','-1 1\n0 2'])expect(()=>parseBeatText(text,{duration:10})).toThrow();
     expect(()=>parseBeatText(Array.from({length:8001},(_,i)=>`${i*.5} ${i%4+1}`).join('\n'),{duration:5000})).toThrow('8000');
   });
-  test('dispatches MIDI by header and chart by content and gives actionable GP guidance',async()=>{
+  test('dispatches MIDI by header and chart by content and gives actionable synchronous GP guidance',async()=>{
     expect(parseTempoFile(midi([[...end()]]),{name:'notes.bin',duration:10}).format).toBe('midi');
     expect(parseTempoFile(chart('0 = B 120000'),{duration:10}).format).toBe('chart');
-    expect(()=>parseTempoFile('whatever',{name:'tab.gp5',duration:10})).toThrow('Export');
+    expect(()=>parseTempoFile('whatever',{name:'tab.gp5',duration:10})).toThrow('Import a file');
     const file={name:'beats.tsv',size:20,arrayBuffer:async()=>new TextEncoder().encode('0 1\n.5 2').buffer};
     expect((await importTempoFile(file,{duration:10})).format).toBe('beats');
   });

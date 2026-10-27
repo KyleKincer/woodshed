@@ -133,6 +133,20 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       })()`);
       if(nativeTheme.themeSource!=='system')throw Error('Native appearance did not return to system');
       console.log(JSON.stringify({appearanceSmoke:appearance}));
+      // Exercise the separately bundled Guitar Pro parser under Chromium's
+      // real CSP. This tiny artificial GP3 fixture is alphaTab's strings test:
+      // v1.8.4, MPL-2.0; source and license are in the bundled alphaTab notice.
+      const guitarProFile = fs.readdirSync(path.join(webRoot,'assets')).find(name=>/^guitar-pro-import-.*\.js$/.test(name));
+      if (!guitarProFile) throw Error('Guitar Pro importer missing from desktop bundle');
+      const guitarPro = await window.webContents.executeJavaScript(`(async () => {
+        const {parseGuitarPro} = await import('/assets/' + ${JSON.stringify(guitarProFile)});
+        if(typeof parseGuitarPro!=='function')throw Error('Guitar Pro parser export missing');
+        const bytes = Uint8Array.from(atob("GEZJQ0hJRVIgR1VJVEFSIFBSTyB2My4wMAAAAAAAAAEAAAAAAQAAAAABAAAAAAEAAAAAAQAAAAABAAAAAAEAAAAAAQAAAAABAAAAAQAAAAAAeAAAAAAAAAAZAAAADQgAAAAAAAAZAAAADQgAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAAAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAAYAAAAAQEAAAAAAAABAAAAAQAAAAMEBAAGU3B1ciAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAABAAAAAOwAAADcAAAAyAAAALQAAACgAAAAAAAAAAQAAAAEAAAACAAAAGAAAAAAAAAD/AAAAAgAAAAAAfjABBgEwAQYCMAEGAzABBgQwAQYFMAEGBkEC/wA="), value=>value.charCodeAt(0));
+        const result = parseGuitarPro(bytes, {duration:4});
+        if(result.format!=='guitar-pro' || result.map.version!==1 || result.map.tailQpm!==120 || !result.map.pins.length || result.map.pins.some(pin=>!Number.isFinite(pin.time)) || result.map.measures[0].numerator!==4 || result.drums)throw Error('Guitar Pro playback map smoke failed');
+        return {format:result.format, bars:result.map.measures.length, tempo:result.map.tailQpm};
+      })()`);
+      console.log(JSON.stringify({guitarProSmoke:guitarPro}));
       // Check the packaged module, MIME type, CSP, WASM compilation and actual
       // audio output in Chromium on every release platform.
       const stretchFile = fs.readdirSync(path.join(webRoot,'assets')).find(name=>/^SignalsmithStretch-.*\.mjs$/.test(name));

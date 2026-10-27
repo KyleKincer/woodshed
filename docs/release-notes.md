@@ -1,3 +1,10 @@
+Woodshed 1.8.0 imports Guitar Pro scores directly.
+
+- In Tempo map → Find / import, choose a `.gp3`, `.gp4`, `.gp5`, `.gpx` or `.gp` file. Its tempo changes, meter changes, pickups, repeats and alternate endings become editable Woodshed timing. Use the existing offset controls to line it up with your recording.
+- A percussion part can seed an editable drum draft through Use map & import drums. Guitar parts provide timing without inventing drum notes; existing written drum parts stay protected.
+- Timing follows the score's tempo. Backing-track audio sync points are not applied, and gradual tempo transitions need review. Check the beginning and end against your recording. Free-time bars and meters Woodshed cannot represent report an error.
+- Files stay on your device. The Guitar Pro reader loads only when needed. Bounded container checks cover GPX compression and modern Guitar Pro ZIP files, including files written by Guitar Pro itself.
+
 Woodshed 1.7.0 adds tempo-map discovery, alignment, and drum-draft imports.
 
 - In Tempo map, choose Find / import to search Chorus Encore and the human-annotated Harmonix Set. Import Chorus SNG or ZIP downloads directly, or select a MIDI, Clone Hero chart, or beat-timestamp file. Guitar Pro and Songsterr users can export MIDI first.
