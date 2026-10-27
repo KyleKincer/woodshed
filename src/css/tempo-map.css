@@ -5,7 +5,8 @@
 :root[data-theme=dark] { --map-fill:rgba(138,175,255,.10); --map-connector:rgba(138,175,255,.4); --map-kbd:#2c3532; }
 
 /* The player positions these inline every frame; mapping hides them outright. */
-.player.mapping .edit-cursor, .player.mapping .mini-edit-cursor { display:none !important; }
+.player.mapping:not(:has(.is-sourcing)) .edit-cursor,
+.player.mapping:not(:has(.is-sourcing)) .mini-edit-cursor { display:none !important; }
 
 /* Selection line through the stems. */
 .map-cursor { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--accent); pointer-events:none; z-index:3; }

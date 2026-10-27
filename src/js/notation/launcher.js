@@ -3,13 +3,17 @@ export function attachNotation(options){
   const {root}=options,nav=root.querySelector('.workspace-nav');let workspace=null,pending=null,closed=false,wanted=false;
   const host=document.createElement('section');host.className='notation-workspace';host.hidden=true;host.setAttribute('aria-label','Drum transcription');root.querySelector('.transport').before(host);
   const paint=()=>{root.querySelector('.player').classList.toggle('notation-active',wanted);nav.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.workspace==='transcribe')===wanted)));};
+  const ensure=async()=>{pending??=import('./editor.js').then(({createNotationWorkspace})=>createNotationWorkspace({...options,host})).catch(error=>{pending=null;throw error;});
+    const result=await pending;if(closed){result.destroy();throw new Error('Reopen the song to edit its drum part.');}workspace=result;return workspace;};
   const show=async()=>{wanted=true;paint();host.hidden=false;
     if(workspace){workspace.setVisible(true);return;}
     host.innerHTML='<div class="notation-loading" role="status">Loading notation…</div>';
-    try{pending??=import('./editor.js').then(({createNotationWorkspace})=>createNotationWorkspace({...options,host}));const result=await pending;if(closed){result.destroy();return;}workspace=result;workspace.setVisible(wanted);}
+    try{await ensure();workspace.setVisible(wanted);}
     catch{pending=null;host.innerHTML='<div class="notation-empty"><h2>Couldn’t open transcription</h2><p>Check your connection and try again.</p><button>Try again</button></div>';host.querySelector('button').onclick=show;}
   };
   nav.querySelector('[data-workspace="transcribe"]').onclick=show;
   nav.querySelector('[data-workspace="practice"]').onclick=()=>{wanted=false;paint();host.hidden=true;workspace?.setVisible(false);};
-  return {handleKey:e=>{if(!wanted)return false;workspace?.handleKey(e);return true;},tick:time=>workspace?.tick(time),flush:()=>workspace?.flush(),destroy(){closed=true;workspace?.destroy();host.remove();}};
+  return {handleKey:e=>{if(!wanted)return false;workspace?.handleKey(e);return true;},tick:time=>workspace?.tick(time),flush:()=>workspace?.flush(),
+    async importScore(score,notice){const part=await ensure();part.importScore(score,notice);await show();if(notice)part.notice(notice);},
+    destroy(){closed=true;workspace?.destroy();host.remove();}};
 }

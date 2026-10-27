@@ -50,3 +50,16 @@ test('pad audition never turns keyboard entry into a hidden preview mode',async(
   host.querySelector('[data-kit="snare"]').click();expect(persistence.set).not.toHaveBeenCalled();
   clickAction('panel-kit');key('s');expect(saved().bars[0].hits[0].instrument).toBe('snare');
 });
+
+test('imported drum draft uses ordinary saving and undo, and refuses to replace written notes',async()=>{
+  await open();
+  const draft=emptyScore(8);
+  draft.bars=[{measureId:draft.timeline.measures[0].id,coverage:'progress',hits:[{
+    id:'imported-kick',instrument:'kick',offset:fraction(0),duration:fraction(1,2),voice:2,value:8,
+    dotted:false,tuplet:1,velocity:.8,accent:false,ghost:false,flam:false,sticking:'',
+  }]}];
+  workspace.importScore(draft);
+  expect(saved().bars[0].hits[0].instrument).toBe('kick');
+  expect(()=>workspace.importScore(draft)).toThrow('already has drum notation');
+  clickAction('undo');expect(saved().bars).toHaveLength(0);
+});

@@ -46,6 +46,14 @@ export function saveTempo(id, tempo) {
   return convex.mutation(api.songs.saveTempo, { id, tempo });
 }
 
+export function findTempoSources(args) {
+  return convex.action(api.tempoSources.search, args);
+}
+
+export function loadTempoSource(id) {
+  return convex.action(api.tempoSources.load, {id});
+}
+
 export function deleteSong(id) {
   return convex.mutation(api.songs.remove, { id });
 }

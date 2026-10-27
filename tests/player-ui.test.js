@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
 import {beforeEach, afterEach, expect, test, vi} from 'vitest';
 import {readFileSync} from 'node:fs';
-const state = vi.hoisted(() => ({engines:[],load:null}));
-vi.mock('../src/js/backend.js', () => ({onSong:vi.fn(()=>()=>{}),signKeys:vi.fn(async()=>({d:'test.wav'})),savePractice:vi.fn(async()=>{}),saveTempo:vi.fn(async()=>{})}));
+const state = vi.hoisted(() => ({engines:[],load:null,notation:null}));
+vi.mock('../src/js/backend.js', () => ({onSong:vi.fn(()=>()=>{}),signKeys:vi.fn(async()=>({d:'test.wav'})),savePractice:vi.fn(async()=>{}),saveTempo:vi.fn(async()=>{}),
+  getNotation:vi.fn(()=>state.notation),
+  findTempoSources:vi.fn(async()=>[{id:'test-map',title:'Studio timing',artist:'Band',source:'harmonix',duration:10}]),
+  loadTempoSource:vi.fn(async()=>({text:'1 1 1\n1.5 2 1\n2 3 1\n2.5 4 1\n3 1 2',sourceUrl:'https://example.test'})),
+}));
 vi.mock('../src/js/waveform.js', () => ({computePeaksRange:()=>[],drawWaveform:()=>{}}));
 vi.mock('../src/js/engine.js', () => ({MultitrackEngine:class {
   rate=1; preservePitch=true; duration=10; playing=false; loop={enabled:false,a:0,b:10};
@@ -25,12 +29,31 @@ const song={id:'s',title:'Song',duration:10,stems:[{name:'drums',key:'d'}],pract
 beforeEach(()=>{
   document.body.innerHTML='<div id="header-song"></div><div id="player-root"></div>';
   song.practice={rate:0.75};
-  localStorage.clear();state.engines=[];state.load=Promise.resolve();
+  localStorage.clear();state.engines=[];state.load=Promise.resolve();state.notation=Promise.resolve(null);
   globalThis.ResizeObserver=class {observe(){}disconnect(){}};
   HTMLCanvasElement.prototype.getContext=()=>new Proxy({}, {get:(target,key)=>target[key]??(()=>{}),set:(target,key,value)=>{target[key]=value;return true;}});
   globalThis.requestAnimationFrame=()=>1;globalThis.cancelAnimationFrame=()=>{};
 });
 afterEach(()=>closePlayer());
+const settleSource=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
+test('closing a source audition restores the original map before the final tempo save',async()=>{
+  const backend=await import('../src/js/backend.js');backend.saveTempo.mockClear();
+  await openPlayer({...song,tempo:{map:[{t:0,bpm:120,beatsPerBar:4,unit:4}],source:'map'}});
+  document.getElementById('map-btn').click();
+  document.querySelector('[data-map=sources]').click();await settleSource();
+  document.querySelector('[data-choice="1"]').click();await settleSource();
+  expect(document.querySelector('[data-ts=current]').textContent).toBe('Studio timing');
+  closePlayer();
+  expect(backend.saveTempo.mock.lastCall[1].songMap).toBeUndefined();
+  expect(backend.saveTempo.mock.lastCall[1].map[0].t).toBe(0);
+});
+test('a delayed notation load cannot open sources after leaving map mode',async()=>{
+  let resolve;state.notation=new Promise(done=>{resolve=done;});
+  await openPlayer(song);document.getElementById('map-btn').click();
+  document.querySelector('[data-map=sources]').click();
+  document.getElementById('map-btn').click();resolve(null);await settleSource();
+  expect(document.querySelector('.tempo-sources').hidden).toBe(true);
+});
 test('loading progress is contained inside the track panel and controls become ready together',async()=>{
   let finish;state.load=new Promise(resolve=>{finish=resolve;});
   const ready=openPlayer(song);
