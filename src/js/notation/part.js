@@ -33,13 +33,19 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
   const newScore = () => songMap ? {version: 2, title: 'Drums', timeline: structuredClone(songMap.timeline()), bars: []} : scoreFromTiming(engine.duration, metronome);
 
   let score;
-  if (readOnly) score = (await loadSharedNotation(shareToken))?.score;
-  else {
-    store = persistence || new NotationStore(song.id, setStatus);
-    score = await store.load();
-    if (persistence) setStatus('fixture');
+  try {
+    if (readOnly) score = (await loadSharedNotation(shareToken))?.score;
+    else {
+      store = persistence || new NotationStore(song.id, setStatus);
+      score = await store.load();
+      if (persistence) setStatus('fixture');
+    }
+    if (score || !readOnly) editor = new ScoreEditor(score ? fitScore(score) : newScore());
+  } catch (error) {
+    // The store registers window listeners and timers; release them before failing.
+    if (!persistence) store?.destroy();
+    throw error;
   }
-  if (score || !readOnly) editor = new ScoreEditor(score ? fitScore(score) : newScore());
 
   // Follow tempo-map edits; undo history moves to the new timing too.
   const retime = (list, timeline) => { const out = []; for (let i = list.length - 1; i >= 0; i--) { const next = {...list[i], timeline}; try { validateScore(next); } catch { break; } out.unshift(next); } return out; };

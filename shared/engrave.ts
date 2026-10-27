@@ -30,6 +30,8 @@ export type EngravedBeat = {
   rest: boolean;
   /** Invisible spacer for an otherwise empty secondary voice. */
   hidden: boolean;
+  /** A whole-bar rest in a bar no single value fills (5/4, 7/8 …). */
+  measureRest?: boolean;
 };
 export type EngravedVoice = {voice: 1 | 2; beats: EngravedBeat[]};
 export type EngravedBar = {voices: EngravedVoice[]};
@@ -140,6 +142,36 @@ function writeCell(cell: Cell, events: Event[], allowDottedCell: boolean): CellR
   return [{beats, kind}];
 }
 
+/**
+ * A beat group of 5 or 7 units, or an odd remainder of a shortened bar, is
+ * not one written value; split it into 3- and 2-unit beats (5 = 3+2,
+ * 7 = 3+2+2), or into the largest writable pieces for remainders.
+ */
+function writableCells(start: Fraction, length: Fraction, unit: Fraction): Cell[] {
+  if (writtenValue(length)) return [{start, length, forced: null}];
+  const units = ratio(length, unit), pieces: Fraction[] = [];
+  if (isInteger(units)) {
+    let n = units.n;
+    if (n % 2) { pieces.push(mul(unit, 3)); n -= 3; }
+    for (; n > 0; n -= 2) pieces.push(mul(unit, 2));
+  } else {
+    let left = length;
+    while (left.n > 0) {
+      let piece = fraction(1, 16);
+      for (const candidate of [4, 3, 2, 3 / 2, 1, 3 / 4, 1 / 2, 3 / 8, 1 / 4, 3 / 16, 1 / 8, 1 / 16]) {
+        const f = fraction(Math.round(candidate * 16), 16);
+        if (compare(f, left) <= 0) { piece = f; break; }
+      }
+      if (compare(piece, left) > 0) throw new Error('This bar length cannot be written.');
+      pieces.push(piece); left = subtract(left, piece);
+    }
+  }
+  const out: Cell[] = [];
+  let q = start;
+  for (const piece of pieces) { out.push({start: q, length: piece, forced: null}); q = add(q, piece); }
+  return out;
+}
+
 /** Beat cells for a measure, truncated for partial (pickup) bars. */
 export function rhythmCells(measure: Measure, spans: TupletSpan[] = []): Cell[] {
   const cells: Cell[] = [];
@@ -148,7 +180,7 @@ export function rhythmCells(measure: Measure, spans: TupletSpan[] = []): Cell[] 
     if (compare(q, measure.length) >= 0) break;
     let length = fraction(4 * g, measure.denominator);
     if (compare(add(q, length), measure.length) > 0) length = subtract(measure.length, q);
-    cells.push({start: q, length, forced: null}); q = add(q, length);
+    cells.push(...writableCells(q, length, fraction(4, measure.denominator))); q = add(q, length);
   }
   const sorted = [...spans].sort((a, b) => compare(a.start, b.start));
   let result = cells;
@@ -185,6 +217,9 @@ function mergeCells(results: {cell: Cell; result: CellResult}[], measure: Measur
   const total = results.reduce((q, r) => add(q, r.cell.length), zero());
   const simple = results.every(r => !r.cell.forced);
   const whole = writtenValue(total);
+  // An empty full bar is one bar rest, whatever its meter.
+  if (simple && !whole && compare(total, fraction(4 * measure.numerator, measure.denominator)) === 0 && results.every(r => r.result.kind === 'empty'))
+    return [{start: zero(), duration: total, value: 1, dots: 0, tuplet: null, hits: [], rest: true, hidden: false, measureRest: true}];
   if (simple && whole && results.length > 1 && results.every((r, i) => r.result.kind === 'empty' || (i === 0 && r.result.kind === 'single'))) {
     const head = results[0].result;
     return [{...head.beats[0], start: zero(), duration: total, ...whole, tuplet: null}];
@@ -222,7 +257,10 @@ function engraveVoice(hits: Hit[], measure: Measure, spans: TupletSpan[]): Engra
 /** Write a bar. `layout` 'split' puts hands up (voice 1) and feet down (voice 2). */
 export function engraveBar(bar: Bar | undefined, measure: Measure, layout: Layout = 'combined'): EngravedBar {
   const hits = bar?.hits ?? [], spans = bar?.tuplets ?? [];
-  if (layout === 'combined') return {voices: [{voice: 1, beats: engraveVoice(hits, measure, spans.filter(s => !s.voice || s.voice === 1))}]};
+  // A tuplet written for one voice applies to the combined rhythm only when
+  // the other voice's onsets also fall on its grid.
+  const fits = (span: TupletSpan) => { const end = add(span.start, span.length), unit = div(span.length, span.count); return hits.every(h => compare(h.offset, span.start) < 0 || compare(h.offset, end) >= 0 || isInteger(ratio(subtract(h.offset, span.start), unit))); };
+  if (layout === 'combined') return {voices: [{voice: 1, beats: engraveVoice(hits, measure, spans.filter(s => !s.voice || fits(s)))}]};
   const upper = hits.filter(h => h.voice === 1), lower = hits.filter(h => h.voice === 2);
   const voices: EngravedVoice[] = [{voice: 1, beats: engraveVoice(upper, measure, spans.filter(s => !s.voice || s.voice === 1))}];
   if (lower.length) voices.push({voice: 2, beats: engraveVoice(lower, measure, spans.filter(s => !s.voice || s.voice === 2))});
@@ -235,4 +273,25 @@ export function engraveBar(bar: Bar | undefined, measure: Measure, layout: Layou
 export function canWrite(bar: Bar | undefined, measure: Measure, hit: Hit, layout: Layout = 'combined') {
   try { engraveBar({measureId: measure.id, coverage: 'progress', hits: [...(bar?.hits ?? []), hit], tuplets: bar?.tuplets}, measure, layout); return true; }
   catch { return false; }
+}
+
+// Grids per rhythm cell, simplest first.
+const GRIDS = [1, 2, 4, 3, 8, 6, 16, 12, 5, 7, 10, 24, 20, 28, 14, 9];
+const SIMPLE = new Set([1, 2, 4, 3, 8, 6, 16, 12, 5, 7]);
+
+/**
+ * Choose one grid (divisions of the cell) for onsets at `rel` quarter notes
+ * from its start. Exact positions keep their grid (any grid for an exact
+ * source such as Guitar Pro; common grids otherwise); a performance is
+ * snapped to the simplest grid within a tolerance scaled to that grid, so
+ * timing slop never turns into 64ths or quintuplets.
+ */
+export function chooseGrid(length: number, rel: number[], {exact = false} = {}) {
+  const usable = GRIDS.filter(s => length / s > 1 / 32 + 1e-9);
+  const error = (s: number) => Math.max(0, ...rel.map(r => { const u = length / s; return Math.abs(r - Math.round(r / u) * u); }));
+  const precise = usable.find(s => (exact || SIMPLE.has(s)) && error(s) <= 1e-6);
+  if (precise) return precise;
+  const loose = usable.find(s => error(s) <= Math.min(0.06, length / s * 0.3));
+  if (loose) return loose;
+  return usable.reduce((best, s) => error(s) < error(best) - 1e-9 ? s : best, usable[0]);
 }

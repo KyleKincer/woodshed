@@ -1,8 +1,8 @@
 // Convert a Woodshed drum score into an alphaTab model. Pure: no DOM, no
 // rendering, so the conversion is unit-tested in Node. Written rhythm comes
 // from shared/engrave.ts; alphaTab only lays out and draws it.
-import {kitPiece, number, starts, toTime, beatGroups, compare} from '../../../shared/notation.ts';
-import {engraveBar} from '../../../shared/engrave.ts';
+import {kitPiece, number, starts, toTime, compare} from '../../../shared/notation.ts';
+import {engraveBar, rhythmCells} from '../../../shared/engrave.ts';
 
 const DURATION = {1: 'Whole', 2: 'Half', 4: 'Quarter', 8: 'Eighth', 16: 'Sixteenth', 32: 'ThirtySecond', 64: 'SixtyFourth'};
 const ROLL = {1: 'Eighth', 2: 'Sixteenth', 3: 'ThirtySecond'};
@@ -88,15 +88,14 @@ export function buildAlphaTabScore(at, score, {layout = score.layout || 'combine
     if (measure.label) { master.section = new M.Section(); master.section.text = measure.label; master.section.marker = ''; }
     const tempo = marks.get(index) ?? (index === first ? Math.round(barTempo(score.timeline, index)) : null);
     if (tempo) master.tempoAutomations.push(M.Automation.buildTempoAutomation(false, 0, tempo, 2, true));
-    const groups = beatGroups(measure);
-    if (!(groups.every(g => g === 1)) && !(measure.denominator === 8 && groups.every(g => g === 3))) {
-      const rules = new M.BeamingRules();
-      const unit = {4: 1, 8: 2, 16: 4}[measure.denominator] ?? 1;
-      rules.groups.set(M.Duration.Eighth, groups.map(g => Math.max(1, g * 2 / unit)));
-      rules.groups.set(M.Duration.Sixteenth, groups.map(g => Math.max(1, g * 4 / unit)));
-      rules.groups.set(M.Duration.ThirtySecond, groups.map(g => Math.max(1, g * 8 / unit)));
-      master.beamingRules = rules;
+    // Every bar gets its own rules: alphaTab carries a bar's rules into all
+    // later bars that have none. Beams follow the engraver's rhythm cells.
+    const cells = rhythmCells(measure), rules = new M.BeamingRules();
+    for (const [duration, per] of [[M.Duration.Eighth, 8], [M.Duration.Sixteenth, 16], [M.Duration.ThirtySecond, 32]]) {
+      const sizes = cells.map(c => number(c.length) * per / 4);
+      if (sizes.every(n => Number.isInteger(n) && n >= 1)) rules.groups.set(duration, sizes);
     }
+    master.beamingRules = rules;
     out.addMasterBar(master);
     const atBar = new M.Bar();
     staff.addBar(atBar);
@@ -123,7 +122,8 @@ export function buildAlphaTabScore(at, score, {layout = score.layout || 'combine
             const grace = new M.Beat();
             grace.graceType = M.GraceType.BeforeBeat;
             grace.duration = graces === 1 ? M.Duration.Eighth : M.Duration.Sixteenth;
-            for (const hit of graceHits.filter(h => graces === 1 || h.drag)) {
+            // With a drag on the beat, single flams share the grace nearest the note.
+            for (const hit of graceHits.filter(h => graces === 1 || h.drag || g === graces - 1)) {
               const note = new M.Note();
               note.percussionArticulation = kitPiece(hit.instrument).gp;
               grace.addNote(note);

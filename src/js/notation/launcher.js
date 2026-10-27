@@ -56,12 +56,14 @@ export function attachNotation(options) {
     return workspace;
   };
 
-  const failed = (host, title, retry) => {
-    host.innerHTML = `<div class="notation-empty"><h2>${title}</h2><p>Check your connection and try again.</p><button type="button">Try again</button></div>`;
+  const failed = (host, title, retry, error) => {
+    host.innerHTML = `<div class="notation-empty"><h2>${title}</h2><p></p><button type="button">Try again</button></div>`;
+    host.querySelector('p').textContent = error?.data?.message || error?.message || 'Check your connection and try again.';
     host.querySelector('button').onclick = retry;
   };
 
-  async function show(next, {remember = true} = {}) {
+  // Only the Chart/Tracks switch records this device's choice.
+  async function show(next, {remember = false} = {}) {
     chosen = true;
     mode = next;
     if (remember && next !== 'transcribe') writeView(next);
@@ -74,18 +76,18 @@ export function attachNotation(options) {
       if (chart) { chart.setVisible(true); return; }
       chartHost.innerHTML = '<div class="notation-loading" role="status">Loading chart…</div>';
       try { await loadChart(); if (mode === 'chart') chart.setVisible(true); }
-      catch { failed(chartHost, 'Couldn’t open the chart', () => show('chart')); }
+      catch (error) { failed(chartHost, 'Couldn’t open the chart', () => show('chart'), error); }
     } else if (next === 'transcribe') {
       if (workspace) { workspace.setVisible(true); return; }
       editorHost.innerHTML = '<div class="notation-loading" role="status">Loading notation…</div>';
       try { await loadWorkspace(); if (mode === 'transcribe') workspace.setVisible(true); }
-      catch { failed(editorHost, 'Couldn’t open transcription', () => show('transcribe')); }
+      catch (error) { failed(editorHost, 'Couldn’t open transcription', () => show('transcribe'), error); }
     }
   }
 
   nav.querySelector('[data-workspace="transcribe"]').onclick = () => show('transcribe');
   nav.querySelector('[data-workspace="practice"]').onclick = () => show(readView() === 'tracks' ? 'tracks' : (part?.hasNotation ? 'chart' : 'tracks'));
-  switcher.addEventListener('click', event => { const b = event.target.closest('[data-practice-view]'); if (b) show(b.dataset.practiceView); });
+  switcher.addEventListener('click', event => { const b = event.target.closest('[data-practice-view]'); if (b) show(b.dataset.practiceView, {remember: true}); });
   paint();
 
   // Open straight to the chart when the song has one, unless this device
@@ -96,6 +98,8 @@ export function attachNotation(options) {
   }).catch(() => {});
 
   return {
+    /** The tempo map edits the waveform timeline; leave the chart for it. */
+    leaveChart: () => { if (mode === 'chart') void show('tracks'); },
     handleKey: e => { if (mode !== 'transcribe') return false; workspace?.handleKey(e); return true; },
     tick: time => { if (mode === 'chart') chart?.tick(time); else if (mode === 'transcribe') workspace?.tick(time); },
     flush: async () => { await part?.flush(); },

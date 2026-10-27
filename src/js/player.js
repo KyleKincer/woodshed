@@ -906,6 +906,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     onDetect: readOnly ? null : (report) => detectBeats(report),
     onSources: readOnly ? null : async () => { await drumPartReady; if (isCurrent() && mapMode.active()) tempoSources.open(); },
     onExit: () => tempoSources?.close(),
+    onEnter: () => transcription.leaveChart(),
     setGridVisible: (visible) => { const before = grid.visible; if (grid.visible !== visible) gridToggle.click(); return before; }});
   const sourceHost = document.createElement('div');
   sourceHost.className = 'tempo-sources-host';

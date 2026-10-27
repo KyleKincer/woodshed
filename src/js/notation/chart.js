@@ -100,7 +100,7 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
     programmaticScroll = performance.now();
     scroller.scrollTo({top: target, behavior: smooth ? 'smooth' : 'auto'});
   }
-  const stopFollowing = () => { if (performance.now() - programmaticScroll < 900) return; if (follow && engine.playing) { follow = false; paintTools(); } };
+  const stopFollowing = () => { if (gesture?.armed || performance.now() - programmaticScroll < 900) return; if (follow && engine.playing) { follow = false; paintTools(); } };
   scroller.addEventListener('wheel', stopFollowing, {passive: true});
   scroller.addEventListener('touchmove', stopFollowing, {passive: true});
 
@@ -118,6 +118,9 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
         if ((b.getAttribute('aria-current') === 'true') !== on) { b.setAttribute('aria-current', String(on)); if (on) b.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
       }
     }
+    // The drum stem can be muted from the keyboard or mixer too.
+    const drums = drumTrack(), mute = host.querySelector('[data-chart="mute-drums"]');
+    if (drums && mute.getAttribute('aria-pressed') !== String(!!drums.muted)) paintTools();
     const loop = engine.loop, key = loop.enabled ? `${loop.a}:${loop.b}` : '';
     if (force || key !== lastLoop) { lastLoop = key; view.setLoop(loop.enabled ? [toQuarter(timeline(), loop.a), toQuarter(timeline(), loop.b)] : null); }
   }
@@ -129,10 +132,13 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
     if (kind === 'down') {
       if (event.button !== 0 || at.index == null) return;
       gesture = {id: event.pointerId, start: at, x: event.clientX, y: event.clientY, dragging: false, touch: event.pointerType !== 'mouse', armed: event.pointerType === 'mouse'};
+      // Keep receiving the gesture when a mouse drag leaves the score.
+      if (!gesture.touch) try { view.stage.setPointerCapture(event.pointerId); } catch { /* not capturable */ }
       if (gesture.touch) gesture.timer = setTimeout(() => { if (gesture) { gesture.armed = true; gesture.dragging = true; navigator.vibrate?.(10); view.setRange([at.index, at.index]); say('Drag across bars to loop them'); } }, 380);
       return;
     }
     if (!gesture || event.pointerId !== gesture.id) return;
+    if (kind === 'move' && !gesture.touch && event.buttons === 0) kind = 'up';
     if (kind === 'move') {
       const distance = Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y);
       if (!gesture.armed) { if (distance > 8) { clearTimeout(gesture.timer); gesture = null; } return; }
@@ -169,6 +175,9 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
     follow = true; paintTools(); sync(true);
   }
   host.querySelector('.chart-score').addEventListener('contextmenu', e => { if (gesture?.touch) e.preventDefault(); });
+  // After a long press the finger selects bars; it must not start a scroll
+  // (which would cancel the gesture).
+  host.querySelector('.chart-score').addEventListener('touchmove', e => { if (gesture?.armed && e.cancelable) e.preventDefault(); }, {passive: false});
 
   host.addEventListener('click', event => {
     const button = event.target.closest('button');
@@ -188,8 +197,11 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
       case 'loop-section': {
         const section = currentSection(lastQ ?? 0);
         if (!section) break;
-        if (engine.loop.enabled && Math.abs(engine.loop.a - barTime(section.index)) < 1e-3 && Math.abs(engine.loop.b - barEndTime(section.end)) < 1e-3) { clearLoop(); say('Loop off'); break; }
-        setLoop(barTime(section.index), barEndTime(section.end));
+        // The engine clamps loops to the recording; compare like for like.
+        const a = Math.max(0, barTime(section.index)), b = Math.min(engine.duration ?? Infinity, barEndTime(section.end));
+        if (engine.loop.enabled && Math.abs(engine.loop.a - a) < 1e-3 && Math.abs(engine.loop.b - b) < 1e-3) { clearLoop(); say('Loop off'); break; }
+        if (b - a < .02) { say('This section starts after the recording ends'); break; }
+        setLoop(a, b);
         if (!engine.playing) engine.seek(barTime(section.index));
         say(`Looping ${section.label}`); sync(true); break;
       }

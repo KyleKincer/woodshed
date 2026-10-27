@@ -76,3 +76,4 @@
 .notation-print-score{width:1000px}
 @media print{.notation-print-score{width:100%}}
 @media (pointer:coarse){.notation-workspace button{min-height:38px}.notation-durations button{min-width:38px}}
+.notation-workspace [hidden]{display:none!important}

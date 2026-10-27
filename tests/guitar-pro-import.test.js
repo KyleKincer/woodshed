@@ -76,7 +76,8 @@ describe('direct Guitar Pro imports', () => {
     expect(drums.hits.map(h=>h.q)).toEqual([0,1,2,3,4,5,6,6+1/3,6+2/3,7,8,8+2/3,8+4/3].map(q=>expect.closeTo(q,9)));
     expect(drums.hits[4]).toMatchObject({flam:true,drag:false}); expect(drums.hits[5]).toMatchObject({flam:false,drag:true});
     expect(drums.hits[9].roll).toBe(2); expect(drums.hits[8]).not.toHaveProperty('roll');
-    expect(drums.tuplets).toEqual([{q:6,length:1,count:3},{q:8,length:2,count:3}]);
+    // Snare-only groups belong to the hands voice.
+    expect(drums.tuplets).toEqual([{q:6,length:1,count:3,voice:1},{q:8,length:2,count:3,voice:1}]);
     expect(result.warnings.join(' ')).not.toContain('Grace hits before the first downbeat');
     // The eighth-note triplet restates the beat grid; the quarter-note triplet does not.
     const {score} = importDrumHits(drums.hits, result.map, {source:drums.source, tuplets:drums.tuplets});
@@ -85,7 +86,7 @@ describe('direct Guitar Pro imports', () => {
     expect(second).not.toHaveProperty('tuplets');
     expect(second.hits.map(h=>h.offset)).toEqual([fraction(0),fraction(1),fraction(2),fraction(7,3),fraction(8,3),fraction(3)]);
     expect(second.hits.slice(0,2)).toMatchObject([{flam:true},{flam:false,drag:true}]);expect(second.hits[5].roll).toBe(2);
-    expect(third.tuplets).toEqual([{start:fraction(0),length:fraction(2),count:3}]);
+    expect(third.tuplets).toEqual([{start:fraction(0),length:fraction(2),count:3,voice:1}]);
     expect(third.hits.map(h=>h.offset)).toEqual([fraction(0),fraction(2,3),fraction(4,3)]);
   });
   test('grace hits before the first downbeat are disclosed', () => {

@@ -3,7 +3,7 @@
 // rhythm is derived later by shared/engrave.ts, so MIDI note gates and
 // authored durations are never treated as notation.
 import {KIT, fraction, number, id, starts, musicalStarts, extent, toTime, validateTimeline, validateScore, compare, add, MAX_HITS, MAX_HITS_PER_BAR, MAX_TUPLETS_PER_BAR} from '../../../shared/notation.ts';
-import {rhythmCells} from '../../../shared/engrave.ts';
+import {rhythmCells, chooseGrid} from '../../../shared/engrave.ts';
 import {toTimeline} from '../../../shared/song-map.ts';
 
 // Exact General MIDI → kit piece. Choke and edge articulations share a MIDI
@@ -17,30 +17,15 @@ const byId = new Map(KIT.map(k => [k.id, k]));
 // Guitar Pro articulation ids, including chokes, edges and half-open hi-hat.
 const byGp = new Map(KIT.map(k => [k.gp, k]));
 
-// Grids per rhythm cell, simplest first. A cell is a counted beat.
-const GRIDS = [1, 2, 4, 3, 8, 6, 16, 12, 5, 7, 10, 24, 32, 20, 28, 14, 9];
-// Exact sources (notation exports) must land exactly; performances are
-// snapped to the simplest grid within these tolerances, in quarter notes.
-const TOLERANCES = [1e-6, 0.03, 0.06];
-
-/** Choose one grid for every onset in a cell (all voices together). */
-function cellGrid(length, rel, forced) {
-  const L = number(length);
-  const errors = s => rel.map(r => { const u = L / s; return Math.abs(r - Math.round(r / u) * u); });
-  if (forced) return forced;
-  const usable = GRIDS.filter(s => L / s >= 1 / 32 - 1e-9);
-  for (const tolerance of TOLERANCES) {
-    const s = usable.find(s => Math.max(0, ...errors(s)) <= tolerance);
-    if (s) return s;
-  }
-  return usable.reduce((best, s) => Math.max(...errors(s)) < Math.max(...errors(best)) ? s : best, usable[0]);
-}
+/** One grid for a cell's onsets; explicit tuplets force theirs. */
+const cellGrid = (length, rel, forced, exact) => forced || chooseGrid(number(length), rel, {exact});
 
 /**
  * `hits`: {q, midi, velocity, instrument?, gp?, accent?, heavy?, ghost?, flam?, drag?, roll?, sticking?}[]
  *   in quarter-note coordinates from bar 1.
  * `timing`: the chosen SongMapData or Timeline, with IDs matching the song.
- * `options.tuplets`: {q, length, count}[] explicit tuplets from notation sources.
+ * `options.tuplets`: {q, length, count, voice?}[] explicit tuplets from notation sources;
+ *   a voice limits the tuplet to that voice's hits.
  * No existing score or timing object is changed. A caller must explicitly
  * adopt the returned draft through the active notation editor/store.
  */
@@ -58,12 +43,14 @@ export function importDrumHits(hits, timing, {title = 'Imported drums', source =
   const spans = new Map();
   for (const t of Array.isArray(tuplets) ? tuplets : []) {
     if (!t || !Number.isFinite(t.q) || !Number.isFinite(t.length) || !Number.isInteger(t.count) || t.count < 2 || t.count > 16 || t.length <= 0) continue;
+    const voice = [1, 2].includes(t.voice) ? t.voice : undefined;
     const bar = barAt(t.q), start = t.q - positions[bar], measure = timeline.measures[bar];
     const startF = fraction(Math.round(start * 960), 960), lengthF = fraction(Math.round(t.length * 960), 960);
     const writable = [1, 2, 4, 8, 16, 32, 64].some(v => compare(lengthF, fraction(4, v)) === 0 || compare(lengthF, fraction(6, v)) === 0);
     if (!writable || Math.abs(number(startF) - start) > 1e-6 || compare(add(startF, lengthF), measure.length) > 0) continue;
     const list = spans.get(bar) || [];
-    if (list.length < MAX_TUPLETS_PER_BAR && !list.some(s => compare(s.start, add(startF, lengthF)) < 0 && compare(startF, add(s.start, s.length)) < 0)) list.push({start: startF, length: lengthF, count: t.count});
+    const clash = list.some(o => (!o.voice || !voice || o.voice === voice) && compare(o.start, add(startF, lengthF)) < 0 && compare(startF, add(o.start, o.length)) < 0);
+    if (list.length < MAX_TUPLETS_PER_BAR && !clash) list.push({start: startF, length: lengthF, count: t.count, ...(voice ? {voice} : {})});
     spans.set(bar, list);
   }
 
@@ -84,12 +71,14 @@ export function importDrumHits(hits, timing, {title = 'Imported drums', source =
   // because of performance timing.
   const placed = [];
   for (const [bar, list] of byBar) {
-    const measure = timeline.measures[bar], cells = rhythmCells(measure, spans.get(bar) || []);
-    for (const cell of cells) {
+    const measure = timeline.measures[bar], barSpans = spans.get(bar) || [];
+    // Hands and feet share one grid per beat unless a tuplet belongs to one voice.
+    const groups = barSpans.some(t => t.voice) ? [1, 2].map(v => ({list: list.filter(h => h.kit.voice === v), cells: rhythmCells(measure, barSpans.filter(t => !t.voice || t.voice === v))})) : [{list, cells: rhythmCells(measure, barSpans)}];
+    for (const group of groups) for (const cell of group.cells) {
       const start = number(cell.start), length = number(cell.length);
-      const inside = list.filter(h => h.rel >= start - 1e-9 && h.rel < start + length - 1e-9);
+      const inside = group.list.filter(h => h.rel >= start - 1e-9 && h.rel < start + length - 1e-9);
       if (!inside.length) continue;
-      const s = cellGrid(cell.length, inside.map(h => h.rel - start), cell.forced);
+      const s = cellGrid(cell.length, inside.map(h => h.rel - start), cell.forced, source === 'guitar-pro');
       for (const h of inside) {
         const steps = Math.round((h.rel - start) * s / length);
         if (Math.abs(steps * length / s - (h.rel - start)) > 1e-7) quantized++;
@@ -132,8 +121,8 @@ export function importDrumHits(hits, timing, {title = 'Imported drums', source =
     bar.tuplets = bar.tuplets.filter(span => {
       const cell = cells.find(c => compare(c.start, span.start) === 0 && compare(c.length, span.length) === 0);
       if (!cell) return true;
-      const end = add(span.start, span.length), rel = bar.hits.filter(h => compare(h.offset, span.start) >= 0 && compare(h.offset, end) < 0).map(h => number(h.offset) - number(span.start));
-      return cellGrid(span.length, rel, null) !== span.count;
+      const end = add(span.start, span.length), rel = bar.hits.filter(h => (!span.voice || h.voice === span.voice) && compare(h.offset, span.start) >= 0 && compare(h.offset, end) < 0).map(h => number(h.offset) - number(span.start));
+      return cellGrid(span.length, rel, null, true) !== span.count;
     });
     if (!bar.tuplets.length) { delete bar.tuplets; continue; }
     try { validateScore({version: 2, title: 'check', timeline: {...timeline, measures: [measure]}, bars: [bar]}); }

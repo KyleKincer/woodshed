@@ -30,7 +30,7 @@ export const MAP_KEYS = [
   ['Shape', [['↑ ↓', 'Beats in this bar (⇧ this bar only)'], ['E', 'Edit bar'], ['R', 'Ramp to the next pin'], ['P', 'Loop these bars'], ['* /', 'Double / halve the tempo'], ['⌥ ↑ ↓', 'Tempo after the last pin'], ['⌘Z', 'Undo'], ['Esc', 'Done']]],
 ];
 
-export function createMapMode({root, engine, songMap, metronome, readOnly = false, getView, setView, setFollow, timeToX, play, setGridVisible, redraw, onLoopChange = () => {}, onDetect = null, onSources = null, onExit = null}) {
+export function createMapMode({root, engine, songMap, metronome, readOnly = false, getView, setView, setFollow, timeToX, play, setGridVisible, redraw, onLoopChange = () => {}, onDetect = null, onSources = null, onExit = null, onEnter = null}) {
   const panel = root.querySelector('#map-strip');
   const button = root.querySelector('#map-btn');
   const cursorEl = root.querySelector('#map-cursor');
@@ -502,6 +502,8 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   function enter(q = null, {edit = false} = {}) {
     if (readOnly) return false;
     if (!active) {
+      // The map edits the waveform timeline, so its view must be showing.
+      onEnter?.();
       active = true; message = '';
       saved = {metronome: metronome.enabled, grid: setGridVisible(true)};
       if (!metronome.enabled) metronome.setEnabled(true);

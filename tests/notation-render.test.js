@@ -31,7 +31,10 @@ function writtenLength(beat) {
   if (beat.dots === 2) q = mul(q, fraction(7, 4));
   return beat.tuplet ? mul(q, fraction(beat.tuplet.m, beat.tuplet.n)) : q;
 }
-const spansFor = (bar, layout, voice) => (bar.tuplets ?? []).filter(s => !s.voice || s.voice === (layout === 'combined' ? 1 : voice));
+// In the combined rhythm a voice's tuplet applies only when every onset in it fits its grid.
+const fitsAll = (bar, s) => bar.hits.every(h => compare(h.offset, s.start) < 0 || compare(h.offset, add(s.start, s.length)) >= 0
+  || mul(mul(subtract(h.offset, s.start), fraction(s.count, 1)), fraction(s.length.d, s.length.n)).d === 1);
+const spansFor = (bar, layout, voice) => (bar.tuplets ?? []).filter(s => !s.voice || (layout === 'combined' ? fitsAll(bar, s) : s.voice === voice));
 
 /** Throws a description of the first broken invariant. */
 function checkEngraved(bar, measure, layout) {
@@ -42,7 +45,9 @@ function checkEngraved(bar, measure, layout) {
     v.beats.forEach((b, i) => {
       if (compare(b.start, at)) throw new Error(`voice ${v.voice} beat ${i} starts at ${str(b.start)}, expected ${str(at)}`);
       if (!VALUES.includes(b.value) || ![0, 1, 2].includes(b.dots)) throw new Error(`voice ${v.voice} beat ${i} has unwritable value ${b.value}/${b.dots}`);
-      if (compare(writtenLength(b), b.duration)) throw new Error(`voice ${v.voice} beat ${i} lasts ${str(b.duration)} but is written as ${str(writtenLength(b))}`);
+      // An empty bar in an odd meter is one whole-bar rest.
+      if (b.measureRest) { if (v.beats.length !== 1 || !b.rest || compare(b.duration, measure.length)) throw new Error(`voice ${v.voice} has a malformed bar rest`); }
+      else if (compare(writtenLength(b), b.duration)) throw new Error(`voice ${v.voice} beat ${i} lasts ${str(b.duration)} but is written as ${str(writtenLength(b))}`);
       if (b.rest !== !b.hits.length) throw new Error(`voice ${v.voice} beat ${i} rest flag disagrees with its hits`);
       for (const h of b.hits) {
         if (compare(h.offset, b.start)) throw new Error(`hit ${h.id} at ${str(h.offset)} written at ${str(b.start)}`);

@@ -183,3 +183,46 @@ test('an imported part opens the chart with a notice, and the empty part is rest
   click('section.notation-workspace [data-action="undo"]');
   expect(persistence.set.mock.calls.at(-1)[0].bars).toHaveLength(0);
 });
+
+test('falling back to Tracks never records a view choice for the device',async()=>{
+  await open(null);await settle();
+  click('[data-workspace="transcribe"]');click('[data-workspace="practice"]');await settle();
+  click('[data-practice-view="chart"]');await settle();
+  click('[data-chart="import"]');
+  expect(localStorage.getItem('ws.practice.view')).toBe('chart');
+});
+
+test('Loop section turns off a last section that runs past the end of the recording',async()=>{
+  engine.duration=31;
+  engine.setLoop=vi.fn();
+  options.setLoop=vi.fn((a,b)=>{engine.loop={enabled:true,a,b:Math.min(b,engine.duration)};});
+  await openChart();
+  position=29;launcher.tick(position);
+  click('[data-chart="loop-section"]');
+  expect(engine.loop).toMatchObject({enabled:true,b:31});
+  click('[data-chart="loop-section"]');
+  expect(options.clearLoop).toHaveBeenCalled();expect(engine.loop.enabled).toBe(false);
+});
+
+test('Mute drums follows the drum stem when it is muted elsewhere',async()=>{
+  await openChart();
+  engine.toggleMute('drums');launcher.tick(position);
+  expect(root.querySelector('[data-chart="mute-drums"]').getAttribute('aria-pressed')).toBe('true');
+});
+
+test('opening the tempo map from the chart shows the stems',async()=>{
+  await openChart();
+  launcher.leaveChart();
+  await vi.waitFor(()=>expect(player().classList.contains('chart-active')).toBe(false));
+  expect(localStorage.getItem('ws.practice.view')).toBeNull();
+});
+
+test('a mouse drag released outside the score still sets the loop',async()=>{
+  await openChart();
+  view().stage.setPointerCapture=vi.fn();
+  view().pointer('down',{index:1,q:4});
+  view().pointer('move',{index:3,q:12},{clientX:300,buttons:1});
+  view().pointer('move',{index:6,q:24},{clientX:600,buttons:0});
+  expect(options.setLoop).toHaveBeenCalledWith(2,8);
+  expect(view().stage.setPointerCapture).toHaveBeenCalled();
+});

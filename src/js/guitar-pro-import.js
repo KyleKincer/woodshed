@@ -3,7 +3,7 @@
 import {Settings, importer, midi, model} from '@coderline/alphatab';
 import {parseMidiTempo, MAX_TEMPO_FILE_BYTES} from './tempo-import.js';
 import {preflightGuitarPro} from './guitar-pro-bounds.js';
-import {MAX_MEASURES} from '../../shared/notation.ts';
+import {MAX_MEASURES, KIT} from '../../shared/notation.ts';
 import {MAX_PINS} from '../../shared/song-map.ts';
 
 const fail = message => { throw new Error(message); };
@@ -104,7 +104,10 @@ export function parseGuitarPro(value, {duration} = {}) {
 
 const QUARTER = 960;
 const VELOCITY = [0.25, 0.35, 0.45, 0.55, 0.7, 0.82, 0.92, 1];
-const ROLLS = new Map([[8, 1], [16, 2], [32, 3]]);
+// alphaTab reports the stroke value (beat value × 2^slashes); 32nds and
+// faster read as a three-slash (buzz) roll.
+const rollFor = speed => speed >= 32 ? 3 : speed >= 16 ? 2 : 1;
+const FEET = new Set(KIT.filter(k => k.voice === 2).flatMap(k => [k.gp, k.midi]).concat(35));
 
 /**
  * Read drum notes from the score model in playback order (repeats expanded),
@@ -126,7 +129,7 @@ export function guitarProDrums(score, lookups, percussion) {
           const seenGroups = new Set();
           for (const beat of voice.beats) {
             if (beat.graceType !== model.GraceType.None) { graces.push(beat); continue; }
-            if (beat.isEmpty || beat.isRest || !beat.notes.length) { graces = []; continue; }
+            if (beat.isEmpty || beat.isRest || !beat.notes.length || beat.notes.every(n => n.isTieDestination)) { graces = []; continue; }
             const q = barQ + beat.displayStart / QUARTER;
             const group = beat.tupletGroup;
             if (group && beat.hasTuplet && !seenGroups.has(group)) {
@@ -135,11 +138,15 @@ export function guitarProDrums(score, lookups, percussion) {
               const length = members.reduce((sum, b) => sum + b.displayDuration, 0);
               const unit = Math.min(...members.map(b => b.displayDuration));
               const count = Math.round(length / unit);
-              if (count >= 2 && Math.abs(count * unit - length) < 1) tuplets.push({q: barQ + members[0].displayStart / QUARTER, length: length / QUARTER, count});
+              // A tuplet in a hands-only or feet-only group applies to that voice.
+              const voices = new Set(members.flatMap(b => b.notes.map(n => { const art = articulation(n); return FEET.has(art ? art.id : n.percussionArticulation) || FEET.has(art?.outputMidiNumber) ? 2 : 1; })));
+              if (count >= 2 && Math.abs(count * unit - length) < 1) tuplets.push({q: barQ + members[0].displayStart / QUARTER, length: length / QUARTER, count, ...(voices.size === 1 ? {voice: [...voices][0]} : {})});
             }
             const velocity = VELOCITY[Math.max(0, Math.min(7, beat.dynamics ?? 4))];
-            const roll = beat.isTremolo ? ROLLS.get(beat.tremoloSpeed) ?? 2 : 0;
+            const roll = beat.isTremolo ? rollFor(beat.tremoloSpeed) : 0;
             for (const note of beat.notes) {
+              // A tie continues the previous stroke; it is not a new hit.
+              if (note.isTieDestination) continue;
               const art = articulation(note), gpId = art ? art.id : note.percussionArticulation;
               const midiNote = art ? art.outputMidiNumber : note.percussionArticulation;
               const graceCount = graces.filter(g => g.notes.some(n => n.percussionArticulation === note.percussionArticulation)).length;

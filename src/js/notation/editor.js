@@ -104,7 +104,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
   }
   /** Explicit tuplet over the beat at the cursor, for rhythms the automatic grid can't infer. */
   function tupletDialog(){const a=active(),cells=rhythmCells(a.measure),cell=cells.find(c=>compare(c.start,a.offset===0?fraction(0):fraction(Math.round(a.offset*960),960))<=0&&compare(add(c.start,c.length),fraction(Math.round(a.offset*960),960))>0)||cells[0],beat=number(cell.length),bar=score().bars.find(b=>b.measureId===a.measure.id),existing=(bar?.tuplets||[]).find(t=>compare(t.start,cell.start)<=0&&compare(add(t.start,t.length),cell.start)>0);
-    dialog(`Tuplet in bar ${a.index+1}`,`<p>Most tuplets are written automatically from where the notes fall. Set one here for rhythms that span beats, such as quarter-note triplets, or to keep a bracket on a beat with a single note.</p><div class="notation-form-grid"><label>Notes in the tuplet <select name="count">${[0,2,3,4,5,6,7,9].map(n=>`<option value="${n}" ${existing?.count===n?'selected':''}>${n?n:'Automatic (clear)'}</option>`).join('')}</select></label><label>Spanning <select name="span">${[[.5,'Half a beat'],[1,'One beat'],[2,'Two beats'],[4,'Four beats']].filter(([n])=>n*beat<=number(a.measure.length)+1e-9).map(([n,l])=>`<option value="${n}" ${existing&&Math.abs(number(existing.length)/beat-n)<1e-9?'selected':n===1?'selected':''}>${l}</option>`).join('')}</select></label></div><p class="hint">Starts at beat ${cells.indexOf(cell)+1}. Notes already in the span must fall on the tuplet's grid.</p>`,data=>{const count=Number(data.get('count')),length=fraction(Math.round(Number(data.get('span'))*beat*960),960);if(compare(add(cell.start,length),a.measure.length)>0)throw new Error('The tuplet would run past the end of the bar.');editor().setTuplet(a.index,count?{start:cell.start,length,count}:null,cell.start,length);changed();});}
+    dialog(`Tuplet in bar ${a.index+1}`,`<p>Most tuplets are written automatically from where the notes fall. Set one here for rhythms that span beats, such as quarter-note triplets, or to keep a bracket on a beat with a single note.</p><div class="notation-form-grid"><label>Notes in the tuplet <select name="count">${[...new Set([0,2,3,4,5,6,7,9,...(existing?[existing.count]:[])])].sort((x,y)=>x-y).map(n=>`<option value="${n}" ${(existing?existing.count===n:n===3)?'selected':''}>${n?n:'Automatic (clear)'}</option>`).join('')}</select></label><label>Spanning <select name="span">${[[.5,'Half a beat'],[1,'One beat'],[2,'Two beats'],[4,'Four beats']].filter(([n])=>n*beat<=number(a.measure.length)+1e-9).map(([n,l])=>`<option value="${n}" ${(existing?Math.abs(number(existing.length)/beat-n)<1e-9:n===1)?'selected':''}>${l}</option>`).join('')}</select></label></div><p class="hint">Starts at beat ${cells.indexOf(cell)+1}. Notes already in the span must fall on the tuplet's grid.</p>`,data=>{const count=Number(data.get('count')),length=fraction(Math.round(Number(data.get('span'))*beat*960),960);if(compare(add(cell.start,length),a.measure.length)>0)throw new Error('The tuplet would run past the end of the bar.');editor().setTuplet(a.index,count?{start:cell.start,length,count}:null,cell.start,length);changed();});}
   function alignment(){const a=active(),m=a.measure,t=score().timeline,time=toTime(t,a.start);
     dialog(`Align bar ${a.index+1}`,`<p>Adjust meter and recording alignment.</p><div class="notation-form-grid"><label>Downbeat (seconds) <input name="time" type="number" min="0" max="${engine.duration}" step="any" value="${time}" required></label><label>Section label <input name="label" maxlength="120" value="${xml(m.label)}" placeholder="Verse, chorus, fill…"></label><label>Meter numerator <input name="n" type="number" min="1" max="16" value="${m.numerator}" required></label><label>Meter denominator <select name="d">${[2,4,8,16].map(d=>`<option value="${d}" ${d===m.denominator?'selected':''}>${d}</option>`).join('')}</select></label><label>Beat grouping <input name="grouping" value="${beatGroups(m).join('+')}" placeholder="3+3 or 2+2+3" required></label><label>Actual length (quarter notes) <input name="length" type="number" min=".0625" max="32" step=".0625" value="${number(m.length)}" required></label></div><p class="hint">Shorten the length for a pickup or partial bar. Notes must fit within the bar.</p>`,data=>{
       editor().transact(s=>{const measure=s.timeline.measures[a.index],length=fraction(Math.round(Number(data.get('length'))*16),16),delta=number(length)-number(measure.length),boundary=a.start+number(measure.length);measure.numerator=Number(data.get('n'));measure.denominator=Number(data.get('d'));measure.label=String(data.get('label')).trim();measure.length=length;measure.grouping=String(data.get('grouping')).split('+').map(n=>Number(n.trim()));
@@ -122,7 +122,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
   }
   function keyboardSettings(){dialog('Drum shortcuts',`<p>Drum keys enter notes at the cursor. 1–7 set the step; / cycles tuplet steps; arrows move the cursor; R skips a step; Space plays. Leave a field empty for no key.</p><div class="notation-form-grid">${KIT.map(k=>`<label>${xml(k.name)}<input name="${k.id}" value="${xml(keyFor(k))}" maxlength="1" pattern="[a-zA-Z]?"></label>`).join('')}</div>`,data=>{const next=Object.fromEntries(KIT.map(k=>[k.id,String(data.get(k.id)).toLowerCase()]));const keys=Object.values(next).filter(Boolean);if(new Set(keys).size!==keys.length||keys.some(k=>'nrag'.includes(k)))throw new Error('Each pad needs a unique letter. N, R, A and G are reserved for Write, Skip, Accent and Ghost.');shortcuts=next;try{localStorage.setItem('ws.notation.keys',JSON.stringify(next));}catch{}render();});}
 
-  host.innerHTML=`<header class="notation-heading"></header><div class="notation-toolbar" aria-label="Note tools"></div><div class="notation-panel hidden"></div>
+  host.innerHTML=`<header class="notation-heading"></header><div class="notation-toolbar" aria-label="Note tools"></div><div class="notation-panel hidden"></div><div class="notation-empty notation-unshared" hidden><h2>No notation shared</h2></div>
     <div class="notation-body"><aside class="notation-sections"></aside><div class="notation-surface" role="grid" aria-label="Drum notation. Click to place the cursor, double-click to add, drum keys enter notes, Space plays." aria-describedby="notation-help" tabindex="0"><div class="notation-score"></div><div class="notation-lanes"></div><div class="notation-pagination"></div><div class="notation-sr-only" role="row"><span role="gridcell" id="notation-active-cell"></span></div></div></div>
     <div class="notation-note-list hidden" aria-label="Accessible note list"></div><footer class="notation-footer"></footer>`;
   const surface=host.querySelector('.notation-surface'),scoreHost=host.querySelector('.notation-score'),lanesHost=host.querySelector('.notation-lanes');
@@ -168,7 +168,10 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
     lastView=JSON.stringify(v);
   }
   function render(){if(disposed)return;
-    if(!editor()){host.querySelector('.notation-body').innerHTML='<div class="notation-empty"><h2>No notation shared</h2></div>';return;}
+    // A shared song may gain or lose notation while open; keep the workspace intact.
+    for(const el of host.querySelectorAll('.notation-toolbar,.notation-body,.notation-footer,.notation-note-list'))el.hidden=!editor();
+    host.querySelector('.notation-unshared').hidden=!!editor();
+    if(!editor())return;
     const focused=document.activeElement,hadFocus=surface===focused,focusAttribute=host.contains(focused)&&focused!==surface?[...focused.attributes].find(a=>a.name.startsWith('data-')):null;
     renderChrome();
     if(layout==='score')renderScore();else renderLanesView();
@@ -178,6 +181,8 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
   // Score pointer: click places the cursor (snapped to the step) or selects a
   // note; double-click writes the piece on that staff line; drag selects.
   function scorePointer({kind,event,at}){
+    // A touch scroll cancels the gesture; never let its pointerup land later.
+    if(kind==='cancel'){cancelGesture();return;}
     if(kind==='down'){if(event.button!==0||at.index==null)return;cancelGesture();followPlayback=false;setFollow(false);
       const start={x:event.clientX,y:event.clientY,at,before:new Set(selected)};let moved=false,box=null;
       const stage=view.stage,rect=stage.getBoundingClientRect();
@@ -195,9 +200,10 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
         if(doubleClick&&!readOnly){const line=Math.round((at.y-at.lineTop)/(at.lineHeight/8)),chosen=pieceForLine(line,piece);if(chosen)piece=chosen;cursor=q;insert();return;}
         navigate(q,{seek:!engine.playing});
       });focus();};
-      const cleanup=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);box?.remove();cancelGesture=()=>{};};
+      const cleanup=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);box?.remove();cancelGesture=()=>{};};
+      const cancel=()=>cancelGesture();
       cancelGesture=()=>{cleanup();render();};
-      window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);
+      window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);window.addEventListener('pointercancel',cancel);
     }
   }
 

@@ -4,7 +4,7 @@ import type {QueryCtx,MutationCtx} from './_generated/server';
 import type {Id} from './_generated/dataModel';
 import {requireUserId,requireWritableUserId} from './lib/auth';
 import {barValidator,headerValidator} from './lib/notationValidators';
-import {validateTimeline,validateBar,upgradeBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
+import {validateTimeline,validateBar,upgradeBar,currentBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
 import {sameContent} from '../shared/content';
 
@@ -59,7 +59,9 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   const measureIds=new Set(args.header.timeline.measures.map(m=>m.id));
   const unchangedRows=rows.filter(r=>measureIds.has(r.bar.measureId)&&!args.bars.some(b=>b.measureId===r.bar.measureId));
   for(const row of unchangedRows)validateBar(row.bar,args.header.timeline);
-  const hitCount=unchangedRows.reduce((n,r)=>n+r.bar.hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
+  // Legacy rows hold rests and off-grid positions; count them as clients see them.
+  const measures=new Map(args.header.timeline.measures.map(m=>[m.id,m]));
+  const hitCount=unchangedRows.reduce((n,r)=>n+currentBar(r.bar,measures.get(r.bar.measureId)!).hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
   if(hitCount>MAX_HITS)throw new ConvexError(`A part can contain up to ${MAX_HITS} hits.`);
   if(part&&sameContent(part.header,args.header)&&rows.every(r=>measureIds.has(r.bar.measureId))&&args.bars.every(bar=>sameContent(bar,rows.find(r=>r.bar.measureId===bar.measureId)?.bar)))unchanged();
   const revision=args.baseRevision+1, fields={userId,songId:args.songId,header:args.header,revision,lastMutation:args.mutationId,hitCount};

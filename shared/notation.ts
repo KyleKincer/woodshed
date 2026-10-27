@@ -60,7 +60,7 @@ export const KIT:readonly KitPiece[] = [
   {id:'pedalHat',name:'Pedal hi-hat',short:'HH pedal',key:'p',midi:44,gp:44,line:9,voice:2,family:'foot',core:true},
 ];
 export const kitPiece=(id:string)=>KIT.find(k=>k.id===id);
-import {engraveBar} from './engrave';
+import {engraveBar,rhythmCells,chooseGrid} from './engrave';
 const gcd=(a:number,b:number):number=>b?gcd(b,a%b):a;
 export function fraction(n:number,d=1):Fraction {
   if(!Number.isSafeInteger(n)||!Number.isSafeInteger(d)||d<=0)throw new Error('Invalid musical duration.');
@@ -110,8 +110,8 @@ export function validateTimeline(t:Timeline) {
 function validateFraction(f:Fraction){if(!Number.isSafeInteger(f.n)||Math.abs(f.n)>1e8||!Number.isSafeInteger(f.d)||f.d<1||f.d>1e6)throw new Error('Musical fraction is out of range.');}
 const isWritableLength=(f:Fraction)=>[1,2,4,8,16,32,64].some(v=>compare(f,fraction(4,v))===0||compare(f,fraction(6,v))===0);
 export function validateBar(input:Bar|unknown,timeline:Timeline) {
-  const bar=upgradeBar(input);
-  const m=timeline.measures.find(m=>m.id===bar.measureId);if(!m||bar.hits.length>MAX_HITS_PER_BAR||!['unstarted','progress','reviewed'].includes(bar.coverage))throw new Error('Invalid bar.');
+  const m=timeline.measures.find(m=>m.id===(input as Bar)?.measureId);
+  const bar=m?currentBar(input,m):upgradeBar(input);if(!m||bar.hits.length>MAX_HITS_PER_BAR||!['unstarted','progress','reviewed'].includes(bar.coverage))throw new Error('Invalid bar.');
   const ids=new Set<string>(),slots=new Set<string>();
   for(const h of bar.hits){validateFraction(h.offset);
     const slot=`${number(h.offset)}:${h.instrument}`;
@@ -137,11 +137,35 @@ export function upgradeBar(input:any):Bar {
 }
 export function upgradeScore(input:any):Score {
   if(!input||typeof input!=='object')throw new Error('Invalid drum part.');
-  if(input.version===2)return {...input,bars:(input.bars||[]).map(upgradeBar)};
-  if(input.version!==1)throw new Error('This drum part was saved by a newer version of Woodshed. Update Woodshed to open it.');
-  return {version:2,title:input.title,timeline:input.timeline,bars:(input.bars||[]).map(upgradeBar)};
+  if(input.version!==1&&input.version!==2)throw new Error('This drum part was saved by a newer version of Woodshed. Update Woodshed to open it.');
+  const measures=new Map<string,Measure>((input.timeline?.measures||[]).map((m:Measure)=>[m.id,m]));
+  const bars=(input.bars||[]).map((b:any)=>measures.has(b?.measureId)?currentBar(b,measures.get(b.measureId)!):upgradeBar(b));
+  return input.version===2?{...input,bars}:{version:2,title:input.title,timeline:input.timeline,bars};
 }
-
+const isLegacyBar=(input:any)=>Array.isArray(input?.hits)&&input.hits.some((h:any)=>'duration' in h||h.instrument==='rest');
+/**
+ * A bar in the current format. Version 1 positions the engraver cannot write
+ * (the old importer kept 1/96, 1/40 and 1/56 quarter positions) are snapped
+ * per beat to the simplest grid, so every legacy part still opens.
+ */
+export function currentBar(input:any,measure:Measure):Bar {
+  const bar=upgradeBar(input);
+  if(!isLegacyBar(input))return bar;
+  try{engraveBar(bar,measure,'split');engraveBar(bar,measure,'combined');return bar;}catch{}
+  const cells=rhythmCells(measure),seen=new Set<string>(),hits:Hit[]=[];
+  for(const cell of cells){
+    const end=add(cell.start,cell.length),inside=bar.hits.filter(h=>compare(h.offset,cell.start)>=0&&compare(h.offset,end)<0);
+    if(!inside.length)continue;
+    const length=number(cell.length),s=chooseGrid(length,inside.map(h=>number(h.offset)-number(cell.start)));
+    for(const h of inside){
+      let steps=Math.round((number(h.offset)-number(cell.start))*s/length);
+      if(steps>=s&&compare(end,measure.length)>=0)steps=s-1;
+      const offset=add(cell.start,fraction(steps*cell.length.n,cell.length.d*s)),key=`${number(offset)}:${h.instrument}`;
+      if(seen.has(key))continue;seen.add(key);hits.push({...h,offset});
+    }
+  }
+  return {...bar,hits};
+}
 /** Immutable transactions give every edit a single inverse and preserve audio time. */
 export class ScoreEditor {
   score:Score; undoStack:Score[]=[]; redoStack:Score[]=[];
