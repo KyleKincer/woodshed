@@ -12,7 +12,8 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
 const SCALES = [.8, .9, 1, 1.1, 1.25, 1.4, 1.6, 1.8];
-const defaultScale = () => window.matchMedia?.('(pointer: coarse)').matches ? 1.1 : 1.1;
+// Two dense bars per line on a portrait tablet; three on a laptop.
+const defaultScale = () => (window.innerWidth || 1200) < 1000 ? .9 : 1.1;
 
 /**
  * @param options.part shared drum part (part.js)
@@ -54,7 +55,8 @@ export function createChart({host, part, engine, setLoop, clearLoop, onMixerChan
     const list = [];
     t.measures.forEach((m, i) => { if (m.label) list.push({index: i, label: m.label}); });
     if (!list.length || list[0].index !== 0) list.unshift({index: 0, label: list.length ? 'Start' : 'Bar 1'});
-    return list.map((s, k) => ({...s, end: (list[k + 1]?.index ?? t.measures.length) - 1}));
+    const seen = new Map();
+    return list.map((s, k) => { const n = (seen.get(s.label) || 0) + 1; seen.set(s.label, n); return {...s, label: n > 1 ? `${s.label} ${n}` : s.label, end: (list[k + 1]?.index ?? t.measures.length) - 1}; });
   }
   function currentSection(q) { const t = timeline(); if (!t) return null; const index = view?.barAt(q) ?? 0; return sectionList().filter(s => s.index <= index).at(-1) ?? null; }
 

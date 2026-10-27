@@ -30,7 +30,7 @@
 .chart{position:relative}
 /* While the chart is open the waveform timeline steps aside. */
 .player.chart-active .tracks,.player.chart-active .time-ruler,.player.chart-active .overview,.player.chart-active .timeline-tools,.player.chart-active .map-lane,.player.chart-active #map-strip{display:none!important}
-.player.chart-active{min-height:0;height:calc(100dvh - var(--player-top,140px))}
+.player.chart-active{min-height:0;height:100%}
 .player.chart-active .transport{position:sticky;bottom:0;z-index:8}
 .workspace-nav .workspace-spacer{flex:1}
 .workspace-nav .practice-view{display:flex;gap:0;margin:6px 0}

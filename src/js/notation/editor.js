@@ -73,6 +73,8 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
     if(!canWrite(bar,a.measure,hit,score().layout))throw new Error('A note cannot be written there. Choose a coarser step, or clear the tuplet on this beat.');
     selectionKind='notes';selected=new Set([editor().insert(a.index,hit)]);barRange=[a.index,a.index];changed();ensureAudio().play(selectedHits()[0]||hit,engine.ctx.currentTime,true);
   }
+  /** Bring the cursor's bars into the waveform window used by the lanes. */
+  function revealCursor(){const s=score(),t=toTime(s.timeline,number(cursor)),v=getView();if(t>=v.start&&t<=v.end)return;const index=active().index;fitBars(index,Math.min(index+3,s.timeline.measures.length-1));}
   function setStep(value=stepValue,dotted=stepDotted,tuplet=stepTuplet){stepValue=value;stepDotted=tuplet>1?false:dotted;stepTuplet=tuplet;
     // Keep the cursor on the new grid inside its beat.
     const a=active(),snapped=snapPosition(score(),number(cursor),step());if(compare(snapped,cursor)!==0&&locate(score().timeline,number(snapped)).index===a.index)cursor=snapped;render();}
@@ -234,7 +236,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
   surface.addEventListener('keydown',e=>onKey(e));
 
   host.addEventListener('click',e=>{const el=e.target.closest('button');if(!el||!host.contains(el)||el.closest('.notation-surface .score-stage'))return;attempt(()=>{
-    if(el.dataset.view){layout=el.dataset.view;try{localStorage.setItem('ws.notation.layout',layout);}catch{}render();}
+    if(el.dataset.view){layout=el.dataset.view;try{localStorage.setItem('ws.notation.layout',layout);}catch{}if(layout==='lanes')revealCursor();render();}
     else if(el.dataset.step)setStep(Number(el.dataset.step),stepDotted,stepTuplet);
     else if(el.dataset.layout){if(!readOnly){editor().setLayout(el.dataset.layout);changed();}}
     else if(el.dataset.kit)insert(el.dataset.kit,{preview:auditionPads});
@@ -324,7 +326,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
     // Feet default to the kit piece most used in the part.
     const used=new Map();for(const b of score().bars)for(const h of b.hits)used.set(h.instrument,(used.get(h.instrument)||0)+1);if(used.size&&!used.has(piece))piece=[...used].sort((a,b)=>b[1]-a[1])[0][0];}
   return {handleKey:onKey,flush:()=>part.flush(),notice:message,
-    setVisible(visible){host.hidden=!visible;if(!visible){cancelGesture();audio?.setMode('recording');host.closest('.player')?.classList.remove('notation-expanded');}else{render();focus();}},
+    setVisible(visible){host.hidden=!visible;if(!visible){cancelGesture();audio?.setMode('recording');host.closest('.player')?.classList.remove('notation-expanded');}else{if(layout==='lanes'&&editor())revealCursor();render();focus();}},
     tick(time){if(!editor()||host.hidden||disposed)return;const s=score(),q=toQuarter(s.timeline,time);
       if(layout==='score'){if(followPlayback&&engine.playing){const current=locate(s.timeline,q).index;if(current<page||current>=page+PAGE){page=pageOf(current);render();}}view?.setPlayhead(engine.playing||engine.paused?q:null);return;}
       const v=getView();if(JSON.stringify(v)!==lastView){render();return;}

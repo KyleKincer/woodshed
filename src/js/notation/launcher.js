@@ -32,8 +32,6 @@ export function attachNotation(options) {
     nav.querySelectorAll('[data-workspace]').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.workspace === 'transcribe') === (mode === 'transcribe'))));
     switcher.hidden = mode === 'transcribe';
     switcher.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.practiceView === mode)));
-    // The chart fills the space below the nav; measure where it starts.
-    if (mode === 'chart') player.style.setProperty('--player-top', `${Math.max(0, player.getBoundingClientRect().top + window.scrollY)}px`);
   };
 
   const loadPart = () => partPending ??= ready.catch(() => {}).then(() => import('./part.js')).then(({openPart}) => openPart(options)).then(result => {

@@ -38,6 +38,7 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
   stage.append(overlay, root);
   host.replaceChildren(stage);
 
+  function el(name, attrs) { const node = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; }
   const settings = new alphaTab.Settings();
   settings.core.useWorkers = false;
   settings.core.includeNoteBounds = true;
@@ -116,15 +117,29 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
     return index;
   }
 
-  function el(name, attrs) { const node = document.createElementNS(SVG, name); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; }
+  // Two layers: marks that change on edits, and the playhead that moves
+  // every frame without rebuilding anything else.
+  const staticLayer = el('g', {}), nowBar = el('rect', {class: 'score-now-bar', rx: 4}), nowLine = el('line', {class: 'score-playhead'});
+  const nowLayer = el('g', {class: 'score-now'});
+  nowLayer.append(nowBar, nowLine);
+  overlay.append(staticLayer, nowLayer);
+  function drawPlayhead() {
+    const at = ready && playhead != null ? xAt(playhead) : null;
+    nowLayer.style.display = at ? '' : 'none';
+    if (!at) return;
+    const set = (node, attrs) => { for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); };
+    set(nowBar, {x: at.g.bar.x, y: at.g.lineTop - 8, width: at.g.bar.w, height: at.g.lineHeight + 16});
+    set(nowLine, {x1: at.x, x2: at.x, y1: at.g.lineTop - 12, y2: at.g.lineTop + at.g.lineHeight + 12});
+  }
   function drawOverlay() {
-    overlay.replaceChildren();
-    if (!ready) return;
+    staticLayer.replaceChildren();
+    if (!ready) { drawPlayhead(); return; }
     overlay.setAttribute('width', root.offsetWidth);
     overlay.setAttribute('height', root.offsetHeight);
+    const append = node => staticLayer.append(node);
     for (const [index, kind] of barMarks) {
       const g = geometry.get(index);
-      if (g) overlay.append(el('rect', {class: `score-mark score-mark-${kind}`, x: g.bar.x, y: g.lineTop - 4, width: g.bar.w, height: g.lineHeight + 8, rx: 4}));
+      if (g) append(el('rect', {class: `score-mark score-mark-${kind}`, x: g.bar.x, y: g.lineTop - 4, width: g.bar.w, height: g.lineHeight + 8, rx: 4}));
     }
     if (loop) {
       const [a, b] = loop;
@@ -132,34 +147,28 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
         const start = number(starts[g.index]), end = start + number(score.timeline.measures[g.index].length);
         if (end <= a + 1e-9 || start >= b - 1e-9) continue;
         const x0 = a > start ? xAt(a).x : g.bar.x, x1 = b < end ? xAt(b).x : g.bar.x + g.bar.w;
-        overlay.append(el('rect', {class: 'score-loop', x: x0, y: g.lineTop - 6, width: Math.max(2, x1 - x0), height: g.lineHeight + 12, rx: 3}));
+        append(el('rect', {class: 'score-loop', x: x0, y: g.lineTop - 6, width: Math.max(2, x1 - x0), height: g.lineHeight + 12, rx: 3}));
       }
     }
     if (focusBars) {
-      for (let i = focusBars[0]; i <= focusBars[1]; i++) { const g = geometry.get(i); if (g) overlay.append(el('rect', {class: 'score-range', x: g.bar.x, y: g.lineTop - 6, width: g.bar.w, height: g.lineHeight + 12})); }
+      for (let i = focusBars[0]; i <= focusBars[1]; i++) { const g = geometry.get(i); if (g) append(el('rect', {class: 'score-range', x: g.bar.x, y: g.lineTop - 6, width: g.bar.w, height: g.lineHeight + 12})); }
     }
     if (selection.size && built) {
       for (const [note, hit] of built.noteHits) {
         if (!selection.has(hit.id)) continue;
         const beatBounds = api.boundsLookup?.findBeat(note.beat);
         const nb = beatBounds?.notes?.find(n => n.note === note);
-        if (nb) { const b = nb.noteHeadBounds; overlay.append(el('rect', {class: 'score-selected', x: b.x - 3, y: b.y - 3, width: b.w + 6, height: b.h + 6, rx: 4})); }
+        if (nb) { const b = nb.noteHeadBounds; append(el('rect', {class: 'score-selected', x: b.x - 3, y: b.y - 3, width: b.w + 6, height: b.h + 6, rx: 4})); }
       }
     }
     if (caret) {
       const at = xAt(caret.q);
       if (at) {
-        overlay.append(el('line', {class: 'score-caret', x1: at.x, x2: at.x, y1: at.g.lineTop - 14, y2: at.g.lineTop + at.g.lineHeight + 14}));
-        if (caret.label) { const t = el('text', {class: 'score-caret-label', x: at.x + 4, y: at.g.lineTop - 16}); t.textContent = caret.label; overlay.append(t); }
+        append(el('line', {class: 'score-caret', x1: at.x, x2: at.x, y1: at.g.lineTop - 14, y2: at.g.lineTop + at.g.lineHeight + 14}));
+        if (caret.label) { const t = el('text', {class: 'score-caret-label', x: at.x + 4, y: at.g.lineTop - 16}); t.textContent = caret.label; append(t); }
       }
     }
-    if (playhead != null) {
-      const at = xAt(playhead);
-      if (at) {
-        overlay.append(el('rect', {class: 'score-now-bar', x: at.g.bar.x, y: at.g.lineTop - 8, width: at.g.bar.w, height: at.g.lineHeight + 16, rx: 4}));
-        overlay.append(el('line', {class: 'score-playhead', x1: at.x, x2: at.x, y1: at.g.lineTop - 12, y2: at.g.lineTop + at.g.lineHeight + 12}));
-      }
-    }
+    drawPlayhead();
   }
 
   api.renderFinished.on(() => {
@@ -223,7 +232,7 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
     setOptions(options) { renderOptions = {...renderOptions, ...options}; render(); },
     setScale(value) { settings.display.scale = value; api.updateSettings(); api.render(); },
     setBarsPerRow(value) { settings.display.barsPerRow = value; api.updateSettings(); api.render(); },
-    setPlayhead(q) { if (playhead === q) return; playhead = q; drawOverlay(); },
+    setPlayhead(q) { if (playhead === q) return; playhead = q; drawPlayhead(); },
     setLoop(range) { loop = range; drawOverlay(); },
     setSelection(ids) { selection = ids; drawOverlay(); },
     setCaret(value) { caret = value; drawOverlay(); },
