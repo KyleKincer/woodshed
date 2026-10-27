@@ -6,7 +6,7 @@ const openDB=()=>new Promise((resolve,reject)=>{const request=indexedDB.open('wo
 async function journal(key,value){const db=await openDB();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('drafts',value===undefined?'readonly':'readwrite'),store=tx.objectStore('drafts');const request=value===undefined?store.get(key):store.put(value,key);tx.oncomplete=()=>resolve(request.result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}finally{db.close();}}
 const clone=value=>structuredClone(value);
 const header=score=>({version:score.version,title:score.title,...(score.layout?{layout:score.layout}:{}),timeline:score.timeline});
-const canonical=input=>{if(!input)return null;const score=input.version===2?input:upgradeScore(input);return {...header(clone(score)),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).map(upgradeBar).sort((a,b)=>a.measureId.localeCompare(b.measureId))};};
+const canonical=input=>{if(!input)return null;const score=upgradeScore(input);return {...header(clone(score)),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).sort((a,b)=>a.measureId.localeCompare(b.measureId))};};
 async function savePart(args){
   try{return await convex.mutation(api.notation.save,args);}
   catch(error){if(error.data?.code!=='NOTATION_UNCHANGED')throw error;return {revision:error.data.revision};}

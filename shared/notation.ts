@@ -133,7 +133,7 @@ export function validateScore(score:Score){if(score.version!==2||!score.title.tr
 /** Version 1 hits carried authored durations; v2 derives them. Explicit rests are dropped. */
 export function upgradeBar(input:any):Bar {
   if(!input||!Array.isArray(input.hits)||!input.hits.some((h:any)=>'duration' in h||h.instrument==='rest'))return input as Bar;
-  return {measureId:input.measureId,coverage:input.coverage,hits:input.hits.filter((h:HitV1)=>h.instrument!=='rest').map((h:HitV1)=>({id:h.id,offset:h.offset,instrument:h.instrument,voice:h.voice,accent:h.accent,ghost:h.ghost,flam:h.flam,sticking:h.sticking,velocity:h.velocity})),...(input.tuplets?{tuplets:input.tuplets}:{})};
+  return {measureId:input.measureId,coverage:input.coverage,hits:input.hits.filter((h:any)=>h.instrument!=='rest').map(({duration,value,dotted,tuplet,...h}:any)=>h),...(input.tuplets?{tuplets:input.tuplets}:{})};
 }
 export function upgradeScore(input:any):Score {
   if(!input||typeof input!=='object')throw new Error('Invalid drum part.');

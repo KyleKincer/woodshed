@@ -3,7 +3,7 @@ import {beforeEach,afterEach,expect,test,vi} from 'vitest';
 vi.mock('../src/js/auth.js',()=>({convex:{query:vi.fn(),mutation:vi.fn()}}));
 import {convex} from '../src/js/auth.js';
 import {NotationStore} from '../src/js/notation/store.js';
-import {emptyScore} from '../shared/notation.ts';
+import {emptyScore,fraction,durationOf} from '../shared/notation.ts';
 let disk,stores=[];
 const storage=async(key,value)=>{if(value!==undefined)disk=structuredClone(value);return structuredClone(disk);};
 beforeEach(()=>{vi.clearAllMocks();disk=null;convex.query.mockResolvedValue(null);convex.mutation.mockImplementation(async (_fn,args)=>({revision:args.baseRevision+1}));});
@@ -59,7 +59,8 @@ test('an already-saved acknowledgement recovers a journal from an older client',
   convex.query.mockResolvedValue({score:baseline,revision:7});
   convex.mutation.mockRejectedValue(Object.assign(new Error('already saved'),{data:{code:'NOTATION_UNCHANGED',revision:7}}));
   const s=create();await s.load();await s.flush();
-  expect(convex.mutation).toHaveBeenCalledTimes(1);expect(disk.pending).toBeNull();expect(s.blocked).toBe(false);expect(s.revision).toBe(7);
+  expect(convex.mutation).toHaveBeenCalledTimes(1);expect(convex.mutation.mock.lastCall[1].header.version).toBe(2);
+  expect(disk.pending).toBeNull();expect(s.blocked).toBe(false);expect(s.revision).toBe(7);
 });
 test('recovery retains an undo made while a save was awaiting acknowledgement',async()=>{
   const original=emptyScore(16),changed={...original,title:'Pending edit'};
@@ -90,4 +91,42 @@ test('reload replays an interrupted save without comparing its acknowledgement t
   const pendingId=disk.pending.args.mutationId;first.blocked=true;first.destroy();
   // The query sees revision zero; retry commits revision one after that snapshot.
   const recovered=create();await recovered.load();expect(recovered.blocked).toBe(false);expect(recovered.revision).toBe(1);expect(convex.mutation.mock.lastCall[1].mutationId).toBe(pendingId);await recovered.flush();expect(disk.pending).toBeNull();expect(disk.score).toEqual(disk.baseline);
+});
+
+const hitV1=(id,instrument,offset,value=8)=>({id,offset,duration:durationOf(value),instrument,voice:instrument==='kick'?2:1,value,dotted:false,tuplet:1,accent:true,ghost:false,flam:false,sticking:'L',velocity:.8});
+const v1Score=score=>({version:1,title:score.title,timeline:score.timeline,bars:score.timeline.measures.slice(0,2).map((m,i)=>({measureId:m.id,coverage:'progress',hits:[hitV1('snare'+i,'snare',fraction(1),4),hitV1('kick'+i,'kick',fraction(0),4),hitV1('rest'+i,'rest',fraction(2),2)]}))});
+const upgradedHit=(id,instrument,offset)=>({id,offset,instrument,voice:instrument==='kick'?2:1,accent:true,ghost:false,flam:false,sticking:'L',velocity:.8});
+test('a version 1 part loads as version 2 without saving until it is edited',async()=>{
+  const old=v1Score(emptyScore(16));convex.query.mockResolvedValue({score:serverOrder(old),revision:3});
+  const s=create();const loaded=await s.load();
+  expect(loaded).toMatchObject({version:2,title:old.title});
+  expect(Object.fromEntries(loaded.bars.map(b=>[b.measureId,b.hits]))).toEqual(Object.fromEntries(old.bars.map((b,i)=>[b.measureId,[upgradedHit('snare'+i,'snare',fraction(1)),upgradedHit('kick'+i,'kick',fraction(0))]])));
+  s.set(old);s.set(loaded);await s.flush();
+  expect(convex.mutation).not.toHaveBeenCalled();expect(s.onStatus).toHaveBeenLastCalledWith('saved');
+  s.set({...loaded,bars:[{...loaded.bars[0],coverage:'reviewed'},loaded.bars[1]]});await s.flush();
+  expect(convex.mutation).toHaveBeenCalledTimes(1);
+  expect(convex.mutation.mock.lastCall[1]).toMatchObject({baseRevision:3,header:{version:2},bars:[{measureId:loaded.bars[0].measureId,coverage:'reviewed',hits:loaded.bars[0].hits}]});
+});
+test('a version 1 journal replays its pending save as version 2',async()=>{
+  const base=emptyScore(16),old=v1Score(base),edited={...old,title:'Pending edit'};
+  disk={score:edited,baseline:old,revision:2,pending:{args:{songId:'song',baseRevision:2,mutationId:'pending-v1',header:{version:1,title:edited.title,timeline:edited.timeline},bars:edited.bars},nextBaseline:edited}};
+  convex.query.mockResolvedValue({score:old,revision:2});
+  const s=create();await s.load();await s.flush();
+  expect(convex.mutation).toHaveBeenCalledTimes(1);
+  const args=convex.mutation.mock.lastCall[1];
+  expect(args).toMatchObject({mutationId:'pending-v1',baseRevision:2,header:{version:2,title:'Pending edit',timeline:base.timeline}});
+  expect(args.bars).toEqual(old.bars.map((b,i)=>({measureId:b.measureId,coverage:'progress',hits:[upgradedHit('snare'+i,'snare',fraction(1)),upgradedHit('kick'+i,'kick',fraction(0))]})));
+  expect(disk.pending).toBeNull();expect(disk.score).toEqual(disk.baseline);expect(disk.baseline).toMatchObject({version:2,title:'Pending edit'});expect(s.revision).toBe(3);
+});
+test('the stem layout is saved in the header and survives reloads',async()=>{
+  const score=emptyScore(16);convex.query.mockResolvedValue({score,revision:1});
+  const s=create();const loaded=await s.load();s.set({...loaded,layout:'split'});await s.flush();
+  expect(convex.mutation).toHaveBeenCalledTimes(1);
+  expect(convex.mutation.mock.lastCall[1]).toMatchObject({header:{version:2,layout:'split',title:score.title},bars:[]});
+  expect(disk.baseline.layout).toBe('split');
+  convex.query.mockResolvedValue({score:serverOrder({...score,layout:'split'}),revision:2});
+  expect((await s.reload()).layout).toBe('split');
+  s.set({...loaded,layout:'split'});await s.flush();expect(convex.mutation).toHaveBeenCalledTimes(1);
+  s.set(loaded);await s.flush();
+  expect(convex.mutation).toHaveBeenCalledTimes(2);expect(convex.mutation.mock.lastCall[1].header).not.toHaveProperty('layout');
 });

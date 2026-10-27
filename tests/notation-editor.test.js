@@ -33,7 +33,8 @@ const hits=()=>saved().bars.flatMap(b=>b.hits);
 const view=()=>views.at(-1);
 // Score gestures: down comes from the view, up from the window.
 const tap=(at,{x=10,y=10,shiftKey=false}={})=>{view().pointer('down',at,{clientX:x,clientY:y});window.dispatchEvent(new PointerEvent('pointerup',{clientX:x,clientY:y,shiftKey}));};
-const lane=(x,y,move)=>{const el=host.querySelector('.notation-lanes');el.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:x,clientY:y}));if(move)el.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:move[0],clientY:move[1]}));el.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:move?.[0]??x,clientY:move?.[1]??y}));};
+// happy-dom has no layout: give the lanes the 800 px width they are drawn at.
+const lane=(x,y,move)=>{const el=host.querySelector('.notation-lanes');Object.defineProperty(el,'clientWidth',{value:800,configurable:true});el.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:x,clientY:y}));if(move)el.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:move[0],clientY:move[1]}));el.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:move?.[0]??x,clientY:move?.[1]??y}));};
 // Lane rows at 120 bpm over an 8 s view: 50 px per quarter; core kit rows from the top.
 const ROW={snare:208,crossStick:236};
 
@@ -49,11 +50,13 @@ test('drum keys write at the cursor and store only position, never written durat
 test('R skips a step without writing, and the same key twice in one place does not duplicate',async()=>{
   await open();key('4');key('r');key('r');expect(persistence.set).not.toHaveBeenCalled();
   key('s');expect(hits()[0].offset).toEqual(fraction(1));
-  const count=persistence.set.mock.calls.length;key('s');expect(persistence.set).toHaveBeenCalledTimes(count);
+  key('s');expect(hits()).toHaveLength(1);
+  key('ArrowRight');key('s');expect(hits().map(h=>h.offset)).toEqual([fraction(1),fraction(3,2)]);
 });
 
 test('/ cycles tuplet steps and writes on the tuplet grid',async()=>{
-  await open();const tuplet=()=>host.querySelector('[data-field="tuplet"]').value;
+  // happy-dom keeps a re-rendered select's old value; read the option the toolbar marks.
+  await open();const tuplet=()=>host.querySelector('[data-field="tuplet"] [selected]').value;
   key('4');key('/');expect(tuplet()).toBe('3');
   key('ArrowRight');key('s');expect(hits()[0].offset).toEqual(fraction(1,3));
   key('ArrowRight');key('ArrowRight');key('k');expect(hits()[1].offset).toEqual(fraction(1));

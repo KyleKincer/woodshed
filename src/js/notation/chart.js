@@ -24,7 +24,7 @@ const defaultScale = () => (window.innerWidth || 1200) < 1000 ? .9 : 1.1;
 export function createChart({host, part, engine, setLoop, clearLoop, onMixerChange = () => {}, onEmpty = {}}) {
   let scale = store.get('ws.chart.scale', defaultScale());
   let layoutOverride = store.get('ws.chart.layout', null);
-  let pendingLoop = null, follow = true, visible = false, view = null, lastQ = null, lastLoop = '', lastSystem = null, programmaticScroll = 0, renderedScore = null, renderedLayout = null;
+  let pendingLoop = null, follow = true, visible = false, view = null, lastQ = null, lastLoop = '', lastSystem = null, programmaticScroll = -Infinity, renderedScore = null, renderedLayout = null;
   host.classList.add('chart');
   host.innerHTML = `<div class="chart-bar" role="toolbar" aria-label="Chart">
       <div class="chart-sections" aria-label="Sections"></div>

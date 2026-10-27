@@ -69,7 +69,9 @@ function rests(cellStart: Fraction, unit: Fraction, written: Fraction, from: num
   while (left > 0) {
     let size = 1;
     // Largest piece that is aligned at `pos` and writable as one symbol.
-    for (let k = left; k >= 1; k--) {
+    // Inside a tuplet every rest is one grid step: alphaTab closes a bracket by
+    // count, and mixed-length groups only close on plain tick totals.
+    for (let k = tuplet ? 1 : left; k >= 1; k--) {
       const w = writtenValue(mul(written, k), allowDots ? 1 : 0);
       if (w && (pos % k === 0 || (allowDots && w.dots && pos === from && k === left))) { size = k; break; }
     }
@@ -95,7 +97,7 @@ function writeCell(cell: Cell, events: Event[], allowDottedCell: boolean): CellR
     s = ratio(length, g).n;
   }
   const unit = div(length, s);
-  if (compare(unit, fraction(1, 32)) < 0) throw new Error('A note is closer than a 128th to the beat grid. Snap it to a coarser grid.');
+  if (compare(unit, fraction(1, 32)) <= 0) throw new Error('A note is on a 128th grid or finer. Snap it to a coarser grid.');
   // 16th/32nd triplets (and other even tuplet grids) read best as one tuplet
   // per half/quarter beat, each simplified on its own.
   let odd = s; while (odd % 2 === 0) odd /= 2;

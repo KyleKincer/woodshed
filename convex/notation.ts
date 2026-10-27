@@ -4,7 +4,7 @@ import type {QueryCtx,MutationCtx} from './_generated/server';
 import type {Id} from './_generated/dataModel';
 import {requireUserId,requireWritableUserId} from './lib/auth';
 import {barValidator,headerValidator} from './lib/notationValidators';
-import {validateTimeline,validateBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
+import {validateTimeline,validateBar,upgradeBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
 import {sameContent} from '../shared/content';
 
@@ -37,7 +37,10 @@ export const get=query({args:{songId:v.optional(v.id('songs')),token:v.optional(
 export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),mutationId:v.string(),header:headerValidator,bars:v.array(barValidator)},handler:async(ctx,args)=>{
   const userId=await requireWritableUserId(ctx),song=await ctx.db.get(args.songId);if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');
   if(args.mutationId.length>100||!args.mutationId||args.bars.length>16||!Number.isSafeInteger(args.baseRevision)||args.baseRevision<0||!args.header.title.trim()||args.header.title.length>100)throw new ConvexError('Invalid score update.');
-  validateTimeline(args.header.timeline);for(const bar of args.bars)validateBar(bar,args.header.timeline);
+  validateTimeline(args.header.timeline);
+  // Version 2 bars must already be current: validateBar checks the upgraded
+  // bar, so a rest or duration field here would otherwise be stored as-is.
+  for(const bar of args.bars){if(args.header.version===2&&upgradeBar(bar)!==bar)throw new ConvexError('A note does not fit this bar or has invalid data.');validateBar(bar,args.header.timeline);}
   if(new Set(args.bars.map(b=>b.measureId)).size!==args.bars.length)throw new ConvexError('Duplicate bar update.');
   const part=await ctx.db.query('notationParts').withIndex('by_songId',q=>q.eq('songId',args.songId)).unique();
   if(part?.lastMutation===args.mutationId)return {revision:part.revision};

@@ -60,7 +60,8 @@ export function importDrumHits(hits, timing, {title = 'Imported drums', source =
     if (!t || !Number.isFinite(t.q) || !Number.isFinite(t.length) || !Number.isInteger(t.count) || t.count < 2 || t.count > 16 || t.length <= 0) continue;
     const bar = barAt(t.q), start = t.q - positions[bar], measure = timeline.measures[bar];
     const startF = fraction(Math.round(start * 960), 960), lengthF = fraction(Math.round(t.length * 960), 960);
-    if (Math.abs(number(startF) - start) > 1e-6 || compare(add(startF, lengthF), measure.length) > 0) continue;
+    const writable = [1, 2, 4, 8, 16, 32, 64].some(v => compare(lengthF, fraction(4, v)) === 0 || compare(lengthF, fraction(6, v)) === 0);
+    if (!writable || Math.abs(number(startF) - start) > 1e-6 || compare(add(startF, lengthF), measure.length) > 0) continue;
     const list = spans.get(bar) || [];
     if (list.length < MAX_TUPLETS_PER_BAR && !list.some(s => compare(s.start, add(startF, lengthF)) < 0 && compare(startF, add(s.start, s.length)) < 0)) list.push({start: startF, length: lengthF, count: t.count});
     spans.set(bar, list);

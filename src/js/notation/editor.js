@@ -164,7 +164,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
     const s=score(),width=Math.max(240,surface.clientWidth||800),positions=starts(s.timeline),v=getView();
     let indices=s.timeline.measures.map((m,i)=>i).filter(i=>toTime(s.timeline,positions[i]+number(s.timeline.measures[i].length))>v.start+1e-8&&toTime(s.timeline,positions[i])<v.end-1e-8);
     if(!indices.length)indices=[active().index];
-    lanesData=renderLanes(lanesHost,{score:s,indices,width,timeRange:v,selected,cursor:number(cursor),grid:number(gridStep()),rows:rows()});
+    lanesData={...renderLanes(lanesHost,{score:s,indices,width,timeRange:v,selected,cursor:number(cursor),grid:number(gridStep()),rows:rows()}),width};
     lastView=JSON.stringify(v);
   }
   function render(){if(disposed)return;
@@ -204,7 +204,7 @@ export async function createNotationWorkspace({host,part,song,engine,songMap=nul
   // Lanes pointer: time-aligned grid; drag notes in time or across lanes.
   lanesHost.addEventListener('pointerdown',e=>{
     if(e.button!==0||!lanesData)return;e.preventDefault();cancelGesture();followPlayback=false;setFollow(false);
-    const rect=lanesHost.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,width=lanesHost.clientWidth,v=getView(),bar=lanesData.bars.find(b=>x>=b.left&&x<b.right);if(!bar)return;
+    const rect=lanesHost.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,width=lanesData.width,v=getView(),bar=lanesData.bars.find(b=>x>=b.left&&x<b.right);if(!bar)return;
     const targetAt=(px,py)=>lanesData.targets.filter(t=>px>=t.x-3&&px<=t.right+3&&Math.abs(t.y-py)<12).sort((a,b)=>Math.abs(a.x-px)-Math.abs(b.x-px))[0];
     const target=y>=LANE_TOP?targetAt(x,y):null,positionFromX=px=>snapPosition(score(),toQuarter(score().timeline,v.start+px/width*(v.end-v.start)),gridStep());
     const origin=y<LANE_TOP?fraction(Math.round(clamp(toQuarter(score().timeline,v.start+x/width*(v.end-v.start)),0,extent(score().timeline)-1e-6)*1e6),1e6):positionFromX(x),before=new Set(selected);
