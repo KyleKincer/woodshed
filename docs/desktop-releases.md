@@ -3,7 +3,7 @@
 The Electron app includes a frozen Python 3.11 processing runtime, yt-dlp,
 Demucs, BeatNet, Node.js, FFmpeg and ffprobe. Model weights download on first
 use. Linux AppImage, macOS DMG + updater ZIP (Apple Silicon only), and
-Windows NSIS installers are built on their native GitHub Actions runners.
+Windows NSIS installers are built on their native GitHub Actions runners. macOS builds use the supported macOS 15 Apple Silicon runner; the older macOS 14 runner could not acquire capacity during the 1.7.0 release.
 
 Windows and Linux installers bundle CPU processing. On an NVIDIA machine the
 first separation downloads a separate CUDA 12.8 processor from the same GitHub
