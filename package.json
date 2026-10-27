@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
     "@aws-sdk/s3-request-presigner": "^3.1127.0",
+    "@coderline/alphatab": "1.8.4",
     "@convex-dev/auth": "2.0.0-alpha.1",
     "@convex-dev/r2": "^0.10.2",
     "@convex-dev/stripe": "^0.1.6",

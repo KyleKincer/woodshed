@@ -32,8 +32,8 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
       <section class="ts-find" aria-label="Available maps">
         <form class="ts-search"><label for="tempo-source-query">Song or artist</label><div class="ts-search-row"><input id="tempo-source-query" name="query" type="search" maxlength="160" autocomplete="off"><button class="mi-btn" type="submit">Search</button></div><p class="ts-search-scope">Search Chorus Encore and Harmonix Set</p></form>
         <div class="ts-results" aria-label="Tempo map choices"></div>
-        <div class="ts-import"><button type="button" class="mi-btn" data-ts="file">Import a file…</button><input type="file" accept=".sng,.zip,.mid,.midi,.chart,.txt,.tsv,.lab,.csv" hidden><span>Chorus SNG / ZIP, MIDI, chart, or beat timestamps</span></div>
-        <details class="ts-elsewhere"><summary>Other sources</summary><p>You can also browse <a href="https://www.enchor.us/" target="_blank" rel="noopener noreferrer">Chorus Encore</a>, or download MIDI from <a href="https://www.songsterr.com/plus" target="_blank" rel="noopener noreferrer">Songsterr</a>, then import it here. Guitar Pro files can be exported as MIDI first.</p></details>
+        <div class="ts-import"><button type="button" class="mi-btn" data-ts="file">Import a file…</button><input type="file" accept=".gp3,.gp4,.gp5,.gpx,.gp,.sng,.zip,.mid,.midi,.chart,.txt,.tsv,.lab,.csv" hidden><span>Guitar Pro, Chorus SNG / ZIP, MIDI, chart, or beat timestamps</span></div>
+        <details class="ts-elsewhere"><summary>Other sources</summary><p>You can also browse <a href="https://www.enchor.us/" target="_blank" rel="noopener noreferrer">Chorus Encore</a>, or download MIDI from <a href="https://www.songsterr.com/plus" target="_blank" rel="noopener noreferrer">Songsterr</a>, then import it here. Import Guitar Pro files directly (.gp3, .gp4, .gp5, .gpx or .gp), including drums when present. Timing follows score playback and repeats; audio sync points may need manual alignment.</p></details>
       </section>
       <section class="ts-align" aria-label="Align the chosen map">
         <div class="ts-listening"><div class="ts-current"><span class="mi-k">Listening to</span><strong data-ts="current">Your map</strong><span data-ts="detail"></span></div><button type="button" class="mi-btn" data-ts="play" ${play ? '' : 'hidden'}>Play / pause</button></div>
@@ -122,8 +122,8 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
       renderChoices();
       const summary = candidates.length
         ? `${candidates.length} possible map${candidates.length === 1 ? '' : 's'}. Choose one to hear it with your recording.`
-        : searchWarnings.length ? 'Search incomplete. You can still import a MIDI or chart file, or try another title.'
-          : 'No matches in Chorus Encore or Harmonix Set. Import a MIDI or chart file, or try another title.';
+        : searchWarnings.length ? 'Search incomplete. You can still import a file, or try another title.'
+          : 'No matches in Chorus Encore or Harmonix Set. Import a file, or try another title.';
       say([summary, ...searchWarnings].join(' '), !candidates.length && searchWarnings.length ? 'error' : 'info');
     } catch (error) {
       if (opened && !disposed && revision === searchRevision) say(`Search unavailable. ${errorText(error)} You can still import a file.`, 'error');

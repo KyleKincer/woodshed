@@ -20,8 +20,11 @@ Open a song, choose **Tempo map → Find / import…**. The source browser stays
 | Standard MIDI | Local format 0/1 PPQN tempo and meter events, GM channel-10 percussion, and named Rock Band/Clone Hero Expert drum tracks. | Format 2, SMPTE timing and unsupported meters are rejected. Named game tracks use their own lane and tom-marker rules; ordinary MIDI percussion remains GM. |
 | Clone Hero `.chart` | Local SyncTrack tempo/meter with audio Offset; ExpertDrums can seed a draft. | Game drum lanes approximate the kit, including cymbal markers. Other difficulty tracks are not substituted. |
 | Beat timestamps | Two or three columns: seconds, beat in bar, optional bar number. Harmonix/Isophonics-style files are accepted. | Missing consecutive beats are rejected. Without a usable meter hint, quarter-note interpretation is explicitly disclosed. |
-| Songsterr / Guitar Pro | External search/export, then MIDI import. | No automated scraping or subscription-dependent download integration. Guitar Pro audio sync points may need conversion into score tempo automations before MIDI export. |
+| Guitar Pro | Import `.gp3`, `.gp4`, `.gp5`, `.gpx` or `.gp` directly for score tempo, meter and a drum draft when a percussion part is present. | Timing follows score playback, including repeats. Backing-track sync points are not applied; timing uses score tempo. Gradual transitions need review; free-time bars and unsupported meters are rejected. Audition and adjust the offset. |
+| Songsterr | External search/export, then MIDI import. | No automated scraping or subscription-dependent download integration. |
 | Local SNG / ZIP | Import a Chorus song download directly. The reader selects notes.chart or notes.mid and applies song.ini timing metadata once. | Single-song archives only, 128 MiB maximum. ZIP64, encrypted ZIPs, unsupported compression and ambiguous multi-song packages require extracting the notes file manually. |
+
+Guitar Pro timing uses the low-level alphaTab 1.8.4 reader, loaded only on demand, with no renderer, synthesizer, fonts or SoundFont downloads. Files stay on the device. Imports retain score playback order and explicit pickup boundaries. GP files are limited to 10 MiB, 32 MiB expanded container data, 64 tracks, 100,000 source notes/beats, 1,024 unfolded bars and 16,000 drum hits. The reader includes the upstream MPL-2.0 notice and exact source link in `public/licenses/alphatab.txt`; desktop builds bundle the same notice.
 
 MIDI/chart timing becomes native measures and pins. Timestamps remain authoritative; bar IDs are reused by index so written notation remains attached. Negative shifts insert an audio-zero boundary and retain musical coordinates instead of clamping beats together. Clipping inside a gradual ramp is refused. Notes files are limited to 10 MiB, 8,000 pins and 1,024 measures. Online SNG reads cap notes at 750 KiB to fit action return limits. Local archive reads skip audio and bound decompression; they never upload the package.
 
@@ -39,6 +42,7 @@ Chorus package loading validates 206 responses, byte ranges, stable sizes and ET
 
 Primary references:
 
+- [alphaTab supported formats and low-level APIs](https://www.alphatab.net/docs/guides/lowlevel-apis/)
 - [Harmonix Set documentation and annotation format](https://github.com/urinieto/harmonixset/tree/64abeb509429e73d74559fb98e621dac866efea1)
 - [Guitar Pro audio synchronization and score tempo automations](https://www.guitar-pro.com/docs/gp8/audio/backing-track)
 - [Songsterr export features](https://www.songsterr.com/plus)
