@@ -1,3 +1,13 @@
+Woodshed 1.9.0 rebuilds drum notation so it reads like Guitar Pro and Songsterr, and adds a drum chart for rehearsing.
+
+- Practice opens to a drum Chart when a song has a drum part. The playing bar is highlighted with a beat cursor, and the chart scrolls to keep it near the top. Scroll by hand to look ahead; press Follow to return. Choose Tracks to see the stems; your choice is remembered on this device.
+- Section chips jump to Intro, Verse, Chorus and so on. Loop section loops the section that is playing. Tap a bar to play from it, and drag across bars to loop them. On an iPad, long-press the first bar and tap the last. Size, Together or Hands / feet notation, and Mute drums are one tap away. The chart fits two dense bars per line on an iPad in portrait and three on a laptop.
+- Notation is engraved the way Guitar Pro writes it: one bracketed tuplet per beat, beaming by beat, rests that show the beat, accents, ghost notes, flams, drags, rolls and sticking. Choose Together (one rhythm, like Songsterr) or Hands / feet (hands stems up, feet stems down).
+- The kit now has 27 pieces, matching Guitar Pro: china, splash, two crashes and their chokes, half-open hi-hat, ride edge, bell and choke, cowbell, five toms, rimshot, cross-stick, kick and pedal hi-hat.
+- Transcribe writes notes where they fall; Woodshed works out how they are written. Choose a step (1–7, / for triplets and other tuplets), press drum keys to write at the cursor and R to skip a step. Double-click the staff to write the drum on that line. Drum lanes show only the pieces in use, aligned with the waveform. Tuplet on this beat… covers quarter-note triplets and other rhythms that span beats.
+- Guitar Pro drum imports keep their articulations, accents, ghosts, flams, drags, rolls, tuplets and section names, and ties no longer become extra hits. MIDI and chart imports keep china and splash, and a played performance snaps to the simplest rhythm per beat.
+- Existing drum parts open and are upgraded automatically. Once 1.9.0 saves a drum part, earlier versions of Woodshed can no longer open it, and they cannot overwrite it. Update Woodshed on every device you use.
+
 Woodshed 1.8.0 imports Guitar Pro scores directly.
 
 - In Tempo map → Find / import, choose a `.gp3`, `.gp4`, `.gp5`, `.gpx` or `.gp` file. Its tempo changes, meter changes, pickups, repeats and alternate endings become editable Woodshed timing. Use the existing offset controls to line it up with your recording.
