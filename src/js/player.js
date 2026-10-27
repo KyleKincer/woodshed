@@ -922,10 +922,10 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
       return {...aligned, sourceUrl: result.sourceUrl};
     },
     play: () => doPlayStop({pause: true}),
-    previewDrums: result => importDrumHits(result.drums.hits, songMap.serialize(), {source: result.drums.source, duration}),
+    previewDrums: result => importDrumHits(result.drums.hits, songMap.serialize(), {source: result.drums.source, duration, tuplets: result.drums.tuplets}),
     onImportDrums: async result => {
       if (!isCurrent()) throw new Error('Reopen the song to import its drum part.');
-      const imported = importDrumHits(result.drums.hits, songMap.serialize(), {title: 'Imported drums', source: result.drums.source, duration});
+      const imported = importDrumHits(result.drums.hits, songMap.serialize(), {title: 'Imported drums', source: result.drums.source, duration, tuplets: result.drums.tuplets});
       if (!imported.importedCount) throw new Error('This file contains no supported drum hits inside the recording. Keep the tempo map alone.');
       await transcription.importScore(imported.score, [...(result.drums.warnings || []), ...imported.warnings].join(' '));
       importedDrums = true;
@@ -1004,7 +1004,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   cleanupFns.push(() => window.removeEventListener('woodshed:theme', redrawTheme));
 
   const activeEngine = engine;
-  const transcription=attachNotation({root,song,engine:activeEngine,metronome:songMetronome,songMap,mapActive:()=>mapMode.active(),openMap:(q,options)=>mapMode.enter(q,options),getView:()=>({...view}),setView,setFollow,play:doPlayStop,readOnly,shareToken,onLoopChange:updateLoopOverlay,onMixerChange:()=>{for(const {track,row} of trackRows){row.querySelector('.tbtn.mute').classList.toggle('on',track.muted);row.querySelector('.tbtn.mute').setAttribute('aria-pressed',String(track.muted));}drawWaveforms();}});
+  const transcription=attachNotation({root,song,engine:activeEngine,metronome:songMetronome,songMap,ready:drumPartReady,setLoop:(a,b)=>{activeEngine.setLoop(true,a,b);setLoopBtn(true);updateLoopOverlay();},clearLoop:()=>{activeEngine.setLoop(false);setLoopBtn(false);updateLoopOverlay();},openImport:readOnly?null:async()=>{mapMode.enter();await drumPartReady;if(isCurrent()&&mapMode.active())tempoSources.open();},mapActive:()=>mapMode.active(),openMap:(q,options)=>mapMode.enter(q,options),getView:()=>({...view}),setView,setFollow,play:doPlayStop,readOnly,shareToken,onLoopChange:updateLoopOverlay,onMixerChange:()=>{for(const {track,row} of trackRows){row.querySelector('.tbtn.mute').classList.toggle('on',track.muted);row.querySelector('.tbtn.mute').setAttribute('aria-pressed',String(track.muted));}drawWaveforms();}});
   cleanupFns.push(()=>transcription.destroy());
   let practiceTimer;
   let lastPractice = structuredClone(song.practice || null);

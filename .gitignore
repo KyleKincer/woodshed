@@ -19,3 +19,4 @@ release/
 
 artifacts/
 release-assets/
+tests/local/

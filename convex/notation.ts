@@ -41,6 +41,9 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   if(new Set(args.bars.map(b=>b.measureId)).size!==args.bars.length)throw new ConvexError('Duplicate bar update.');
   const part=await ctx.db.query('notationParts').withIndex('by_songId',q=>q.eq('songId',args.songId)).unique();
   if(part?.lastMutation===args.mutationId)return {revision:part.revision};
+  // Parts are upgraded to derived-rhythm notation by current clients. An older
+  // client must not write version 1 bars back over a version 2 part.
+  if(part&&part.header.version===2&&args.header.version===1)throw new ConvexError({code:'NOTATION_UPGRADE_REQUIRED',message:'This drum part uses newer notation. Update Woodshed to edit it.'});
   if((part?.revision??0)!==args.baseRevision)throw new ConvexError({code:'NOTATION_CONFLICT',message:'This part changed on another device. Your local edits are retained. Export them or load the saved version.'});
   // Older clients can loop on object-key ordering. Stop their drain loop with
   // an error, before rereading every bar or invalidating shared subscriptions.

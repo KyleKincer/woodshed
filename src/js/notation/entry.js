@@ -1,4 +1,4 @@
-import {id,fraction,number,add,durationOf,emptyScore,validateScore,KIT,musicalStarts,locate,subtract,extent} from '../../../shared/notation.ts';
+import {id,fraction,number,add,emptyScore,validateScore,KIT,musicalStarts,locate,subtract,extent,compare} from '../../../shared/notation.ts';
 
 /** Seed a draft from the actual practice pulses, without rounding audio times. */
 export function scoreFromTiming(duration,metronome){
@@ -30,7 +30,7 @@ export function scoreFromTiming(duration,metronome){
   const last=anchors.at(-1),section=metronome.sectionAt(last.time);
   const interval=anchors.length>1?last.time-anchors.at(-2).time:60/section.bpm;
   anchors.push({position:add(last.position,fraction(4,section.unit||4)),time:last.time+interval});
-  const score={version:1,title:'Drums',timeline:{version:1,measures,anchors},bars:[]};
+  const score={version:2,title:'Drums',timeline:{version:1,measures,anchors},bars:[]};
   validateScore(score);return score;
 }
 
@@ -40,17 +40,9 @@ export function snapPosition(score,raw,grid){
   return add(a.startPosition,fraction(ticks*grid.n,grid.d));
 }
 
-/** Resize to a written duration; grid placement remains independent. */
-export function nearestDuration(length,tuplet=1){
-  const choices=[];
-  for(const value of [1,2,4,8,16,32,64])for(const dotted of [false,true]){
-    const duration=durationOf(value,dotted,tuplet);choices.push({value,dotted,tuplet,duration});
-  }
-  return choices.sort((a,b)=>Math.abs(number(a.duration)-length)-Math.abs(number(b.duration)-length))[0];
-}
-
 /** A whole drag is one validated, undoable transaction. */
-export function moveLaneNotes(editor,ids,delta,laneDelta=0){
+/** `lanes` lists the kit ids shown as rows, top to bottom. */
+export function moveLaneNotes(editor,ids,delta,laneDelta=0,lanes=KIT.map(k=>k.id)){
   return editor.transact(s=>{
     const positions=musicalStarts(s.timeline),moving=[];
     for(const bar of s.bars){const index=s.timeline.measures.findIndex(m=>m.id===bar.measureId);
@@ -59,11 +51,12 @@ export function moveLaneNotes(editor,ids,delta,laneDelta=0){
     }
     for(const {hit,position} of moving){
       if(number(position)<0||number(position)>=extent(s.timeline))throw new Error('Notes must stay within the part.');
-      const lane=KIT.findIndex(k=>k.id===hit.instrument),kit=KIT[lane+laneDelta];
-      if(lane>=0&&!kit)throw new Error('Notes must stay within the drum kit.');
+      const lane=lanes.indexOf(hit.instrument),kit=KIT.find(k=>k.id===lanes[lane+laneDelta]);
+      if(laneDelta&&(lane<0||!kit))throw new Error('Notes must stay within the drum kit.');
       const target=locate(s.timeline,number(position));
-      editor.bar(target.index,s).hits.push({...hit,offset:subtract(position,target.startPosition),
-        ...(lane>=0&&laneDelta?{instrument:kit.id,voice:kit.voice}:{})});
+      const bar=editor.bar(target.index,s),moved={...hit,offset:subtract(position,target.startPosition),...(laneDelta?{instrument:kit.id,voice:kit.voice}:{})};
+      if(bar.hits.some(h=>h.instrument===moved.instrument&&compare(h.offset,moved.offset)===0))throw new Error('That drum already has a note there.');
+      bar.hits.push(moved);
       editor.bar(target.index,s).coverage='progress';
     }
   });
