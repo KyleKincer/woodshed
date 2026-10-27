@@ -11,9 +11,12 @@ export type TempoCandidate = {
   title: string;
   artist: string;
   album: string;
-  source: 'harmonix';
+  source: 'harmonix' | 'chorus';
   duration: number;
-  bpm: number;
+  bpm?: number;
+  charter?: string;
+  hasDrums?: boolean;
+  sourceUrl?: string;
   /** Declared catalog meter, not inferred from the beat intervals. */
   meter?: { numerator: number; denominator: number };
 };

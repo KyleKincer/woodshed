@@ -9,7 +9,7 @@ import { Metronome } from './metronome.js';
 import { createMapMode } from './map-mode.js';
 import { createTempoSources } from './tempo-sources.js';
 import '../css/tempo-sources.css';
-import { parseBeatText } from './tempo-import.js';
+import { parseBeatText, parseTempoFile } from './tempo-import.js';
 import { importDrumHits } from './notation/import-drums.js';
 import { fromTimeline } from '../../shared/song-map.ts';
 import { validateBar } from '../../shared/notation.ts';
@@ -914,7 +914,12 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     search: args => backend.findTempoSources(args),
     load: async candidate => {
       const result = await backend.loadTempoSource(candidate.id);
-      return {...parseBeatText(result.text, {duration, meter: candidate.meter}), sourceUrl: result.sourceUrl};
+      const imported = result.format === 'beats'
+        ? parseBeatText(result.text, {duration, meter: candidate.meter})
+        : parseTempoFile(result.data, {name: result.format === 'midi' ? 'notes.mid' : 'notes.chart', duration});
+      const aligned = result.metadata
+        ? (await import('./tempo-archive.js')).applyChartMetadata(imported, result.metadata) : imported;
+      return {...aligned, sourceUrl: result.sourceUrl};
     },
     play: () => doPlayStop({pause: true}),
     previewDrums: result => importDrumHits(result.drums.hits, songMap.serialize(), {source: result.drums.source, duration}),

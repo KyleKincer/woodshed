@@ -7,7 +7,8 @@ const clone = (value) => structuredClone(value);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const seconds = (value) => { const whole = Math.round(value); return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`; };
 const errorText = (error) => String(error?.message || error || 'Could not load that map.');
-const sourceName = (value) => value === 'harmonix' ? 'Harmonix Set' : value;
+const sourceName = (value) => ({harmonix: 'Harmonix Set', chorus: 'Chorus Encore'}[value] || value);
+const charterLabel = (item) => item?.charter ? `Chart by ${item.charter}` : '';
 
 export function createTempoSources({root, song, songMap, engine, search, load, onClose = () => {}, onImportDrums = null, previewDrums = null, play = null}) {
   let opened = false, disposed = false, searchRevision = 0, loadRevision = 0, importingDrums = false;
@@ -29,10 +30,10 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
       <button type="button" class="mi-btn" data-ts="cancel">Cancel</button></div>
     <div class="ts-body">
       <section class="ts-find" aria-label="Available maps">
-        <form class="ts-search"><label for="tempo-source-query">Song or artist</label><div class="ts-search-row"><input id="tempo-source-query" name="query" type="search" maxlength="160" autocomplete="off"><button class="mi-btn" type="submit">Search</button></div></form>
+        <form class="ts-search"><label for="tempo-source-query">Song or artist</label><div class="ts-search-row"><input id="tempo-source-query" name="query" type="search" maxlength="160" autocomplete="off"><button class="mi-btn" type="submit">Search</button></div><p class="ts-search-scope">Search Chorus Encore and Harmonix Set</p></form>
         <div class="ts-results" aria-label="Tempo map choices"></div>
-        <div class="ts-import"><button type="button" class="mi-btn" data-ts="file">Import a file…</button><input type="file" accept=".mid,.midi,.chart,.txt,.tsv,.lab,.csv" hidden><span>MIDI, Clone Hero chart, or beat timestamps</span></div>
-        <details class="ts-elsewhere"><summary>Other sources</summary><p>Find a chart on <a href="https://www.enchor.us/" target="_blank" rel="noopener noreferrer">Chorus Encore</a>, or download MIDI from <a href="https://www.songsterr.com/plus" target="_blank" rel="noopener noreferrer">Songsterr</a>, then import it here. Guitar Pro files can be exported as MIDI first.</p></details>
+        <div class="ts-import"><button type="button" class="mi-btn" data-ts="file">Import a file…</button><input type="file" accept=".sng,.zip,.mid,.midi,.chart,.txt,.tsv,.lab,.csv" hidden><span>Chorus SNG / ZIP, MIDI, chart, or beat timestamps</span></div>
+        <details class="ts-elsewhere"><summary>Other sources</summary><p>You can also browse <a href="https://www.enchor.us/" target="_blank" rel="noopener noreferrer">Chorus Encore</a>, or download MIDI from <a href="https://www.songsterr.com/plus" target="_blank" rel="noopener noreferrer">Songsterr</a>, then import it here. Guitar Pro files can be exported as MIDI first.</p></details>
       </section>
       <section class="ts-align" aria-label="Align the chosen map">
         <div class="ts-listening"><div class="ts-current"><span class="mi-k">Listening to</span><strong data-ts="current">Your map</strong><span data-ts="detail"></span></div><button type="button" class="mi-btn" data-ts="play" ${play ? '' : 'hidden'}>Play / pause</button></div>
@@ -55,7 +56,7 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
 
   function say(message, tone = 'info') { status.textContent = message; status.dataset.tone = tone; }
   function renderChoices() {
-    results.innerHTML = items.map((item, index) => `<button type="button" class="ts-choice" data-choice="${index}" aria-pressed="${selected === item}"><span><b>${esc(item.title)}</b><small>${esc([item.artist, item.album, sourceName(item.source), Number.isFinite(item.duration) ? seconds(item.duration) : ''].filter(Boolean).join(' · '))}</small></span><span class="ts-choice-mark" aria-hidden="true">${selected === item ? '✓' : 'Try'}</span></button>`).join('');
+    results.innerHTML = items.map((item, index) => `<button type="button" class="ts-choice" data-choice="${index}" aria-pressed="${selected === item}"><span><b>${esc(item.title)}</b><small>${esc([item.artist, item.album, sourceName(item.source), charterLabel(item), item.hasDrums ? 'Drum chart' : '', Number.isFinite(item.duration) ? seconds(item.duration) : ''].filter(Boolean).join(' · '))}</small></span><span class="ts-choice-mark" aria-hidden="true">${selected === item ? '✓' : 'Try'}</span></button>`).join('');
   }
   function renderSelection() {
     current.textContent = selected?.title || 'Your map';
@@ -67,7 +68,7 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
     }
     const importCount = preview?.importedCount ?? count;
     const drumDetail = count ? `${importCount} drum hit${importCount === 1 ? '' : 's'} ${preview ? 'ready to import' : 'available'}${preview?.skippedCount ? ` · ${preview.skippedCount} skipped` : ''}` : '';
-    detail.textContent = [selected?.artist, selected?.album, sourceName(selected?.source), drumDetail].filter(Boolean).join(' · ');
+    detail.textContent = [selected?.artist, selected?.album, sourceName(selected?.source), charterLabel(selected), drumDetail].filter(Boolean).join(' · ');
     const mismatch = Number.isFinite(selected?.duration) && Math.abs(selected.duration - duration()) > 2
       ? `This version is ${Math.abs(selected.duration - duration()).toFixed(1)} seconds ${selected.duration > duration() ? 'longer' : 'shorter'} than your recording. Check that it is the same performance.` : '';
     warning.textContent = [...new Set([...(selected?.result?.warnings || []), ...(selected?.result?.drums?.warnings || []), ...(preview?.warnings || []), previewError, mismatch].filter(Boolean))].join(' ');
@@ -114,11 +115,16 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
       const response = await search({query: text, duration: duration()});
       if (!opened || disposed || revision !== searchRevision) return;
       const candidates = Array.isArray(response) ? response : response?.candidates || [];
+      const searchWarnings = Array.isArray(response?.warnings) ? response.warnings.filter(Boolean) : [];
       const retained = items.filter((item) => item.id === 'original' || item.local || item === selected);
       const ids = new Set(retained.map((item) => item.id));
       items = [...retained, ...candidates.filter((item) => item?.id && !ids.has(item.id)).map((item) => ({...item, offset: 0}))];
       renderChoices();
-      say(candidates.length ? `${candidates.length} possible map${candidates.length === 1 ? '' : 's'}. Choose one to hear it with your recording.` : 'No catalog matches. Import a MIDI or chart file, or try another title.');
+      const summary = candidates.length
+        ? `${candidates.length} possible map${candidates.length === 1 ? '' : 's'}. Choose one to hear it with your recording.`
+        : searchWarnings.length ? 'Search incomplete. You can still import a MIDI or chart file, or try another title.'
+          : 'No matches in Chorus Encore or Harmonix Set. Import a MIDI or chart file, or try another title.';
+      say([summary, ...searchWarnings].join(' '), !candidates.length && searchWarnings.length ? 'error' : 'info');
     } catch (error) {
       if (opened && !disposed && revision === searchRevision) say(`Search unavailable. ${errorText(error)} You can still import a file.`, 'error');
     } finally { if (revision === searchRevision) searchButton.disabled = false; }

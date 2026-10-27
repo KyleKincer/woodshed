@@ -35,6 +35,44 @@ describe('MIDI tempo maps',()=>{
     const {map}=parseMidiTempo(midi([[...tempo(0,500000),...tempo(0,600000),...end()]]),{duration:10});
     expect(map.pins).toHaveLength(1);expect(map.tailQpm).toBe(100);
   });
+  test('named PART DRUMS imports Expert lanes on any channel with timed tom markers',()=>{
+    const name=text('PART DRUMS');
+    const track=[...event(0,255,3,name.length,...name),...event(0,0x92,110,100),...event(0,0x92,96,100),...event(0,0x92,98,100),
+      ...event(240,0x82,98,0),...event(0,0x92,99,100),...event(240,0x82,110,0),...event(0,0x92,98,100),
+      ...event(0,0x92,100,100),...event(0,0x92,95,100),...end(480)];
+    const result=parseMidiTempo(midi([[...tempo(0,500000),...end()],track]),{duration:8});
+    expect(result.drums.source).toBe('chart');
+    expect(result.drums.hits.map(h=>[h.q,h.midi])).toEqual([[0,36],[0,48],[.5,51],[1,42],[1,49],[1,36]]);
+    expect(result.drums.hits[1].durationQ).toBe(.5);
+    expect(result.drums.warnings.join(' ')).toContain('double-kick');
+  });
+  test('track names after notes are still recognized; guitar and unnamed lanes are not drum charts',()=>{
+    const named=(name)=>{const bytes=text(name);return [...event(0,0x90,98,100),...event(480,0x80,98,0),...event(0,255,3,bytes.length,...bytes),...end()];};
+    const drums=parseMidiTempo(midi([[...tempo(0,500000),...end()],named('PART DRUMS')]),{duration:8});
+    expect(drums.drums.hits).toHaveLength(1);expect(drums.drums.hits[0].midi).toBe(42);
+    expect(parseMidiTempo(midi([named('PART GUITAR')]),{duration:8}).drums).toBeUndefined();
+    expect(parseMidiTempo(midi([[...event(0,0x90,96,100),...end()]]),{duration:8}).drums).toBeUndefined();
+  });
+  test('uses the standard drum part once when an alternate 2x chart is also present',()=>{
+    const named=(name,note)=>{const bytes=text(name);return [...event(0,255,3,bytes.length,...bytes),...event(0,0x90,note,100),...end(480)];};
+    const result=parseMidiTempo(midi([named('PART DRUMS_2X',95),named('PART DRUMS',97)]),{duration:8});
+    expect(result.drums.hits.map(h=>h.midi)).toEqual([38]);
+    const alternate=parseMidiTempo(midi([named('PART DRUMS_2X',95)]),{duration:8});
+    expect(alternate.drums.hits.map(h=>h.midi)).toEqual([36]);
+  });
+  test('five-lane MIDI and blue/green tom ranges have distinct kit assignments',()=>{
+    const named=(events)=>{const name=text('PART DRUMS');return [...event(0,255,3,name.length,...name),...events,...end(480)];};
+    const five=parseMidiTempo(midi([named([...event(0,0x90,98,100),...event(0,0x90,99,100),...event(0,0x90,100,100),...event(0,0x90,101,100)])]),{duration:8});
+    expect(five.drums.hits.map(h=>h.midi)).toEqual([42,47,49,45]);
+    expect(five.drums.warnings.join(' ')).toContain('five-lane');
+    const pro=parseMidiTempo(midi([named([...event(0,0x90,111,100),...event(0,0x90,112,100),...event(0,0x90,99,100),...event(0,0x90,100,100),...event(240,0x80,111,0),...event(0,0x80,112,0),...event(0,0x90,99,100),...event(0,0x90,100,100)])]),{duration:8});
+    expect(pro.drums.hits.map(h=>h.midi)).toEqual([47,45,51,49]);
+  });
+  test('a GM percussion export named PART DRUMS still uses channel 10 note numbers',()=>{
+    const name=text('PART DRUMS');
+    const result=parseMidiTempo(midi([[...event(0,255,3,name.length,...name),...event(0,0x99,36,100),...event(240,0x89,36,0),...end()]]),{duration:8});
+    expect(result.drums.source).toBe('midi');expect(result.drums.hits[0]).toMatchObject({midi:36,durationQ:.5});
+  });
   test('extracts channel 10 GM percussion with running status, note-off lengths and velocity',()=>{
     const track=[...tempo(0,500000),...event(0,0x99,36,127),...event(240,38,64),...event(240,36,0),...event(240,0x89,38,0),...end()];
     const {drums}=parseMidiTempo(midi([track]),{duration:10});
@@ -71,6 +109,12 @@ describe('Clone Hero tempo maps',()=>{
   });
   test('editor A anchors do not override playback B events',()=>{
     const {map}=parseChartTempo(chart('0 = B 120000\n768 = B 120000\n768 = A 1000000'),{duration:10});expect(timeAt(compile(map),4)).toBeCloseTo(2);
+  });
+  test('five-lane chart green is a floor tom and its yellow/orange lanes remain cymbals',()=>{
+    const drums='[ExpertDrums]\n{\n0 = N 2 0\n192 = N 3 0\n384 = N 4 0\n576 = N 5 0\n}';
+    const result=parseChartTempo(chart('0 = B 120000','',drums),{duration:10});
+    expect(result.drums.hits.map(h=>h.midi)).toEqual([42,47,49,45]);
+    expect(result.drums.warnings.join(' ')).toContain('five-lane');
   });
   test('extracts ExpertDrums and honors cymbal flags while warning about approximations',()=>{
     const drums='[ExpertDrums]\n{\n0 = N 0 0\n0 = N 2 0\n0 = N 66 0\n192 = N 3 0\n384 = N 4 0\n384 = N 68 0\n}';
