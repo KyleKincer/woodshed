@@ -25,6 +25,7 @@ import type * as lib_dedupe from "../lib/dedupe.js";
 import type * as lib_musicBrainz from "../lib/musicBrainz.js";
 import type * as lib_presets from "../lib/presets.js";
 import type * as lib_songMetadata from "../lib/songMetadata.js";
+import type * as lib_tempoCatalog from "../lib/tempoCatalog.js";
 import type * as media from "../media.js";
 import type * as metadata from "../metadata.js";
 import type * as metadataLookup from "../metadataLookup.js";
@@ -39,6 +40,7 @@ import type * as settings from "../settings.js";
 import type * as songs from "../songs.js";
 import type * as songsInternal from "../songsInternal.js";
 import type * as storage from "../storage.js";
+import type * as tempoSources from "../tempoSources.js";
 import type * as users from "../users.js";
 import type * as worker from "../worker.js";
 
@@ -66,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   "lib/musicBrainz": typeof lib_musicBrainz;
   "lib/presets": typeof lib_presets;
   "lib/songMetadata": typeof lib_songMetadata;
+  "lib/tempoCatalog": typeof lib_tempoCatalog;
   media: typeof media;
   metadata: typeof metadata;
   metadataLookup: typeof metadataLookup;
@@ -80,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   songs: typeof songs;
   songsInternal: typeof songsInternal;
   storage: typeof storage;
+  tempoSources: typeof tempoSources;
   users: typeof users;
   worker: typeof worker;
 }>;

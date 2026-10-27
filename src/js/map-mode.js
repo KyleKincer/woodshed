@@ -30,7 +30,7 @@ export const MAP_KEYS = [
   ['Shape', [['↑ ↓', 'Beats in this bar (⇧ this bar only)'], ['E', 'Edit bar'], ['R', 'Ramp to the next pin'], ['P', 'Loop these bars'], ['* /', 'Double / halve the tempo'], ['⌥ ↑ ↓', 'Tempo after the last pin'], ['⌘Z', 'Undo'], ['Esc', 'Done']]],
 ];
 
-export function createMapMode({root, engine, songMap, metronome, readOnly = false, getView, setView, setFollow, timeToX, play, setGridVisible, redraw, onLoopChange = () => {}, onDetect = null}) {
+export function createMapMode({root, engine, songMap, metronome, readOnly = false, getView, setView, setFollow, timeToX, play, setGridVisible, redraw, onLoopChange = () => {}, onDetect = null, onSources = null, onExit = null}) {
   const panel = root.querySelector('#map-strip');
   const button = root.querySelector('#map-btn');
   const cursorEl = root.querySelector('#map-cursor');
@@ -55,6 +55,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
         <button type="button" class="mi-btn primary" data-map="pin"></button>
         <button type="button" class="mi-btn" data-map="tap"></button>
         <button type="button" class="mi-btn" data-map="edit">Edit bar ${kbd('E')}</button>
+        ${onSources ? '<button type="button" class="mi-btn" data-map="sources">Find / import…</button>' : ''}
         <button type="button" class="mi-icon" data-map="more" aria-label="More tempo map tools" aria-haspopup="menu" aria-expanded="false">${MORE}</button>
         <span class="mi-rule" aria-hidden="true"></span>
         <button type="button" class="mi-icon" data-map="undo" aria-label="Undo" title="Undo (⌘Z)">${UNDO}</button>
@@ -517,6 +518,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   }
   function exit() {
     if (!active) return;
+    if (onExit?.() === false) return false;
     finishPass(); stopPreview();
     if (editing) closeEditor();
     toggleMenu(false); closeKeys();
@@ -539,6 +541,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
     snap: () => { snapTaps = !snapTaps; localStorage.setItem(TAP_SNAP_KEY, snapTaps ? '1' : '0'); say(snapTaps ? 'Taps snap to the nearest drum hit within 40 ms.' : 'Taps land exactly where you press.'); render(); },
     calibrate: startCalibration, detect: () => onDetect?.((text, kind) => say(text, kind)), keys: toggleKeys,
     more: () => toggleMenu(),
+    sources: () => { finishPass(); stopPreview(); toggleMenu(false); closeKeys(); onSources?.(); },
   };
   panel.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-map]');

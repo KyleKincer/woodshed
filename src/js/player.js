@@ -7,6 +7,10 @@ import { arrangePlayerControls } from './player-layout.js';
 import { MultitrackEngine } from './engine.js';
 import { Metronome } from './metronome.js';
 import { createMapMode } from './map-mode.js';
+import { createTempoSources } from './tempo-sources.js';
+import '../css/tempo-sources.css';
+import { parseBeatText } from './tempo-import.js';
+import { importDrumHits } from './notation/import-drums.js';
 import { fromTimeline } from '../../shared/song-map.ts';
 import { validateBar } from '../../shared/notation.ts';
 import { boundedView, wheelNavigation } from './timeline-navigation.js';
@@ -375,7 +379,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   // Beat grid + tempo-change markers over the visible window.
   const gridCanvas = document.getElementById('grid-canvas');
   const tempoMarkers = document.getElementById('tempo-markers');
-  let mapMode = null;
+  let mapMode = null, tempoSources = null;
   function shouldSnapToGrid() { return grid.visible && grid.snap && metronome?.beats?.length; }
   function persistGridSettings() {
     localStorage.setItem(GRID_STORAGE_KEY, JSON.stringify(grid));
@@ -399,6 +403,8 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   }
   function snapTime(t) {
     const raw = clamp(t, 0, duration);
+    // Alignment targets the recording, independently of the candidate grid.
+    if (tempoSources?.isOpen()) return raw;
     if (!shouldSnapToGrid()) return raw;
     const beats = metronome.beats;
     let lo = 0, hi = beats.length - 1;
@@ -834,7 +840,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     backend.saveTempo(song.id, songMetronome.serialize()).catch(error => console.error('Could not sync count-in and tempo settings:', error));
   }
   function persistTempo() { tempoDirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(flushTempo, 400); }
-  cleanupFns.push(flushTempo);
+  // Source audition must restore a canceled preview before the final save.
 
   function nowText(pos) {
     const q = songMap.positionAt(pos), index = Math.max(0, songMap.barIndexAt(q)), m = songMap.measure(index);
@@ -892,13 +898,39 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
     guard.keep = (id) => bars.some(b => b.measureId === id);
     releasePartGuard = songMap.setGuard('notation', guard);
   };
-  void adoptDrumPart();
+  const drumPartReady = adoptDrumPart();
 
+  let importedDrums = false;
   mapMode = createMapMode({root, engine, songMap, metronome, readOnly, getView: () => ({...view}), setView, setFollow,
     timeToX, play: () => doPlayStop(), redraw: drawGrid, onLoopChange: updateLoopOverlay,
     onDetect: readOnly ? null : (report) => detectBeats(report),
+    onSources: readOnly ? null : async () => { await drumPartReady; if (isCurrent() && mapMode.active()) tempoSources.open(); },
+    onExit: () => tempoSources?.close(),
     setGridVisible: (visible) => { const before = grid.visible; if (grid.visible !== visible) gridToggle.click(); return before; }});
+  const sourceHost = document.createElement('div');
+  sourceHost.className = 'tempo-sources-host';
+  root.querySelector('#map-strip').append(sourceHost);
+  tempoSources = createTempoSources({root: sourceHost, song, songMap, engine,
+    search: args => backend.findTempoSources(args),
+    load: async candidate => {
+      const result = await backend.loadTempoSource(candidate.id);
+      return {...parseBeatText(result.text, {duration, meter: candidate.meter}), sourceUrl: result.sourceUrl};
+    },
+    play: () => doPlayStop({pause: true}),
+    previewDrums: result => importDrumHits(result.drums.hits, songMap.serialize(), {source: result.drums.source, duration}),
+    onImportDrums: async result => {
+      if (!isCurrent()) throw new Error('Reopen the song to import its drum part.');
+      const imported = importDrumHits(result.drums.hits, songMap.serialize(), {title: 'Imported drums', source: result.drums.source, duration});
+      if (!imported.importedCount) throw new Error('This file contains no supported drum hits inside the recording. Keep the tempo map alone.');
+      await transcription.importScore(imported.score, [...(result.drums.warnings || []), ...imported.warnings].join(' '));
+      importedDrums = true;
+      return imported;
+    },
+    onClose: () => { mapMode.refresh(); if (importedDrums) { importedDrums = false; mapMode.exit(); } },
+  });
+  cleanupFns.push(() => { tempoSources.destroy(); sourceHost.remove(); });
   cleanupFns.push(() => { mapMode.destroy(); releasePartGuard(); });
+  cleanupFns.push(flushTempo);
   document.getElementById('m-map').onclick = () => { metroBtn.click(); mapMode.enter(); };
   if (readOnly) document.getElementById('m-map').disabled = true;
 
@@ -1028,6 +1060,10 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   // ---- keyboard ----
   keyHandler = (e) => {
     if (e.defaultPrevented || e.isComposing) return;
+    if (tempoSources.isOpen()) {
+      if (e.key === 'Escape') { e.preventDefault(); tempoSources.close(); }
+      return;
+    }
     if (document.querySelector('.metadata-modal, dialog[open], [role="dialog"]:not(.hidden)')) return;
     if (e.key === 'Escape' && !metroPop.classList.contains('hidden')) { e.preventDefault(); metroBtn.click(); metroBtn.focus(); return; }
     if (e.code === 'Space' && isPointerControl(e.target) && !e.target.closest('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),textarea,[contenteditable]')) {

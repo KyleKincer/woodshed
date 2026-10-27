@@ -297,7 +297,17 @@ export async function createNotationWorkspace({host,song,engine,metronome,songMa
   const releaseGuard=songMap&&!readOnly?songMap.setGuard('notation',noteGuard):()=>{};
   const sharedUpdate=data=>{if(disposed)return;editor=data?.score?new ScoreEditor(fitScore(data.score)):null;selected.clear();timingSignature='';if(editor){cursor=fraction(Math.round(clamp(number(cursor),0,extent(editor.score.timeline)-.0001)*1e6),1e6);const index=active().index;barRange=[index,index];updateTiming();audio?.setScore(editor.score);}else{audio?.setMode('recording');metronome.setNotationTiming?.();}render();};
   const unwatch=readOnly?watchSharedNotation(shareToken,sharedUpdate,()=>sharedUpdate(null)):()=>{};
-  return {handleKey:onKey,flush:()=>store?.flush(),setVisible(visible){host.hidden=!visible;if(!visible){cancelGesture();audio?.setMode('recording');metronome.setNotationTiming?.();timingSignature='';host.closest('.player').classList.remove('notation-expanded');}else{updateTiming();render();focus();}},
+  return {handleKey:onKey,flush:()=>store?.flush(),notice:message,
+    importScore(score,notice){
+      if(readOnly||disposed||!editor)throw new Error('This drum part cannot be edited.');
+      if(store?.blocked)throw new Error('Resolve the saved drum-part conflict before importing.');
+      if(editor.score.bars.some(bar=>bar.hits.length||bar.coverage!=='unstarted'))
+        throw new Error('This song already has drum notation. Keep the tempo map alone; import drums into a song with an empty part.');
+      const next=songMap?mapScore(structuredClone(score)):structuredClone(score);validateScore(next);
+      editor.transact(draft=>Object.assign(draft,next));cursor=fraction(0);selected.clear();barRange=[0,0];changed();
+      message(notice||'Imported drum draft. Review the kit mapping and rhythms against the recording. Undo restores the empty part.');
+    },
+    setVisible(visible){host.hidden=!visible;if(!visible){cancelGesture();audio?.setMode('recording');metronome.setNotationTiming?.();timingSignature='';host.closest('.player').classList.remove('notation-expanded');}else{updateTiming();render();focus();}},
     tick(time){if(!editor||host.hidden||disposed)return;if(layout==='expanded'&&followPlayback&&engine.playing){const current=locate(editor.score.timeline,toQuarter(editor.score.timeline,time)).index;if(current<expandedStart||current>=expandedStart+12){expandedStart=Math.floor(current/12)*12;render();}}
       const view=getView();if(layout!=='expanded'&&JSON.stringify(view)!==lastView){render();return;}
       const surface=host.querySelector('.notation-surface'),head=host.querySelector('.notation-playhead'),q=toQuarter(editor.score.timeline,time),row=surface?._rows?.find(r=>q>=starts(editor.score.timeline)[r.items[0]]&&q<=starts(editor.score.timeline)[r.items.at(-1)]+number(editor.score.timeline.measures[r.items.at(-1)].length));
