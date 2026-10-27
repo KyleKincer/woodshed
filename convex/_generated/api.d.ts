@@ -21,6 +21,7 @@ import type * as jobs from "../jobs.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_billingPolicy from "../lib/billingPolicy.js";
 import type * as lib_catalogRequest from "../lib/catalogRequest.js";
+import type * as lib_chorusCatalog from "../lib/chorusCatalog.js";
 import type * as lib_dedupe from "../lib/dedupe.js";
 import type * as lib_musicBrainz from "../lib/musicBrainz.js";
 import type * as lib_presets from "../lib/presets.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/billingPolicy": typeof lib_billingPolicy;
   "lib/catalogRequest": typeof lib_catalogRequest;
+  "lib/chorusCatalog": typeof lib_chorusCatalog;
   "lib/dedupe": typeof lib_dedupe;
   "lib/musicBrainz": typeof lib_musicBrainz;
   "lib/presets": typeof lib_presets;

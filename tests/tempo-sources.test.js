@@ -36,6 +36,35 @@ test('opening searches title and artist while leaving the current map untouched'
   expect(document.querySelector('a[href*="songsterr.com"]').href).toContain('pattern=Band+Song');
 });
 
+test('Chorus results show source, charter and drum availability before audition', async () => {
+  search.mockResolvedValueOnce({candidates: [{id: 'chorus-one', title: 'Born in Dissonance', artist: 'Meshuggah', source: 'chorus', charter: 'Drum Charter', hasDrums: true, duration: 276}], warnings: []});
+  panel.open(); await settle();
+  expect(document.querySelector('.ts-search-scope').textContent).toBe('Search Chorus Encore and Harmonix Set');
+  const choice = document.querySelector('[data-choice="1"]');
+  expect(choice.textContent).toContain('Chorus Encore');
+  expect(choice.textContent).toContain('Chart by Drum Charter');
+  expect(choice.textContent).toContain('Drum chart');
+  expect(choice.textContent).toContain('4:36');
+  await choose(1);
+  expect(el('detail').textContent).toContain('Chorus Encore · Chart by Drum Charter');
+});
+
+test('partial provider failures remain visible and never claim a complete empty search', async () => {
+  search.mockResolvedValueOnce({candidates: [], warnings: ['Chorus Encore is temporarily unavailable.']});
+  panel.open(); await settle();
+  const message = document.querySelector('.ts-status').textContent;
+  expect(message).toContain('Search incomplete');
+  expect(message).toContain('Chorus Encore is temporarily unavailable');
+  expect(message).toContain('You can still import');
+  expect(message).not.toContain('No matches');
+  expect(el('file').disabled).toBe(false);
+  search.mockResolvedValueOnce({candidates: [{id: 'one', title: 'Studio', artist: 'Band', source: 'chorus'}], warnings: ['Harmonix Set is temporarily unavailable.']});
+  document.querySelector('.ts-search').dispatchEvent(new Event('submit', {bubbles: true, cancelable: true})); await settle();
+  expect(document.querySelector('[data-choice="1"]').textContent).toContain('Studio');
+  expect(document.querySelector('.ts-status').textContent).toContain('1 possible map');
+  expect(document.querySelector('.ts-status').textContent).toContain('Harmonix Set is temporarily unavailable');
+});
+
 test('audition candidates independently, retain each offset, restore and cancel exactly', async () => {
   const original = map.serialize();
   panel.open(); await settle();

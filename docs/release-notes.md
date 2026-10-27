@@ -1,9 +1,9 @@
 Woodshed 1.7.0 adds tempo-map discovery, alignment, and drum-draft imports.
 
-- In Tempo map, choose Find / import to search the human-annotated Harmonix Set or import a MIDI, Clone Hero chart, or beat-timestamp file. Guitar Pro and Songsterr users can export MIDI first; links to Songsterr and Chorus Encore help find other versions.
+- In Tempo map, choose Find / import to search Chorus Encore and the human-annotated Harmonix Set. Import Chorus SNG or ZIP downloads directly, or select a MIDI, Clone Hero chart, or beat-timestamp file. Guitar Pro and Songsterr users can export MIDI first.
 - Try another candidate without losing your map. Each candidate keeps its own offset while the view is open. Move the entire grid earlier or later by 10 or 100 ms, type an offset, or align the first downbeat to the waveform cursor. Cancel restores your map; Keep map saves ordinary editable timing.
 - Audition against the recording with Play / pause. Check near the beginning and end: an offset fixes a constant mismatch; timing drift needs another version or pin corrections. Different recording lengths are called out.
-- MIDI percussion and supported chart drum lanes can seed a drum transcription. Use map & import drums opens an editable, unreviewed draft in Transcribe. The preview reports kit approximations, skipped hits, and rhythmic rounding. Existing written drum parts are never overwritten by this import.
+- MIDI percussion, Rock Band drum tracks, and supported chart drum lanes can seed a drum transcription. Use map & import drums opens an editable, unreviewed draft in Transcribe. The preview reports kit approximations, skipped hits, and rhythmic rounding. Existing written drum parts are never overwritten by this import. Guitar-only charts supply timing without inventing drum notes.
 - Tempo changes, meter changes, compound meters, and negative intro offsets retain their musical timing. Beat-only sources provide timing, not invented drum notes. Unsupported file formats and timing features report an error instead of silently flattening them.
 
 Woodshed 1.6.2 fixes repeated background saving in drum transcription.

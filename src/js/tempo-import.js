@@ -1,4 +1,4 @@
-// Tempo-only interchange. Files are parsed locally; notes and audio are never uploaded.
+// Timing and optional drum-note interchange. Local files are never uploaded.
 import {fraction, number, add, subtract, compare, id, MAX_MEASURES} from '../../shared/notation.ts';
 import {compile, timeAt, positionAt, normalize, validateSongMap, fromBeats, MAX_PINS, MIN_QPM, MAX_QPM} from '../../shared/song-map.ts';
 
@@ -79,6 +79,45 @@ function eventMap(tempos, meters, resolution, duration, offset = 0) {
   return shifted;
 }
 
+// Guitar-game MIDI uses named instrument tracks and lane pitches rather than
+// GM percussion. See the format reference used by YARG:
+// https://solamint.github.io/GuitarGame_ChartFormats/Chart-File-Formats/mid-format/Tracks/Drums/
+const gameDrumNames = new Set(['PART DRUMS', 'PART DRUM', 'PART DRUMS_2X']);
+function gameMidiDrums(track, resolution) {
+  const expert = track.notes.filter(note => note.midi >= 95 && note.midi <= 101);
+  if (!expert.length) return null;
+  if (expert.length > 16000) fail('This MIDI file contains more than 16000 drum hits.');
+  const toms = track.notes.filter(note => note.midi >= 110 && note.midi <= 112);
+  const fiveLane = !toms.length && expert.some(note => note.midi === 101);
+  const tomRanges = new Map([110, 111, 112].map(midi => {
+    const merged = [];
+    for (const marker of toms.filter(note => note.midi === midi).sort((a, b) => a.tick - b.tick)) {
+      // Ticks are integers; a zero-length marker applies at its own tick.
+      const end = marker.tick + Math.max(1, marker.length), previous = merged.at(-1);
+      if (previous && marker.tick <= previous.end) previous.end = Math.max(previous.end, end);
+      else merged.push({start: marker.tick, end});
+    }
+    return [midi, merged];
+  }));
+  const tomAt = (midi, tick) => {
+    const ranges = tomRanges.get(midi); let low = 0, high = ranges.length - 1, found = -1;
+    while (low <= high) { const mid = (low + high) >> 1; if (ranges[mid].start <= tick) { found = mid; low = mid + 1; } else high = mid - 1; }
+    return found >= 0 && tick < ranges[found].end;
+  };
+  const hits = expert.map(note => {
+    const midi = note.midi <= 96 ? 36 : note.midi === 97 ? 38 :
+      note.midi === 98 ? (!fiveLane && tomAt(110, note.tick) ? 48 : 42) :
+      note.midi === 99 ? (fiveLane || tomAt(111, note.tick) ? 47 : 51) :
+      note.midi === 100 ? (!fiveLane && tomAt(112, note.tick) ? 45 : 49) : 45;
+    return {q: note.tick / resolution, midi, durationQ: note.length / resolution, velocity: note.velocity / 127};
+  });
+  const warnings = ['Expert game lanes approximate the drum kit: yellow cymbal becomes hi-hat, blue cymbal ride, and green cymbal crash. Tom-marker spans are retained. Check the imported part against the recording.'];
+  if (expert.some(note => note.midi === 95)) warnings.push('Expert+ / double-kick notes are included in the drum draft.');
+  if (fiveLane) warnings.push('A five-lane drum chart was inferred from its fifth-lane notes; check cymbal and tom assignments.');
+  if (track.texts.some(text => /mix[ _]+3[ _]+drums\d+d(?:\]|$)/i.test(text))) warnings.push('This chart contains disco-flip sections. Check snare and hi-hat assignments in those sections.');
+  return {hits, source: 'chart', warnings};
+}
+
 export function parseMidiTempo(value, {duration} = {}) {
   const bytes = bytesOf(value);
   if (bytes.length > MAX_TEMPO_FILE_BYTES) fail('Choose a tempo file smaller than 10 MB.');
@@ -98,12 +137,12 @@ export function parseMidiTempo(value, {duration} = {}) {
   if(!tracks || tracks>1024 || (format===0&&tracks!==1)) fail('The MIDI track count is invalid.');
   if(resolution&0x8000) fail('SMPTE MIDI timing is not a musical tempo map. Export a ticks-per-quarter-note MIDI file instead.');
   p=headerEnd;
-  const tempos=[], meters=[], drumHits=[]; let events=0;
+  const tempos=[], meters=[], midiTracks=[]; let events=0;
   for(let track=0;track<tracks;track++) {
     limit=bytes.length;
     if(tag()!=='MTrk') fail('The MIDI file is missing a track.');
     const size=u32();need(size);const end=p+size;limit=end;
-    let tick=0,running=0,ended=false;const activeDrums=new Map();
+    let tick=0,running=0,ended=false,trackName='';const activeNotes=new Map(),notes=[],texts=[];
     while(p<end) {
       if(++events>MAX_EVENTS) fail('This MIDI file has too many events.');
       tick+=vlq();validTick(tick);
@@ -113,17 +152,23 @@ export function parseMidiTempo(value, {duration} = {}) {
         running=status;const count=(status&0xe0)===0xc0?1:2,values=[];
         for(let i=0;i<count;i++) {const value=read();if(value>=0x80)fail('The MIDI file has an invalid note event.');values.push(value);}
         const kind=status&0xf0;
-        if((status&0x0f)===9 && (kind===0x90||kind===0x80)) {
-          const [midi,velocity]=values,active=activeDrums.get(midi)||[];
-          if(kind===0x90&&velocity>0) {
-            if(drumHits.length>=16000)fail('This MIDI file contains more than 16000 drum hits.');
-            const hit={q:tick/resolution,midi,durationQ:0,velocity:velocity/127};drumHits.push(hit);active.push(hit);activeDrums.set(midi,active);
-          } else if(active.length) {const hit=active.shift();hit.durationQ=tick/resolution-hit.q;}
+        if(kind===0x90||kind===0x80) {
+          const [midi,velocity]=values,channel=status&0x0f,key=`${channel}:${midi}`,active=activeNotes.get(key)||[];
+          // Track names need not precede notes, so retain possible game lanes
+          // and GM percussion until the full track's metadata is available.
+          if(channel===9 || (midi>=95&&midi<=112)) {
+            if(kind===0x90&&velocity>0) {
+              if(notes.length>=100000)fail('This MIDI track contains too many possible drum events.');
+              const note={tick,midi,channel,length:0,velocity};notes.push(note);active.push(note);activeNotes.set(key,active);
+            } else if(active.length) {const note=active.shift();note.length=tick-note.tick;}
+          }
         }
       } else if(status===0xff) {
         running=0;const type=read(),length=vlq();need(length);
         if(type===0x51) { if(length!==3)fail('The MIDI tempo event is invalid.');const us=bytes[p]*65536+bytes[p+1]*256+bytes[p+2];if(!us)fail('The MIDI tempo must be positive.');tempos.push({tick,bpm:60000000/us}); }
         else if(type===0x58) { if(length!==4)fail('The MIDI time signature is invalid.');meters.push({tick,numerator:bytes[p],denominator:2**bytes[p+1]}); }
+        else if(type===0x03 && length<=256) trackName=new TextDecoder().decode(bytes.subarray(p,p+length)).trim().toUpperCase();
+        else if(type===0x01 && length<=1024) texts.push(new TextDecoder().decode(bytes.subarray(p,p+length)));
         else if(type===0x2f) { if(length)fail('The MIDI end-of-track event is invalid.');ended=true; }
         p+=length;
         if(ended) { if(p!==end)fail('The MIDI file contains data after an end-of-track event.');break; }
@@ -131,10 +176,23 @@ export function parseMidiTempo(value, {duration} = {}) {
       else fail('The MIDI file contains an unsupported system event.');
     }
     if(!ended) fail('The MIDI track has no end-of-track event.');
+    for(const active of activeNotes.values()) for(const note of active) if(note.midi>=110&&note.midi<=112) note.length=tick-note.tick;
+    midiTracks.push({name:trackName,notes,texts});
     limit=bytes.length;
   }
   if(p!==bytes.length) fail('The MIDI file has unexpected trailing data.');
-  return {map:eventMap(tempos,meters,resolution,duration),format:'midi',warnings:tempos.length?[]:['This MIDI stores no tempo events; the standard default of 120 BPM is being used.'],...(drumHits.length?{drums:{hits:drumHits.sort((a,b)=>a.q-b.q),source:'midi',warnings:[]}}:{})};
+  const namedDrums=midiTracks.filter(track=>gameDrumNames.has(track.name));
+  // Prefer the standard chart when an author also supplied an alternate 2x
+  // track; combining both would duplicate the entire part.
+  const primary=namedDrums.find(track=>track.name==='PART DRUMS') || namedDrums.find(track=>track.name==='PART DRUM') || namedDrums[0];
+  let drums=primary && gameMidiDrums(primary,resolution);
+  if(!drums) {
+    const hits=midiTracks.flatMap(track=>track.notes.filter(note=>note.channel===9).map(note=>({q:note.tick/resolution,midi:note.midi,durationQ:note.length/resolution,velocity:note.velocity/127})));
+    if(hits.length) drums={hits,source:'midi',warnings:[]};
+  }
+  if(drums?.hits.length>16000)fail('This MIDI file contains more than 16000 drum hits.');
+  if(drums) drums.hits.sort((a,b)=>a.q-b.q);
+  return {map:eventMap(tempos,meters,resolution,duration),format:'midi',warnings:tempos.length?[]:['This MIDI stores no tempo events; the standard default of 120 BPM is being used.'],...(drums?{drums}:{})};
 }
 
 export function parseChartTempo(text, {duration} = {}) {
@@ -159,7 +217,7 @@ export function parseChartTempo(text, {duration} = {}) {
     // A marks editor locks; playback follows the B events, as specified by .chart.
   }
   if(!tempos.length)fail('This chart contains no tempo events.');
-  const drumSection=section('ExpertDrums'),drumHits=[];
+  const drumSection=section('ExpertDrums'),drumHits=[],drumWarnings=['Game lanes approximate the kit: yellow cymbal becomes hi-hat, blue cymbal ride, and green cymbal crash. Check the imported drum sounds and rhythms.'];
   if(drumSection!==undefined) {
     const notes=new Map();
     for(const raw of drumSection.split(/\r?\n/)) {
@@ -168,15 +226,18 @@ export function parseChartTempo(text, {duration} = {}) {
       if(!notes.has(tick))notes.set(tick,[]);notes.get(tick).push({lane,length});
       if(notes.size>16000)fail('This chart contains too many drum hits.');
     }
+    const allNotes=[...notes.values()].flat(),hasCymbals=allNotes.some(note=>note.lane>=66&&note.lane<=68);
+    const fiveLane=!hasCymbals&&allNotes.some(note=>note.lane===5 || (note.lane<=5&&note.length>0));
+    if(fiveLane)drumWarnings.push('A five-lane drum chart was inferred from its fifth-lane notes or drum sustains; check cymbal and tom assignments.');
     for(const [tick,at] of notes) for(const note of at) {
       const cymbal=at.some(n=>n.lane===note.lane+64),lane=note.lane;
-      const midi=lane===0||lane===32?36:lane===1?38:lane===2?(cymbal?42:48):lane===3?(cymbal?51:47):lane===4?(cymbal?49:45):lane===5?49:null;
+      const midi=lane===0||lane===32?36:lane===1?38:lane===2?(fiveLane||cymbal?42:48):lane===3?(cymbal?51:47):lane===4?(fiveLane||cymbal?49:45):lane===5?45:null;
       if(midi===null)continue;
       if(drumHits.length>=16000)fail('This chart contains more than 16000 drum hits.');
       drumHits.push({q:tick/resolution,midi,durationQ:note.length/resolution,velocity:.8});
     }
   }
-  return {map:eventMap(tempos,meters,resolution,duration,offset),format:'chart',warnings:offset?[`The chart's ${offset.toFixed(3)} s audio offset is included.`]:[],...(drumHits.length?{drums:{hits:drumHits.sort((a,b)=>a.q-b.q),source:'chart',warnings:['Game lanes approximate the kit: yellow cymbal becomes hi-hat, blue cymbal ride, and green cymbal crash. Check the imported drum sounds and rhythms.']}}:{})};
+  return {map:eventMap(tempos,meters,resolution,duration,offset),format:'chart',warnings:offset?[`The chart's ${offset.toFixed(3)} s audio offset is included.`]:[],...(drumHits.length?{drums:{hits:drumHits.sort((a,b)=>a.q-b.q),source:'chart',warnings:drumWarnings}}:{})};
 }
 
 /** Harmonix/Isophonics rows: seconds, beat-in-bar, optional bar number. Beat units are not encoded. */
@@ -238,7 +299,8 @@ export function parseTempoFile(value, {name='',duration,denominator,meter} = {})
 }
 
 export async function importTempoFile(file, {duration,denominator,meter} = {}) {
-  if(!file||typeof file.arrayBuffer!=='function')fail('Choose a MIDI, Clone Hero chart, or beat timestamp file.');
+  if(!file||typeof file.arrayBuffer!=='function')fail('Choose a MIDI, Clone Hero chart, Chorus SNG/ZIP, or beat timestamp file.');
+  if(/\.(sng|zip)$/i.test(file.name))return (await import('./tempo-archive.js')).importTempoArchive(file,{duration,denominator,meter});
   if(file.size>MAX_TEMPO_FILE_BYTES)fail('Choose a tempo file smaller than 10 MB.');
   return parseTempoFile(await file.arrayBuffer(),{name:file.name,duration,denominator,meter});
 }

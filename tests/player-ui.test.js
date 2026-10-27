@@ -5,7 +5,7 @@ const state = vi.hoisted(() => ({engines:[],load:null,notation:null}));
 vi.mock('../src/js/backend.js', () => ({onSong:vi.fn(()=>()=>{}),signKeys:vi.fn(async()=>({d:'test.wav'})),savePractice:vi.fn(async()=>{}),saveTempo:vi.fn(async()=>{}),
   getNotation:vi.fn(()=>state.notation),
   findTempoSources:vi.fn(async()=>[{id:'test-map',title:'Studio timing',artist:'Band',source:'harmonix',duration:10}]),
-  loadTempoSource:vi.fn(async()=>({text:'1 1 1\n1.5 2 1\n2 3 1\n2.5 4 1\n3 1 2',sourceUrl:'https://example.test'})),
+  loadTempoSource:vi.fn(async()=>({format:'beats',text:'1 1 1\n1.5 2 1\n2 3 1\n2.5 4 1\n3 1 2',sourceUrl:'https://example.test'})),
 }));
 vi.mock('../src/js/waveform.js', () => ({computePeaksRange:()=>[],drawWaveform:()=>{}}));
 vi.mock('../src/js/engine.js', () => ({MultitrackEngine:class {
@@ -53,6 +53,18 @@ test('a delayed notation load cannot open sources after leaving map mode',async(
   document.querySelector('[data-map=sources]').click();
   document.getElementById('map-btn').click();resolve(null);await settleSource();
   expect(document.querySelector('.tempo-sources').hidden).toBe(true);
+});
+test('online Chorus chart bytes preserve package delay and offer supported drum drafts',async()=>{
+  const backend=await import('../src/js/backend.js');backend.saveTempo.mockClear();
+  backend.loadTempoSource.mockResolvedValueOnce({format:'chart',data:new TextEncoder().encode('[Song]\n{\nResolution = 192\n}\n[SyncTrack]\n{\n0 = B 120000\n}\n[ExpertDrums]\n{\n0 = N 0 0\n192 = N 1 0\n}').buffer,metadata:{delay:'500'},sourceUrl:'https://www.enchor.us'});
+  await openPlayer(song);document.getElementById('map-btn').click();
+  document.querySelector('[data-map=sources]').click();await settleSource();
+  document.querySelector('[data-choice="1"]').click();
+  for(let i=0;i<15&&document.querySelector('[data-ts=current]').textContent!=='Studio timing';i++)await new Promise(resolve=>setTimeout(resolve,10));
+  expect(document.querySelector('[data-ts=drums]').hidden).toBe(false);
+  expect(document.querySelector('[data-ts=warning]').textContent).toContain('0.500 s audio delay');
+  document.querySelector('[data-ts=keep]').click();closePlayer();
+  expect(backend.saveTempo.mock.lastCall[1].songMap.pins[0].time).toBe(.5);
 });
 test('loading progress is contained inside the track panel and controls become ready together',async()=>{
   let finish;state.load=new Promise(resolve=>{finish=resolve;});
