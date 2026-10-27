@@ -1,9 +1,9 @@
 // Low-level alphaTab import only: no notation renderer, synthesizer, fonts,
 // soundfonts or network requests. This module is loaded on the first GP import.
-import {Settings, importer, midi} from '@coderline/alphatab';
+import {Settings, importer, midi, model} from '@coderline/alphatab';
 import {parseMidiTempo, MAX_TEMPO_FILE_BYTES} from './tempo-import.js';
 import {preflightGuitarPro} from './guitar-pro-bounds.js';
-import {MAX_MEASURES} from '../../shared/notation.ts';
+import {MAX_MEASURES, KIT} from '../../shared/notation.ts';
 import {MAX_PINS} from '../../shared/song-map.ts';
 
 const fail = message => { throw new Error(message); };
@@ -94,6 +94,72 @@ export function parseGuitarPro(value, {duration} = {}) {
   generator.generate();
   if (handler.leadingGrace) warnings.push('Grace hits before the first downbeat were omitted; bar 1 stays at time zero. Check the intro and offset.');
   const result = parseMidiTempo(file.toBinary(), {duration});
+  const lookups = generator.tickLookup.masterBars;
+  // Section names label the played bars, in playback order.
+  lookups.forEach((lookup, i) => { const label = lookup.masterBar.section?.text?.trim(); if (label && result.map.measures[i]) result.map.measures[i].label = label.slice(0, 120); });
+  const drums = percussion.size ? guitarProDrums(score, lookups, percussion) : null;
   return {...result, format:'guitar-pro', warnings:[...new Set([...warnings, ...result.warnings])],
-    ...(result.drums ? {drums:{...result.drums, source:'guitar-pro', warnings:['Guitar Pro percussion is an editable starting point. Check kit articulations, ornaments and written rhythms against the recording.']}} : {})};
+    ...(drums?.hits.length ? {drums:{...drums, source:'guitar-pro', warnings:['Guitar Pro percussion keeps its articulations, accents, ghosts, flams and tuplets. Check it against the recording.']}} : {})};
+}
+
+const QUARTER = 960;
+const VELOCITY = [0.25, 0.35, 0.45, 0.55, 0.7, 0.82, 0.92, 1];
+// alphaTab reports the stroke value (beat value × 2^slashes); 32nds and
+// faster read as a three-slash (buzz) roll.
+const rollFor = speed => speed >= 32 ? 3 : speed >= 16 ? 2 : 1;
+const FEET = new Set(KIT.filter(k => k.voice === 2).flatMap(k => [k.gp, k.midi]).concat(35));
+
+/**
+ * Read drum notes from the score model in playback order (repeats expanded),
+ * keeping the articulation, accents, ghosts, grace notes and tuplets that a
+ * MIDI rendering would lose.
+ */
+export function guitarProDrums(score, lookups, percussion) {
+  const hits = [], tuplets = [];
+  for (const lookup of lookups) {
+    const barQ = lookup.start / QUARTER, index = lookup.masterBar.index;
+    for (const trackIndex of percussion) {
+      const track = score.tracks[trackIndex];
+      const articulation = note => track.percussionArticulations?.[note.percussionArticulation] ?? null;
+      for (const staff of track.staves) {
+        const bar = staff.bars[index];
+        if (!bar) continue;
+        for (const voice of bar.voices) {
+          let graces = [];
+          const seenGroups = new Set();
+          for (const beat of voice.beats) {
+            if (beat.graceType !== model.GraceType.None) { graces.push(beat); continue; }
+            if (beat.isEmpty || beat.isRest || !beat.notes.length || beat.notes.every(n => n.isTieDestination)) { graces = []; continue; }
+            const q = barQ + beat.displayStart / QUARTER;
+            const group = beat.tupletGroup;
+            if (group && beat.hasTuplet && !seenGroups.has(group)) {
+              seenGroups.add(group);
+              const members = group.beats.filter(b => b.graceType === model.GraceType.None);
+              const length = members.reduce((sum, b) => sum + b.displayDuration, 0);
+              const unit = Math.min(...members.map(b => b.displayDuration));
+              const count = Math.round(length / unit);
+              // A tuplet in a hands-only or feet-only group applies to that voice.
+              const voices = new Set(members.flatMap(b => b.notes.map(n => { const art = articulation(n); return FEET.has(art ? art.id : n.percussionArticulation) || FEET.has(art?.outputMidiNumber) ? 2 : 1; })));
+              if (count >= 2 && Math.abs(count * unit - length) < 1) tuplets.push({q: barQ + members[0].displayStart / QUARTER, length: length / QUARTER, count, ...(voices.size === 1 ? {voice: [...voices][0]} : {})});
+            }
+            const velocity = VELOCITY[Math.max(0, Math.min(7, beat.dynamics ?? 4))];
+            const roll = beat.isTremolo ? rollFor(beat.tremoloSpeed) : 0;
+            for (const note of beat.notes) {
+              // A tie continues the previous stroke; it is not a new hit.
+              if (note.isTieDestination) continue;
+              const art = articulation(note), gpId = art ? art.id : note.percussionArticulation;
+              const midiNote = art ? art.outputMidiNumber : note.percussionArticulation;
+              const graceCount = graces.filter(g => g.notes.some(n => n.percussionArticulation === note.percussionArticulation)).length;
+              hits.push({q, midi: midiNote, gp: gpId, velocity, durationQ: beat.displayDuration / QUARTER,
+                accent: note.accentuated === model.AccentuationType.Normal, heavy: note.accentuated === model.AccentuationType.Heavy,
+                ghost: !!note.isGhost, flam: graceCount === 1, drag: graceCount > 1, ...(roll ? {roll} : {})});
+            }
+            graces = [];
+          }
+        }
+      }
+    }
+  }
+  hits.sort((a, b) => a.q - b.q);
+  return {hits, tuplets};
 }

@@ -1,6 +1,7 @@
 import { fetchMedia } from './media-fetch.js';
 import { Zip, ZipPassThrough } from 'fflate';
 import * as backend from './backend.js';
+import { upgradeScore } from '../../shared/notation.ts';
 const encoder = new TextEncoder();
 const safe = text => String(text).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,100) || 'song';
 
@@ -36,7 +37,8 @@ export async function exportLibrary(onProgress = () => {}) {
     for(const [i,song] of songs.entries()) {
       onProgress(`Exporting ${i+1}/${songs.length}: ${song.title}`);
       const notation=await backend.getNotation(song.id);
-      if(notation)await add(`${safe(song.title)}-${song.id}/drums.woodshed.json`,encoder.encode(JSON.stringify({format:'woodshed-notation',version:1,song:{title:song.title,artist:song.artist,duration:song.duration},score:notation.score},null,2)));
+      // Stored parts can mix version 1 rows into a version 2 part; exports are always current.
+      if(notation)await add(`${safe(song.title)}-${song.id}/drums.woodshed.json`,encoder.encode(JSON.stringify({format:'woodshed-notation',version:2,song:{title:song.title,artist:song.artist,duration:song.duration},score:upgradeScore(notation.score)},null,2)));
       const keys=[...song.stems.map(s=>s.key),...(song.coverKey?[song.coverKey]:[])];
       const urls=await backend.signKeys(keys);
       for(const key of keys) {

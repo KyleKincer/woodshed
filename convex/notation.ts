@@ -4,7 +4,7 @@ import type {QueryCtx,MutationCtx} from './_generated/server';
 import type {Id} from './_generated/dataModel';
 import {requireUserId,requireWritableUserId} from './lib/auth';
 import {barValidator,headerValidator} from './lib/notationValidators';
-import {validateTimeline,validateBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
+import {validateTimeline,validateBar,upgradeBar,currentBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
 import {sameContent} from '../shared/content';
 
@@ -37,10 +37,16 @@ export const get=query({args:{songId:v.optional(v.id('songs')),token:v.optional(
 export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),mutationId:v.string(),header:headerValidator,bars:v.array(barValidator)},handler:async(ctx,args)=>{
   const userId=await requireWritableUserId(ctx),song=await ctx.db.get(args.songId);if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');
   if(args.mutationId.length>100||!args.mutationId||args.bars.length>16||!Number.isSafeInteger(args.baseRevision)||args.baseRevision<0||!args.header.title.trim()||args.header.title.length>100)throw new ConvexError('Invalid score update.');
-  validateTimeline(args.header.timeline);for(const bar of args.bars)validateBar(bar,args.header.timeline);
+  validateTimeline(args.header.timeline);
+  // Version 2 bars must already be current: validateBar checks the upgraded
+  // bar, so a rest or duration field here would otherwise be stored as-is.
+  for(const bar of args.bars){if(args.header.version===2&&upgradeBar(bar)!==bar)throw new ConvexError('A note does not fit this bar or has invalid data.');validateBar(bar,args.header.timeline);}
   if(new Set(args.bars.map(b=>b.measureId)).size!==args.bars.length)throw new ConvexError('Duplicate bar update.');
   const part=await ctx.db.query('notationParts').withIndex('by_songId',q=>q.eq('songId',args.songId)).unique();
   if(part?.lastMutation===args.mutationId)return {revision:part.revision};
+  // Parts are upgraded to derived-rhythm notation by current clients. An older
+  // client must not write version 1 bars back over a version 2 part.
+  if(part&&part.header.version===2&&args.header.version===1)throw new ConvexError({code:'NOTATION_UPGRADE_REQUIRED',message:'This drum part uses newer notation. Update Woodshed to edit it.'});
   if((part?.revision??0)!==args.baseRevision)throw new ConvexError({code:'NOTATION_CONFLICT',message:'This part changed on another device. Your local edits are retained. Export them or load the saved version.'});
   // Older clients can loop on object-key ordering. Stop their drain loop with
   // an error, before rereading every bar or invalidating shared subscriptions.
@@ -53,7 +59,9 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   const measureIds=new Set(args.header.timeline.measures.map(m=>m.id));
   const unchangedRows=rows.filter(r=>measureIds.has(r.bar.measureId)&&!args.bars.some(b=>b.measureId===r.bar.measureId));
   for(const row of unchangedRows)validateBar(row.bar,args.header.timeline);
-  const hitCount=unchangedRows.reduce((n,r)=>n+r.bar.hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
+  // Legacy rows hold rests and off-grid positions; count them as clients see them.
+  const measures=new Map(args.header.timeline.measures.map(m=>[m.id,m]));
+  const hitCount=unchangedRows.reduce((n,r)=>n+currentBar(r.bar,measures.get(r.bar.measureId)!).hits.length,0)+args.bars.reduce((n,b)=>n+b.hits.length,0);
   if(hitCount>MAX_HITS)throw new ConvexError(`A part can contain up to ${MAX_HITS} hits.`);
   if(part&&sameContent(part.header,args.header)&&rows.every(r=>measureIds.has(r.bar.measureId))&&args.bars.every(bar=>sameContent(bar,rows.find(r=>r.bar.measureId===bar.measureId)?.bar)))unchanged();
   const revision=args.baseRevision+1, fields={userId,songId:args.songId,header:args.header,revision,lastMutation:args.mutationId,hitCount};

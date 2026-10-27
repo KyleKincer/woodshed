@@ -1,11 +1,12 @@
 import {convex} from '../auth.js';
 import {anyApi as api} from 'convex/server';
 import {sameContent as equal} from '../../../shared/content.ts';
+import {upgradeScore,upgradeBar} from '../../../shared/notation.ts';
 const openDB=()=>new Promise((resolve,reject)=>{const request=indexedDB.open('woodshed-notation',1);request.onupgradeneeded=()=>request.result.createObjectStore('drafts');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
 async function journal(key,value){const db=await openDB();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('drafts',value===undefined?'readonly':'readwrite'),store=tx.objectStore('drafts');const request=value===undefined?store.get(key):store.put(value,key);tx.oncomplete=()=>resolve(request.result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}finally{db.close();}}
 const clone=value=>structuredClone(value);
-const header=score=>({version:score.version,title:score.title,timeline:score.timeline});
-const canonical=score=>score?{...header(clone(score)),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).sort((a,b)=>a.measureId.localeCompare(b.measureId))}:null;
+const header=score=>({version:score.version,title:score.title,...(score.layout?{layout:score.layout}:{}),timeline:score.timeline});
+const canonical=input=>{if(!input)return null;const score=upgradeScore(input);return {...header(clone(score)),bars:score.bars.filter(b=>b.hits.length||b.coverage!=='unstarted').map(clone).sort((a,b)=>a.measureId.localeCompare(b.measureId))};};
 async function savePart(args){
   try{return await convex.mutation(api.notation.save,args);}
   catch(error){if(error.data?.code!=='NOTATION_UNCHANGED')throw error;return {revision:error.data.revision};}
@@ -20,7 +21,9 @@ export class NotationStore {
     this.baseline=remote?.score??null;this.revision=remote?.revision??0;
     if(draft?.score&&(draft.pending||!equal(canonical(draft.score),canonical(draft.baseline)))){
       this.score=canonical(draft.score);this.baseline=canonical(draft.baseline);this.revision=draft.revision;this.pending=draft.pending;
-      if(this.pending)this.pending.nextBaseline=canonical(this.pending.nextBaseline);
+      if(this.pending){this.pending.nextBaseline=canonical(this.pending.nextBaseline);
+        // A journal written before derived-rhythm notation replays as version 2.
+        const args=this.pending.args;if(args.header?.version===1)this.pending.args={...args,header:header(upgradeScore({...args.header,bars:[]})),bars:args.bars.map(upgradeBar)};}
       let replayed=false;
       if(this.pending){try{const result=await savePart(this.pending.args);this.revision=result.revision;this.baseline=this.pending.nextBaseline;this.pending=null;replayed=true;await this.persist();}catch(error){if(error.data?.code==='NOTATION_CONFLICT')this.blocked=true;}}
       // A successful replay is newer than the remote snapshot fetched above.

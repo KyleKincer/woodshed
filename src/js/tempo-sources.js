@@ -84,7 +84,8 @@ export function createTempoSources({root, song, songMap, engine, search, load, o
     const map = offsetTempoMap(item.result.map, offset);
     // Bar N stays attached to bar N of the user's transcription. The store's
     // notation guards refuse a meter or length change that would strand notes.
-    map.measures.forEach((m, i) => { if (baseline.measures[i]) m.id = baseline.measures[i].id; });
+    // Section labels the user wrote survive unless the source names that bar.
+    map.measures.forEach((m, i) => { if (baseline.measures[i]) { m.id = baseline.measures[i].id; if (!m.label && baseline.measures[i].label) m.label = baseline.measures[i].label; } });
     songMap.replace(map, 'tempo-source');
     item.offset = offset;
     selected = item;
