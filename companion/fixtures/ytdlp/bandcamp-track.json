@@ -1,0 +1,59 @@
+{
+ "id": "3912845567",
+ "title": "Harbor Lights",
+ "track": "Harbor Lights",
+ "uploader": "Ada Moreno",
+ "uploader_id": "adamoreno",
+ "artist": "Ada Moreno",
+ "artists": [
+  "Ada Moreno"
+ ],
+ "album": "Salt & Signal",
+ "duration": 221.6,
+ "thumbnail": "https://f4.bcbits.com/img/a2318841220_10.jpg",
+ "thumbnails": [
+  {
+   "url": "https://f4.bcbits.com/img/a2318841220_10.jpg",
+   "id": "10"
+  },
+  {
+   "url": "https://f4.bcbits.com/img/a2318841220_16.jpg",
+   "width": 700,
+   "height": 700,
+   "id": "16"
+  },
+  {
+   "url": "https://f4.bcbits.com/img/a2318841220_7.jpg",
+   "width": 160,
+   "height": 160,
+   "id": "7"
+  }
+ ],
+ "webpage_url": "https://adamoreno.bandcamp.com/track/harbor-lights",
+ "original_url": "https://adamoreno.bandcamp.com/track/harbor-lights",
+ "webpage_url_basename": "harbor-lights",
+ "webpage_url_domain": "bandcamp.com",
+ "extractor": "Bandcamp",
+ "extractor_key": "Bandcamp",
+ "formats": [
+  {
+   "format_id": "mp3-128",
+   "url": "https://t4.bcbits.com/stream/abc/mp3-128/3912845567",
+   "ext": "mp3",
+   "abr": 128,
+   "vcodec": "none"
+  }
+ ],
+ "display_id": "harbor-lights",
+ "fulltitle": "Harbor Lights",
+ "duration_string": "3:41",
+ "release_year": 2024,
+ "_type": "video",
+ "epoch": 1793172670,
+ "_version": {
+  "version": "2026.10.26",
+  "current_git_head": null,
+  "release_git_head": "c91f8de0bfb3577894abad716eaaa01659e6bd14",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}

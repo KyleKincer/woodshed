@@ -1,0 +1,5 @@
+{
+  "$comment": "yt-dlp arguments shared by companion/pipeline.py (downloads) and companion/lookup.mjs (B4 lookups). 'base' goes on every invocation; 'lookup' is added for metadata-only lookups (architecture §6.10 CPA).",
+  "base": ["--js-runtimes", "node", "--remote-components", "ejs:github", "--ignore-config", "--no-playlist"],
+  "lookup": ["--skip-download", "--no-warnings", "--dump-single-json"]
+}

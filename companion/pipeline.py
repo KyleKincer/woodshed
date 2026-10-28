@@ -1,7 +1,27 @@
 """Local-only audio acquisition, separation and encoding. No cloud credentials."""
 from __future__ import annotations
 import json, os, pathlib, re, subprocess, sys
-YTDLP_ARGS = ['--js-runtimes', 'node', '--remote-components', 'ejs:github', '--ignore-config', '--no-playlist']
+
+
+def _load_ytdlp_args() -> list[str]:
+    """The base yt-dlp arguments, shared with companion/lookup.mjs through ytdlp-args.json.
+
+    Frozen builds carry the file next to the bundled modules (sys._MEIPASS).
+    """
+    roots = [pathlib.Path(__file__).resolve().parent]
+    if getattr(sys, "_MEIPASS", None):
+        roots.append(pathlib.Path(sys._MEIPASS))
+    for root in roots:
+        path = root / "ytdlp-args.json"
+        if path.is_file():
+            args = json.loads(path.read_text(encoding="utf-8")).get("base")
+            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+                raise RuntimeError(f"{path} has no valid 'base' argument list.")
+            return args
+    raise RuntimeError("ytdlp-args.json is missing from the processor.")
+
+
+YTDLP_ARGS = _load_ytdlp_args()
 STEM_SETS = {
     "htdemucs_6s": ["drums", "bass", "other", "vocals", "guitar", "piano"],
 }

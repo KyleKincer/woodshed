@@ -1,0 +1,111 @@
+{
+ "id": "1789012345",
+ "uploader": "Ada Moreno",
+ "uploader_id": "1093221",
+ "uploader_url": "https://soundcloud.com/ada-moreno",
+ "timestamp": 1712345678,
+ "title": "Harbor Lights",
+ "track": "Harbor Lights",
+ "description": "",
+ "duration": 221.413,
+ "webpage_url": "https://soundcloud.com/adamoreno/harbor-lights",
+ "license": "all-rights-reserved",
+ "view_count": 40213,
+ "like_count": 812,
+ "comment_count": 14,
+ "repost_count": 33,
+ "genres": [
+  "Indie"
+ ],
+ "tags": [],
+ "artists": [],
+ "thumbnails": [
+  {
+   "id": "mini",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-mini.jpg",
+   "width": 16,
+   "height": 16
+  },
+  {
+   "id": "tiny",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-tiny.jpg",
+   "width": 20,
+   "height": 20
+  },
+  {
+   "id": "small",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-small.jpg",
+   "width": 32,
+   "height": 32
+  },
+  {
+   "id": "badge",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-badge.jpg",
+   "width": 47,
+   "height": 47
+  },
+  {
+   "id": "t67x67",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-t67x67.jpg",
+   "width": 67,
+   "height": 67
+  },
+  {
+   "id": "large",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-large.jpg",
+   "width": 100,
+   "height": 100
+  },
+  {
+   "id": "t300x300",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-t300x300.jpg",
+   "width": 300,
+   "height": 300
+  },
+  {
+   "id": "crop",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-crop.jpg",
+   "width": 400,
+   "height": 400
+  },
+  {
+   "id": "t500x500",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-t500x500.jpg",
+   "width": 500,
+   "height": 500
+  },
+  {
+   "id": "original",
+   "url": "https://i1.sndcdn.com/artworks-0p1789012345x-original.jpg",
+   "preference": 10
+  }
+ ],
+ "formats": [
+  {
+   "format_id": "hls_opus_64",
+   "url": "https://cf-hls-opus-media.sndcdn.com/playlist/0p.m3u8",
+   "ext": "opus",
+   "abr": 64,
+   "vcodec": "none",
+   "protocol": "m3u8_native"
+  }
+ ],
+ "original_url": "https://soundcloud.com/adamoreno/harbor-lights?in=adamoreno/sets/salt-signal",
+ "webpage_url_basename": "harbor-lights",
+ "webpage_url_domain": "soundcloud.com",
+ "extractor": "soundcloud",
+ "extractor_key": "Soundcloud",
+ "epoch": 1793172660,
+ "duration_string": "3:41",
+ "release_year": 2024,
+ "_version": {
+  "version": "2026.10.26",
+  "current_git_head": null,
+  "release_git_head": "c91f8de0bfb3577894abad716eaaa01659e6bd14",
+  "repository": "yt-dlp/yt-dlp"
+ },
+ "thumbnail": "https://i1.sndcdn.com/artworks-0p1789012345x-original.jpg",
+ "display_id": "1789012345",
+ "fulltitle": "Harbor Lights",
+ "_type": "video"
+}

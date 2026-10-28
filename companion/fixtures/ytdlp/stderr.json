@@ -1,0 +1,14 @@
+{
+ "$comment": "yt-dlp stderr from failed lookups, one string per case (classified by companion/lookup.mjs classifyFailure).",
+ "bot_check": "WARNING: [youtube] hL7aQ2mR9sE: Signature extraction failed: Some formats may be missing\nERROR: [youtube] hL7aQ2mR9sE: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies\n",
+ "bot_check_search": "ERROR: [youtube:search] harbor lights ada moreno: Sign in to confirm you're not a bot. This helps protect our community. Learn more\n",
+ "age_gate": "ERROR: [youtube] Zp3kW8vYt0c: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.\n",
+ "private": "ERROR: [youtube] Q9xR4bN2LmA: Private video. Sign in if you've been granted access to this video. Use --cookies-from-browser or --cookies for the authentication.\n",
+ "removed": "ERROR: [youtube] uP5tYc6Hn1o: Video unavailable. This video has been removed by the uploader\n",
+ "region": "ERROR: [youtube] rT2nV8cX4kB: The uploader has not made this video available in your country\n",
+ "premiere": "ERROR: [youtube] rT2nV8cX4kB: Premieres in 3 hours\n",
+ "unsupported": "WARNING: [generic] Falling back on generic information extractor\nERROR: Unsupported URL: https://example.com/blog/harbor-lights\n",
+ "sc_404": "ERROR: [soundcloud] adamoreno/harbor-light: Unable to download JSON metadata: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)\n",
+ "network": "ERROR: [youtube:search] harbor lights ada moreno: Unable to download API page: <urlopen error [Errno 8] nodename nor servname provided, or not known> (caused by TransportError('<urlopen error [Errno 8] nodename nor servname provided, or not known>'))\n",
+ "missing_module": "/Applications/Woodshed.app/Contents/Resources/processor/woodshed-processor/woodshed-processor: No module named yt_dlp\n"
+}

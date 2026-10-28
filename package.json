@@ -23,6 +23,7 @@
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",
     "desktop:package": "npm run build && npm run desktop:prepare && electron-builder --publish never",
     "test:desktop": "node --test desktop/*.test.cjs",
+    "test:companion": "node --test companion/*.test.mjs",
     "fixture": "vite --config tests/fixture/vite.config.mjs",
     "fixture:capture": "NODE_PATH=${NODE_PATH:-/opt/node-tools/node_modules} node tests/fixture/lib/runner.cjs",
     "fixture:compare": "python3 -I scripts/compare-shots.py",

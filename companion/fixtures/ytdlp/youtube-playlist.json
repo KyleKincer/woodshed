@@ -1,0 +1,57 @@
+{
+ "id": "PLr3b0Wp6Jq1Hc8rKd9sQx2LmN4vY7tZaB",
+ "title": "Ada Moreno — Salt & Signal (full album)",
+ "availability": "public",
+ "channel_follower_count": null,
+ "description": "",
+ "tags": [],
+ "thumbnails": [
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/hqdefault.jpg",
+   "height": 360,
+   "width": 480,
+   "id": "0"
+  }
+ ],
+ "modified_date": "20240420",
+ "view_count": 91234,
+ "playlist_count": 10,
+ "channel": "Ada Moreno",
+ "channel_id": "UCx9c3f1hTn0bQyJmK3PqY2w",
+ "uploader_id": "@AdaMoreno",
+ "uploader": "Ada Moreno",
+ "channel_url": "https://www.youtube.com/channel/UCx9c3f1hTn0bQyJmK3PqY2w",
+ "uploader_url": "https://www.youtube.com/@AdaMoreno",
+ "_type": "playlist",
+ "entries": [
+  {
+   "id": "hL7aQ2mR9sE",
+   "title": "Harbor Lights",
+   "formats": [],
+   "duration": 221,
+   "_type": "video"
+  },
+  {
+   "id": "Zp3kW8vYt0c",
+   "title": "Salt & Signal",
+   "formats": [],
+   "duration": 198,
+   "_type": "video"
+  }
+ ],
+ "extractor_key": "YoutubeTab",
+ "extractor": "youtube:tab",
+ "webpage_url": "https://www.youtube.com/playlist?list=PLr3b0Wp6Jq1Hc8rKd9sQx2LmN4vY7tZaB",
+ "original_url": "https://www.youtube.com/playlist?list=PLr3b0Wp6Jq1Hc8rKd9sQx2LmN4vY7tZaB",
+ "webpage_url_basename": "playlist",
+ "webpage_url_domain": "youtube.com",
+ "release_year": null,
+ "epoch": 1793172650,
+ "__files_to_move": {},
+ "_version": {
+  "version": "2026.10.26",
+  "current_git_head": null,
+  "release_git_head": "c91f8de0bfb3577894abad716eaaa01659e6bd14",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}
