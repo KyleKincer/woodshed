@@ -690,3 +690,163 @@ test('destroy removes the strip, its listeners and its focused provider', async 
   expect(b.reg.context().focused ?? null).toBeNull();
   b.strip.destroy();
 });
+
+describe('pointer, focus and layout edge cases', () => {
+  test('a second pointer during a touch scrub cancels it: no cue, no label, the playhead follows playback again', async () => {
+    const scrubs = [];
+    const b = await bed({onScrub: (t) => scrubs.push(t)});
+    pointer(b.slider, 'pointerdown', {x: 100, y: 20, pointerType: 'touch', pointerId: 7});
+    pointer(b.slider, 'pointermove', {x: 130, y: 20, pointerType: 'touch', pointerId: 7});
+    pointer(b.slider, 'pointermove', {x: 160, y: 20, pointerType: 'touch', pointerId: 7});
+    expect(scrubs).toHaveLength(2);
+    expect(b.nav.hasAttribute('data-scrubbing')).toBe(true);
+    pointer(b.slider, 'pointerdown', {x: 400, y: 20, pointerType: 'touch', pointerId: 8, isPrimary: false});
+    pointer(b.slider, 'pointerup', {x: 400, y: 20, pointerType: 'touch', pointerId: 8, isPrimary: false});
+    pointer(b.slider, 'pointermove', {x: 300, y: 20, pointerType: 'touch', pointerId: 7});
+    pointer(b.slider, 'pointerup', {x: 300, y: 20, pointerType: 'touch', pointerId: 7});
+    expect(scrubs).toHaveLength(2);
+    expect(b.nav.hasAttribute('data-scrubbing')).toBe(false);
+    expect(b.nav.querySelector('.strip-scrub').hidden).toBe(true);
+    expect(b.snap.cue).toBe(0);
+    await b.ts.play();
+    await b.ts.advance(3);
+    const x = translateX(b.nav.querySelector('.strip-playhead'));
+    expect(x).toBeCloseTo(b.ts.transport.position() * WIDTH / 128, 0);
+    expect(x).toBeLessThan(40);
+  });
+
+  test('a scrub ends only on its own pointer; losing its capture cancels it', async () => {
+    const b = await bed();
+    pointer(b.slider, 'pointerdown', {x: 100, y: 20, pointerType: 'touch', pointerId: 5});
+    pointer(b.slider, 'pointermove', {x: 140, y: 20, pointerType: 'touch', pointerId: 5});
+    // Another pointer's up is not this scrub's.
+    pointer(b.slider, 'pointerup', {x: 140, y: 20, pointerType: 'touch', pointerId: 9});
+    expect(b.nav.hasAttribute('data-scrubbing')).toBe(true);
+    b.slider.dispatchEvent(new window.PointerEvent('lostpointercapture', {pointerId: 5, pointerType: 'touch', bubbles: true}));
+    await settle();
+    expect(b.nav.hasAttribute('data-scrubbing')).toBe(false);
+    expect(b.snap.cue).toBe(0);
+  });
+
+  test('a click on a segment drops the roving item, so L and Enter act on the click, not a stale segment', async () => {
+    const b = await bed({practice: practiceOf({cue: 23})});
+    document.documentElement.dataset.place = 'stage';
+    document.documentElement.dataset.posture = 'stage';
+    const stop = startDispatcher({registry: b.reg, platform: 'win'});
+    current.push(() => stop());
+    b.slider.focus();
+    expect(b.reg.context().focused).toMatchObject({label: 'Verse'});
+    mouseTap(b.slider, 250);   // Chorus (32–48)
+    expect(b.snap.cue).toBe(32);
+    expect(b.reg.context().focused ?? null).toBeNull();
+    expect(b.nav.querySelector('.strip-focus').hidden).toBe(true);
+    expect(b.slider.getAttribute('aria-valuetext')).toBe('Bar 17, beat 1, Chorus');
+    keydown('KeyL', {target: b.slider});
+    expect(b.snap.loop.on).toBe(true);
+    expect(b.snap.loop.a).toBeGreaterThanOrEqual(32);
+    // The next arrow key roves on from where the click left the cue.
+    keydown('ArrowRight', {target: b.slider});
+    expect(b.reg.context().focused).toMatchObject({kind: 'section', label: 'Verse 2', t0: 48});
+    // A click that focuses the strip (pointerdown → focus → pointerup) starts no roving item either.
+    b.slider.blur();
+    pointer(b.slider, 'pointerdown', {x: 450, y: 20, pointerType: 'mouse'});
+    b.slider.focus();
+    pointer(b.slider, 'pointerup', {x: 450, y: 20, pointerType: 'mouse'});
+    expect(b.snap.cue).toBe(64);
+    expect(b.reg.context().focused ?? null).toBeNull();
+    b.ts.transport.clearLoop();
+    keydown('KeyL', {target: b.slider});
+    expect(b.snap.loop.a).toBeGreaterThanOrEqual(64);
+    // A touch tap focuses after its pointerup (the compatibility mousedown), still before the click.
+    b.slider.blur();
+    pointer(b.slider, 'pointerdown', {x: 650, y: 20, pointerType: 'touch', pointerId: 11});
+    pointer(b.slider, 'pointerup', {x: 650, y: 20, pointerType: 'touch', pointerId: 11});
+    b.slider.focus();
+    b.slider.dispatchEvent(new window.MouseEvent('click', {bubbles: true, cancelable: true, clientX: 650, clientY: 20}));
+    expect(b.reg.context().focused ?? null).toBeNull();
+    // Once the press is over, a keyboard focus-in (Tab) starts the roving item again.
+    b.slider.blur();
+    b.slider.focus();
+    expect(b.reg.context().focused).toMatchObject({kind: 'section'});
+  });
+
+  test('the viewport bracket moves with the segments when the layout changes', async () => {
+    const viewport = signal({t0: 40, t1: 48});
+    const b = await bed({viewport, onViewport: () => {}});
+    const view = b.nav.querySelector('.strip-viewport');
+    expect([left(view), widthOf(view)]).toEqual([250, 50]);
+    b.ts.session.mapChange('label', (m) => { m.edit((d) => { d.measures[1].label = 'Pick'; }, 'label'); });
+    await settle();
+    const chorus = b.segs().find((s) => s.querySelector('.strip-seg-label').textContent === 'Chorus');
+    expect(left(chorus)).not.toBeCloseTo(200, 1);
+    expect(left(view)).toBeCloseTo(left(chorus) + widthOf(chorus) / 2, 3);
+    expect(widthOf(view)).toBeCloseTo(widthOf(chorus) / 2, 3);
+  });
+
+  test('the progress fill of the first segment covers its lead-in, as the playhead does', async () => {
+    const tempo = tempoOf(pickup);
+    tempo.songMap.measures[0].label = 'Pickup';
+    tempo.songMap.measures[3].label = 'Verse';
+    const b = await bed({tempo, duration: pickup.duration, practice: practiceOf({cue: 0.25})});
+    expect(b.labels()).toEqual(['Start', 'Verse']);
+    const first = b.segs()[0];
+    expect(first.hasAttribute('data-current')).toBe(true);
+    const p = Number(/scaleX\(([\d.]+)\)/.exec(first.querySelector('.strip-seg-progress').style.transform)[1]);
+    const x = translateX(b.nav.querySelector('.strip-playhead'));
+    expect(p).toBeGreaterThan(0);
+    expect(p).toBeCloseTo((x - left(first)) / widthOf(first), 4);
+  });
+
+  test('rename prefills the section\'s own label: the synthetic Start opens empty, not with the auto "Pickup"', async () => {
+    const tempo = tempoOf(pickup);
+    tempo.songMap.measures[0].label = 'Pickup';
+    tempo.songMap.measures[3].label = 'Verse';
+    const b = await bed({tempo, duration: pickup.duration});
+    const [start, verse] = b.ts.position.regions();
+    expect(b.strip.rename(start)).toBe(true);
+    const input = b.host.querySelector('input.strip-rename');
+    expect(input.value).toBe('');
+    expect(input.placeholder).toBe('Start');
+    expect(input.getAttribute('aria-label')).toBe('Rename Start');
+    keydown('Escape', {target: input});
+    b.strip.rename(verse);
+    expect(b.host.querySelector('input.strip-rename').value).toBe('Verse');
+  });
+
+  test('a rename committed by blur leaves focus where the user sent it', async () => {
+    const b = await bed();
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    b.strip.rename(b.ts.position.regions()[2]);
+    const input = b.host.querySelector('input.strip-rename');
+    input.value = 'Hook';
+    const refocus = vi.spyOn(b.slider, 'focus');
+    outside.focus();
+    await settle();
+    expect(b.host.querySelector('input.strip-rename')).toBeNull();
+    expect(b.labels()[2]).toBe('Hook');
+    expect(refocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(outside);
+  });
+
+  test('the wheel scrolls an overflowing strip, scales line deltas, and passes through at either end', async () => {
+    const b = await bed({tempo: manySections()});
+    let scroll = 0;
+    Object.defineProperty(b.track, 'scrollLeft', {configurable: true, get: () => scroll, set: (v) => { scroll = v; }});
+    const wheel = (init) => {
+      const e = new window.WheelEvent('wheel', {bubbles: true, cancelable: true, ...init});
+      b.track.dispatchEvent(e);
+      return e;
+    };
+    expect(wheel({deltaY: 100}).defaultPrevented).toBe(true);
+    expect(scroll).toBe(100);
+    expect(wheel({deltaY: 3, deltaMode: 1}).defaultPrevented).toBe(true);
+    expect(scroll).toBe(148);
+    scroll = 0;
+    expect(wheel({deltaY: -100}).defaultPrevented).toBe(false);
+    expect(scroll).toBe(0);
+    scroll = 32 * 56 - WIDTH;
+    expect(wheel({deltaY: 100}).defaultPrevented).toBe(false);
+    expect(scroll).toBe(32 * 56 - WIDTH);
+  });
+});

@@ -49,6 +49,7 @@ import {Menu} from '../ui/menu.js';
 import {createPressRecognizer} from './press.js';
 import {drawStripWave} from './wave-render.js';
 import {formatClock} from '../../shared/practice.ts';
+import {sectionLabelOf} from '../../shared/song-map.ts';
 
 // Later-wave module, resolved by contract path (D2; Appendix C item 58): ST8a's menu builders.
 const LATER = import.meta.glob('./menus.js');
@@ -63,6 +64,8 @@ export const SPRING_MS = 180;
 /** A touch or mouse press moves this far before it is a drag or scrub (press.js's moveTol). */
 export const MOVE_TOL = 8;
 const EPS = 1e-6;
+/** How long after a press on the strip a focus-in still counts as the press's (no click came). */
+const PRESS_FOCUS_MS = 1000;
 const MAX_LABEL = 60;
 const KEYS = 'ArrowLeft ArrowRight Home End';
 
@@ -389,6 +392,7 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     renderTransport();
     renderFrame(pos(), {force: true});
     renderFocus();
+    renderViewport();
   }
 
   // ------------------------------------------------------------------ rendering: transport state
@@ -471,7 +475,8 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     }
     const seg = segEls[i];
     if (seg) {
-      const r = seg.region;
+      // Over the segment's span (the first holds the lead-in, the last the tail), as toX draws it.
+      const r = model.spans[i] ?? seg.region;
       const p = r.t1 > r.t0 ? clamp((at - r.t0) / (r.t1 - r.t0), 0, 1) : 0;
       if (force || Math.abs(p - lastProgress) >= 0.002) {
         lastProgress = p;
@@ -525,9 +530,16 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     return found;
   };
 
-  let focusIndex = -1;    // the roving item while the slider has focus
+  // The roving item exists only for keyboard use (D45; dispatch.js rule 7's modality): a keyboard
+  // focus-in starts it at the position, a pointer focus-in does not, and any pointer press on the
+  // strip drops it, so Enter and L then act on what the press did (transport.again, loopToggle)
+  // rather than on an item the user can no longer see. The next arrow key starts it again.
+  let focusIndex = -1;    // the roving item while the slider has keyboard focus
   let focusPoint = null;  // the slider's value then (the position at focus-in, then the item's start)
   let offFocused = null;
+  // A press on the strip is under way: a focus-in now came from it (a mouse focuses on mousedown,
+  // a touch tap on its compatibility mousedown after pointerup, both before the click).
+  let pointerPress = false, pointerPressTimer = null;
 
   function focusedItem() {
     if (focusIndex < 0) return null;
@@ -581,11 +593,33 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     registry.invalidate?.();
   }
 
+  /** Starts the roving item at the position and provides it as ctx.focused. */
+  function startRoving(list = items()) {
+    focusPoint = pos();
+    focusIndex = list.length ? itemIndexAt(list, focusPoint) : -1;
+    setValue(focusPoint);
+    renderFocus();
+    if (!offFocused) offFocused = registry.provide('focused', () => focusedItem());
+    registry.invalidate?.();
+  }
+  /** Drops the roving item and withdraws ctx.focused; aria-valuetext follows the position again. */
+  function dropRoving() {
+    const had = focusIndex >= 0 || !!offFocused;
+    focusIndex = -1;
+    focusPoint = null;
+    renderFocus();
+    offFocused?.();
+    offFocused = null;
+    setValue(pos());
+    if (had) registry.invalidate?.();
+  }
+
   const onKeyDown = (e) => {
     if (e.target !== slider || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (!/^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) return;
     const list = items();
     if (!list.length) return;
-    if (focusIndex < 0) focusIndex = itemIndexAt(list, pos());
+    if (focusIndex < 0) startRoving(list);
     let next = null;
     if (e.key === 'ArrowRight') next = focusIndex + 1;
     else if (e.key === 'ArrowLeft') next = focusPoint !== null && focusPoint > list[focusIndex].t0 + EPS ? focusIndex : focusIndex - 1;
@@ -597,29 +631,32 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
   };
 
   const onFocus = () => {
-    const list = items();
-    focusPoint = pos();
-    focusIndex = list.length ? itemIndexAt(list, focusPoint) : -1;
-    setValue(focusPoint);
-    renderFocus();
-    offFocused?.();
-    offFocused = registry.provide('focused', () => focusedItem());
+    if (pointerPress) return;   // a click or tap focused it: no roving item until a key
+    startRoving();
   };
-  const onBlur = () => {
-    focusIndex = -1;
-    focusPoint = null;
-    renderFocus();
-    offFocused?.();
-    offFocused = null;
-    setValue(pos());
+  const onBlur = () => dropRoving();
+  const endPress = () => { pointerPress = false; clearTimeout(pointerPressTimer); pointerPressTimer = null; };
+  // Capture, so a press on a child that stops propagation (the viewport bracket) counts too.
+  const onPressCapture = () => {
+    pointerPress = true;
+    clearTimeout(pointerPressTimer);
+    pointerPressTimer = setTimeout(endPress, PRESS_FOCUS_MS);
+    if (focusIndex >= 0 || offFocused) dropRoving();
   };
+  slider.addEventListener('keydown', endPress, true);
   slider.addEventListener('keydown', onKeyDown);
   slider.addEventListener('focus', onFocus);
   slider.addEventListener('blur', onBlur);
+  slider.addEventListener('pointerdown', onPressCapture, true);
+  slider.addEventListener('click', endPress);
   offs.push(() => {
+    slider.removeEventListener('keydown', endPress, true);
     slider.removeEventListener('keydown', onKeyDown);
     slider.removeEventListener('focus', onFocus);
     slider.removeEventListener('blur', onBlur);
+    slider.removeEventListener('pointerdown', onPressCapture, true);
+    slider.removeEventListener('click', endPress);
+    endPress();
     offFocused?.();
     offFocused = null;
   });
@@ -723,8 +760,8 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     }
     return COPY.scrub([formatClock(t), regionAt(t)?.label]);
   }
-  function scrubTo(t) {
-    scrubbing = {t};
+  function scrubTo(t, id) {
+    scrubbing = {t, id};
     scrubEl.hidden = false;
     scrubEl.textContent = scrubLabel(t);
     scrubEl.style.left = `${toX(t)}px`;
@@ -742,9 +779,15 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     renderFrame(pos(), {force: true});
   }
 
+  // The scrub belongs to its own pointer: only that pointer's up, cancel or lost capture ends it,
+  // and a second pointer (a pinch, a palm, the mouse) cancels it outright.
   const onPointerDown = (e) => {
     if (e.target?.closest?.('[data-press-ignore]')) return;
-    if ((e.pointerType === 'touch' || e.pointerType === 'pen') && e.isPrimary !== false && !playingPhase() && !renaming) {
+    const other = (candidate && e.pointerId !== candidate.id) || (scrubbing && e.pointerId !== scrubbing.id);
+    if (other) {
+      candidate = null;
+      if (scrubbing) scrubEnd({cancelled: true});
+    } else if ((e.pointerType === 'touch' || e.pointerType === 'pen') && e.isPrimary !== false && !playingPhase() && !renaming) {
       candidate = {id: e.pointerId, x0: e.clientX, y0: e.clientY};
     } else {
       candidate = null;
@@ -753,37 +796,40 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
   };
   let mouseDown = null;
   const onPointerMove = (e) => {
-    if (scrubbing && candidate && e.pointerId === candidate.id) {
-      scrubTo(timeAt(e.clientX));
+    if (scrubbing && e.pointerId === scrubbing.id) {
+      scrubTo(timeAt(e.clientX), e.pointerId);
       return;
     }
     if (!candidate || e.pointerId !== candidate.id) return;
     if (Math.hypot(e.clientX - candidate.x0, e.clientY - candidate.y0) <= MOVE_TOL) return;
     try { slider.setPointerCapture?.(e.pointerId); } catch { /* the pointer is already gone */ }
     nav.setAttribute('data-scrubbing', '');
-    scrubTo(timeAt(e.clientX));
+    scrubTo(timeAt(e.clientX), e.pointerId);
   };
-  const onPointerUp = (e) => {
-    if (candidate && e.pointerId === candidate.id) {
-      candidate = null;
-      if (scrubbing) scrubEnd();
-    }
+  const endPointer = (e, {cancelled}) => {
+    if (candidate && e.pointerId === candidate.id) candidate = null;
+    if (scrubbing && e.pointerId === scrubbing.id) scrubEnd({cancelled});
   };
-  const onPointerCancel = (e) => {
-    if (candidate && e.pointerId === candidate.id) {
-      candidate = null;
-      if (scrubbing) scrubEnd({cancelled: true});
-    }
+  const onPointerUp = (e) => endPointer(e, {cancelled: false});
+  const onPointerCancel = (e) => endPointer(e, {cancelled: true});
+  // Losing the capture without a pointerup (the strip was hidden, another capture) cancels; after a
+  // pointerup the scrub has already ended.
+  const onLostCapture = (e) => {
+    if (e.target !== slider || !scrubbing || e.pointerId !== scrubbing.id) return;
+    const s = scrubbing;
+    queueMicrotask(() => { if (scrubbing === s || (scrubbing && scrubbing.id === s.id)) endPointer(e, {cancelled: true}); });
   };
   slider.addEventListener('pointerdown', onPointerDown);
   slider.addEventListener('pointermove', onPointerMove);
   slider.addEventListener('pointerup', onPointerUp);
   slider.addEventListener('pointercancel', onPointerCancel);
+  slider.addEventListener('lostpointercapture', onLostCapture);
   offs.push(() => {
     slider.removeEventListener('pointerdown', onPointerDown);
     slider.removeEventListener('pointermove', onPointerMove);
     slider.removeEventListener('pointerup', onPointerUp);
     slider.removeEventListener('pointercancel', onPointerCancel);
+    slider.removeEventListener('lostpointercapture', onLostCapture);
   });
 
   let longFrom = null;
@@ -817,11 +863,18 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
   offs.push(offPress);
 
   // A vertical wheel scrolls an overflowing strip sideways.
+  // At either end the wheel is left to the page (the Stage scrolls on); line and page deltas
+  // (Firefox) are scaled to pixels.
+  const WHEEL_LINE_PX = 16;
   const onWheel = (e) => {
     if (!(model.layout.width > width + 0.5) || e.ctrlKey) return;
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    const scale = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? Math.max(1, width) : 1;
+    const from = track.scrollLeft || 0;
+    const to = clamp(from + e.deltaY * scale, 0, Math.max(0, model.layout.width - width));
+    if (Math.abs(to - from) < 0.5) return;
     e.preventDefault();
-    track.scrollLeft = clamp((track.scrollLeft || 0) + e.deltaY, 0, model.layout.width - width);
+    track.scrollLeft = to;
   };
   track.addEventListener('wheel', onWheel, {passive: false});
   offs.push(() => track.removeEventListener('wheel', onWheel));
@@ -831,10 +884,10 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
   async function openMenu(g) {
     if (renaming) return;
     let region = null, t;
-    if (g.keyboard && focusIndex >= 0) {
-      const item = items()[focusIndex];
+    if (g.keyboard) {
+      const item = focusIndex >= 0 ? items()[focusIndex] : null;
       t = item?.t0 ?? pos();
-      region = item?.region ?? regionAt(t);
+      region = item?.region ?? (model.mode === 'sections' ? model.regions[segmentAt(t)] ?? null : regionAt(t));
     } else {
       t = timeAt(g.clientX);
       region = model.mode === 'sections' ? model.regions[segmentAt(t)] ?? null : regionAt(t);
@@ -865,7 +918,9 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     if (isSection && (session.readOnly || !mapped() || !Number.isInteger(region.startBar))) return false;
     if (!isSection && (region.kind !== 'marker' || !region.id)) return false;
     cancelRename();
-    const current = isSection ? (map.bars[region.startBar]?.label ?? '').trim() : String(region.label ?? '');
+    // The section's own stored label: '' for the synthetic Start (measure 0's auto 'Pickup' included).
+    const current = isSection ? sectionLabelOf({index: region.startBar, label: String(map.bars[region.startBar]?.label ?? '')})
+      : String(region.label ?? '');
     const name = region.label || COPY.start;
     const input = h('input', {
       class: 'strip-rename', type: 'text', value: current, maxLength: MAX_LABEL, placeholder: name,
@@ -877,20 +932,22 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
     input.style.width = `${Math.max(140, box ? box.w : 160)}px`;
     renaming = {input, region};
     nav.setAttribute('data-renaming', '');
-    const finish = (commit) => {
+    // Enter and Escape return focus to the strip; a blur (Tab, a click elsewhere) commits and
+    // leaves focus where the user sent it.
+    const finish = (commit, {refocus = true} = {}) => {
       if (!renaming || renaming.input !== input) return;
       const text = input.value.trim().slice(0, MAX_LABEL);
       renaming = null;
       nav.removeAttribute('data-renaming');
+      if (refocus && !destroyed) slider.focus?.({preventScroll: true});
       input.remove();
       if (commit && text && text !== current) commitRename(region, text, current);
-      if (!destroyed) slider.focus?.({preventScroll: true});
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); finish(true); }
       else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
     });
-    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('blur', () => finish(true, {refocus: false}));
     content.append(input);
     keepInView({x: box ? box.x : x0, w: Math.max(140, box ? box.w : 160)}, {smooth: false});
     input.focus?.();
@@ -1003,7 +1060,6 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
       if (w === width) { drawWave(); return; }
       width = w;
       renderStructure();
-      renderViewport();
     });
     ro.observe(track);
     offs.push(() => ro.disconnect());
