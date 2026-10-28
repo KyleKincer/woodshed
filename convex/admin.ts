@@ -42,9 +42,13 @@ export const accounts = query({
   },
 });
 export const account = query({
-  args: { id: v.id('users') }, returns: v.any(), handler: async (ctx, { id }) => {
+  // A string, not v.id('users'): the id comes from the /admin/accounts/:id URL, and
+  // anything that is not a users id must fail with a coded not_found (ticket I2a-7).
+  args: { id: v.string() }, returns: v.any(), handler: async (ctx, args) => {
     await requireAdmin(ctx);
-    const user = await ctx.db.get('users', id); if (!user) fail('not_found', 'Account not found.');
+    const id = ctx.db.normalizeId('users', args.id);
+    const user = id ? await ctx.db.get('users', id) : null;
+    if (!id || !user) fail('not_found', 'Account not found.');
     const control = await accountControl(ctx, id);
     const devices = await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', id)).take(MAX_DEVICE_ROWS);
     const presence = await Promise.all(devices.map(d => ctx.db.query('devicePresence').withIndex('by_deviceId', q => q.eq('deviceId', d._id)).unique()));
@@ -53,8 +57,9 @@ export const account = query({
     return { id, name: user.name, email: user.email, createdAt: user.createdAt, emailVerified: user.emailVerified,
       status: control?.status ?? 'active', byteLimit: control?.byteLimit ?? null, notes: control?.notes ?? '',
       usedBytes: await used(ctx, `user:${id}`), limitBytes: (await limits(ctx, id)).userBytes, admin: await isAdminId(ctx, id),
-      devices: devices.map((d, i) => ({id: d._id, name: d.name, revoked: d.revoked, revokedBy: revokedBy[i], lastSeenAt: presence[i]?.lastSeenAt ?? null})),
-      jobs: jobs.map(j => ({id: j._id, label: j.label, status: j.status, stage: j.stage, error: j.error, createdAt: j.createdAt})),
+      devices: devices.map((d, i) => ({id: d._id, name: d.displayName ?? d.name, revoked: d.revoked, revokedBy: revokedBy[i], lastSeenAt: presence[i]?.lastSeenAt ?? null})),
+      // retryAt: a bot-checked job waiting for worker.autoRetry is still live (cancelJob).
+      jobs: jobs.map(j => ({id: j._id, label: j.label, status: j.status, stage: j.stage, error: j.error, retryAt: j.retryAt ?? null, createdAt: j.createdAt})),
     };
   },
 });

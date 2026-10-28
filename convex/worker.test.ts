@@ -10,7 +10,7 @@ import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hashToken } from './devices';
-import { BOT_CHECK_BACKOFF_MS, RESUME_MESSAGE } from './worker';
+import { BOT_CHECK_BACKOFF_MS, RESUME_MESSAGE, TITLE_OVERRIDE_FLAG } from './worker';
 import { barsOf, defaultSongMap, hasRealMap, sectionsOf, songMapFromTempo, type SongMapData } from '../shared/song-map';
 import { PRACTICE_CAP } from '../shared/practice';
 import { isUpgraded } from './migrations';
@@ -177,6 +177,19 @@ describe('worker.progress', () => {
     expect((await s.getJob(jobId))!.meta.channel).toBe('Ada Moreno');
   });
 
+  test("the user's title override (I2a-5 flag) survives the processor's meta; the rest still merges (I2a-6)", async () => {
+    const s = await setup();
+    const jobId = await s.job({ source: { type: 'upload', value: 'take-3.wav' }, meta: { title: 'My Take', [TITLE_OVERRIDE_FLAG]: true } });
+    await s.t.mutation(api.worker.claim, { token: TOKEN, jobId });
+    await s.t.mutation(api.worker.progress, { token: TOKEN, jobId, stage: 'separate', percent: 10, meta: { title: 'take-3', duration: 204 } });
+    expect((await s.getJob(jobId))!.meta).toEqual({ title: 'My Take', [TITLE_OVERRIDE_FLAG]: true, duration: 204 });
+    // Without the flag the processor's title still replaces an early one (B4).
+    const plain = await s.job({ meta: { title: 'Early' } });
+    await s.t.mutation(api.worker.claim, { token: TOKEN, jobId: plain });
+    await s.t.mutation(api.worker.progress, { token: TOKEN, jobId: plain, stage: 'download', percent: 10, meta: { title: 'Resolved' } });
+    expect((await s.getJob(plain))!.meta.title).toBe('Resolved');
+  });
+
   test('a classified failure stores its errorCode; an unknown code becomes `unknown`', async () => {
     const s = await setup();
     const jobId = await s.job();
@@ -287,6 +300,34 @@ describe('worker.finish', () => {
     // A malformed resolved URL is dropped rather than stored.
     const other = await finishJob(s, await s.job({ source: { type: 'url', value: 'https://youtu.be/y' } }), { resolvedUrl: 'javascript:alert(1)' });
     expect((await s.getSong(other))!.resolvedUrl).toBeUndefined();
+  });
+
+  test("a new song takes the user's title override over the file's tags and locks it (I2a-6)", async () => {
+    const s = await setup();
+    const jobId = await s.job({ source: { type: 'upload', value: 'take-3.wav' }, meta: { title: '  My Take  ', [TITLE_OVERRIDE_FLAG]: true } });
+    const songId = await finishJob(s, jobId, { title: 'take-3', artist: 'Ada Moreno' });
+    const row = (await s.getSong(songId))!;
+    expect(row).toMatchObject({ title: 'My Take', artist: 'Ada Moreno', metadataLocks: ['title'] });
+    // A later lookup cannot replace the locked title.
+    expect((await s.getSong(songId))!.metadataStatus).toBe('pending');
+    await s.t.mutation(internal.metadata.applyAutomatic, {
+      id: songId, status: 'matched', changes: { title: 'Take Three', album: 'Live' }, before: { title: 'My Take' },
+    });
+    expect(await s.getSong(songId)).toMatchObject({ title: 'My Take', album: 'Live' });
+    // Without the flag, an early meta title is only the card's: the song keeps the file's title and no lock.
+    const plain = await finishJob(s, await s.job({ source: { type: 'upload', value: 'b.wav' }, meta: { title: 'Card only' } }), { title: 'From tags' });
+    expect(await s.getSong(plain)).toMatchObject({ title: 'From tags' });
+    expect((await s.getSong(plain))!.metadataLocks).toBeUndefined();
+  });
+
+  test('a re-split ignores a title override and keeps its song title', async () => {
+    const s = await setup();
+    const songId = await s.song({ title: 'Mine' });
+    const jobId = await s.job({ songId, source: { type: 'upload', value: 'x.wav' }, meta: { title: 'Typed', [TITLE_OVERRIDE_FLAG]: true } });
+    expect(await finishJob(s, jobId, { title: 'Theirs' })).toBe(songId);
+    const row = (await s.getSong(songId))!;
+    expect(row.title).toBe('Mine');
+    expect(row.metadataLocks).toBeUndefined();
   });
 
   test('recordingUnconfirmed is set only for searches the user did not confirm (D43)', async () => {

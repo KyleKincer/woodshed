@@ -51,6 +51,14 @@ const THUMBNAIL_MAX = 2000;
 const URL_MAX = 2000;
 const PROVIDER_MAX = 100;
 
+/**
+ * The flag `jobs.createSeparation` sets inside a new upload's `meta` when the
+ * user typed its title (`jobs.TITLE_OVERRIDE_FLAG`, ticket I2a-5). While it is
+ * set, `progress` never replaces `meta.title` with the processor's, and
+ * `finish` titles the new song with it and locks the title (ticket I2a-6).
+ */
+export const TITLE_OVERRIDE_FLAG = 'titleOverride';
+
 type Job = Doc<'jobs'>;
 type Song = Doc<'songs'>;
 type SuggestedSection = { t0: number; label: string; confidence: number };
@@ -105,6 +113,13 @@ function cleanMeta(meta: { title?: string; channel?: string; duration?: number; 
   const thumb = meta.thumbnail?.trim();
   if (thumb && thumb.length <= THUMBNAIL_MAX && /^https:\/\/[^\s]+$/i.test(thumb)) out.thumbnail = thumb;
   return out;
+}
+
+/** The user's title for a job's new song (I2a-5/I2a-6), or undefined when the job carries none. */
+function titleOverrideOf(job: Job): string | undefined {
+  const meta = isObject(job.meta) ? job.meta : null;
+  if (!meta || meta[TITLE_OVERRIDE_FLAG] !== true || typeof meta.title !== 'string') return undefined;
+  return meta.title.trim() || undefined;
 }
 
 function cleanUrl(url: string | undefined) {
@@ -204,6 +219,8 @@ export const progress = mutation({
     const retry = !paused && errorCode === 'bot_check' && attempts < BOT_CHECK_ATTEMPTS;
     const retryAt = retry ? now + BOT_CHECK_BACKOFF_MS * 2 ** Math.max(0, attempts - 1) : undefined;
     const meta = a.meta ? cleanMeta(a.meta) : null;
+    // I2a-6: the user's title override stands over the processor's tags and file name.
+    if (meta && titleOverrideOf(j) !== undefined) delete meta.title;
     await ctx.db.patch('jobs', j._id, {
       status: failed ? 'error' : 'running',
       stage: a.stage.slice(0, 30),
@@ -325,7 +342,10 @@ export const finish = internalMutation({
     }
     if (a.result.fingerprint && (a.result.fingerprint.value.length > 30000 || !/^[A-Za-z0-9_-]+$/.test(a.result.fingerprint.value) || !Number.isFinite(a.result.fingerprint.duration) || a.result.fingerprint.duration <= 0)) fail('invalid', 'Invalid fingerprint.');
     const { resolvedUrl: rawUrl, provider: rawProvider, ...result } = a.result;
-    const imported = cleanMetadata(Object.fromEntries(Object.keys(metadataFields).filter(key => key in result).map(key => [key, result[key as keyof typeof result]])));
+    // I2a-6: a new song takes the user's title override (I2a-5) over the file's tags or name, and locks it.
+    const titleOverride = job.songId ? undefined : titleOverrideOf(job);
+    const tagged = { ...result, ...(titleOverride !== undefined ? { title: titleOverride } : {}) };
+    const imported = cleanMetadata(Object.fromEntries(Object.keys(metadataFields).filter(key => key in tagged).map(key => [key, tagged[key as keyof typeof tagged]])));
     const resolvedUrl = cleanUrl(rawUrl);
     const provider = rawProvider?.trim().slice(0, PROVIDER_MAX) || undefined;
     // A `six` split runs as `full` on the 6-stem model; the song keeps the mode the user chose.
@@ -348,6 +368,7 @@ export const finish = internalMutation({
       songId = await ctx.db.insert('songs', {
         ...fields,
         originDeviceId: d._id,
+        ...(titleOverride !== undefined ? { metadataLocks: ['title'] } : {}),
         hasChart: state.hasChart,
         mapSummary: state.mapSummary,
         // D43: a search the user did not pick from B4 candidates may be the wrong recording.
