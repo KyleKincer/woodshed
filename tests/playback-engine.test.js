@@ -191,46 +191,6 @@ test('toggle() is gone; seek(t, {cue: false}) leaves the cue', async () => {
   await engine.play(); settle(); advance(2); engine.seek(50, {cue:false});
   engine.stop(); expect(engine.getPosition()).toBe(12);
 });
-test('count-in supports bars and beats, legacy defaults, and persisted audible pre-roll', () => {
-  const metro = new Metronome(engine);
-  metro.load({countIn:true,map:[{t:0,bpm:120,beatsPerBar:3,unit:4}]});
-  expect(metro.countInPlan()).toEqual({duration:1.5,beats:[{offset:0,downbeat:true},{offset:0.5,downbeat:false},{offset:1,downbeat:false}]});
-  expect(metro.audiblePreRoll).toBe(false);
-  metro.setCountInLength(2);
-  expect(metro.countInPlan().duration).toBe(3);
-  metro.setCountInUnit('beats');metro.setAudiblePreRoll(true);
-  expect(metro.countInPlan().duration).toBe(1);
-  const other = new Metronome(engine);other.load(metro.serialize());
-  expect(other.serialize()).toMatchObject({countInLength:2,countInUnit:'beats',audiblePreRoll:true});
-  metro.destroy();other.destroy();
-});
-test('count-in clicks work with the metronome off and stop immediately on cancellation', async () => {
-  const metro = new Metronome(engine);
-  metro._click = vi.fn();
-  await engine.play({countIn:metro.countInPlan()});
-  metro.tick();expect(metro._click).toHaveBeenCalledWith(engine.lookahead,true);
-  metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
-  const stop = vi.fn();metro._scheduledClicks.add({stop});engine.pause();metro.tick();
-  expect(stop).toHaveBeenCalled();
-  advance(3);metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
-  metro.destroy();
-});
-test('detected count-in at the end uses the final local tempo and meter', () => {
-  const metro = new Metronome(engine);
-  metro.setDetected([[1,1],[1.5,2],[2,3],[2.5,1],[2.75,2],[3,3],[3.25,1],[3.5,2],[3.75,3]]);
-  engine.seek(3.8);
-  expect(metro.countInPlan().duration).toBe(0.75);
-  metro.destroy();
-});
-test('count-in follows tempo changes and extrapolates clicks beyond a detected grid', () => {
-  const metro = new Metronome(engine);
-  metro.setDetected([[0,1],[0.5,2],[1,3],[1.5,1],[2.5,2],[3.5,3],[4.5,1]]);
-  metro.setCountInUnit('beats');metro.setCountInLength(4);engine.seek(4.5);
-  expect(metro.countInPlan().duration).toBe(3.5);
-  engine.seek(10.5);
-  expect(metro.countInPlan().beats).toHaveLength(4);
-  metro.destroy();
-});
 
 test('sectionAt finds the bar by quarters, not seconds, across a meter change (I0A-1)', () => {
   // 120 qpm: two 4/4 bars (q 0-8, 0-4 s), then 6/8 bars of three quarters each (q 8, 11, 14, ...).

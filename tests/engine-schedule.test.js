@@ -445,7 +445,7 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
   test('count-in clicks sound through the aux bus while the stems are held at 0; pause mutes the bus at once', async () => {
     const metronome = new Metronome(engine);
     engine.seek(20);
-    await engine.play({countIn: metronome.countInPlan()});
+    await engine.play({countIn: metronome.countInPlanAt(20)});
     metronome.start();
     clock.advance(0.2);
     expect(engine.master.gain.valueAt(0.15)).toBe(0);
