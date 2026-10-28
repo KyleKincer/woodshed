@@ -13,11 +13,10 @@
 //   - a section detection (`sections-<songId>`) is claimed at once and keeps running;
 //   - `jobs:retry` runs the job again the way creating it did (a separation is claimed
 //     after 1.5 s, a detection at once), so "Try again" never leaves a stuck queued row;
-//   - where the server cancels a stale live detection and inserts a new one, the fixture
-//     replaces the row under the same `beats-<songId>` id;
-//   - the seeded running detections (`job-beats`, `job-sections`) are display rows
-//     that never finish, so a user-started detection is never folded into them:
-//     only a live detection the fixture created is reused;
+//   - a live detection is reused, or a stale one canceled, as on the server: any live
+//     detection of that kind for the song counts, the seeded running ones (`job-beats`
+//     on quiet, `job-sections` on lanterns, display rows that never finish) included.
+//     The new row replaces any earlier row under the same `<kind>-<songId>` id;
 //   - like the other handler modules, the queries do not refuse a suspended account
 //     (fx-auth=suspended); every mutation applies the server's account rules.
 // `db.jobs` holds done jobs too (the unapplied detection `job-detect-nightbus`,
@@ -192,13 +191,15 @@ export function resume(now = Date.now()) {
     setTimeout(() => { if (settle()) changed(); }, j.finishAt - now);
 }
 
-/** A live detection of this kind for the song that the fixture created (see the header). */
-const liveDetection = (songId, kind) => db.jobs.find(j => j.jobId === `${kind}-${songId}` && isLive(j));
+/** convex/jobs.ts liveDetection: the song's newest queued or running detection of this kind. */
+const liveDetection = (songId, kind) => db.jobs.filter(j => j.songId === songId && j.kind === kind && isLive(j))
+  .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
 
 /**
  * convex/jobs.ts startDetection: the chosen computer is checked first; a live detection
  * is reused only while its computer is paired and, when a computer was chosen, it is
- * that one or the job is running. Returns `{device}` for a new job or `{jobId}` to reuse.
+ * that one or the job is running; a stale one is canceled. Returns `{device}` for a new
+ * job or `{jobId}` to reuse.
  */
 function detectionTarget(songId, kind, deviceId) {
   const chosen = deviceId ? pairedDevice(deviceId) : null;
@@ -210,7 +211,14 @@ function detectionTarget(songId, kind, deviceId) {
       return {jobId: live.jobId};
     }
   }
-  return {device: chosen ?? defaultDevice()};
+  // The server cancels the stale job first, but a refusal below rolls that back: pick the computer first.
+  const device = chosen ?? defaultDevice();
+  if (live) {
+    Object.assign(live, {status: 'canceled', updatedAt: Date.now()});
+    delete live.retryAt;
+    delete live.finishAt;
+  }
+  return {device};
 }
 
 /** A beat detection claimed now (on creation or retry); it finishes on its own after 1.5 s (8 s with fx-detect=slow). */

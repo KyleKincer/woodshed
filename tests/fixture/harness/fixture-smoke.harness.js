@@ -9,7 +9,10 @@
 // overlap-sheet (below the fold of a fixed sheet's own scroller, beside a fixed
 // button where the sheet's buttons would be if it were not scrolled: one
 // problem, not two) and focus-shadow (a resting shadow, no focus ring) are the
-// harder cases, and chip-row (a scrolling row of chips) must pass.
+// harder cases, and chip-row (a scrolling row of chips) must pass. overlay (an open
+// popover, a non-modal dialog and a fallback layer root, each partly over a page button)
+// must pass too; overlay-pair (two overlapping buttons inside one open popover) is one
+// overlap problem: targets inside one overlay are still compared.
 const mapLabel = song => {
   const t = song.tempo;
   if (!t) return 'no tempo';
@@ -69,6 +72,23 @@ export default async function mount(el, {fixture, query, h}) {
       styled(h('button', {type: 'button'}, 'Sixth'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px; margin-top: 600px')),
     'position: fixed; top: 0; right: 0; width: 240px; height: 200px; overflow: auto; background: var(--bg, white); padding: 0; margin: 0; box-sizing: border-box'),
     styled(h('button', {type: 'button'}, 'Decoy'), 'position: fixed; top: 600px; right: 60px; width: 180px; height: 50px; margin: 0'));
+  // Fixed page buttons on the right (clear of the summary), each partly under an overlay's button.
+  const btn = (label, css) => styled(h('button', {type: 'button'}, label), `position: fixed; width: 120px; height: 40px; margin: 0; ${css}`);
+  const layer = (node, css) => styled(node, `position: fixed; inset: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; ${css}`);
+  const popover = (...children) => { const node = h('div', {}, ...children); node.setAttribute('popover', 'manual'); return node; };
+  if (demo === 'overlay') {
+    const pop = layer(popover(btn('In popover', 'left: 960px; top: 310px')), 'left: 0; top: 0');
+    const dialog = layer(h('dialog', {}, btn('In dialog', 'left: 960px; top: 410px')), 'left: 0; top: 0');
+    const fallback = layer(h('div', {'data-layer-fallback': '', 'data-layer': 'menu'}, btn('In fallback', 'left: 960px; top: 510px')), 'left: 0; top: 0');
+    el.append(btn('Behind popover', 'left: 900px; top: 300px'), btn('Behind dialog', 'left: 900px; top: 400px'), btn('Behind fallback', 'left: 900px; top: 500px'), pop, dialog, fallback);
+    pop.showPopover();
+    dialog.show();
+  }
+  if (demo === 'overlay-pair') {
+    const pop = layer(popover(btn('Seventh', 'left: 900px; top: 300px'), btn('Eighth', 'left: 960px; top: 310px')), 'left: 0; top: 0');
+    el.append(pop);
+    pop.showPopover();
+  }
   if (demo === 'chip-row') el.prepend(styled(h('div', {class: 'chips'}, ...Array.from({length: 8}, (_, i) => styled(h('button', {type: 'button', class: 'chip'}, `Section ${i}`), 'flex: none; white-space: nowrap'))), 'display: flex; gap: 8px; overflow-x: auto; width: 200px'));
   if (demo === 'focus-shadow') el.prepend(h('div', {},
     h('style', {}, '.fx-flat:focus { outline: none !important; } .fx-ring:focus-visible { outline: 3px solid rgb(23, 75, 209); outline-offset: 2px; }'),

@@ -65,5 +65,10 @@ export function onChanged(fn) {
 }
 
 export const findSong = id => db.songs.find(s => s.id === id);
-/** Song rows as the 1.9 client saw them: the synthesis hints stay private. */
-export const publicSong = ({bpm, offset, ...s}) => clone(s);
+/**
+ * Seed rows hold only schema values, so optional columns are absent rather than null;
+ * convex/songs.ts toClient reads each of these as `?? null`.
+ */
+const CLIENT_NULLS = {metadataStatus: null, metadataRecordingId: null, metadataReleaseId: null, artwork: null, source: null, coverKey: null};
+/** Song rows as the client sees them: absent optional columns read as null; the synthesis hints stay private. */
+export const publicSong = ({bpm, offset, ...s}) => ({...CLIENT_NULLS, ...clone(s)});

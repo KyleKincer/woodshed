@@ -165,8 +165,4 @@ export const handlers = {
     page: sortedSongs().map(s => ({...fullSong(s), practice: clone(practiceRow(s.id)?.practice ?? s.practice ?? null)})),
     isDone: true, continueCursor: '',
   }),
-
-  // Fixture only: songs.rename is deleted from Convex (§8, wave 0B). tests/fixture/unit/fixture-db.test.js
-  // (FX1) still uses it as its sample mutation; remove it once that test uses a 2.0 mutation.
-  'songs:rename': ({id, title}) => { owned(id).title = title; return fullSong(findSong(id)); },
 };

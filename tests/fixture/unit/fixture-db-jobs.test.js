@@ -109,7 +109,7 @@ describe('createSeparation', () => {
 });
 
 describe('detections', () => {
-  it('a live detection the fixture created is reused, on the chosen computer', async () => {
+  it('a live detection is reused, on the chosen computer', async () => {
     vi.useFakeTimers({now: NOW});
     const first = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev2'});
     expect(raw(first.jobId)).toMatchObject({deviceId: 'dev2', settings: {sections: true}, status: 'running'});
@@ -122,7 +122,7 @@ describe('detections', () => {
 
   it('settings.sections follows the account, and computer refusals are coded', async () => {
     runtime.db.settings.autoSections = false;
-    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'jam03'});
     expect(raw(jobId)).toMatchObject({settings: {sections: false}, deviceId: 'dev1'});
     expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev9'}))).toBe('device_unpaired');
     expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'missing'}))).toBe('not_found');
@@ -140,6 +140,34 @@ describe('detections', () => {
     expect(raw(first.jobId)).toMatchObject({deviceId: 'dev1', status: 'running'});
     expect(runtime.db.jobs.filter(j => j.jobId === first.jobId)).toHaveLength(1);
     expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev9'}))).toBe('device_unpaired');
+  });
+
+  it('any live detection of the kind for the song is reused, a seeded one too, as convex/jobs.ts does', async () => {
+    vi.useFakeTimers({now: NOW});
+    // quiet's seeded job-beats is a running B6 chained detection: reusing it drops chainedFrom (D44).
+    expect(await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'})).toEqual({jobId: 'job-beats'});
+    expect(raw('job-beats')).toMatchObject({status: 'running', updatedAt: NOW});
+    expect(raw('job-beats').chainedFrom).toBeUndefined();
+    expect(raw('beats-quiet')).toBeUndefined();
+    expect(await call('mutation', 'jobs:createSectionDetection', {songId: 'lanterns'})).toEqual({jobId: 'job-sections'});
+    expect(raw('sections-lanterns')).toBeUndefined();
+    // Another kind is not a match: a beat detection for lanterns is new.
+    expect(await call('mutation', 'jobs:createBeatDetection', {songId: 'lanterns'})).toEqual({jobId: 'beats-lanterns'});
+  });
+
+  it('a stale seeded detection is canceled and replaced; a refusal leaves it running', async () => {
+    vi.useFakeTimers({now: NOW});
+    runtime.db.devices.find(d => d.id === 'dev1').revoked = true;
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet', deviceId: 'dev2'});
+    expect(jobId).toBe('beats-quiet');
+    expect(raw('job-beats')).toMatchObject({status: 'canceled', updatedAt: NOW});
+    expect(raw(jobId)).toMatchObject({status: 'running', deviceId: 'dev2'});
+    // No computer to run a replacement: the server's transaction rolls the cancel back.
+    start();
+    runtime.db.devices.forEach(d => { d.revoked = true; });
+    expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'}))).toBe('device_unpaired');
+    expect(raw('job-beats').status).toBe('running');
+    expect(raw('beats-quiet')).toBeUndefined();
   });
 
   it('without a deviceId, presence older than 150 s reads as offline', async () => {

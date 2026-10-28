@@ -6,6 +6,9 @@
 //                scroll position is restored). Targets compare within their frame (the window,
 //                one [data-scroller], or fixed); across frames only as they were on screen at
 //                the start. Targets clipped by a non-scroller container (a chip row) are clipped.
+//                An open overlay (a [popover] that is :popover-open, a dialog[open], or a fallback
+//                layer root [data-layer-fallback], src/ui/popover.js) partly covers the page by
+//                design: a pair where exactly one target is inside an open overlay is not compared.
 //                opts.structure.viewportOnly = true checks the visible viewport only.
 //   clip         no clipped label: scrollWidth > clientWidth on buttons, tabs, options, chips
 //                and readouts. A chip or readout is [data-chip], [data-readout], or a class that
@@ -106,6 +109,12 @@ function collect({interactive, labelled, labelClass, ignore = [], allowClip = []
     const xs = [x0 + (x1 - x0) / 4, (x0 + x1) / 2, x1 - (x1 - x0) / 4], ys = [y0 + (y1 - y0) / 4, (y0 + y1) / 2, y1 - (y1 - y0) / 4];
     return xs.some(x => ys.some(y => onTop(x, y)));
   };
+  // Open overlays (top layer or the fallback layer): a target inside one is compared with the page
+  // behind it only through findOverlaps' rule (exactly one inside: skipped).
+  const popoverOpen = el => { try { return el.matches(':popover-open'); } catch { return false; } };
+  const overlays = [...document.querySelectorAll('[popover], dialog[open], [data-layer-fallback]')]
+    .filter(el => el.matches('dialog[open], [data-layer-fallback]') || popoverOpen(el));
+  const overlayOf = el => { for (let a = el; a; a = a.parentElement) { const i = overlays.indexOf(a); if (i >= 0) return i; } return null; };
   const start = new Map([root, ...inner].map(s => [s, [s.scrollLeft, s.scrollTop]]));
   const frameOf = m => (m === undefined ? 'fixed' : m === root ? 'window' : `scroller:${inner.indexOf(m)}`);
   const candidates = [];
@@ -194,7 +203,7 @@ function collect({interactive, labelled, labelClass, ignore = [], allowClip = []
   }
   return {
     overflow,
-    targets: targets.map((t, i) => ({i, label: label(t.el), path: path(t.el), rect: t.rect, frame: t.frame, view: t.view})),
+    targets: targets.map((t, i) => ({i, label: label(t.el), path: path(t.el), rect: t.rect, frame: t.frame, view: t.view, overlay: overlayOf(t.el)})),
     nested,
     clipped,
     placeholder,
@@ -210,13 +219,17 @@ function overlapArea(a, b) {
 
 /** Pairs of overlapping targets, skipping nested pairs ([[i, j], …] indexes into `targets`).
  *  Targets of one frame (`frame`: 'window', 'fixed', 'scroller:N') compare by `rect`; targets of
- *  different frames compare by `view` (where they were on screen at the start), when both have one. */
+ *  different frames compare by `view` (where they were on screen at the start), when both have one.
+ *  A pair where exactly one target is inside an open overlay (`overlay`: its index, else null) is
+ *  skipped: the overlay covers the page behind it by design. */
 function findOverlaps(targets, nested = []) {
   const skip = new Set(nested.map(([i, j]) => `${Math.min(i, j)}:${Math.max(i, j)}`));
   const out = [];
   for (let i = 0; i < targets.length; i++) for (let j = i + 1; j < targets.length; j++) {
     if (skip.has(`${i}:${j}`)) continue;
     const a = targets[i], b = targets[j];
+    const inOverlay = t => t.overlay !== undefined && t.overlay !== null;
+    if (inOverlay(a) !== inOverlay(b)) continue;
     const area = a.frame === b.frame ? overlapArea(a.rect, b.rect) : a.view && b.view ? overlapArea(a.view, b.view) : 0;
     if (area) out.push({a: targets[i], b: targets[j], area: Math.round(area)});
   }

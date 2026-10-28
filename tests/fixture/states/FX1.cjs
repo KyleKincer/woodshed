@@ -210,12 +210,12 @@ module.exports = [
 
       // A beat detection running across a reload still finishes.
       await page.goto(`${t.base}${SMOKE}?fx-reset=1`); await t.ready('fixture-smoke');
-      await page.evaluate(() => window.fixture.call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'}));
-      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.jobs.some(j => j.jobId === 'beats-quiet'));
+      await page.evaluate(() => window.fixture.call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'}));
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.jobs.some(j => j.jobId === 'beats-velvet'));
       await page.reload(); await t.ready('fixture-smoke');
-      await page.waitForFunction(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-quiet')?.status === 'done', null, {timeout: 6000});
-      const beats = await page.evaluate(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-quiet'));
-      t.expect(beats.label === 'Finding bars — Quiet Hours' && beats.deviceId === 'dev1' && beats.createdAt > 0 && beats.updatedAt >= beats.createdAt, `the reloaded detection finished with a full row (${JSON.stringify({...beats, result: undefined})})`);
+      await page.waitForFunction(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-velvet')?.status === 'done', null, {timeout: 6000});
+      const beats = await page.evaluate(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-velvet'));
+      t.expect(beats.label === 'Finding bars — Velvet Arc' && beats.deviceId === 'dev1' && beats.createdAt > 0 && beats.updatedAt >= beats.createdAt, `the reloaded detection finished with a full row (${JSON.stringify({...beats, result: undefined})})`);
     },
   },
   {
@@ -252,7 +252,7 @@ module.exports = [
     url: SMOKE,
     opts: {devices: ['laptop'], themes: ['light'], capture: false},
     async fn(page, t) {
-      const demos = {overflow: 'overflow', overlap: 'overlap', clip: 'clip', placeholder: 'placeholder', 'placeholder-nested': 'placeholder', 'overlap-below': 'overlap', 'overlap-below-window': 'overlap', 'overlap-sheet': 'overlap'};
+      const demos = {overflow: 'overflow', overlap: 'overlap', clip: 'clip', placeholder: 'placeholder', 'placeholder-nested': 'placeholder', 'overlap-below': 'overlap', 'overlap-below-window': 'overlap', 'overlap-sheet': 'overlap', 'overlay-pair': 'overlap'};
       // Where each below-the-fold demo's problem is, and which scroller the scan must put back.
       const below = {'overlap-below': ['Third', '#harness'], 'overlap-below-window': ['Third', null], 'overlap-sheet': ['Fifth', '#fx-sheet']};
       const scrolled = sel => page.evaluate(s => { const el = s ? document.querySelector(s) : document.scrollingElement; return [el.scrollLeft, el.scrollTop, el.scrollHeight > el.clientHeight]; }, sel);
@@ -274,6 +274,12 @@ module.exports = [
       await page.goto(`${t.base}${SMOKE}?demo=overlap-below`); await t.ready('fixture-smoke');
       await page.evaluate(() => { document.getElementById('harness').scrollTop = 120; });
       t.expect((await t.structure()).length === 1 && (await scrolled('#harness'))[1] === 120, 'the overlap scan restores a scroller that started scrolled');
+      // An open overlay (popover, dialog[open], a fallback layer root) partly over the page is by design.
+      await page.goto(`${t.base}${SMOKE}?demo=overlay`); await t.ready('fixture-smoke');
+      const overlay = await t.structure();
+      t.expect(overlay.length === 0, `an open overlay partly over page targets is not an overlap (${JSON.stringify(overlay)})`);
+      const shown = await page.evaluate(() => [...document.querySelectorAll('#harness button')].filter(b => /^In /.test(b.textContent)).map(b => document.elementFromPoint(b.getBoundingClientRect().left + 10, b.getBoundingClientRect().top + 10) === b));
+      t.expect(shown.length === 3 && shown.every(Boolean), `the overlay demo's buttons are on top (${JSON.stringify(shown)})`);
       await page.goto(`${t.base}${SMOKE}?demo=chip-row`); await t.ready('fixture-smoke');
       t.expect((await t.structure()).length === 0, 'a scrolling row of chips is not a clipped label');
       await page.goto(`${t.base}${SMOKE}?demo=focus-shadow`); await t.ready('fixture-smoke');
@@ -347,14 +353,24 @@ module.exports = [
     url: `${SMOKE}?fx-audio=manual`,
     opts: {devices: ['laptop'], themes: ['light'], capture: false, installClock: NOW},
     async fn(page, t) {
+      // page.clock.install keeps time flowing in real time, so every bound below is measured against
+      // this process's own clock (t.clockInstall.before: just before the install), never a fixed
+      // allowance: a loaded machine (--jobs 3) only widens both sides together.
+      const SLACK = 50;
+      const wall0 = Date.now();
       const start = await page.evaluate(() => { window.__ctx = new AudioContext(); return {date: Date.now(), audio: window.__ctx.currentTime}; });
+      const sinceInstall = Date.now() - t.clockInstall.before;
       await t.advance(100);
       await page.evaluate(() => window.fixture.advance(50));
       const end = await page.evaluate(() => ({date: Date.now(), audio: window.__ctx.currentTime}));
+      const between = Date.now() - wall0;
       t.expect(start.audio === 0 && Math.abs(end.audio - .15) < 1e-9, `audio time moved by 150 ms (${JSON.stringify(end)})`);
-      // page.clock.install keeps time flowing, so the page clock moved by at least the 150 ms run on it.
-      t.expect(end.date - start.date >= 150 && end.date - start.date < 1150, `the page clock moved with it (${end.date - start.date} ms)`);
-      t.expect(Math.abs(start.date - Date.parse(NOW)) < 1000, 'page.clock.install started at the given time');
+      t.expect(t.clockInstall.time === Date.parse(NOW), `the runner installed the clock at ${NOW} (${JSON.stringify(t.clockInstall)})`);
+      const offset = start.date - Date.parse(NOW);
+      t.expect(offset >= 0 && offset <= sinceInstall + SLACK, `page.clock.install started at the given time (${offset} ms after it, ${sinceInstall} ms of real time since the install)`);
+      // The page clock moved by at least the 150 ms run on it, and by no more than that plus the real time that passed.
+      const moved = end.date - start.date;
+      t.expect(moved >= 150 && moved <= 150 + between + SLACK, `the page clock moved with it (${moved} ms, ${between} ms of real time)`);
     },
   },
   {

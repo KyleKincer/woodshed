@@ -6,12 +6,37 @@ import {describe, it, expect} from 'vitest';
 import {createSeed, seedKey, buildMap, REHEARSAL, SHARE_TOKEN, DEMO_TOKEN, SEED_SWITCHES, USER_ID} from '../db/seed.js';
 import {cleanSongMap, validateSongMap, compile, timeAt} from '../../../shared/song-map.ts';
 import {number, beatGroups} from '../../../shared/notation.ts';
+import schema from '../../../convex/schema.ts';
 
 const NOW = Date.parse('2026-10-28T09:00:00Z');
 const seed = createSeed({now: NOW});
 const song = id => seed.songs.find(s => s.id === id);
 const practiceOf = id => seed.songPractice.find(p => p.songId === id)?.practice;
 const PRACTICE_CAP = 32_768;
+
+/** Problems with `value` against a convex/values validator (the kinds convex/schema.ts uses). */
+function schemaProblems(v, value, path, out = []) {
+  if (value === undefined) { if (v.isOptional !== 'optional') out.push(`${path}: missing`); return out; }
+  const bad = what => out.push(`${path}: ${JSON.stringify(value)?.slice(0, 60)} is not ${what}`);
+  switch (v.kind) {
+    case 'any': break;
+    case 'string': case 'id': if (typeof value !== 'string') bad('a string'); break;
+    case 'float64': if (typeof value !== 'number') bad('a number'); break;
+    case 'boolean': if (typeof value !== 'boolean') bad('a boolean'); break;
+    case 'null': if (value !== null) bad('null'); break;
+    case 'literal': if (value !== v.value) bad(JSON.stringify(v.value)); break;
+    case 'array': if (!Array.isArray(value)) bad('an array'); else value.forEach((e, i) => schemaProblems(v.element, e, `${path}[${i}]`, out)); break;
+    case 'record': if (!value || typeof value !== 'object') bad('a record'); else for (const [k, e] of Object.entries(value)) schemaProblems(v.value, e, `${path}.${k}`, out); break;
+    case 'object':
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { bad('an object'); break; }
+      for (const [k, f] of Object.entries(v.fields)) schemaProblems(f, value[k], `${path}.${k}`, out);
+      for (const k of Object.keys(value)) if (!(k in v.fields)) out.push(`${path}.${k}: not in the schema`);
+      break;
+    case 'union': if (!v.members.some(m => !schemaProblems(m, value, path).length)) bad('any member of the union'); break;
+    default: out.push(`${path}: unchecked validator kind ${v.kind}`);
+  }
+  return out;
+}
 
 describe('the rehearsal song (Appendix A)', () => {
   const gh = song('glasshouse');
@@ -171,6 +196,30 @@ describe('review flags, suggestions and sharing', () => {
     expect(seed.demoToken).toBe(DEMO_TOKEN);
     expect(Object.values(seed.shares).map(s => s.token).sort()).toEqual([SHARE_TOKEN, DEMO_TOKEN].sort());
     for (const s of Object.values(seed.shares)) expect(s.token).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('song rows against convex/schema.ts', () => {
+  const fields = schema.tables.songs.validator.fields;
+  const FIXTURE_ONLY = ['id', 'coverUrl', 'bpm', 'offset'];
+  it('hold only schema values: no null for an optional column, no value outside a union', () => {
+    for (const fx of [{}, {account: 'new'}, {devices: 'none'}, {auth: 'export_only'}]) {
+      for (const row of createSeed({fx, now: NOW}).songs) {
+        const problems = Object.keys(row).filter(k => !(k in fields) && !FIXTURE_ONLY.includes(k)).map(k => `${row.id}.${k}: not in the schema`);
+        for (const [k, f] of Object.entries(fields)) if (k in row) schemaProblems(f, row[k], `${row.id}.${k}`, problems);
+        expect(problems, JSON.stringify(fx)).toEqual([]);
+      }
+    }
+  });
+  it('a song with no metadata lookup has no metadataStatus or MusicBrainz ids', () => {
+    for (const id of ['lowtide', 'jam03', 'quiet']) for (const k of ['metadataStatus', 'metadataRecordingId', 'metadataReleaseId']) expect(song(id), `${id}.${k}`).not.toHaveProperty(k);
+    expect(song('glasshouse').metadataStatus).toBe('matched');
+    expect(song('metropolis').metadataStatus).toBe('pending');
+  });
+  it('the checker catches the values the seed used to hold', () => {
+    expect(schemaProblems(fields.metadataStatus, 'done', 's.metadataStatus')).toHaveLength(1);
+    expect(schemaProblems(fields.metadataRecordingId, null, 's.metadataRecordingId')).toHaveLength(1);
+    expect(schemaProblems(fields.metadataStatus, undefined, 's.metadataStatus')).toEqual([]);
   });
 });
 
