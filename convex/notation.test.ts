@@ -4,6 +4,8 @@ import {test,expect} from 'vitest';
 import {anyApi as api} from 'convex/server';
 import schema from './schema';
 import {emptyScore,fraction,durationOf,upgradeScore,validateScore} from '../shared/notation';
+import {defaultSongMap} from '../shared/song-map';
+import {emptyPractice} from '../shared/practice';
 const modules=import.meta.glob('./**/*.ts');
 async function setup(){const t=convexTest(schema,modules),alice=t.withIdentity({subject:'alice'}),bob=t.withIdentity({subject:'bob'});const songId=await t.run(ctx=>ctx.db.insert('songs',{userId:'alice',title:'Test',duration:20,addedAt:1,stems:[{name:'drums',key:'drums'}],stemMode:'full',quality:{model:'htdemucs',shifts:0,overlap:.25,format:'opus'}}));const score=emptyScore(20);const {bars,...header}=score;const args={songId,baseRevision:0,mutationId:'first',header,bars};return {t,alice,bob,songId,score,args};}
 const hit=(id:string,instrument:string,offset=fraction(0),extra={})=>({id,offset,instrument,voice:instrument==='kick'?2:1,accent:false,ghost:false,flam:false,sticking:'',velocity:.75,...extra});
@@ -11,12 +13,16 @@ const hit=(id:string,instrument:string,offset=fraction(0),extra={})=>({id,offset
 const hitV1=(id:string,instrument:string,offset=fraction(0),value=8)=>({id,offset,duration:durationOf(value),instrument,voice:instrument==='kick'?2:1,value,dotted:false,tuplet:1,accent:false,ghost:false,flam:false,sticking:'',velocity:.75});
 const v1Header=(header:any)=>({version:1,title:header.title,timeline:header.timeline});
 const snapshot=(t:any)=>t.run(async (ctx:any)=>({parts:await ctx.db.query('notationParts').collect(),bars:await ctx.db.query('notationBars').collect()}));
-test('writes require ownership and writable account access; retries do not duplicate revisions',async()=>{
+test('writes require ownership; export-only accounts may edit; retries do not duplicate revisions',async()=>{
   const {t,alice,bob,songId,args}=await setup();await expect(t.mutation(api.notation.save,args)).rejects.toThrow('Not signed');await expect(bob.mutation(api.notation.save,args)).rejects.toThrow('unavailable');
   expect(await alice.mutation(api.notation.save,args)).toEqual({revision:1});expect(await alice.mutation(api.notation.save,args)).toEqual({revision:1});
   await expect(alice.mutation(api.notation.save,{...args,mutationId:'other'})).rejects.toThrow('NOTATION_CONFLICT');
-  await t.run(ctx=>ctx.db.insert('accountControls',{userId:'alice',status:'export_only',notes:''}));await expect(alice.mutation(api.notation.save,{...args,baseRevision:1,mutationId:'blocked'})).rejects.toThrow('export-only');
-  expect((await alice.query(api.notation.get,{songId})).revision).toBe(1);
+  // D10: a chart edit is personal state with no new stored media.
+  await t.run(ctx=>ctx.db.insert('accountControls',{userId:'alice',status:'export_only',notes:''}));
+  expect(await alice.mutation(api.notation.save,{...args,baseRevision:1,mutationId:'allowed',header:{...args.header,title:'Edited'}})).toEqual({revision:2});
+  expect((await alice.query(api.notation.get,{songId})).revision).toBe(2);
+  const control=await t.run(ctx=>ctx.db.query('accountControls').first());await t.run(ctx=>ctx.db.patch(control!._id,{status:'suspended'}));
+  await expect(alice.mutation(api.notation.save,{...args,baseRevision:2,mutationId:'blocked'})).rejects.toThrow('suspended');
 });
 test('score validation rejects corrupt positions, tuplets and unsafe updates atomically',async()=>{
   const {alice,args,score}=await setup();const measureId=score.timeline.measures[0].id;
@@ -84,18 +90,18 @@ test('sharing inclusion and revocation govern read-only score access',async()=>{
   await alice.mutation(api.sharing.create,{id:songId,includeNotation:true});await alice.mutation(api.sharing.revoke,{id:songId});expect(await t.query(api.notation.get,{token})).toBeNull();
   await alice.mutation(api.songs.remove,{id:songId});expect(await t.run(ctx=>ctx.db.query('notationParts').take(10))).toEqual([]);expect(await t.run(ctx=>ctx.db.query('notationBars').take(10))).toEqual([]);
 });
-test('desktop 1.5 request shapes preserve web notation and its sharing preference',async()=>{
+test('tempo and practice saves leave the drum part and its sharing preference alone',async()=>{
   const {t,alice,args,songId}=await setup();await alice.mutation(api.notation.save,args);
   const before=await alice.query(api.notation.get,{songId});
-  // Existing desktop clients know only the original song settings and omit the
-  // new inclusion argument when retrieving or creating an active share link.
-  await alice.mutation(api.songs.saveTempo,{id:songId,tempo:{source:'manual',map:[{t:0,bpm:87,beatsPerBar:4,unit:4}]}});
-  await alice.mutation(api.songs.savePractice,{id:songId,practice:{rate:.75,loop:{enabled:true,a:1,b:4},tracks:[]}});
+  // A share link created without the inclusion argument keeps the stored preference.
+  await alice.mutation(api.songs.saveTempo,{id:songId,tempo:{songMap:defaultSongMap(20,87)},baseRev:0});
+  await alice.mutation(api.songs.savePractice,{id:songId,practice:{...emptyPractice(),rate:.75},final:true});
   const {token}=await alice.mutation(api.sharing.create,{id:songId,includeNotation:false});
   expect(await alice.mutation(api.sharing.create,{id:songId})).toEqual({token});
   expect(await alice.query(api.notation.get,{songId})).toEqual(before);
   expect(await t.query(api.notation.get,{token})).toBeNull();
-  expect((await alice.query(api.songs.get,{id:songId}))?.practice.rate).toBe(.75);
+  expect((await alice.query(api.songs.getPractice,{id:songId}))?.rate).toBe(.75);
+  expect(await alice.query(api.songs.get,{id:songId})).toMatchObject({hasChart:false,tempoRev:1});
 });
 test('independent drum rhythms round-trip through saves and shared parts',async()=>{
   const {t,alice,args,songId,score}=await setup();

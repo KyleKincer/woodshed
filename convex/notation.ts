@@ -2,7 +2,9 @@ import {v,ConvexError} from 'convex/values';
 import {query,mutation} from './_generated/server';
 import type {QueryCtx,MutationCtx} from './_generated/server';
 import type {Id} from './_generated/dataModel';
-import {requireUserId,requireWritableUserId} from './lib/auth';
+import {requireUserId} from './lib/auth';
+import {fail} from './lib/errors';
+import {ensureBackfill,chartPatch} from './migrations';
 import {barValidator,headerValidator} from './lib/notationValidators';
 import {validateTimeline,validateBar,upgradeBar,currentBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
@@ -19,9 +21,18 @@ export async function sharedPart(ctx:QueryCtx|MutationCtx,songId:Id<'songs'>){
   const share=await ctx.db.query('songShares').withIndex('by_songId',q=>q.eq('songId',songId)).unique();
   return share?.includeNotation===false?null:readPart(ctx,songId);
 }
-export async function deletePart(ctx:MutationCtx,partId:Id<'notationParts'>){
+/**
+ * Deletes a part and its bars; the song it belonged to no longer has a chart
+ * (B1 `hasChart`, with the summaries that depend on it). `songDeleted`: the
+ * caller deletes the song next, so it is not patched.
+ */
+export async function deletePart(ctx:MutationCtx,partId:Id<'notationParts'>,{songDeleted=false}:{songDeleted?:boolean}={}){
+  const part=await ctx.db.get('notationParts',partId);
   const rows=await ctx.db.query('notationBars').withIndex('by_partId',q=>q.eq('partId',partId)).take(MAX_MEASURES+1);
-  for(const row of rows)await ctx.db.delete(row._id);await ctx.db.delete(partId);
+  for(const row of rows)await ctx.db.delete('notationBars',row._id);
+  if(part)await ctx.db.delete('notationParts',partId);
+  const song=part?.songId?await ctx.db.get('songs',part.songId):null;
+  if(song&&!songDeleted&&song.hasChart!==false)await ctx.db.patch('songs',song._id,await chartPatch(ctx,song,false));
 }
 export async function capturePart(ctx:MutationCtx,songId:Id<'songs'>,userId:string){
   const data=await sharedPart(ctx,songId);if(!data)return undefined;
@@ -31,11 +42,12 @@ export async function capturePart(ctx:MutationCtx,songId:Id<'songs'>,userId:stri
 export const get=query({args:{songId:v.optional(v.id('songs')),token:v.optional(v.string())},handler:async(ctx,args)=>{
   let songId=args.songId;
   if(args.token){const song=await sharedSource(ctx,args.token);if(!song)return null;songId=song._id;const share=await ctx.db.query('songShares').withIndex('by_songId',q=>q.eq('songId',songId!)).unique();if(share?.includeNotation===false)return null;}
-  else{const userId=await requireUserId(ctx);const song=songId?await ctx.db.get(songId):null;if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');}
+  else{const userId=await requireUserId(ctx);const song=songId?await ctx.db.get('songs',songId):null;if(!song||song.userId!==userId)fail('not_found','Song unavailable.');}
   const result=await readPart(ctx,songId!);return result?{score:{...result.part.header,bars:result.rows.map(r=>r.bar)},revision:result.part.revision}:null;
 }});
+// Export-only accounts may edit charts: personal state with no new stored media (D10).
 export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),mutationId:v.string(),header:headerValidator,bars:v.array(barValidator)},handler:async(ctx,args)=>{
-  const userId=await requireWritableUserId(ctx),song=await ctx.db.get(args.songId);if(!song||song.userId!==userId)throw new ConvexError('Song unavailable.');
+  const userId=await requireUserId(ctx),song=await ctx.db.get('songs',args.songId);if(!song||song.userId!==userId)fail('not_found','Song unavailable.');
   if(args.mutationId.length>100||!args.mutationId||args.bars.length>16||!Number.isSafeInteger(args.baseRevision)||args.baseRevision<0||!args.header.title.trim()||args.header.title.length>100)throw new ConvexError('Invalid score update.');
   validateTimeline(args.header.timeline);
   // Version 2 bars must already be current: validateBar checks the upgraded
@@ -69,5 +81,9 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   if(existing)await ctx.db.patch(partId,fields);
   for(const row of existing?.rows||[])if(!measureIds.has(row.bar.measureId))await ctx.db.delete(row._id);
   for(const bar of args.bars){const row=existing?.rows.find(r=>r.bar.measureId===bar.measureId);if(row)await ctx.db.patch(row._id,{bar});else await ctx.db.insert('notationBars',{partId,bar});}
+  // The Library's chart flag (B1): any hit, or any bar marked reviewed (a reviewed empty bar is a transcribed rest).
+  const hasChart=hitCount>0||unchangedRows.some(r=>r.bar.coverage==='reviewed')||args.bars.some(b=>b.coverage==='reviewed');
+  // A part makes the map real (§4.1 rule 2), so the summaries change with the flag.
+  if(song.hasChart!==hasChart){await ensureBackfill(ctx,userId);await ctx.db.patch('songs',song._id,await chartPatch(ctx,song,hasChart));}
   return {revision};
 }});

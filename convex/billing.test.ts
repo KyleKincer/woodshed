@@ -73,7 +73,8 @@ test('cleanup waits for R2 deletion and stops as soon as the remaining library f
   for(let i=0;i<2;i++){
    const key=`users/${userId}/${i}/drums.webm`;
    objects.push(await ctx.db.insert('audioObjects',{userId,jobId,key,name:'drums.webm',bytes:200e6,mime:'audio/webm',checksum:'a'.repeat(43)+'=',expiresAt:0,status:'ready'}));
-   await ctx.db.insert('songs',{userId,title:`Song ${i}`,duration:10,stems:[{name:'drums',key}],stemMode:'full',quality:{model:'htdemucs',shifts:0,overlap:0.25,format:'opus',bitrate:192},addedAt:i});
+   const songId=await ctx.db.insert('songs',{userId,title:`Song ${i}`,duration:10,stems:[{name:'drums',key}],stemMode:'full',quality:{model:'htdemucs',shifts:0,overlap:0.25,format:'opus',bitrate:192},addedAt:i});
+   await ctx.db.insert('songPractice',{songId,userId,practice:{v:2,rate:1},updatedAt:1});
   }
   await ctx.db.insert('storageUsage',{scope:`user:${userId}`,bytes:400e6});await ctx.db.insert('storageUsage',{scope:'app',bytes:400e6});return objects;
  });
@@ -81,6 +82,9 @@ test('cleanup waits for R2 deletion and stops as soon as the remaining library f
  await t.mutation(internal.billingData.startCleanup,{userId,deadline:grace.graceEndsAt!});
  await t.mutation(internal.billingData.cleanup,{userId});
  expect((await user.query(api.songs.list,{})).songs).toHaveLength(1);
+ // The deleted song's practice goes with it (deleteSongData, B1).
+ const practice=await t.run(ctx=>ctx.db.query('songPractice').collect());
+ expect(practice.map(row=>row.songId)).toEqual([(await user.query(api.songs.list,{})).songs[0].id]);
  await t.mutation(internal.billingData.cleanup,{userId});
  expect((await user.query(api.songs.list,{})).songs).toHaveLength(1);
  await t.mutation(internal.storage.deleted,{id:ids[0]});await t.mutation(internal.billingData.cleanup,{userId});
