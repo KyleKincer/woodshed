@@ -1,0 +1,39 @@
+/* CoachMark (src/ui/coachmark.js): an anchored, non-blocking callout at
+ * --z-coachmark, outlined in --accent (spec §6.6, §8.5). */
+@layer primitives {
+  .ui-coachmark {
+    box-sizing: border-box;
+    inline-size: max-content;
+    max-inline-size: min(320px, calc(100vw - 2 * var(--s4)));
+    padding: var(--s3) var(--s4);
+    background: var(--surface);
+    color: var(--ink);
+    border: 2px solid var(--accent);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+  .ui-coachmark-title { margin: 0 0 var(--s1); font-weight: var(--fw-bold); }
+  .ui-coachmark-body { color: var(--ink-2); }
+  .ui-coachmark-body strong { color: var(--ink); }
+  .ui-coachmark-foot {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-block-start: var(--s2);
+    font-size: var(--fs-14);
+    color: var(--ink-3);
+  }
+  .ui-coachmark-skip {
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .ui-coachmark-skip:hover { background: var(--surface-2); }
+}
