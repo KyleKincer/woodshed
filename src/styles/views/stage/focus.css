@@ -1,0 +1,33 @@
+/* Focus (src/stage/stage.js; spec §4.10): F, ⋯ → Focus, or a double tap on the readouts.
+ * Band: the identity row (the HUD's), the strip and the dock go; only the music's height changes,
+ * so the chart never relayouts. A 72 px invisible reveal zone along the bottom shows the dock over
+ * the music for 5 s on a tap. Rail: the rail collapses to the 120 px mini rail (the one Focus
+ * change that relayouts, once, with the anchor kept). */
+@layer views {
+  .stage-reveal { display: none; }
+
+  .stage[data-stage-layout=band][data-focus] .stage-strip,
+  .stage[data-stage-layout=band][data-focus] .stage-controls { display: none; }
+
+  .stage[data-stage-layout=band][data-focus] .stage-reveal {
+    display: block;
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: calc(72px + var(--safe-bottom));
+    z-index: var(--z-local);
+  }
+
+  .stage[data-stage-layout=band][data-focus][data-reveal] .stage-controls {
+    display: flex;
+    grid-area: main;
+    align-self: end;
+    z-index: var(--z-overlay);
+    box-shadow: var(--shadow-sheet);
+  }
+  .stage[data-stage-layout=band][data-focus][data-reveal] .stage-reveal { display: none; }
+
+  .stage[data-stage-layout=rail][data-focus] { --rail-w: 120px; }
+  .stage[data-stage-layout=rail][data-focus] .stage-hud { padding-inline: var(--s2); }
+  .stage[data-stage-layout=rail][data-focus] .stage-controls { padding-inline: var(--s2); }
+}
