@@ -1,0 +1,74 @@
+@layer views {
+  /* The Notes card's content (src/stage/sheets/notes.js, spec §4.7): 17 px practice notes, then key,
+   * tuning and tags, the active spot's note and (for the owner) Edit details. The card itself
+   * (.stage-notes-card, 320 px at the music's top right) is the Stage frame's (stage.css). */
+  .notes {
+    display: grid;
+    gap: var(--s3);
+  }
+  .notes-text,
+  .notes-spot-text {
+    font-size: var(--fs-stage-sub);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .notes-empty {
+    color: var(--ink-3);
+    font-size: var(--fs-stage-sub);
+  }
+  .notes-spot {
+    display: grid;
+    gap: var(--s1);
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+  }
+  .notes-spot-label {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .notes-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--s2) var(--s3);
+    margin: 0;
+  }
+  .notes-fact-label {
+    color: var(--ink-3);
+    font-size: var(--fs-16);
+  }
+  .notes-fact-value {
+    margin: 0;
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    overflow-wrap: anywhere;
+  }
+  .notes-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .notes-tag {
+    padding: 2px var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .notes-owner {
+    display: grid;
+    justify-items: start;
+    gap: var(--s2);
+    padding-top: var(--s2);
+    border-top: 1px solid var(--line);
+  }
+  .notes-hint {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+}
