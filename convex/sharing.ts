@@ -6,14 +6,15 @@
 // audio in R2, then commits the new song here (`finishImport`).
 //
 // What a link carries is an explicit allowlist (`sharedSnapshot`): the song's
-// public metadata, its stems, its map, and its practice setup run through
+// public metadata, its stems, its map (unless the owner turned off "Sections
+// and tempo map", `songShares.includeMap === false`; spec §6.1), and its practice setup run through
 // `shared/practice.ts#sanitizeForShare` (loops, spots and markers; no spot
 // notes, no practice history, no Minus me / Only me, no tombstones). Notes,
 // personal tags, source paths, emails and account ids never leave the account.
 //
 // Stored data is read through the same one-way upgrades as everywhere else:
-// practice comes from `songPractice` first, else the 1.9 `songs.practice`
-// (v1 or v2), upgraded with the legacy click fields that 1.x kept inside
+// practice comes from `migrations.storedPractice` (`songPractice` first, else
+// the 1.9 `songs.practice`, v1 or v2), upgraded with the legacy click fields that 1.x kept inside
 // `tempo` (D51). An import row written by 1.9 (a v1 practice and a legacy
 // tempo in its snapshot) commits through the same normalisation, so nothing
 // here needs a backfill.
@@ -27,6 +28,7 @@ import {fail} from './lib/errors';
 import {coverKeyOf} from './lib/songMetadata';
 import {adjust, limits, used, retireKey} from './storage';
 import {capturePart, deletePart} from './notation';
+import {storedPractice} from './migrations';
 import {cleanSongMap, hasRealMap, songMapFromTempo, mapSummaryOf, barsOf, sectionsFromBars, type SongMapData} from '../shared/song-map';
 import {PRACTICE_CAP, upgradePractice, sanitizeForShare, prunePractice, summarize, type PracticeV2, type SummaryMap} from '../shared/practice';
 import {MAX_MEASURES} from '../shared/notation';
@@ -54,8 +56,12 @@ export type ShareSnapshot = {
   tempo: SharedTempo | undefined; practice: PracticeV2;
 };
 
-/** The song behind an active token, or null when the link must not work. */
-export async function sharedSource(ctx: QueryCtx | MutationCtx, token: string) {
+/** What an owner chose for a link; absent fields mean true (1.9 links always carried the map and the chart). */
+export const includesMap = (share: Pick<Doc<'songShares'>, 'includeMap'> | null | undefined) => share?.includeMap !== false;
+export const includesNotation = (share: Pick<Doc<'songShares'>, 'includeNotation'> | null | undefined) => share?.includeNotation !== false;
+
+/** The active link behind a token and its song, or null when the link must not work. */
+export async function activeShare(ctx: QueryCtx | MutationCtx, token: string): Promise<{share: Doc<'songShares'>; song: Song} | null> {
   if (!tokenValid(token)) return null;
   const share = await ctx.db.query('songShares').withIndex('by_token', q => q.eq('token', token)).unique();
   if (!share?.active) return null;
@@ -66,7 +72,12 @@ export async function sharedSource(ctx: QueryCtx | MutationCtx, token: string) {
     const object = await ctx.db.query('audioObjects').withIndex('by_key', q => q.eq('key', key)).unique();
     if (object && object.status !== 'ready') return null;
   }
-  return song;
+  return {share, song};
+}
+
+/** The song behind an active token, or null when the link must not work. */
+export async function sharedSource(ctx: QueryCtx | MutationCtx, token: string) {
+  return (await activeShare(ctx, token))?.song ?? null;
 }
 
 function pick(value: unknown, keys: string[]) {
@@ -105,14 +116,12 @@ export function sharedPractice(raw: unknown, legacyTempo: unknown, duration: num
   return sanitizeForShare(upgradePractice(raw, {duration, legacyTempo}));
 }
 
-/** The song's stored practice: `songPractice` first, else the 1.9 `songs.practice` (read until V1). */
-async function storedPractice(ctx: QueryCtx | MutationCtx, song: Song): Promise<unknown> {
-  const row = await ctx.db.query('songPractice').withIndex('by_songId', q => q.eq('songId', song._id)).first();
-  return row ? row.practice : song.practice;
-}
-
-/** Explicit allowlist: no notes, personal tags, source file paths or account ids. */
-export async function sharedSnapshot(ctx: QueryCtx | MutationCtx, song: Song): Promise<ShareSnapshot> {
+/**
+ * Explicit allowlist: no notes, personal tags, source file paths or account ids.
+ * `includeMap: false` (the link's "Sections and tempo map" is off) leaves out `tempo`;
+ * the practice keeps its times, and its 1.x click fields still come from the stored tempo.
+ */
+export async function sharedSnapshot(ctx: QueryCtx | MutationCtx, song: Song, {includeMap = true}: {includeMap?: boolean} = {}): Promise<ShareSnapshot> {
   return {
     title: song.title, artist: song.artist || song.uploader || '', album: song.album || '',
     albumArtist: song.albumArtist || '', year: song.year || '', genre: song.genre || '',
@@ -120,7 +129,7 @@ export async function sharedSnapshot(ctx: QueryCtx | MutationCtx, song: Song): P
     musicalKey: song.musicalKey || '', tuning: song.tuning || '',
     duration: song.duration, stems: song.stems, stemMode: song.stemMode, quality: song.quality,
     coverKey: coverKeyOf(song), artwork: song.artwork?.kind === 'release' ? song.artwork : undefined,
-    tempo: sharedTempo(song.tempo, song.duration),
+    tempo: includeMap ? sharedTempo(song.tempo, song.duration) : undefined,
     practice: sharedPractice(await storedPractice(ctx, song), song.tempo, song.duration),
   };
 }
@@ -157,13 +166,13 @@ export const status = query({
     const userId = await requireUserId(ctx);
     await requireOwnSong(ctx, userId, id);
     const share = await ctx.db.query('songShares').withIndex('by_songId', q => q.eq('songId', id)).unique();
-    return share?.active ? {token: share.token, includeNotation: share.includeNotation !== false} : null;
+    return share?.active ? {token: share.token, includeNotation: includesNotation(share), includeMap: includesMap(share)} : null;
   },
 });
 
 export const create = mutation({
-  args: {id: v.id('songs'), includeNotation: v.optional(v.boolean())},
-  handler: async (ctx, {id, includeNotation}) => {
+  args: {id: v.id('songs'), includeNotation: v.optional(v.boolean()), includeMap: v.optional(v.boolean())},
+  handler: async (ctx, {id, includeNotation, includeMap}) => {
     const userId = await requireWritableUserId(ctx), song = await requireOwnSong(ctx, userId, id);
     if (!song.stems.length || song.stems.length > 8) fail('invalid', 'Finish processing this song before sharing it.');
     for (const stem of song.stems) {
@@ -172,12 +181,13 @@ export const create = mutation({
     }
     const existing = await ctx.db.query('songShares').withIndex('by_songId', q => q.eq('songId', id)).unique();
     if (existing?.active) {
-      if (includeNotation !== undefined) await ctx.db.patch('songShares', existing._id, {includeNotation});
+      const choices = {...(includeNotation === undefined ? {} : {includeNotation}), ...(includeMap === undefined ? {} : {includeMap})};
+      if (Object.keys(choices).length) await ctx.db.patch('songShares', existing._id, choices);
       return {token: existing.token};
     }
     // A stopped link never comes back: creating again always mints a new token.
     const token = (crypto.randomUUID() + crypto.randomUUID()).replaceAll('-', '');
-    const fields = {token, active: true, createdAt: Date.now(), includeNotation: includeNotation !== false};
+    const fields = {token, active: true, createdAt: Date.now(), includeNotation: includeNotation !== false, includeMap: includeMap !== false};
     if (existing) await ctx.db.patch('songShares', existing._id, fields);
     else await ctx.db.insert('songShares', {songId: id, userId, ...fields});
     return {token};
@@ -198,9 +208,9 @@ export const revoke = mutation({
 export const view = query({
   args: {token: v.string()},
   handler: async (ctx, {token}) => {
-    const song = await sharedSource(ctx, token);
-    if (!song) return null;
-    const snapshot = await sharedSnapshot(ctx, song);
+    const source = await activeShare(ctx, token);
+    if (!source) return null;
+    const {song} = source, snapshot = await sharedSnapshot(ctx, song, {includeMap: includesMap(source.share)});
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(song.stems.map(s => s.key).join('|')));
     // Storage keys stay opaque to visitors; signing is a separate, scoped endpoint (`shareAudio.playback`).
     return {
@@ -254,13 +264,15 @@ const headValidator = v.object({sourceKey: v.string(), bytes: v.number(), mime: 
 export const beginImport = internalMutation({
   args: {token: v.string(), heads: v.array(headValidator)},
   handler: async (ctx, {token, heads}) => {
-    const userId = await requireWritableUserId(ctx), song = await sharedSource(ctx, token);
-    if (!song) unavailable();
+    const userId = await requireWritableUserId(ctx), source = await activeShare(ctx, token);
+    if (!source) unavailable();
+    const {song, share} = source;
     if (song.userId === userId) return {songId: song._id};
     const existing = await ctx.db.query('shareImports').withIndex('by_userId_and_sourceSongId', q => q.eq('userId', userId).eq('sourceSongId', song._id)).unique();
     if (existing?.songId && await ctx.db.get('songs', existing.songId)) return {songId: existing.songId};
     if (existing?.status === 'copying') fail('invalid', 'This song is already being added. Please wait.');
-    const snapshot = await sharedSnapshot(ctx, song), keys = [...song.stems.map(s => s.key), ...(snapshot.coverKey ? [snapshot.coverKey] : [])];
+    // The snapshot holds what the link carried at this moment; `finishImport` copies only that (no tempo: no map).
+    const snapshot = await sharedSnapshot(ctx, song, {includeMap: includesMap(share)}), keys = [...song.stems.map(s => s.key), ...(snapshot.coverKey ? [snapshot.coverKey] : [])];
     if (heads.length !== keys.length || new Set(heads.map(h => h.sourceKey)).size !== keys.length ||
       heads.some(h => !keys.includes(h.sourceKey) || !Number.isSafeInteger(h.bytes) || h.bytes < 1 || h.bytes > 250_000_000 || !h.etag))
       fail('invalid', 'The shared audio changed. Reload the link and try again.');

@@ -1,10 +1,11 @@
 // Fixture handlers for convex/sharing.ts and convex/shareAudio.ts (architecture
 // §6.7, package BK5). Links live in `db.shares` ({[songId]: {token,
-// includeNotation, createdAt}}), so a link resolves by its token: the share
-// dialog's (Glasshouse) and the demo's (`db.demoToken`, Paper Lanterns).
+// includeNotation, includeMap?, createdAt}}; an absent choice means true, as
+// on the server), so a link resolves by its token: the share dialog's
+// (Glasshouse) and the demo's (`db.demoToken`, Paper Lanterns).
 //
 // `sharing:view` returns the v2 snapshot the server returns: the song's public
-// fields, `tempo: {songMap}`, the practice through the same one-way upgrade and
+// fields, `tempo: {songMap}` (none when the link's includeMap is false), the practice through the same one-way upgrade and
 // `sanitizeForShare` (songPractice first, else the 1.9 songs.practice, with the
 // 1.x click fields from tempo), and `ownerName` from `db.user` ("Kyle K.").
 //
@@ -54,15 +55,18 @@ function sharedTempo(tempo, duration) {
 
 const sharedPractice = song => sanitizeForShare(upgradePractice(storedPractice(song), {duration: song.duration, legacyTempo: song.tempo}));
 
-/** The snapshot `sharing:view` returns for a seeded song. */
+const includes = (share, key) => share?.[key] !== false;
+const choices = share => ({includeNotation: includes(share, 'includeNotation'), includeMap: includes(share, 'includeMap')});
+
+/** The snapshot `sharing:view` returns for a seeded song; with includeMap false it has no `tempo`, as on the server. */
 export function shareView(song) {
-  const s = publicSong(song);
+  const s = publicSong(song), tempo = includes(db.shares[song.id], 'includeMap') ? sharedTempo(s.tempo, s.duration) : undefined;
   return {
     title: s.title, artist: s.artist || s.uploader || '', album: s.album || '', albumArtist: s.albumArtist || '', year: s.year || '',
     genre: s.genre || '', trackNumber: s.trackNumber || '', discNumber: s.discNumber || '', musicalKey: s.musicalKey || '', tuning: s.tuning || '',
     duration: s.duration, stemMode: s.stemMode, quality: s.quality,
     artwork: s.artwork?.kind === 'release' ? s.artwork : undefined,
-    tempo: sharedTempo(s.tempo, s.duration), practice: sharedPractice(song),
+    ...(tempo ? {tempo} : {}), practice: sharedPractice(song),
     id: 'shared', ownerName: ownerNameOf(db.user?.name), revision: 'r1',
     coverKey: s.coverKey || s.coverUrl ? 'cover' : null, coverUrl: s.artwork?.kind === 'release' ? s.coverUrl : null,
     stems: s.stems.map((x, i) => ({name: x.name, key: `stem-${i}`})),
@@ -84,7 +88,7 @@ function copyOf(song) {
   if (existing && findSong(existing)) return existing;
   const id = `${song.id}-copy`, view = shareView(song), now = Date.now();
   const tempo = view.tempo && (view.tempo.songMap || hasRealMap(view.tempo)) ? {songMap: songMapFromTempo(view.tempo, view.duration)} : null;
-  const withPart = db.shares[song.id]?.includeNotation !== false && !!db.notation[song.id];
+  const withPart = includes(db.shares[song.id], 'includeNotation') && !!db.notation[song.id];
   const score = withPart ? clone(db.notation[song.id].score) : null;
   const hasChart = withPart && scoreHasChart(score);
   const real = hasRealMap(tempo, {hasPart: hasChart});
@@ -109,16 +113,17 @@ function copyOf(song) {
 }
 
 export const handlers = {
-  'sharing:status': ({id}) => db.shares[id] ? {token: db.shares[id].token, includeNotation: db.shares[id].includeNotation !== false} : null,
-  'sharing:create': ({id, includeNotation}) => {
+  'sharing:status': ({id}) => db.shares[id] ? {token: db.shares[id].token, ...choices(db.shares[id])} : null,
+  'sharing:create': ({id, includeNotation, includeMap}) => {
     if (fx.auth === 'export_only') throw exportOnly();
     if (!findSong(id)) throw convexError({code: 'not_found', message: 'Song unavailable.'});
     const share = db.shares[id];
     if (share) {
       if (includeNotation !== undefined) share.includeNotation = includeNotation;
+      if (includeMap !== undefined) share.includeMap = includeMap;
       return {token: share.token};
     }
-    db.shares[id] = {token: newToken(), includeNotation: includeNotation !== false, createdAt: Date.now()};
+    db.shares[id] = {token: newToken(), includeNotation: includeNotation !== false, includeMap: includeMap !== false, createdAt: Date.now()};
     return {token: db.shares[id].token};
   },
   'sharing:revoke': ({id}) => { delete db.shares[id]; return null; },

@@ -11,6 +11,7 @@ import type {Id} from './_generated/dataModel';
 import {emptyScore, upgradeScore} from '../shared/notation';
 import {defaultSongMap, hasRealMap, type SongMapData} from '../shared/song-map';
 import {ownerNameOf, sharedTempo, sharedPractice, ANONYMOUS_OWNER, UNAVAILABLE} from './sharing';
+import sharingSource from './sharing.ts?raw';
 
 const remote = vi.hoisted(() => ({objects: new Map<string, {ContentLength: number, ContentType: string, ETag: string}>(), copyHook: null as null | (() => Promise<void>), copies: 0}));
 vi.mock('./r2', () => ({r2: {config: {bucket: 'test'}, getUrl: vi.fn(async (key: string) => 'https://storage.test/' + key), deleteObject: vi.fn(async () => {}), client: {send: vi.fn(async (command: any) => {
@@ -195,9 +196,9 @@ test('ownerName formats the owner as first name and last initial, and never retu
 test('revocation invalidates the link and media access; re-enabling never revives the old link', async () => {
   const {t, alice, songId, token} = await setup();
   expect((await alice.mutation(api.sharing.create, {id: songId})).token).toBe(token);
-  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: true});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: true, includeMap: true});
   await alice.mutation(api.sharing.create, {id: songId, includeNotation: false});
-  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false, includeMap: true});
   await alice.mutation(api.sharing.revoke, {id: songId});
   expect(await alice.query(api.sharing.status, {id: songId})).toBeNull();
   expect(await t.query(api.sharing.view, {token})).toBeNull();
@@ -207,6 +208,75 @@ test('revocation invalidates the link and media access; re-enabling never revive
   expect(next.token).toMatch(/^[a-f0-9]{64}$/);
   expect(await t.query(api.sharing.view, {token: next.token})).not.toBeNull();
   expect(Object.keys(await t.action(api.shareAudio.playback, {token: next.token})).sort()).toEqual(['cover', 'stem-0', 'stem-1']);
+});
+
+test('"Sections and tempo map" (includeMap): stored per link, absent means on, and only the choices given change', async () => {
+  const {t, alice, songId, token} = await setup();
+  const share = () => t.run(ctx => ctx.db.query('songShares').withIndex('by_songId', q => q.eq('songId', songId)).unique());
+  expect(await share()).toMatchObject({includeNotation: true, includeMap: true});
+  expect((await alice.mutation(api.sharing.create, {id: songId, includeMap: false})).token).toBe(token);
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: true, includeMap: false});
+  // Changing one choice leaves the other as it was.
+  await alice.mutation(api.sharing.create, {id: songId, includeNotation: false});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false, includeMap: false});
+  await alice.mutation(api.sharing.create, {id: songId});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false, includeMap: false});
+  await alice.mutation(api.sharing.create, {id: songId, includeMap: true});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false, includeMap: true});
+  // A link written before the field existed (1.9 or 2.0 before G1) reads as on.
+  await t.run(async ctx => { const row = (await ctx.db.query('songShares').withIndex('by_songId', q => q.eq('songId', songId)).unique())!; const {_id, _creationTime, includeMap, ...rest} = row; await ctx.db.replace('songShares', _id, rest); });
+  expect(await share()).not.toHaveProperty('includeMap');
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token, includeNotation: false, includeMap: true});
+  expect((await t.query(api.sharing.view, {token}))?.tempo).toBeDefined();
+  // A new link takes the choices it is created with; a stopped link's choices do not carry over.
+  await alice.mutation(api.sharing.revoke, {id: songId});
+  const next = await alice.mutation(api.sharing.create, {id: songId, includeMap: false});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token: next.token, includeNotation: true, includeMap: false});
+  await alice.mutation(api.sharing.revoke, {id: songId});
+  const third = await alice.mutation(api.sharing.create, {id: songId});
+  expect(await alice.query(api.sharing.status, {id: songId})).toEqual({token: third.token, includeNotation: true, includeMap: true});
+});
+
+test('with includeMap false the link carries no tempo (practice keeps its times) and a saved copy is unmapped', async () => {
+  const map = sectionMap();
+  const {t, alice, bob, songId, token} = await setup({tempo: {songMap: map, countIn: true, countInLength: 2, countInUnit: 'bars'}, songPractice: v2Practice(map)});
+  const mapped = (await t.query(api.sharing.view, {token}))!;
+  expect(mapped.tempo).toEqual({songMap: map});
+  await alice.mutation(api.sharing.create, {id: songId, includeMap: false});
+  const view = (await t.query(api.sharing.view, {token}))!;
+  expect(view).not.toHaveProperty('tempo');
+  expect(view.practice).toEqual(mapped.practice);
+  expect(view.practice.loop).toMatchObject({on: true, a: 8, b: 16});
+  expect(view.practice.spots.map(s => [s.a, s.b])).toEqual([[14, 16]]);
+  expect(view.practice.markers.map(m => m.t)).toEqual([31.2]);
+  expect(JSON.stringify(view)).not.toMatch(/songMap|"measures"/);
+  const copyId = await bob.action(api.shareAudio.save, {token});
+  const copy = (await songRow(t, copyId))!;
+  expect(copy).not.toHaveProperty('tempo');
+  expect(copy).toMatchObject({hasChart: false, tempoRev: 0, mapSummary: {real: false, sections: []}});
+  expect(copy.practiceSummary?.loopLabel).toBe('0:08–0:16 loop');
+  const [row] = await practiceRows(t, copyId);
+  expect(row.practice.loop).toMatchObject({on: true, a: 8, b: 16});
+  // The original keeps its map.
+  expect((await songRow(t, songId))!.tempo.songMap).toEqual(map);
+});
+
+test('the snapshot taken when a save begins decides the copy, even if the owner turns the map off mid-copy', async () => {
+  const map = sectionMap();
+  const {t, alice, bob, songId, token} = await setup({tempo: {songMap: map}, songPractice: v2Practice(map)});
+  let toggled = false;
+  remote.copyHook = async () => { if (!toggled) { toggled = true; await alice.mutation(api.sharing.create, {id: songId, includeMap: false}); } };
+  const copy = (await songRow(t, await bob.action(api.shareAudio.save, {token})))!;
+  expect(copy.tempo).toEqual({songMap: map});
+  expect(copy.mapSummary).toMatchObject({real: true, sections: ['Start', 'Chorus', 'Verse']});
+});
+
+test('practice is read through migrations.storedPractice (one definition, I0B-7)', async () => {
+  expect(sharingSource).toMatch(/import \{storedPractice\} from '\.\/migrations'/);
+  expect(sharingSource).not.toMatch(/function storedPractice/);
+  // Neither a songPractice row nor a 1.9 songs.practice: the link carries the default practice.
+  const {t, token} = await setup({songPracticeOnly: true});
+  expect((await t.query(api.sharing.view, {token}))?.practice).toMatchObject({v: 2, rate: 1, spots: [], markers: [], minusMe: false});
 });
 
 test('only finished, synced songs can be shared; export-only owners cannot create links', async () => {
