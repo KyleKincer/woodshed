@@ -252,16 +252,28 @@ module.exports = [
     url: SMOKE,
     opts: {devices: ['laptop'], themes: ['light'], capture: false},
     async fn(page, t) {
-      const demos = {overflow: 'overflow', overlap: 'overlap', clip: 'clip', placeholder: 'placeholder', 'placeholder-nested': 'placeholder', 'overlap-below': 'overlap'};
+      const demos = {overflow: 'overflow', overlap: 'overlap', clip: 'clip', placeholder: 'placeholder', 'placeholder-nested': 'placeholder', 'overlap-below': 'overlap', 'overlap-below-window': 'overlap', 'overlap-sheet': 'overlap'};
+      // Where each below-the-fold demo's problem is, and which scroller the scan must put back.
+      const below = {'overlap-below': ['Third', '#harness'], 'overlap-below-window': ['Third', null], 'overlap-sheet': ['Fifth', '#fx-sheet']};
+      const scrolled = sel => page.evaluate(s => { const el = s ? document.querySelector(s) : document.scrollingElement; return [el.scrollLeft, el.scrollTop, el.scrollHeight > el.clientHeight]; }, sel);
       for (const [demo, check] of Object.entries(demos)) {
         await page.goto(`${t.base}${SMOKE}?demo=${demo}`); await t.ready('fixture-smoke');
         const problems = await t.structure();
         t.expect(problems.length === 1 && problems[0].startsWith(`${check}:`), `the ${check} check finds the ${demo} demo problem (${JSON.stringify(problems)})`);
         t.expect((await t.structure({skip: [check]})).length === 0, `opts.structure.skip turns the ${check} check off`);
+        if (!below[demo]) continue;
+        const [first, scroller] = below[demo];
+        t.expect(problems[0].includes(`"${first}"`), `the ${demo} problem names the buttons below the fold (${problems[0]})`);
+        // The scan scrolls to hit-test them and puts every scroller back; viewportOnly skips them.
+        const [x, y, scrolls] = await scrolled(scroller);
+        t.expect(scrolls && x === 0 && y === 0, `the overlap scan restores ${scroller ?? 'the window'}'s scroll position (${JSON.stringify([x, y, scrolls])})`);
+        if (scroller !== null) t.expect(await page.evaluate(() => [scrollX, scrollY].join()) === '0,0', `the ${demo} page's window does not scroll`);
+        t.expect((await t.structure({viewportOnly: true})).length === 0, `viewportOnly checks the visible viewport only (${demo})`);
       }
-      // overlap-below: the page is scrolled to hit-test it and put back; viewportOnly skips it.
-      t.expect(await page.evaluate(() => scrollY) === 0, 'the overlap scan restores the scroll position');
-      t.expect((await t.structure({viewportOnly: true})).length === 0, 'viewportOnly checks the visible viewport only');
+      // A scroller that starts scrolled is put back where it was, not at the top.
+      await page.goto(`${t.base}${SMOKE}?demo=overlap-below`); await t.ready('fixture-smoke');
+      await page.evaluate(() => { document.getElementById('harness').scrollTop = 120; });
+      t.expect((await t.structure()).length === 1 && (await scrolled('#harness'))[1] === 120, 'the overlap scan restores a scroller that started scrolled');
       await page.goto(`${t.base}${SMOKE}?demo=chip-row`); await t.ready('fixture-smoke');
       t.expect((await t.structure()).length === 0, 'a scrolling row of chips is not a clipped label');
       await page.goto(`${t.base}${SMOKE}?demo=focus-shadow`); await t.ready('fixture-smoke');
