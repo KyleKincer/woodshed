@@ -1,7 +1,8 @@
 // ST6's states: the song strip on its harness (/__harness/strip), a real song session in the
 // Stage frame's 56 px slot (rail: under the music; band: above the dock). Every state runs with
-// fx-audio=manual. The harness registers the Stage's commands (src/stage/commands.js, ST4), so
-// every state lists it in requires until wave 2a merges; the menu state needs ST8a's menus.js.
+// fx-audio=manual. The harness registers the Stage's commands (src/stage/commands.js, ST4, a
+// same-wave peer), so every state lists it in requires. No state requires a later-wave module
+// (§9.0): the section menu is ST8a's (src/stage/menus.js, wave 2b) and its states check it opening.
 //   st6-strip-sections        mapped: 8 proportional segments, alternating surfaces, the current one
 //                             --now-soft with a 2 px progress fill, 15/600 labels, the 56 px band, axe
 //   st6-strip-overflow        32 parts at the 56 px floor: the strip scrolls and keeps the current part in view
@@ -13,11 +14,17 @@
 //   st6-strip-mouse-loop      a mouse drag across segments loops them; the bracket springs to the edges
 //   st6-strip-keyboard        Tab to the slider, ←/→ rove, L loops and Enter plays the focused segment; focus ring
 //   st6-strip-stems-viewport  the Stems viewport bracket, dragged to a new window
-//   st6-strip-menu            a long-press and a right-click open the section menu (ST8a)
+//   st6-strip-menu-press      a long-press and a right-click never cue or loop; until ST8a's menus.js
+//                             lands (wave 2b) they open nothing (no [role=menu], no console error)
 'use strict';
 
 const {checkAxe} = require('../probes/probe-axe.cjs');
 const {walkFocus} = require('../probes/probe-focus.cjs');
+const fs = require('node:fs');
+const path = require('node:path');
+
+/** ST8a's section menus (wave 2b). The strip loads them lazily by contract path, so it runs without them. */
+const HAS_MENUS = fs.existsSync(path.join(__dirname, '..', '..', '..', 'src', 'stage', 'menus.js'));
 
 const STRIP = (query = '') => `/__harness/strip?fx-audio=manual${query ? `&${query}` : ''}`;
 const REQUIRES = ['src/stage/commands.js'];
@@ -300,15 +307,36 @@ module.exports = [
     },
   },
   {
-    name: 'st6-strip-menu', url: STRIP(), opts: {devices: ['ipad'], capture: false, requires: [...REQUIRES, 'src/stage/menus.js']},
+    // Today's behaviour of the menu gestures (I2a-12). Whether the section menu opens is ST8a's
+    // check at wave 2b; here a long-press and a right-click must not cue, loop or jump, and while
+    // menus.js is absent they open nothing.
+    name: 'st6-strip-menu-press', url: STRIP('cue=20'), opts: {devices: ['ipad'], capture: false, requires: REQUIRES},
     async fn(page, t) {
       await ready(page, t);
+      const before = await snap(page);
       const g = await geometry(page);
+      const chorus = centreOf(g.segs[2], g.y + g.h / 2);
+      const menuOpen = () => page.evaluate(() => !!document.querySelector('[role=menu]'));
       const touch = await t.touch();
-      await touch.longPress(centreOf(g.segs[2], g.y + g.h / 2), {ms: 500});
-      await page.waitForSelector('[role=menu]', {timeout: 3000});
-      const names = await page.$$eval('[role=menu] [role^=menuitem]', (els) => els.map((el) => el.textContent.trim()));
-      t.expect(names.some((n) => /Loop this section/.test(n)) && names.some((n) => /Rename/.test(n)), `the section menu (got ${names})`);
+      await touch.longPress(chorus, {ms: 500});
+      await page.waitForTimeout(400);
+      let s = await snap(page);
+      t.expect(s.cue === before.cue && s.position === before.position, `a long-press does not cue (cue ${before.cue} → ${s.cue}, position ${before.position} → ${s.position})`);
+      t.expect(JSON.stringify(s.loop) === JSON.stringify(before.loop) && s.pendingJump === null, `a long-press neither loops nor jumps (got ${JSON.stringify(s)})`);
+      if (!HAS_MENUS) t.expect(!await menuOpen(), 'before ST8a, a long-press opens nothing');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(350);
+      const verse2 = centreOf(g.segs[3], g.y + g.h / 2);
+      await page.mouse.click(verse2.x, verse2.y, {button: 'right'});
+      await page.waitForTimeout(400);
+      s = await snap(page);
+      t.expect(s.cue === before.cue && s.position === before.position, `a right-click does not cue (cue ${before.cue} → ${s.cue}, position ${before.position} → ${s.position})`);
+      t.expect(JSON.stringify(s.loop) === JSON.stringify(before.loop) && s.pendingJump === null, `a right-click neither loops nor jumps (got ${JSON.stringify(s)})`);
+      if (!HAS_MENUS) t.expect(!await menuOpen(), 'before ST8a, a right-click opens nothing');
+      // The press really reached the strip: a plain tap on the same spot still cues it.
+      await page.waitForTimeout(350);
+      await touch.tap(chorus);
+      t.expect((await snap(page)).cue === 32, 'a plain tap after them still cues the Chorus start');
     },
   },
 ];
