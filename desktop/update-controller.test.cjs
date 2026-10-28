@@ -124,7 +124,8 @@ test("processing warns but does not block an explicitly confirmed restart", asyn
   const h = setup({ busy: true, answers: [0] });
   h.updater.emit("update-downloaded", { version: "1.3.1" });
   await tick();
-  assert.match(h.dialogs[0].detail, /will be cancelled/);
+  assert.equal(h.dialogs[0].detail, "Song processing will pause and resume after the restart.");
+  assert.equal(h.dialogs[0].type, "warning");
   assert.equal(h.dialogs[0].defaultId, 1);
   assert.equal(h.installs, 1);
   assert.equal(h.resumes, 0);
@@ -226,4 +227,55 @@ test("overlapping wake and manual checks share a handled failure", async () => {
   assert.equal(calls, 1);
   assert.equal(h.controller.getState().status, "error");
   assert.match(h.dialogs.at(-1).message, /Check your connection/);
+});
+
+test("playing defers automatic prompts", async () => {
+  const h = setup();
+  await h.controller.setPlaying(true);
+  h.updater.emit("update-available", { version: "1.3.1" });
+  await tick();
+  await h.focus();
+  assert.equal(h.dialogs.length, 0, "no automatic prompt while the Stage plays");
+  h.updater.emit("update-downloaded", { version: "1.3.1" });
+  await tick();
+  assert.equal(h.dialogs.length, 0);
+  assert.equal(h.controller.getState().status, "ready");
+  assert.equal(h.controller.isPlaying(), true);
+});
+
+test("a manual request is never deferred while playing", async () => {
+  const h = setup();
+  await h.controller.setPlaying(true);
+  await h.controller.show();
+  assert.equal(h.dialogs.length, 1);
+  assert.equal(h.dialogs[0].message, "Woodshed is up to date.");
+});
+
+test("stop re-prompts a deferred update once", async () => {
+  const h = setup({ answers: [1] });
+  await h.controller.setPlaying(true);
+  h.updater.emit("update-downloaded", { version: "1.3.1" });
+  await tick();
+  assert.equal(h.dialogs.length, 0);
+  await h.controller.setPlaying(false);
+  assert.equal(h.dialogs.length, 1);
+  assert.match(h.dialogs[0].message, /Restart to update to Woodshed 1.3.1/);
+  // Already prompted for this version: another stop does not ask again.
+  await h.controller.setPlaying(true);
+  await h.controller.setPlaying(false);
+  assert.equal(h.dialogs.length, 1);
+  assert.equal(h.installs, 0);
+});
+
+test("stop does not prompt while the window is unfocused, and stopped → stopped is a no-op", async () => {
+  const h = setup({ focused: false });
+  await h.controller.setPlaying(true);
+  h.updater.emit("update-available", { version: "1.3.1" });
+  await tick();
+  await h.controller.setPlaying(false);
+  assert.equal(h.dialogs.length, 0);
+  await h.focus();
+  assert.equal(h.dialogs.length, 1, "the focus check still prompts later");
+  await h.controller.setPlaying(false);
+  assert.equal(h.dialogs.length, 1);
 });
