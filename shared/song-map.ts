@@ -7,7 +7,11 @@
 import {type Fraction,type Measure,type Timeline,fraction,number,add,subtract,compare,beatGroups,id,MAX_MEASURES} from './notation';
 
 export type Pin = {position:Fraction; time:number; ramp?:boolean};
-export type SongMapData = {version:1; measures:Measure[]; pins:Pin[]; tailQpm?:number};
+/** How a map became real: written by every edit, detection, tap and import (spec §1.1). */
+export const ORIGINS = ['detected', 'tapped', 'imported', 'edited'] as const;
+export type Origin = typeof ORIGINS[number];
+export const isOrigin = (value:unknown):value is Origin => (ORIGINS as readonly unknown[]).includes(value);
+export type SongMapData = {version:1; measures:Measure[]; pins:Pin[]; tailQpm?:number; origin?:Origin};
 export type Span = {p0:number; p1:number; t0:number; t1:number; v0:number; v1:number; ramp:boolean};
 export type Compiled = {pins:Pin[]; spans:Span[]; head:number; tail:number};
 export type Beat = {time:number; downbeat:boolean; bar:number; beat:number; q:number};
@@ -154,19 +158,24 @@ export function validateSongMap(data:SongMapData) {
     p = number(pin.position); t = pin.time;
   }
   if (data.tailQpm !== undefined && (!Number.isFinite(data.tailQpm) || data.tailQpm < MIN_QPM || data.tailQpm > MAX_QPM)) throw new Error('Choose a tempo between 10 and 1000 BPM.');
+  if (data.origin !== undefined && !isOrigin(data.origin)) throw new Error('Invalid song map origin.');
   const c = compile(data);
   // Steady spans may be any positive tempo (a gap between two sections has no clicks); ramps must stay playable.
   for (const s of c.spans) if (s.ramp && !(s.v0 * 60 >= MIN_QPM / 4 && s.v1 * 60 >= MIN_QPM / 4 && s.v0 * 60 <= MAX_QPM * 4 && s.v1 * 60 <= MAX_QPM * 4)) throw new Error('That ramp needs an impossible tempo. Move a pin or remove the ramp.');
 }
 
-/** Keep only known fields so stored maps cannot carry arbitrary data. */
+/**
+ * Keep only known fields so stored maps cannot carry arbitrary data. An
+ * unknown `origin` is dropped silently: it never fails the whole map.
+ */
 export function cleanSongMap(value:unknown):SongMapData|null {
   try {
     const raw = value as SongMapData;
     const data:SongMapData = {version: 1,
       measures: raw.measures.map(m => ({id: String(m.id), numerator: m.numerator, denominator: m.denominator, length: {n: m.length.n, d: m.length.d}, label: String(m.label ?? ''), ...(Array.isArray(m.grouping) ? {grouping: m.grouping.map(Number)} : {})})),
       pins: raw.pins.map(p => ({position: {n: p.position.n, d: p.position.d}, time: p.time, ...(p.ramp ? {ramp: true} : {})})),
-      ...(typeof raw.tailQpm === 'number' ? {tailQpm: raw.tailQpm} : {})};
+      ...(typeof raw.tailQpm === 'number' ? {tailQpm: raw.tailQpm} : {}),
+      ...(isOrigin(raw.origin) ? {origin: raw.origin} : {})};
     validateSongMap(data);
     return data;
   } catch { return null; }
@@ -373,4 +382,211 @@ export function scaleTempo(data:SongMapData, factor:number) {
   const f = factor >= 1 ? fraction(Math.round(factor)) : fraction(1, Math.round(1 / factor));
   data.pins = data.pins.map(p => ({...p, position: fraction(p.position.n * f.n, p.position.d * f.d)}));
   if (data.tailQpm) data.tailQpm = clamp(data.tailQpm * number(f), MIN_QPM, MAX_QPM);
+}
+
+// ---- the real-map rule and the one-way upgrade (architecture §4.1) ---------
+type TempoRecord = {songMap?:unknown; source?:unknown; detected?:unknown; map?:unknown};
+const asTempo = (tempo:unknown):TempoRecord|null => tempo && typeof tempo === 'object' ? tempo as TempoRecord : null;
+const isPlainFourFour = (m:Measure) => m.numerator === 4 && m.denominator === 4 && compare(m.length, fraction(4)) === 0 && (!m.grouping || m.grouping.every(g => g === 1));
+/** Measure 0's `'Pickup'` label is written by `fromBeats`; it never names a section. */
+const isAutoLabel = (label:string, index:number) => index === 0 && label === 'Pickup';
+const legacyDetected = (t:TempoRecord|null) => t?.source === 'detected' && Array.isArray(t.detected) && t.detected.length >= 2;
+const legacySections = (t:TempoRecord|null) => Array.isArray(t?.map) && (t!.map as unknown[]).length > 0;
+
+/** A 1.6–1.9 map (stored without `origin`) that someone actually made: rule 3 of `hasRealMap`. */
+export function isMadeLegacyMap(data:SongMapData):boolean {
+  if (data.pins.length > 1) return true;
+  if (data.measures.some((m, i) => m.label.trim() !== '' && !isAutoLabel(m.label, i))) return true;
+  const only = data.pins[0];
+  return only.time !== 0 || only.position.n !== 0 || (data.tailQpm !== undefined && Math.abs(data.tailQpm - 120) > 1e-9) || data.measures.some(m => !isPlainFourFour(m));
+}
+
+/**
+ * True when the song has a map someone made: detected, tapped, imported or
+ * edited (spec §1.1). The first matching rule decides; `tempo.source` and
+ * `tempo.detected` are noise whenever a valid `songMap` exists.
+ */
+export function hasRealMap(tempo:unknown, {hasPart = false}:{hasPart?:boolean} = {}):boolean {
+  const t = asTempo(tempo), stored = cleanSongMap(t?.songMap);
+  if (stored?.origin) return true;
+  if (hasPart) return true;
+  if (stored) return isMadeLegacyMap(stored);
+  return legacyDetected(t) || legacySections(t);
+}
+
+/**
+ * The map a stored tempo describes, upgraded once: a 1.6–1.9 map that passes
+ * rule 3 becomes `edited`, a legacy `detected` translation `detected`, a
+ * legacy `map` translation `edited`; the placeholder has no origin.
+ */
+export function songMapFromTempo(tempo:unknown, duration:number):SongMapData {
+  const t = asTempo(tempo), seconds = Math.max(0.001, duration || 0), stored = cleanSongMap(t?.songMap);
+  if (stored) { if (!stored.origin && isMadeLegacyMap(stored)) stored.origin = 'edited'; return stored; }
+  try {
+    if (legacyDetected(t)) {
+      const beats = (t!.detected as {time?:unknown; downbeat?:unknown}[]).map(b => ({time: Number(b?.time), downbeat: !!b?.downbeat}));
+      const data = fromBeats(beats, seconds);
+      validateSongMap(data);
+      if (data.pins.length >= 2) return {...data, origin: 'detected'};
+    } else if (legacySections(t)) {
+      const sections = t!.map as {t:number; bpm:number; beatsPerBar:number; unit:number}[];
+      if (sections.some(s => Number.isFinite(s?.t) && s.t >= 0 && s.t < Math.max(seconds, 1e-3))) {
+        const data = fromSections(sections, seconds);
+        validateSongMap(data);
+        return {...data, origin: 'edited'};
+      }
+    }
+  } catch { /* an unreadable legacy map falls back to the placeholder */ }
+  return defaultSongMap(seconds);
+}
+
+// ---- bars and sections (architecture §4.3) --------------------------------
+export type MapBar = {index:number; id:string; display:number|null; q0:number; q1:number; t0:number; t1:number;
+  numerator:number; denominator:number; groups:number[]; units:number; label:string; pickup:boolean; meterChange:boolean;
+  qpm:number; bpm:number; tempoChange:boolean};
+export type MapSection = {index:number; label:string; name:string; startBar:number; endBar:number; t0:number; t1:number; bars:number};
+export const START_SECTION = 'Start';
+const sum = (list:number[]) => list.reduce((a, b) => a + b, 0);
+
+/** Measure 0 shorter than a full bar is a pickup: it displays as "Pickup" and measure 1 is bar 1. */
+export function hasPickup(data:SongMapData) {
+  const m = data.measures[0];
+  return !!m && number(m.length) < number(fullLength(m)) - 1e-9;
+}
+
+/** Bars starting inside the recording (always at least bar 0), with display numbers, meter and tempo. */
+export function barsOf(data:SongMapData, duration:number, c:Compiled = compile(data)):MapBar[] {
+  const bars:MapBar[] = [], pickup = hasPickup(data), starts = measureStarts(data.measures);
+  for (let i = 0; i < data.measures.length; i++) {
+    const m = data.measures[i], q0 = number(starts[i]), q1 = q0 + number(m.length), t0 = timeAt(c, q0);
+    if (i > 0 && t0 >= duration) break;
+    const groups = beatGroups(m), qpm = velocityAt(c, q0) * 60, bpm = qpm / pulseOf(m), prev = final(bars);
+    bars.push({index: i, id: m.id, display: pickup ? (i === 0 ? null : i) : i + 1, q0, q1, t0, t1: timeAt(c, q1),
+      numerator: m.numerator, denominator: m.denominator, groups, units: sum(groups), label: m.label, pickup: pickup && i === 0,
+      meterChange: !!prev && !sameMeter(data.measures[i - 1], m), qpm, bpm, tempoChange: !!prev && Math.abs(bpm - prev.bpm) > 1});
+  }
+  const last = final(bars)!;
+  last.t1 = Math.max(last.t0, Math.min(last.t1, duration));
+  return bars;
+}
+
+/** The section label a bar starts, or '' (measure 0's auto `'Pickup'` label is ignored). */
+export const sectionLabelOf = (bar:{index:number; label:string}) => isAutoLabel(bar.label, bar.index) ? '' : bar.label.trim();
+
+/** Display names: a repeated label is numbered ('Chorus', 'Chorus 2'), never colliding with a label in use. */
+function numberNames(labels:string[]) {
+  const reserved = new Set(labels), used = new Set<string>(), seen = new Map<string, number>();
+  return labels.map(label => {
+    const count = (seen.get(label) ?? 0) + 1;
+    seen.set(label, count);
+    let name = label;
+    if (count > 1) { let n = count; while (reserved.has(`${label} ${n}`) || used.has(`${label} ${n}`)) n++; name = `${label} ${n}`; }
+    used.add(name);
+    return name;
+  });
+}
+
+/** Sections from listed bars: every labelled bar starts one; unlabelled leading bars form "Start". */
+export function sectionsFromBars(bars:MapBar[]):MapSection[] {
+  const heads = bars.filter(b => sectionLabelOf(b) !== '').map(bar => ({bar, label: sectionLabelOf(bar)}));
+  if (!heads.length) return [];
+  if (heads[0].bar.index !== bars[0].index) heads.unshift({bar: bars[0], label: ''});
+  const names = numberNames(heads.map(h => h.label || START_SECTION)), last = final(bars)!;
+  return heads.map((h, i) => {
+    const next = heads[i + 1], endBar = next ? next.bar.index - 1 : last.index;
+    return {index: i, label: h.label, name: names[i], startBar: h.bar.index, endBar, t0: h.bar.t0, t1: next ? next.bar.t0 : last.t1, bars: endBar - h.bar.index + 1};
+  });
+}
+
+export function sectionsOf(data:SongMapData, duration:number):MapSection[] { return sectionsFromBars(barsOf(data, duration)); }
+
+/** The Library's view of a song's map (B1): computed on the server only through this function. */
+export function mapSummaryOf(tempo:unknown, duration:number, {hasPart = false}:{hasPart?:boolean} = {}):{real:boolean; bpm?:number; meter?:string; sections:string[]} {
+  if (!hasRealMap(tempo, {hasPart})) return {real: false, sections: []};
+  const seconds = Math.max(0.001, duration || 0), bars = barsOf(songMapFromTempo(tempo, seconds), seconds);
+  const full = bars.filter(b => !b.pickup), counted = full.length ? full : bars;
+  const tempos = counted.map(b => b.bpm).sort((a, b) => a - b), middle = tempos.length >> 1;
+  const bpm = tempos.length % 2 ? tempos[middle] : (tempos[middle - 1] + tempos[middle]) / 2;
+  const meters = new Map<string, number>();
+  for (const b of counted) { const key = `${b.numerator}/${b.denominator}`; meters.set(key, (meters.get(key) ?? 0) + 1); }
+  let meter = '', most = 0;
+  meters.forEach((count, key) => { if (count > most) { meter = key; most = count; } });
+  return {real: true, bpm: Math.round(bpm), meter, sections: sectionsFromBars(bars).map(s => s.name).slice(0, 64)};
+}
+
+// ---- Tap the beat (architecture §4.6) -------------------------------------
+function fitLine(points:[number, number][]) {
+  let n = 0, sk = 0, st = 0, skk = 0, skt = 0;
+  for (const [k, t] of points) { n++; sk += k; st += t; skk += k * k; skt += k * t; }
+  const period = (n * skt - sk * st) / (n * skk - sk * sk);
+  return {period, phase: (st - period * sk) / n};
+}
+
+/**
+ * A constant-tempo map from beat taps: period and phase by least squares
+ * over the tap index (outliers beyond 0.35 of a beat are dropped once, then
+ * refit), bar 0 on the first fitted tap, pins on the first and last fitted taps.
+ */
+export function fromTaps(taps:number[], duration:number, {numerator = 4}:{numerator?:number} = {}):SongMapData {
+  const list = taps.filter(t => Number.isFinite(t) && t >= 0).sort((a, b) => a - b).filter((t, i, a) => !i || t > a[i - 1] + 1e-3);
+  if (list.length < 4) throw new Error('Tap at least 4 beats.');
+  if (!Number.isInteger(numerator) || numerator < 1 || numerator > 16) throw new Error('Beats per bar must be between 1 and 16.');
+  const points = list.map((t, k):[number, number] => [k, t]);
+  let {period, phase} = fitLine(points);
+  const kept = points.filter(([k, t]) => Math.abs(t - (phase + k * period)) <= 0.35 * period);
+  if (kept.length >= 2 && kept.length < points.length) ({period, phase} = fitLine(kept));
+  if (!(period > 0) || !Number.isFinite(phase)) throw new Error('Those taps do not make a steady beat. Try again.');
+  const qpm = 60 / period;
+  if (qpm < MIN_QPM || qpm > MAX_QPM) throw new Error('Choose a tempo between 10 and 1000 BPM.');
+  const last = list.length - 1, first = phase >= 0 ? 0 : Math.ceil(-phase / period - 1e-9);
+  const pins:Pin[] = [{position: fraction(first), time: Math.max(0, phase + first * period)}];
+  if (last > first) pins.push({position: fraction(last), time: phase + last * period});
+  const measure:Measure = {id: id(), numerator, denominator: 4, length: fraction(numerator), label: ''};
+  const data = normalize({version: 1, measures: [measure], pins, tailQpm: qpm, origin: 'tapped'}, duration);
+  validateSongMap(data);
+  return data;
+}
+
+// ---- markers and suggested sections become section labels (§4.5, D47) -----
+export type MarkerInput = {id:string; t:number; label?:string; deleted?:boolean};
+export type SuggestionBlock = {t0:number; label?:string; confidence?:number};
+const cleanLabel = (label:unknown, fallback:string) => String(label ?? '').trim().slice(0, 120) || fallback;
+
+function nearestBar(bars:MapBar[], t:number) {
+  let low = 0, high = bars.length - 1;
+  while (low < high) { const mid = (low + high + 1) >> 1; if (bars[mid].t0 <= t) low = mid; else high = mid - 1; }
+  const next = bars[low + 1];
+  return next && next.t0 - t < t - bars[low].t0 ? next : bars[low];
+}
+const labelChange = (labels:Map<string, string>) => (draft:SongMapData) => {
+  for (const m of draft.measures) { const label = labels.get(m.id); if (label !== undefined) m.label = label; }
+};
+
+/**
+ * Each live marker labels the bar whose start is nearest to it (bar 0 is
+ * relabelled too). When two markers land on one bar, the earlier one wins
+ * and the other is skipped. `change` is a draft edit for `SongMapStore.edit`.
+ */
+export function sectionsFromMarkers(data:SongMapData, markers:MarkerInput[], duration:number) {
+  const bars = barsOf(data, duration), labels = new Map<string, string>(), converted:string[] = [], skipped:string[] = [];
+  const live = markers.filter(m => m && !m.deleted && Number.isFinite(m.t)).map((m, order) => ({m, order})).sort((a, b) => a.m.t - b.m.t || a.order - b.order);
+  for (const {m} of live) {
+    const bar = nearestBar(bars, m.t);
+    if (labels.has(bar.id)) { skipped.push(m.id); continue; }
+    labels.set(bar.id, cleanLabel(m.label, `Section ${labels.size + 1}`));
+    converted.push(m.id);
+  }
+  return {change: labelChange(labels), converted, skipped};
+}
+
+/** Suggested section blocks label the bar nearest each `t0`; a bar that already has a label is skipped. */
+export function applySuggestion(data:SongMapData, suggestion:{sections?:SuggestionBlock[]}|SuggestionBlock[]|null|undefined, duration:number) {
+  const blocks = (Array.isArray(suggestion) ? suggestion : suggestion?.sections ?? []).filter(b => b && Number.isFinite(b.t0));
+  const bars = barsOf(data, duration), labels = new Map<string, string>();
+  for (const block of [...blocks].sort((a, b) => a.t0 - b.t0)) {
+    const bar = nearestBar(bars, block.t0);
+    if (sectionLabelOf(bar) !== '' || labels.has(bar.id)) continue;
+    labels.set(bar.id, cleanLabel(block.label, `Section ${labels.size + 1}`));
+  }
+  return {change: labelChange(labels), added: labels.size};
 }

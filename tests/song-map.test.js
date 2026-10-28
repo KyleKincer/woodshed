@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
 import {fraction,number,validateTimeline,toTime} from '../shared/notation.ts';
-import {rebarBars,beatsPinnedNear,compile,timeAt,positionAt,velocityAt,beatsOf,fromSections,fromBeats,fromTimeline,toTimeline,defaultSongMap,pin,unpin,renumberPin,editBars,setMeter,meterRun,scaleTempo,validateSongMap,cleanSongMap,normalize,measureStarts,pulseOf} from '../shared/song-map.ts';
+import {rebarBars,beatsPinnedNear,compile,timeAt,positionAt,velocityAt,beatsOf,fromSections,fromBeats,fromTimeline,toTimeline,defaultSongMap,pin,unpin,renumberPin,editBars,setMeter,meterRun,scaleTempo,validateSongMap,cleanSongMap,normalize,measureStarts,pulseOf,ORIGINS} from '../shared/song-map.ts';
 
 const map=(pins,measures=8,extra={})=>({version:1,measures:Array.from({length:measures},(_,i)=>({id:'m'+i,numerator:4,denominator:4,length:fraction(4),label:''})),pins,...extra});
 
@@ -101,6 +101,23 @@ test('stored maps are cleaned and validated; drum-part timelines are adopted as-
   const adopted=fromTimeline(timeline,10);
   expect(adopted.measures[0].id).toBe(data.measures[0].id);
   expect(measureStarts(adopted.measures).length).toBe(adopted.measures.length);
+});
+
+test('origin: cleaning keeps a known origin and silently drops an unknown one; validation rejects it',()=>{
+  const data=defaultSongMap(10);
+  for(const origin of ORIGINS)expect(cleanSongMap({...data,origin}).origin).toBe(origin);
+  const dropped=cleanSongMap({...data,origin:'guessed'});
+  expect(dropped).not.toBeNull();
+  expect(dropped).not.toHaveProperty('origin');
+  expect(cleanSongMap({...data,origin:null})).not.toHaveProperty('origin');
+  expect(()=>validateSongMap({...data,origin:'guessed'})).toThrow(/origin/);
+  expect(()=>validateSongMap({...data,origin:'tapped'})).not.toThrow();
+  // Constructors never stamp an origin; callers do.
+  for(const made of [defaultSongMap(10),fromSections([{t:0,bpm:97,beatsPerBar:3,unit:4}],10),fromBeats([{time:.5,downbeat:true},{time:1,downbeat:false},{time:1.5,downbeat:false}],10)])expect(made).not.toHaveProperty('origin');
+  // The drum part's timeline carries no origin; normalize keeps the one in place.
+  const stamped={...defaultSongMap(10),origin:'edited'};
+  expect(toTimeline(stamped)).not.toHaveProperty('origin');
+  expect(normalize(stamped,30).origin).toBe('edited');
 });
 
 test('re-barring keeps every pin and beat time; only later bar lines move',()=>{
