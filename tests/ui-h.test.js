@@ -5,6 +5,28 @@ import {h, reconcileList, text} from '../src/ui/h.js';
 beforeEach(() => { document.body.replaceChildren(); });
 
 describe('h()', () => {
+  test('a select built with value in props selects that option (value-like props wait for the children)', () => {
+    const select = h('select', {value: 'b'}, h('option', {value: 'a'}, 'A'), h('option', {value: 'b'}, 'B'));
+    expect(select.value).toBe('b');
+    expect(select.selectedIndex).toBe(1);
+    const byIndex = h('select', {selectedIndex: 2}, ['x', 'y', 'z'].map(v => h('option', {value: v}, v)));
+    expect(byIndex.value).toBe('z');
+    const area = h('textarea', {value: 'typed'}, 'default');
+    expect(area.value).toBe('typed');
+    const box = h('input', {type: 'checkbox', checked: true});
+    expect(box.checked).toBe(true);
+  });
+
+  test('null leaves a property unset instead of stringifying it', () => {
+    const d = h('div', {id: null, title: null, hidden: null});
+    expect(d.hasAttribute('id')).toBe(false);
+    expect(d.hasAttribute('title')).toBe(false);
+    expect(d.hidden).toBe(false);
+    const label = h('label', {htmlFor: null});
+    expect(label.hasAttribute('for')).toBe(false);
+    expect(h('input', {value: null}).value).toBe('');
+  });
+
   test('class, style, dataset, attrs, text and properties', () => {
     const el = h('button', {
       class: ['ui-button', null, false && 'x', ['nested']], style: {color: 'red', '--size': '4px', marginTop: '2px'},

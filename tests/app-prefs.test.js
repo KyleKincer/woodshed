@@ -45,7 +45,8 @@ describe('migrateLegacy (§2.5 table)', () => {
     expect(prefs.chart.pinchScale).toBe(1.3);
     expect(prefs.chart.display.layout).toBe('lanes-left');
     expect(prefs.edit.chart.view).toBe('lanes');
-    expect(prefs.edit.chart.keys).toEqual({snare: 'KeyQ', kick: 'KeyZ'});   // '', '1' and 'ab' dropped
+    // '' (a key the user cleared) stays as "no key"; '1' and 'ab' are dropped.
+    expect(prefs.edit.chart.keys).toEqual({snare: 'KeyQ', kick: 'KeyZ', hihat: ''});
     expect(prefs.edit.map).toEqual({tapSnap: false, tapOffset: 0.2});        // clamped to ±0.2 s
     expect(account).toEqual({practice: {stop: 'stay', keepPitch: false}});
     expect(prefs.pendingAccount).toEqual(account);
@@ -232,6 +233,26 @@ describe('live prefs (store.prefs)', () => {
     mod.clearPendingAccount();
     expect(third.store.pendingAccount.value).toBeNull();
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)).pendingAccount).toBeNull();
+  });
+
+  test('a cleared 1.x drum key survives migration and normalization as unbound', async () => {
+    const {prefs} = await boot({'ws.notation.keys': JSON.stringify({snare: 'e', crash2: ''})});
+    expect(prefs.get('edit.chart.keys')).toEqual({snare: 'KeyE', crash2: ''});
+    expect(normalizePrefs(JSON.parse(localStorage.getItem(PREFS_KEY))).edit.chart.keys).toEqual({snare: 'KeyE', crash2: ''});
+  });
+
+  test('unrelated prefs writes do not notify store.pendingAccount subscribers', async () => {
+    const {prefs, store} = await boot({'ws.stopBehavior': 'stay'});
+    const seen = vi.fn();
+    store.pendingAccount.subscribe(seen);
+    prefs.set('practice.distance', 'kit');
+    prefs.set('stems.snap', false);
+    prefs.set('theme', 'dark');
+    prefs.update(d => { d.library.layout = 'list'; });
+    expect(seen).not.toHaveBeenCalled();
+    expect(store.pendingAccount.value).toEqual({practice: {stop: 'stay'}});
+    prefs.set('pendingAccount', {practice: {stop: 'cue'}});
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 
   test('set and update persist the whole JSON and notify subscribers', async () => {

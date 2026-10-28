@@ -230,12 +230,19 @@ export function effect(fn) {
     e.deps.clear();
     if (observer !== e) runCleanup(e);
   };
+  // The first run is batched like any other: writes it makes run their effects (itself included)
+  // after it returns, never nested inside it.
+  batchDepth++;
   try {
     runEffect(e);
   } catch (err) {
+    batchDepth--;
     dispose();
+    try { flush(); } catch { /* the original error wins */ }
     throw err;
   }
+  batchDepth--;
+  flush();
   return dispose;
 }
 

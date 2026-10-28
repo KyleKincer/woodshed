@@ -187,6 +187,25 @@ describe('mounting and root attributes', () => {
   });
 });
 
+describe('failed mounts', () => {
+  test('a view that throws after rendering leaves an empty outlet; the next view mounts alone', async () => {
+    views.stage = {mount: vi.fn(async el => {
+      el.append(Object.assign(document.createElement('p'), {textContent: 'STAGE-PARTIAL'}));
+      throw new Error('boom');
+    }), instances: []};
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    at('/s/abc');
+    make();
+    await router.start();
+    expect(root.dataset.viewError).toBe('stage');
+    expect(outlet.textContent).toBe('');
+    await router.navigate('/settings');
+    expect(outlet.textContent).toBe('settings');
+    expect(root.dataset.viewReady).toBe('settings');
+    expect(root.hasAttribute('data-view-error')).toBe(false);
+  });
+});
+
 describe('history rules', () => {
   test('push for place changes and opening a song; replace for Edit tab switches', async () => {
     make();
@@ -209,19 +228,27 @@ describe('history rules', () => {
     expect(history.length).toBe(length + 2);
   });
 
-  test('same view in the same place gets update(); a different view unmounts then mounts', async () => {
+  test('same route name and same view gets update(); anything else unmounts then mounts (§2.3)', async () => {
     make();
     await router.start();
     await router.navigate('/s/s1/edit/map');
     await router.navigate('/s/s1/edit/chart');
-    await router.navigate('/s/s1/edit/map/find');
     expect(views.edit.mount).toHaveBeenCalledTimes(1);
-    expect(views.edit.instances[0].update).toHaveBeenCalledTimes(2);
+    expect(views.edit.instances[0].update).toHaveBeenCalledTimes(1);
+    // editFind shares the edit view module but is another route name: remount, keeping the session.
+    log.length = 0;
+    await router.navigate('/s/s1/edit/map/find');
+    expect(views.edit.mount).toHaveBeenCalledTimes(2);
+    expect(log).toEqual(['unmount edit', 'mount edit (s1)']);
+    expect(views.edit.instances[1].update).not.toHaveBeenCalled();
     await router.navigate('/settings');
     await router.navigate('/settings/plan');
-    expect(views.settings.mount).toHaveBeenCalledTimes(1);
-    expect(log.slice(-4)).toEqual(['unmount edit', 'disposeSession s1', 'mount settings', 'update settings settingsPage']);
+    expect(views.settings.mount).toHaveBeenCalledTimes(2);
+    expect(log.slice(-5)).toEqual(['unmount edit', 'disposeSession s1', 'mount settings', 'unmount settings', 'mount settings']);
     expect(router.current.value.params).toEqual({section: 'plan'});
+    await router.navigate('/settings/account');
+    expect(views.settings.mount).toHaveBeenCalledTimes(2);
+    expect(log.at(-1)).toBe('update settings settingsPage');
   });
 
   test('an Edit tab outside the list does not match, and unknown paths go home', async () => {
@@ -529,6 +556,44 @@ describe('setQuery', () => {
       history.back();
       await router.settled();
       expect(here()).toBe('/?q=blue&group=album');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a debounced write still pending at browser Back is dropped, not written onto the entry Back lands on', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    try {
+      at('/s/abc');
+      make();
+      await router.start();
+      await router.navigate('/');
+      router.setQuery({q: 'foo'}, {debounceMs: 50});
+      history.back();
+      await router.settled();
+      vi.advanceTimersByTime(80);
+      expect(here()).toBe('/s/abc');
+      expect(router.current.peek().query).toEqual({});
+      expect(router.current.peek().name).toBe('stage');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('router.back() writes a pending debounced query onto the entry it leaves', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    try {
+      make();
+      await router.start();
+      await router.navigate('/settings');
+      router.setQuery({q: 'plan'}, {debounceMs: 400});
+      router.back();
+      await router.settled();
+      vi.advanceTimersByTime(500);
+      expect(here()).toBe('/');
+      history.forward();
+      await router.settled();
+      expect(here()).toBe('/settings?q=plan');
     } finally {
       vi.useRealTimers();
     }

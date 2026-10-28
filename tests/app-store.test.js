@@ -96,6 +96,40 @@ describe('computed', () => {
 });
 
 describe('effect', () => {
+  test('a first run that writes what it read re-runs after it returns, and every cleanup runs once, in order', () => {
+    const s = signal(0);
+    const runs = [], cleaned = [];
+    const off = effect(() => {
+      const v = s.value;
+      runs.push(v);
+      if (v < 2) s.value = v + 1;
+      return () => cleaned.push(v);
+    });
+    expect(runs).toEqual([0, 1, 2]);
+    expect(cleaned).toEqual([0, 1]);
+    off();
+    expect(cleaned).toEqual([0, 1, 2]);
+  });
+
+  test("a first run's writes run other effects after it, not inside it", () => {
+    const b = signal(0);
+    const log = [];
+    effect(() => { log.push(`E2 ${b.value}`); });
+    effect(() => { log.push('E1 start'); b.value = 1; log.push('E1 end'); });
+    expect(log).toEqual(['E2 0', 'E1 start', 'E1 end', 'E2 1']);
+  });
+
+  test('an effect created inside a batch first runs at once; its writes wait for the batch', () => {
+    const b = signal(0);
+    const log = [];
+    effect(() => { log.push(`E2 ${b.value}`); });
+    batch(() => {
+      effect(() => { log.push('E1'); b.value = 1; });
+      log.push('batch end');
+    });
+    expect(log).toEqual(['E2 0', 'E1', 'batch end', 'E2 1']);
+  });
+
   test('runs now and on change; glitch-free across a diamond', () => {
     const a = signal(1);
     const double = computed(() => a.value * 2);

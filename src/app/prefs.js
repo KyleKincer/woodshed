@@ -31,7 +31,7 @@ export const PREFS_DEFAULTS = deepFreeze({
   chart: {display: {layout: null}, pinchScale: null},
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
   roadmap: {waveRowSec: null},
-  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},
+  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
   pedals: {enabled: false, profile: 'practice', pedals: [], custom: {}},
   midi: {enabled: false, bindings: []},
   palette: {frecency: {}},
@@ -207,8 +207,10 @@ export function migrateLegacy(storage) {
   const keys = parseJson(read('ws.notation.keys'));
   if (isPlainObject(keys)) {
     for (const [kit, ch] of Object.entries(keys)) {
-      const key = letterToKeyString(ch);
-      if (key) p.edit.chart.keys[kit] = key;
+      // '' was a key the user cleared in the 1.x Drum shortcuts dialog: keep it as '' ("no key"),
+      // so the kit does not fall back to its KIT default letter.
+      const key = ch === '' ? '' : letterToKeyString(ch);
+      if (key !== null) p.edit.chart.keys[kit] = key;
     }
   }
 
@@ -267,7 +269,10 @@ function commit(next, {persist = true, local = true} = {}) {
   if (JSON.stringify(previous) === JSON.stringify(value)) return;
   if (persist) writeStorage(value);
   state.sig.value = value;
-  if (store.pendingAccount.peek() !== value.pendingAccount) store.pendingAccount.value = value.pendingAccount;
+  // By content: every commit clones pendingAccount, and only a real change may notify (boot step 5).
+  if (JSON.stringify(store.pendingAccount.peek() ?? null) !== JSON.stringify(value.pendingAccount)) {
+    store.pendingAccount.value = value.pendingAccount;
+  }
   appearance(previous, value, {local});
 }
 

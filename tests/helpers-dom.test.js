@@ -111,6 +111,32 @@ describe('installPopoverShim', () => {
     restore();
     expect(document.createElement('div').showPopover).toBeUndefined();
   });
+
+  test(':popover-open works in matches, closest and querySelector(All) via the attribute', () => {
+    const restore = installPopoverShim();
+    const el = document.createElement('div');
+    el.setAttribute('popover', '');
+    const inner = document.createElement('span');
+    el.append(inner);
+    document.body.append(el);
+    const frag = document.createDocumentFragment();
+    expect(el.matches(':popover-open')).toBe(false);
+    expect(document.querySelectorAll(':popover-open')).toHaveLength(0);
+    el.showPopover();
+    expect(el.matches(':popover-open')).toBe(true);
+    expect(el.matches('div:popover-open, p')).toBe(true);
+    expect(inner.closest(':popover-open')).toBe(el);
+    expect(document.querySelector('[popover]:popover-open')).toBe(el);
+    expect(document.body.querySelectorAll(':popover-open')).toHaveLength(1);
+    frag.append(el);
+    expect(frag.querySelector(':popover-open')).toBe(el);
+    el.hidePopover();
+    expect(el.matches(':popover-open')).toBe(false);
+    expect(frag.querySelector(':popover-open')).toBeNull();
+    restore();
+    expect(el.matches('[popover]')).toBe(true);
+    expect(document.createElement('div').showPopover).toBeUndefined();
+  });
 });
 
 describe('canvas', () => {
@@ -254,6 +280,20 @@ describe('flushFrames', () => {
     expect(times[1] - times[0]).toBeCloseTo(1000 / 60);
     expect(cancelled).not.toHaveBeenCalled();
     expect(pendingFrames()).toBe(0);
+  });
+
+  test('a callback cancelled by a sibling during the same frame does not run', () => {
+    installFrameShim();
+    const late = vi.fn();
+    let lateId;
+    const first = vi.fn(() => cancelAnimationFrame(lateId));
+    requestAnimationFrame(first);
+    lateId = requestAnimationFrame(late);
+    expect(flushFrames(1)).toBe(1);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(late).not.toHaveBeenCalled();
+    expect(flushFrames(2)).toBe(0);
+    expect(late).not.toHaveBeenCalled();
   });
 
   test('installs itself on first use; window.requestAnimationFrame is the same queue', () => {

@@ -178,7 +178,8 @@ export function touch(target, type, points = [], options = {}) {
 
 /**
  * Adds showPopover / hidePopover / togglePopover to HTMLElement. The open state is the
- * `data-popover-open` attribute (match it in place of `:popover-open`, or use isPopoverOpen()).
+ * `data-popover-open` attribute, and `:popover-open` works in matches(), closest(),
+ * querySelector() and querySelectorAll() (rewritten to that attribute). isPopoverOpen() also reads it.
  * Fires `beforetoggle` and `toggle` events with {oldState, newState}.
  */
 export function installPopoverShim() {
@@ -214,6 +215,26 @@ export function installPopoverShim() {
     patch(proto, 'hidePopover', {value: hide, writable: true}),
     patch(proto, 'togglePopover', {value: toggle, writable: true}),
   ];
+  // `:popover-open` via the attribute.
+  const rewrite = selector => (typeof selector === 'string' ? selector.replace(/:popover-open\b/g, '[data-popover-open]') : selector);
+  // Patch the prototypes that actually own each method (found from live nodes: the environment's
+  // document can come from a different class than window.Document).
+  const owner = (node, name) => {
+    for (let o = Object.getPrototypeOf(node); o; o = Object.getPrototypeOf(o)) if (Object.hasOwn(o, name)) return o;
+    return null;
+  };
+  const samples = [window.document.createElement('div'), window.document, window.document.createDocumentFragment()];
+  for (const node of samples) {
+    for (const name of ['matches', 'closest', 'querySelector', 'querySelectorAll']) {
+      const target = owner(node, name);
+      if (!target) continue;
+      const original = target[name];
+      if (typeof original !== 'function' || original.__popoverShim) continue;
+      const wrapped = function (selector, ...rest) { return original.call(this, rewrite(selector), ...rest); };
+      wrapped.__popoverShim = true;
+      undo.push(patch(target, name, {value: wrapped, writable: true}));
+    }
+  }
   return remember(() => undo.forEach(fn => fn()));
 }
 
@@ -467,7 +488,7 @@ export function installFrameShim({frameMs = 1000 / 60} = {}) {
   if (frames) return frames.restore;
   const state = {queue: new Map(), next: 1, time: 0, frameMs};
   const raf = fn => { const id = state.next++; state.queue.set(id, fn); return id; };
-  const caf = id => { state.queue.delete(id); };
+  const caf = id => { state.queue.delete(id); state.running?.delete(id); };
   const undo = [patchGlobal('requestAnimationFrame', raf), patchGlobal('cancelAnimationFrame', caf)];
   state.restore = remember(() => { undo.forEach(fn => fn()); frames = null; });
   frames = state;
@@ -484,9 +505,19 @@ export function flushFrames(n = 1) {
   let ran = 0;
   for (let i = 0; i < n; i++) {
     frames.time += frames.frameMs;
-    const batch = [...frames.queue.entries()];
+    const batch = new Map(frames.queue);
     frames.queue.clear();
-    for (const [, fn] of batch) { fn(frames.time); ran++; }
+    frames.running = batch;   // cancelAnimationFrame during the frame still cancels a sibling callback
+    try {
+      for (const [id, fn] of batch) {
+        if (!batch.has(id)) continue;
+        batch.delete(id);
+        fn(frames.time);
+        ran++;
+      }
+    } finally {
+      frames.running = null;
+    }
   }
   return ran;
 }

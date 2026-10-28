@@ -5,8 +5,9 @@
 //
 // - Views are resolved through each route's `view()` loader and export
 //   `mount(el, match, ctx) → {update(match), unmount()}` (either may be async).
-//   A route with the same view module in the same place (and the same song for
-//   session routes) gets update(match); anything else unmounts, then mounts.
+//   The same route name with the same view module (and the same song for session
+//   routes) gets update(match); anything else unmounts, then mounts. A mount that
+//   throws leaves an empty outlet and html[data-view-error=<route name>].
 // - `modalOver: '<route name>'` keeps that parent view mounted underneath and
 //   mounts the modal view into an overlay outlet; Back closes it.
 // - `session: true` routes get ctx.session from getSession(songId) (ctx.getSession,
@@ -245,14 +246,19 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
 
   async function mountInto(el, m, mod, sessionValue) {
     setRootAttributes(m);
-    const instance = await mod.mount(el, m, viewCtx(sessionValue));
+    let instance;
+    try {
+      instance = await mod.mount(el, m, viewCtx(sessionValue));
+    } catch (err) {
+      el.replaceChildren();   // never leave a half-built view for the next one to mount beside
+      throw err;
+    }
     return {match: m, module: mod, instance: instance || {}};
   }
 
   async function showBase(m, {keep = false} = {}) {
     const mod = await load(m.route);
-    const reusable = base && base.module === mod && songOf(base.match) === songOf(m)
-      && (base.match.name === m.name || base.match.route.place === m.route.place);
+    const reusable = base && base.module === mod && base.match.name === m.name && songOf(base.match) === songOf(m);
     if (reusable) {
       if (keep) return;
       setRootAttributes(m);
@@ -363,6 +369,11 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
   // ---------- listeners ----------
 
   function onPopState() {
+    // The URL has already moved to another entry: a debounced query patch meant for the entry we
+    // left cannot be applied there any more, and must not land on this one.
+    clearTimeout(queryTimer);
+    queryTimer = null;
+    pendingQuery = null;
     const from = current.peek();
     const left = base || modal ? lastKey : null;
     if (left) scrollMemory.set(left, captureView());
@@ -427,7 +438,7 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
 
     back({fallback = '/'} = {}) {
       const st = entry();
-      if (st && st.idx > 0) { win.history.back(); return; }
+      if (st && st.idx > 0) { flushQuery(); win.history.back(); return; }
       return router.navigate(fallback);
     },
 

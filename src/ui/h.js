@@ -7,6 +7,8 @@
 //            dataset (object), on ({event: fn | [fn, options]}), attrs (object; true → "", null/false → absent),
 //            ref(el), text (textContent). Any other key: a DOM property when the element has it
 //            (id, type, value, hidden, disabled, tabIndex, …), else an attribute (role, aria-*, for, …).
+//            null or undefined leaves a property unset. value, selectedIndex and checked are assigned
+//            after the children are appended, so h('select', {value: 'b'}, ...options) selects 'b'.
 //     children: Nodes, strings, numbers, arrays (flattened); null, undefined and booleans are skipped.
 //     SVG: 'svg' and SVG element names are created in the SVG namespace (props become attributes).
 //   text(s) → Text
@@ -46,6 +48,14 @@ function setAttr(el, name, value) {
   else el.setAttribute(name, value === true ? '' : String(value));
 }
 
+// Properties that depend on the element's children (a select's options).
+const AFTER_CHILDREN = new Set(['value', 'selectedIndex', 'checked']);
+
+function setProp(el, key, value) {
+  if (value == null) el.removeAttribute(key === 'htmlFor' ? 'for' : key);
+  else el[key] = value;
+}
+
 function appendChildren(el, children) {
   for (const child of children) {
     if (child == null || typeof child === 'boolean') continue;
@@ -68,6 +78,7 @@ export function h(tag, props = {}, ...children) {
   const name = tag.startsWith('svg:') ? tag.slice(4) : tag;
   const el = isSvg ? document.createElementNS(SVG_NS, name) : document.createElement(name);
   let ref = null;
+  const deferred = [];
   for (const [key, value] of Object.entries(props)) {
     switch (key) {
       case 'class': case 'className': setClass(el, value); break;
@@ -87,13 +98,15 @@ export function h(tag, props = {}, ...children) {
       default:
         if (value === undefined) break;
         if (!isSvg && !key.includes('-') && key in el && key !== 'list' && key !== 'form') {
-          el[key] = value;
+          if (AFTER_CHILDREN.has(key)) deferred.push([key, value]);
+          else setProp(el, key, value);
         } else {
           setAttr(el, key === 'htmlFor' ? 'for' : key, value);
         }
     }
   }
   appendChildren(el, children);
+  for (const [key, value] of deferred) setProp(el, key, value);
   if (typeof ref === 'function') ref(el);
   return el;
 }
