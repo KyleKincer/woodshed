@@ -4,8 +4,8 @@
 //
 //   mount(el, match, ctx) → {update(match), unmount()}
 //
-// View state {q, sort, group, filter, artist, album} is read from the URL, then prefs.library
-// (sort, group, filter and the layout); changes are mirrored to the URL (replace, 400 ms) and to
+// View state {q, sort, group, filter, artist, album, layout} is read from the URL, then prefs.library
+// (sort, group, filter and the layout; ?layout=list, grid by default); changes are mirrored to the URL (replace, 400 ms) and to
 // prefs.library. A new search never resets the sort. The top bar's search field belongs to the
 // Library while it is mounted (ctx.topbar.setSearch): typing filters live, Enter opens the top
 // result, ↓ moves into the grid.
@@ -158,7 +158,15 @@ export function mount(el, match, ctx = {}) {
 
   // Library header
   const libTitleText = h('span', {}, COPY.library);
-  const libCount = h('span', {class: 'lib-count'});
+  // The count: '12' on screen (hidden from assistive tech) and '12 songs' visually hidden, so the
+  // heading reads 'Library 12 songs' without an aria-label on a generic span (VF1-2).
+  const libCountShown = h('span', {attrs: {'aria-hidden': 'true'}});
+  const libCountSpoken = h('span', {class: 'sr-only'});
+  const libCount = h('span', {class: 'lib-count'}, libCountShown, libCountSpoken);
+  const setLibCount = (shown, total) => {
+    libCountShown.textContent = shown == null ? '' : COPY.libraryCount(shown, total);
+    libCountSpoken.textContent = shown == null ? '' : COPY.libraryCountLabel(shown, total);
+  };
   const libTitle = h('h2', {class: 'lib-library-title', id: 'lib-library-title'}, libTitleText, libCount);
   const filterHost = h('div', {class: 'lib-filters'});
   const filters = ChipGroup({label: COPY.filterGroup, options: [], value: null, className: 'lib-filter-chips',
@@ -174,7 +182,7 @@ export function mount(el, match, ctx = {}) {
     attrs: {'aria-haspopup': 'menu', 'aria-expanded': 'false'}, onClick: () => openGroupMenu()});
   const layoutToggle = Segmented({label: COPY.view, className: 'lib-layout', value: view.peek().layout,
     options: [{value: 'grid', label: COPY.grid, icon: 'layout-grid'}, {value: 'list', label: COPY.list, icon: 'list'}],
-    onChange: value => setView({layout: value}, {url: false})});
+    onChange: value => setView({layout: value})});
   primitives.push(sortButton, groupButton, layoutToggle);
   const tools = h('div', {class: 'lib-tools'}, sortButton.el, groupButton.el);
   const toolbar = h('div', {class: 'lib-toolbar'}, tools, layoutToggle.el);
@@ -595,14 +603,14 @@ export function mount(el, match, ctx = {}) {
 
     // body
     if (!loaded) {
-      libCount.textContent = '';
+      setLibCount(null);
       untracked(showLoading);
       visibleSongs = [];
       return;
     }
     const adding = addingJobs(state, songsMap);
     if (total === 0 && !adding.length && !addingJobsOf(items, songsMap).length) {
-      libCount.textContent = '';
+      setLibCount(null);
       header.hidden = true;
       untracked(showFirstRun);
       visibleSongs = [];
@@ -613,8 +621,7 @@ export function mount(el, match, ctx = {}) {
     const ordered = sortSongs(shown, sort);
     const groups = groupSongs(ordered, state.group);
     visibleSongs = groups.flatMap(g => g.songs);
-    libCount.textContent = COPY.libraryCount(shown.length, total);
-    libCount.setAttribute('aria-label', COPY.libraryCountLabel(shown.length, total));
+    setLibCount(shown.length, total);
 
     const list = [];
     if (adding.length) {
@@ -810,7 +817,7 @@ export function mount(el, match, ctx = {}) {
     },
     focusFirst: () => (order.length ? focusKey(order[0]) : false),
     focusLast: () => (order.length ? focusKey(order[order.length - 1]) : false),
-    toggleLayout: () => setView({layout: view.peek().layout === 'list' ? 'grid' : 'list'}, {url: false}),
+    toggleLayout: () => setView({layout: view.peek().layout === 'list' ? 'grid' : 'list'}),
     focusSearch: () => topbar?.focusSearch?.(),
   };
   const offProvider = registry.provide?.('library', () => libraryContext);
@@ -822,9 +829,9 @@ export function mount(el, match, ctx = {}) {
     update(next) {
       const fresh = viewState(next?.query ?? {}, prefs.value.peek()?.library ?? {}, lib.songs.peek());
       const cur = view.peek();
-      const same = ['q', 'sort', 'group', 'filter', 'artist', 'album'].every(k => (fresh[k] ?? null) === (cur[k] ?? null));
+      const same = ['q', 'sort', 'group', 'filter', 'artist', 'album', 'layout'].every(k => (fresh[k] ?? null) === (cur[k] ?? null));
       if (same && fresh.sortExplicit === cur.sortExplicit) return;
-      batch(() => { view.value = {...fresh, layout: cur.layout}; });
+      batch(() => { view.value = fresh; });
       if (fresh.q !== cur.q) topbar?.setSearch?.({value: fresh.q, onInput, onKeydown});
     },
     unmount() {

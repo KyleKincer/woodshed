@@ -209,11 +209,20 @@ describe('viewState and queryOf', () => {
   it('ignores unknown values', () => {
     expect(viewState({sort: 'x', group: 'y', filter: 'z'}, {layout: 'tiles'}, [])).toMatchObject({sort: 'added', group: 'none', filter: null, layout: 'grid'});
   });
-  it('queryOf drops defaults (null removes the key) and never carries the layout', () => {
-    expect(queryOf({q: '', sort: 'practised', sortExplicit: false, group: 'none', filter: null, artist: null, album: null, layout: 'list'}))
-      .toEqual({q: null, sort: null, group: null, filter: null, artist: null, album: null});
-    expect(queryOf({q: 'glass', sort: 'title', sortExplicit: true, group: 'album', filter: 'chart', artist: 'Northbound', album: null}))
-      .toEqual({q: 'glass', sort: 'title', group: 'album', filter: 'chart', artist: 'Northbound', album: null});
+  it('the layout is read from the URL before prefs, like sort (VF1-3)', () => {
+    expect(viewState({layout: 'list'}, {layout: 'grid'}, library)).toMatchObject({layout: 'list'});
+    expect(viewState({layout: 'grid'}, {layout: 'list'}, library)).toMatchObject({layout: 'grid'});
+    expect(viewState({layout: 'tiles'}, {layout: 'list'}, library)).toMatchObject({layout: 'list'});
+    expect(viewState({}, {layout: 'list'}, library)).toMatchObject({layout: 'list'});
+  });
+  it('queryOf drops defaults (null removes the key) and mirrors the layout as ?layout=list (grid is null)', () => {
+    expect(queryOf({q: '', sort: 'practised', sortExplicit: false, group: 'none', filter: null, artist: null, album: null, layout: 'grid'}))
+      .toEqual({q: null, sort: null, group: null, filter: null, artist: null, album: null, layout: null});
+    expect(queryOf({q: 'glass', sort: 'title', sortExplicit: true, group: 'album', filter: 'chart', artist: 'Northbound', album: null, layout: 'list'}))
+      .toEqual({q: 'glass', sort: 'title', group: 'album', filter: 'chart', artist: 'Northbound', album: null, layout: 'list'});
+    // round trip
+    const state = viewState({layout: 'list', sort: 'title'}, {}, library);
+    expect(viewState(queryOf(state), {}, library)).toEqual(state);
   });
 });
 

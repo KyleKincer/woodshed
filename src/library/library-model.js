@@ -204,8 +204,8 @@ const oneOf = (value, list) => (typeof value === 'string' && list.includes(value
 const textParam = value => (typeof value === 'string' && value.trim() ? value : null);
 
 /**
- * The effective view state. The URL wins; prefs.library fills sort, group, filter and layout;
- * a missing sort takes the default rule. `artist`/`album` drill-downs and `q` live in the URL only.
+ * The effective view state. The URL wins; prefs.library fills sort, group, filter and layout
+ * (?layout=list; grid is the default and never in the URL); a missing sort takes the default rule. `artist`/`album` drill-downs and `q` live in the URL only.
  */
 export function viewState(query = {}, prefsLibrary = {}, songs = []) {
   const sort = parseSort(query.sort) ? query.sort : parseSort(prefsLibrary?.sort) ? prefsLibrary.sort : defaultSort(songs);
@@ -217,7 +217,7 @@ export function viewState(query = {}, prefsLibrary = {}, songs = []) {
     filter: query.filter !== undefined ? oneOf(query.filter, FILTERS) : oneOf(prefsLibrary?.filter, FILTERS),
     artist: textParam(query.artist),
     album: textParam(query.album),
-    layout: oneOf(prefsLibrary?.layout, LAYOUTS) ?? 'grid',
+    layout: oneOf(query.layout, LAYOUTS) ?? oneOf(prefsLibrary?.layout, LAYOUTS) ?? 'grid',
   };
 }
 
@@ -230,6 +230,7 @@ export function queryOf(state) {
     filter: state.filter ?? null,
     artist: state.artist ?? null,
     album: state.album ?? null,
+    layout: state.layout === 'list' ? 'list' : null,
   };
 }
 

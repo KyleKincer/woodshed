@@ -350,13 +350,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* One line, ellipsized: a recent's state line ('100% · practised 3 days ago', spec §2.2) or a pin's artist. */
   .lib-compact-line {
-    display: -webkit-box;
     overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
     color: var(--ink-2);
     font: var(--fw-regular) var(--fs-14)/1.35 var(--font-ui);
-    white-space: pre-line;
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

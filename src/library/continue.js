@@ -7,7 +7,7 @@
 // ('Bridge loop · 85% · Drums out · practised yesterday'), ▶ Resume (/s/:id: the Stage opens it
 // stopped at its cue, so Space plays at once), Start from top (/s/:id?t=0) and up to three spot
 // chips from practiceSummary.spots (/s/:id?spot=<id>). Recents are compact cards (cover 64,
-// title, state line). Everything is a link: the app frame's router delegate navigates.
+// title, the same state line on one line). Everything is a link: the app frame's router delegate navigates.
 // The cover of whichever card is opened gets the shared-element name for the Stage's View
 // Transition (cards.js nameCover).
 
@@ -17,7 +17,7 @@ import {icon} from '../ui/icon.js';
 import {COPY} from './home.copy.js';
 import {continuePicks} from './library-model.js';
 import {Cover, CompactCard, nameCover} from './cards.js';
-import {artistLabel, practiceLine, practisedLine, spotLabel, stateLine} from './song-labels.js';
+import {artistLabel, spotLabel, stateLine} from './song-labels.js';
 
 const songHref = (id, query = '') => `/s/${encodeURIComponent(id)}${query}`;
 const isPlainClick = e => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
@@ -101,10 +101,9 @@ export function ContinueSection({songs = [], now = 0, profile = null} = {}) {
     const keep = new Set(rest.map(s => s.id));
     for (const [id, card] of compact) if (!keep.has(id)) { card.el.parentNode?.remove(); compact.delete(id); }
     const items = rest.map(song => {
-      const practice = practiceLine(song, {profile: p});
-      const when = practisedLine(song, at);
+      // The hero's state line on one line ('100% · practised 3 days ago'); continue.css ellipsizes it.
+      const line = stateLine(song, at, {profile: p});
       let card = compact.get(song.id);
-      const line = [practice, when].filter(Boolean).join('\n');
       if (!card) {
         card = CompactCard(song, {className: 'lib-recent', line});
         card.el.addEventListener('click', e => { if (isPlainClick(e)) nameCover(card.cover, song.id); });
@@ -112,7 +111,7 @@ export function ContinueSection({songs = [], now = 0, profile = null} = {}) {
       } else {
         card.update(song, {line});
       }
-      card.el.setAttribute('aria-label', [song.title || 'Untitled', practice, when].filter(Boolean).join(', '));
+      card.el.setAttribute('aria-label', [song.title || 'Untitled', line].filter(Boolean).join(', '));
       return card.el.parentNode ?? h('li', {class: 'lib-recent-item'}, card.el);
     });
     items.forEach((li, i) => { if (recents.children[i] !== li) recents.insertBefore(li, recents.children[i] ?? null); });
