@@ -1,0 +1,207 @@
+/* Settings → Processing (src/settings/sections/processing.js; spec §6.2, §6.5): the processor line,
+ * the Advanced disclosure, the old-library import and, on the web, the paired computers. */
+@layer views {
+  /* The processor line: a state dot, then processorLabel's words. */
+  .settings-processor {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-basis: 100%;
+  }
+  .settings-processor-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: var(--r-pill);
+    background: var(--ink-3);
+  }
+  [data-state=ok] > .settings-processor-dot { background: var(--ok); }
+  [data-state=off] > .settings-processor-dot { background: var(--danger); }
+  [data-state=wait] > .settings-processor-dot { background: var(--warn); }
+  .settings-processor-name:empty { display: none; }
+
+  /* A layout that takes away the player's own stem (spec §3.2). */
+  .settings-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    max-width: 60ch;
+    color: var(--warn);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    line-height: 1.4;
+  }
+  .settings-warning-icon { display: inline-flex; flex: none; }
+
+  /* Advanced <details>: model, passes and overlap. */
+  .settings-advanced-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: var(--h-md);
+    padding-inline: var(--s2) var(--s3);
+    margin-inline-start: calc(-1 * var(--s2));
+    border-radius: var(--r-control);
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    list-style: none;
+    cursor: pointer;
+  }
+  .settings-advanced-summary::-webkit-details-marker { display: none; }
+  .settings-advanced-summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (hover: hover) {
+    .settings-advanced-summary:hover { background: var(--surface-2); }
+  }
+  @media (pointer: coarse) {
+    .settings-advanced-summary { min-height: 44px; }
+  }
+  .settings-advanced-chevron {
+    display: inline-flex;
+    color: var(--ink-3);
+    transition: transform var(--motion-fast) var(--ease);
+  }
+  .settings-advanced[open] .settings-advanced-chevron { transform: rotate(90deg); }
+  .settings-advanced-body {
+    display: grid;
+    gap: var(--s3);
+    padding-block: var(--s3) 0;
+  }
+  .settings-advanced-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--s4) var(--s5);
+  }
+  .settings-advanced-field {
+    display: grid;
+    gap: var(--s1);
+  }
+  .settings-advanced-saver:empty { display: none; }
+
+  /* Audio bitrate: a field that reads like the other rows. */
+  .settings-processing [data-row=bitrate] .ui-field { flex: 1 1 280px; max-width: 360px; }
+  .settings-processing [data-row=bitrate] .ui-field-label {
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .settings-processing [data-row=bitrate] .ui-field-hint {
+    max-width: 60ch;
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-processing [data-row=bitrate] .settings-row-control { align-items: flex-end; }
+
+  /* Import an old library: what the scan found, and a folder to type. */
+  .settings-legacy-found {
+    display: grid;
+    gap: var(--s2);
+    flex-basis: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .settings-legacy-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+  .settings-legacy-manual {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--s3);
+    flex-basis: 100%;
+  }
+  .settings-legacy-manual > .ui-field { flex: 1 1 280px; max-width: 480px; }
+
+  /* The web: paired computers (B5). */
+  .settings-devices {
+    display: grid;
+    flex-basis: 100%;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    list-style: none;
+  }
+  .settings-devices:focus { outline: none; }
+  .settings-devices:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .settings-device {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2) var(--s4);
+    min-height: 56px;
+    padding: var(--s3) var(--s4);
+  }
+  .settings-device + .settings-device { border-top: 1px solid var(--line); }
+  .settings-device-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .settings-device-name {
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    overflow-wrap: anywhere;
+  }
+  .settings-device-line {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .settings-device[data-state=online] .settings-processor-dot,
+  .settings-device[data-state=busy] .settings-processor-dot { background: var(--ok); }
+  .settings-device-meta {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .settings-device-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s2);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-advanced-chevron { transition: none; }
+  }
+
+  /* An uncoded processor failure's raw text, behind Details (mono, selectable). */
+  .settings-error-details { flex-basis: 100%; max-width: 72ch; }
+  .settings-error-details[hidden] { display: none; }
+  .settings-error-summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-sm);
+    padding-inline: var(--s2);
+    margin-inline-start: calc(-1 * var(--s2));
+    border-radius: var(--r-control);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .settings-error-summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (hover: hover) {
+    .settings-error-summary:hover { background: var(--surface-2); }
+  }
+  .settings-error-raw {
+    margin: var(--s2) 0 0;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: var(--fs-14)/1.4 var(--font-mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+}
