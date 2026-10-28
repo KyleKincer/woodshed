@@ -8,8 +8,11 @@
 //   fail=N                       the first N settings.patch calls fail (offline)
 //   settings=<json>              stored account settings, merged over the defaults
 //   legacy=none|one|many         what the old-library scan finds (desktop; default one)
-//   importFail=1                 /import fails with the processor's own sentence
+//   importFail=1|missing         /import fails with an uncoded processor message (raw text behind Details),
+//                                or ENOENT on <folder>/library.json (a mistyped folder)
+//   originals=done|nojobs        /export-originals copies 48 files, or answers ENOENT (no jobs folder yet)
 //   devices=mixed|none|online    the paired computers (web; default mixed: one busy, one offline)
+//   devicesLoad=slow             devices.list answers after 800 ms (the store's list starts empty)
 //   status=free|plus|cancel|grace|pastdue|disabled|loading|error   the billing status (plan; default free)
 //   usage=normal|over|appfull    storage.usage
 //   export=done|progress|toolarge|fail   what Export library does (default done after 600 ms)
@@ -53,7 +56,7 @@ function statusFor(mode, now) {
     case 'plus': return {...BASE_STATUS, access: 'paid', status: 'active', interval: 'year', periodEnd: now + 200 * DAY, hasCustomer: true};
     case 'cancel': return {...BASE_STATUS, access: 'paid', status: 'active', interval: 'month', periodEnd: now + 12 * DAY, cancelAtPeriodEnd: true, hasCustomer: true};
     case 'grace': return {...BASE_STATUS, access: 'grace', status: 'canceled', graceEndsAt: now + 9 * DAY, hasCustomer: true};
-    case 'pastdue': return {...BASE_STATUS, access: 'paid', status: 'past_due', interval: 'month', periodEnd: now + 3 * DAY, hasCustomer: true};
+    case 'pastdue': return {...BASE_STATUS, access: 'grace', status: 'past_due', interval: 'month', periodEnd: now + 3 * DAY, graceEndsAt: now + 14 * DAY, hasCustomer: true};
     case 'disabled': return {...BASE_STATUS, enabled: false};
     default: return {...BASE_STATUS};
   }
@@ -110,7 +113,8 @@ export default async function mountHarness(el, {query, h}) {
     info: async () => ({version: '2.0.0'}),
     update: async () => ({status: 'current'}),
   } : {available: false};
-  const devices = signal(devicesFor(query.get('devices') || 'mixed', now));
+  const devicesSlow = query.get('devicesLoad') === 'slow';
+  const devices = signal(devicesSlow ? [] : devicesFor(query.get('devices') || 'mixed', now));
   const songs = signal(new Map(SONGS.map(s => [s.id, s])));
   const legacyMode = query.get('legacy') || 'one';
   const companionModule = {
@@ -125,15 +129,32 @@ export default async function mountHarness(el, {query, h}) {
       record('import', {directory});
       await new Promise(resolve => setTimeout(resolve, 400));
       if (query.get('importFail') === '1') throw Object.assign(new Error('Import queue full. Import more after these finish.'), {code: 'unknown'});
+      if (query.get('importFail') === 'missing') throw Object.assign(new Error(`ENOENT: no such file or directory, open '${directory}/library.json'`), {code: 'unknown'});
       return {count: 20, skipped: 0, remaining: 28};
     },
-    async localRequest(route, body) {
-      record('local', {route, body});
+    async desktopStatus() {
+      record('desktopStatus');
+      return {connected: true, deviceId: 'dev-local', busy: false};
+    },
+    async request(route, {method, body, timeoutMs} = {}) {
+      record('local', {route, method, body, timeoutMs});
       await new Promise(resolve => setTimeout(resolve, 400));
+      if (query.get('originals') === 'nojobs') throw Object.assign(new Error('ENOENT: no such file or directory, scandir \'/Users/kyle/Library/Application Support/Woodshed/accounts/u1/jobs\''), {code: 'unknown'});
       return {count: 48, directory: '~/Downloads/Woodshed-originals-2026-10-28'};
     },
   };
   const devicesApi = {
+    subscribeList(onValue) {
+      record('subscribeList');
+      let off = null;
+      const t = setTimeout(() => {
+        const list = devicesSlow && !devices.peek().length ? devicesFor(query.get('devices') || 'mixed', now) : devices.peek();
+        onValue(list);
+        off = devices.subscribe(value => onValue(value));
+        if (devicesSlow) devices.value = list;
+      }, devicesSlow ? 800 : 0);
+      return () => { clearTimeout(t); off?.(); };
+    },
     async rename({deviceId, name}) {
       record('rename', {deviceId, name});
       const clean = String(name ?? '').replace(/\s+/g, ' ').trim();

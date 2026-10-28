@@ -180,6 +180,64 @@ describe('exportLibrary', () => {
     expect(lib.signKeys).toHaveBeenCalledTimes(1);
   });
 
+  test('Cancel settles at once while a download stalls mid-body: the body is cancelled and the destination aborted', async () => {
+    const dest = destination();
+    const controller = new AbortController();
+    const lib = api({songs: [SONG]});
+    let cancelled = null, fetchSignal = null;
+    lib.fetch.mockImplementation(async (url, {signal} = {}) => {
+      fetchSignal = signal;
+      let sent = false;
+      return new Response(new ReadableStream({
+        pull(c) { if (!sent) { sent = true; c.enqueue(new Uint8Array([1, 2])); return undefined; } return new Promise(() => {}); },
+        cancel(reason) { cancelled = reason ?? true; },
+      }));
+    });
+    const running = exportLibrary(() => {}, {api: lib, signal: controller.signal, window: {showSaveFilePicker: async () => dest.handle}});
+    await vi.waitFor(() => expect(lib.fetch).toHaveBeenCalled());
+    await new Promise(r => setTimeout(r, 20));
+    controller.abort();
+    await expect(running).rejects.toMatchObject({name: 'AbortError'});
+    expect(fetchSignal).toBe(controller.signal);
+    expect(cancelled).toBeTruthy();
+    expect(dest.writable.abort).toHaveBeenCalledOnce();
+    expect(dest.writable.close).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['songs.exportPage', lib => lib.exportPage],
+    ['notation', lib => lib.notation],
+    ['signKeys', lib => lib.signKeys],
+    ['the audio fetch (before headers)', lib => lib.fetch],
+  ])('Cancel settles at once while %s never answers', async (_, pick) => {
+    const dest = destination();
+    const controller = new AbortController();
+    const lib = api({songs: [SONG]});
+    const stalled = pick(lib);
+    stalled.mockImplementation(() => new Promise(() => {}));
+    const running = exportLibrary(() => {}, {api: lib, signal: controller.signal, window: {showSaveFilePicker: async () => dest.handle}});
+    await vi.waitFor(() => expect(stalled).toHaveBeenCalled());
+    controller.abort();
+    await expect(running).rejects.toMatchObject({name: 'AbortError'});
+    expect(dest.writable.close).not.toHaveBeenCalled();
+  });
+
+  test('DEFAULT_API.fetch passes the abort signal (and the desktop media URL) to fetch', async () => {
+    const seen = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => { seen.push([url, init?.signal]); return new Response('x'); });
+    const controller = new AbortController();
+    await DEFAULT_API.fetch('https://r2.test/a.webm', {signal: controller.signal});
+    expect(seen[0]).toEqual(['https://r2.test/a.webm', controller.signal]);
+    const before = globalThis.window.woodshedDesktop;
+    globalThis.window.woodshedDesktop = {mediaUrl: async url => `http://127.0.0.1:1/media?u=${encodeURIComponent(url)}`};
+    try {
+      await DEFAULT_API.fetch('https://r2.test/b.webm', {signal: controller.signal});
+    } finally {
+      globalThis.window.woodshedDesktop = before;
+    }
+    expect(seen[1]).toEqual([`http://127.0.0.1:1/media?u=${encodeURIComponent('https://r2.test/b.webm')}`, controller.signal]);
+  });
+
   test('a cancelled save picker rejects with its AbortError and reads nothing', async () => {
     const lib = api({songs: [SONG]});
     const picker = vi.fn(async () => { throw new DOMException('The user aborted a request.', 'AbortError'); });

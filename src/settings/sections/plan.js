@@ -20,7 +20,8 @@
 // Copy and controls are exported here (COPY, CONTROLS, ROWS) because settings.copy.js is SE1's
 // (architecture §9.0). Tests and harnesses may pass, beside the frame's ctx: `billingApi`
 // ({subscribeStatus, checkout, portal}), `storageApi` ({subscribeUsage}), `exporter` (exportLibrary's
-// signature), `cache` ({supported(), size(), clear()}), `formatDate(ms)` and `location` ({assign}).
+// signature), `auth` ({user(), onChange(fn)}: a sign-out cancels a running export), `cache`
+// ({supported(), size(), clear()}), `formatDate(ms)` and `location` ({assign}).
 
 import '../../styles/views/settings/sections.css';
 import '../../styles/views/settings/plan.css';
@@ -35,6 +36,7 @@ import {SECTION_TITLES} from '../settings.copy.js';
 import {describeError} from '../../app/error-copy.js';
 import {feedback as appFeedback} from '../../app/feedback.js';
 import {artistLabel} from '../../library/song-labels.js';
+import * as appAuth from '../../app/auth.js';
 import * as appBillingApi from '../../api/billing.js';
 import * as appStorageApi from '../../api/storage.js';
 import {exportLibrary, libraryBytes, EXPORT_COPY, FALLBACK_LIMIT} from '../../js/export.js';
@@ -87,6 +89,7 @@ export const COPY = Object.freeze({
     grace: (date, free) => `Your Plus plan has ended. By ${date}, export your library or trim it to the free ${free} to keep the songs you want; after that, the oldest songs over the limit are removed.`,
     ending: date => `Your Plus plan ends on ${date}. Manage your subscription to keep it.`,
     pastDue: 'Your last payment didn’t go through. Update your payment details in Manage subscription to keep Plus.',
+    pastDueBy: date => `Your last payment didn’t go through. Update your payment details in Manage subscription by ${date} to keep Plus.`,
     checkoutSuccess: 'Welcome to Plus. Your new storage shows here within a minute.',
   }),
   export: Object.freeze({
@@ -195,18 +198,103 @@ export const formatDate = ms => new Intl.DateTimeFormat(undefined, {year: 'numer
 export function planNotices(status, {format = formatDate} = {}) {
   if (!status) return [];
   const out = [];
+  // A failed payment: billingData.applySync turns a past_due/unpaid Plus account into 'grace' while
+  // Stripe retries, so the failed-payment notice replaces the "has ended" one.
+  if (paymentFailing(status)) {
+    out.push({key: 'pastDue', tone: 'warn', text: Number.isFinite(status.graceEndsAt) ? C.plan.pastDueBy(format(status.graceEndsAt)) : C.plan.pastDue});
+    return out;
+  }
   if (status.access === 'grace' && Number.isFinite(status.graceEndsAt)) {
     out.push({key: 'grace', tone: 'warn', text: C.plan.grace(format(status.graceEndsAt), formatBytes(status.freeBytes))});
   }
   if (status.access === 'paid' && status.cancelAtPeriodEnd && Number.isFinite(status.periodEnd)) {
     out.push({key: 'ending', tone: 'info', text: C.plan.ending(format(status.periodEnd))});
   }
-  if (status.access === 'paid' && ['past_due', 'unpaid'].includes(status.status)) out.push({key: 'pastDue', tone: 'warn', text: C.plan.pastDue});
   return out;
 }
 
+/** A Plus subscription whose payment failed and that Stripe still holds (past_due or unpaid). */
+export const paymentFailing = status => !!status && (status.access === 'paid' || status.access === 'grace')
+  && ['past_due', 'unpaid'].includes(status.status);
+
+/** The card the account is on: 'plus' while paid or while a failed payment is being retried. */
+export const currentPlan = status => (status?.access === 'paid' || paymentFailing(status) ? 'plus' : 'free');
+
 /** The interval the cards open on: the subscription's, else Yearly. */
 export const initialInterval = status => (status?.interval === 'month' ? 'month' : 'year');
+
+// ---------------------------------------------------------------------------------------------
+// The running export. It belongs to the page, not to one section instance: crossing the stack/split
+// breakpoint (an iPad rotated, a window resized) rebuilds the section, and leaving Settings unmounts it,
+// but neither cancels the export: the next instance shows its progress, or the outcome it ended with.
+// Only Cancel export or a sign-out (or another account signing in) stops it.
+
+let exportJob = null;      // {controller, last: [text, detail] | null}
+let exportOutcome = null;  // the last job's {tone, text} (null: nothing to say), until the next one starts
+const exportViews = new Set();
+
+function runExport(exporter, auth) {
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const job = {controller, last: null};
+  exportJob = job;
+  exportOutcome = null;
+  const who = auth?.user?.()?._id ?? auth?.user?.()?.id ?? null;
+  const offAuth = auth?.onChange?.(({user} = {}) => {
+    const next = user?._id ?? user?.id ?? null;
+    if (!user || next !== who) controller.abort();
+  });
+  const settle = outcome => {
+    try { offAuth?.(); } catch { /* already gone */ }
+    if (exportJob !== job) return;
+    exportJob = null;
+    exportOutcome = outcome;
+    for (const v of exportViews) v.outcome(outcome);
+  };
+  let running;
+  try {
+    running = Promise.resolve(exporter((text, detail = {}) => {
+      if (exportJob !== job || signal.aborted) return;
+      job.last = [text, detail];
+      for (const v of exportViews) v.progress(text, detail);
+    }, {signal}));
+  } catch (err) {
+    running = Promise.reject(err);
+  }
+  running.then(result => {
+    settle({tone: 'ok', text: EXPORT_COPY.done(Number(result?.songs) || 0)});
+  }, err => {
+    const aborted = err?.name === 'AbortError';
+    // A cancelled save picker says nothing; our own abort (Cancel, sign-out) says "canceled".
+    settle(aborted && !signal.aborted ? null : aborted ? {tone: 'info', text: C.export.canceled} : {tone: 'error', text: exportFailedText(err)});
+  });
+  return job;
+}
+
+function attachExport(view) {
+  exportViews.add(view);
+  if (exportJob) {
+    if (exportJob.last) view.progress(...exportJob.last);
+    else view.running();
+  } else if (exportOutcome) {
+    view.outcome(exportOutcome);
+  }
+}
+
+function detachExport(view) {
+  exportViews.delete(view);
+}
+
+/** The running export, if any ({controller}). */
+export const runningExport = () => exportJob;
+
+/** Cancels a running export and forgets the last outcome (tests and harnesses start clean). */
+export function resetExport() {
+  const job = exportJob;
+  exportJob = null;
+  exportOutcome = null;
+  job?.controller.abort();
+}
 
 const plainClick = e => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
@@ -364,7 +452,8 @@ function render(el, ctx) {
     planBody.hidden = false;
     if (interval == null) interval = initialInterval(status);
     intervalSeg.set({value: interval});
-    const paid = status.access === 'paid';
+    // A failed payment still has a subscription: Manage subscription fixes it, and Get Plus would start a second one.
+    const paid = currentPlan(status) === 'plus';
     freeCard.badge.hidden = paid;
     plusCard.badge.hidden = !paid;
     freeCard.el.dataset.current = String(!paid);
@@ -418,13 +507,12 @@ function render(el, ctx) {
 
   // ------------------------------------------------------------------ Export library
   const E = C.export;
-  let controller = null;
   const exportStatus = keep(InlineStatus({tone: 'info', text: ''}));
   exportStatus.el.hidden = true;
   const progressText = h('p', {class: 'settings-value settings-export-progress', role: 'status'});
   const rail = keep(ProgressRail({value: null, label: E.progress}));
   const progress = h('div', {class: 'settings-export-running', hidden: true}, rail.el, progressText);
-  const cancel = keep(Button({label: E.cancel, variant: 'quiet', onClick: () => controller?.abort()}));
+  const cancel = keep(Button({label: E.cancel, variant: 'quiet', onClick: () => exportJob?.controller.abort()}));
   cancel.el.hidden = true;
   const exportButton = keep(Button({label: E.button, icon: 'download', variant: 'primary', onClick: () => startExport()}));
   const pickerless = typeof win?.showSaveFilePicker !== 'function';
@@ -432,48 +520,36 @@ function render(el, ctx) {
   const exportRow = settingRow({row: 'export', label: E.label, hint: E.hint, scope: 'info',
     controls: [h('div', {class: 'settings-actions'}, exportButton.el, cancel.el), progress, exportStatus.el, limitNote]});
 
-  function finishExport() {
-    controller = null;
-    progress.hidden = true;
-    cancel.el.hidden = true;
-    exportButton.set({busy: false, disabled: false});
-  }
+  // The export outlives this section (a layout rebuild, leaving Settings): see exportJob below.
+  const view = {
+    running() {
+      exportStatus.el.hidden = true;
+      exportButton.set({busy: E.exporting, disabled: true});
+    },
+    progress(text, detail = {}) {
+      progress.hidden = false;
+      cancel.el.hidden = false;
+      exportButton.set({busy: E.exporting, disabled: true});
+      progressText.textContent = text;
+      const total = Number(detail.total) || 0;
+      rail.set({value: detail.phase === 'song' && total ? detail.done / total : detail.phase === 'finish' || detail.phase === 'done' ? 1 : null});
+    },
+    outcome(outcome) {
+      progress.hidden = true;
+      cancel.el.hidden = true;
+      exportButton.set({busy: false, disabled: false});
+      exportStatus.el.hidden = !outcome;
+      if (outcome) exportStatus.set(outcome);
+    },
+  };
   function startExport() {
-    if (controller) return;
-    controller = new AbortController();
-    const signal = controller.signal;
-    exportStatus.el.hidden = true;
-    exportButton.set({busy: E.exporting, disabled: true});
+    if (exportJob) return;
     // exportLibrary opens the save picker synchronously, inside this click.
-    let running;
-    try {
-      running = Promise.resolve(exporter((text, detail = {}) => {
-        if (destroyed || controller?.signal !== signal) return;
-        progress.hidden = false;
-        cancel.el.hidden = false;
-        progressText.textContent = text;
-        const total = Number(detail.total) || 0;
-        rail.set({value: detail.phase === 'song' && total ? detail.done / total : detail.phase === 'finish' || detail.phase === 'done' ? 1 : null});
-      }, {signal}));
-    } catch (err) {
-      running = Promise.reject(err);
-    }
-    running.then(result => {
-      if (destroyed) return;
-      finishExport();
-      exportStatus.set({tone: 'ok', text: EXPORT_COPY.done(Number(result?.songs) || 0)});
-      exportStatus.el.hidden = false;
-    }, err => {
-      if (destroyed) return;
-      const aborted = err?.name === 'AbortError';
-      const byUs = signal.aborted;
-      finishExport();
-      if (aborted && !byUs) return;   // the save picker was cancelled: nothing to say
-      exportStatus.set(aborted ? {tone: 'info', text: E.canceled} : {tone: 'error', text: exportFailedText(err)});
-      exportStatus.el.hidden = false;
-    });
+    runExport(exporter, ctx.auth ?? appAuth);
+    attachExport(view);
   }
-  offs.push(() => controller?.abort());
+  attachExport(view);
+  offs.push(() => detachExport(view));
 
   // ------------------------------------------------------------------ Playback cache
   const K = C.cache;

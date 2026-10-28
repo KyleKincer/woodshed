@@ -173,4 +173,35 @@
   @media (prefers-reduced-motion: reduce) {
     .settings-advanced-chevron { transition: none; }
   }
+
+  /* An uncoded processor failure's raw text, behind Details (mono, selectable). */
+  .settings-error-details { flex-basis: 100%; max-width: 72ch; }
+  .settings-error-details[hidden] { display: none; }
+  .settings-error-summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-sm);
+    padding-inline: var(--s2);
+    margin-inline-start: calc(-1 * var(--s2));
+    border-radius: var(--r-control);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .settings-error-summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (hover: hover) {
+    .settings-error-summary:hover { background: var(--surface-2); }
+  }
+  .settings-error-raw {
+    margin: var(--s2) 0 0;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: var(--fs-14)/1.4 var(--font-mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
 }

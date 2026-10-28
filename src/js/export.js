@@ -18,13 +18,14 @@
 // gesture), before any network wait. Browsers without showSaveFilePicker (Safari, iPad, Firefox) build
 // the archive in memory and download it, which is limited to FALLBACK_LIMIT bytes (100 MB): a larger
 // library is refused before anything is written. Every failure aborts the destination; nothing is
-// reported as exported unless the whole archive was written. A signal aborts the export (AbortError).
+// reported as exported unless the whole archive was written. A signal aborts the export (AbortError) at
+// once, even while a request or a download is stalled: it is passed to the audio fetch, cancels the body
+// being read, and every wait races it.
 // Thrown errors are either ApiErrors from src/api (coded) or plain Errors whose message is a sentence
 // written for people (fatal.js and Plan & storage show those as they are). Cancelling the save picker
 // rejects with the picker's AbortError.
 
 import {Zip, ZipPassThrough} from 'fflate';
-import {fetchMedia} from './media-fetch.js';
 import {query} from '../api/client.js';
 import * as songsApi from '../api/songs.js';
 import * as settingsApi from '../api/settings.js';
@@ -55,7 +56,12 @@ export const DEFAULT_API = Object.freeze({
   setlists: () => setlistsApi.list(),
   notation: songId => query('notation:get', {songId}),
   signKeys: keys => signKeys(keys),
-  fetch: url => fetchMedia(url),
+  // media-fetch.js's fetchMedia, plus the abort signal (fetchMedia takes no init yet): desktop streams
+  // signed audio through its native HTTP client, the browser fetches R2 directly.
+  fetch: async (url, {signal} = {}) => {
+    const bridge = globalThis.window?.woodshedDesktop;
+    return fetch(bridge?.mediaUrl ? await bridge.mediaUrl(url) : url, {signal: signal ?? undefined});
+  },
 });
 
 const encoder = new TextEncoder();
@@ -101,6 +107,20 @@ const abortError = signal => (signal?.reason instanceof Error && signal.reason.n
   : new DOMException('The export was canceled.', 'AbortError'));
 const check = signal => { if (signal?.aborted) throw abortError(signal); };
 
+/** `promise`, or an AbortError as soon as the signal fires: a stalled request never holds Cancel up. */
+function until(signal, promise) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    Promise.resolve(promise).catch(() => {});
+    return Promise.reject(abortError(signal));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener('abort', onAbort, {once: true});
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 /** Streams the library into a ZIP. See the header. */
 export async function exportLibrary(onProgress = () => {}, {signal = null, api = DEFAULT_API, window: win = globalThis.window} = {}) {
   const say = (text, detail) => {
@@ -117,17 +137,17 @@ export async function exportLibrary(onProgress = () => {}, {signal = null, api =
   const songs = [];
   let cursor = null, page;
   do {
-    page = await api.exportPage({paginationOpts: {numItems: PAGE_SIZE, cursor}});
+    page = await until(signal, api.exportPage({paginationOpts: {numItems: PAGE_SIZE, cursor}}));
     songs.push(...(page?.page ?? []));
     cursor = page?.continueCursor ?? null;
     check(signal);
   } while (page && !page.isDone);
-  const [config, lists] = await Promise.all([api.config(), api.setlists()]);
+  const [config, lists] = await until(signal, Promise.all([api.config(), api.setlists()]));
   check(signal);
 
   if (!handle && libraryBytes(songs) > FALLBACK_LIMIT) throw new Error(EXPORT_COPY.tooLarge);
 
-  const writer = handle ? await handle.createWritable() : null;
+  const writer = handle ? await until(signal, handle.createWritable()) : null;
   const chunks = [];
   let outputBytes = 0, chain = Promise.resolve();
   let finishedResolve, finishedReject;
@@ -151,27 +171,31 @@ export async function exportLibrary(onProgress = () => {}, {signal = null, api =
     const entry = new ZipPassThrough(name);
     zip.add(entry);
     entry.push(bytes, true);
-    await chain;
+    await until(signal, chain);
   }
-  /** Streams one response body into an entry, checking the signal between chunks. */
+  /** Streams one response body into an entry; an abort cancels the body at once, even mid-read. */
   async function stream(name, response) {
     const entry = new ZipPassThrough(name);
     zip.add(entry);
     const reader = response.body.getReader();
+    const onAbort = () => { reader.cancel(abortError(signal)).catch(() => {}); };
+    signal?.addEventListener('abort', onAbort, {once: true});
     try {
       while (true) {
         check(signal);
-        const {value, done} = await reader.read();
+        const {value, done} = await until(signal, reader.read());
         if (done) break;
         entry.push(value);
-        await chain;
+        await until(signal, chain);
       }
     } catch (err) {
       reader.cancel().catch(() => {});
       throw err;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
     entry.push(new Uint8Array(), true);
-    await chain;
+    await until(signal, chain);
   }
 
   try {
@@ -182,14 +206,14 @@ export async function exportLibrary(onProgress = () => {}, {signal = null, api =
       check(signal);
       say(EXPORT_COPY.song(i + 1, songs.length, song.title), {phase: 'song', done: i, total: songs.length, title: song.title});
       const folder = songFolder(song);
-      const chart = notationDocument(song, await api.notation(song.id));
+      const chart = notationDocument(song, await until(signal, api.notation(song.id)));
       check(signal);
       if (chart) await add(`${folder}/drums.woodshed.json`, json(chart));
       const keys = [...(song.stems ?? []).map(s => s.key), ...(song.coverKey ? [song.coverKey] : [])].filter(Boolean);
-      const urls = keys.length ? await api.signKeys(keys) : {};
+      const urls = keys.length ? await until(signal, api.signKeys(keys)) : {};
       for (const key of keys) {
         check(signal);
-        const response = urls[key] ? await api.fetch(urls[key]) : null;
+        const response = urls[key] ? await until(signal, api.fetch(urls[key], {signal})) : null;
         if (!response?.ok || !response.body) throw new Error(EXPORT_COPY.songFailed(song.title));
         await stream(`${folder}/${safeName(key.split('/').pop())}`, response);
       }
@@ -197,7 +221,7 @@ export async function exportLibrary(onProgress = () => {}, {signal = null, api =
     check(signal);
     say(EXPORT_COPY.finishing, {phase: 'finish', done: songs.length, total: songs.length});
     zip.end();
-    await finished;
+    await until(signal, finished);
     if (writer) await writer.close();
     else {
       const url = URL.createObjectURL(new Blob(chunks, {type: 'application/zip'}));

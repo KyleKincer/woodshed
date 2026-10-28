@@ -22,7 +22,11 @@
 //   se2-save-failed               a failed save reverts the toggle: "Couldn't save · Retry"; Retry saves it
 //   se2-processor-phases          every processor phase's line; first run and pairing failure captured
 //   se2-custom-quality            Custom quality with Advanced open; a six-stem note
-//   se2-legacy-many               two old libraries, each named apart; a failing import's sentence
+//   se2-legacy-many               two old libraries, each named apart; a failing import's sentence, its raw
+//                                 text only behind Details
+//   se2-companion-missing         a mistyped folder and a computer with no jobs folder read as plain sentences
+//   se2-web-devices-loading       a browser before devices.list answers: "Checking your computers…", never
+//                                 "No computer is connected yet"
 //   se2-plan-states               loading, error → Try again; past due; over the limit; app full
 //   se2-export-running            the export's progress rail and Cancel export
 //   se2-export-ipad               the iPad 100 MB note; an export that fails reads as a sentence
@@ -372,7 +376,52 @@ module.exports = [
       await page.getByRole('button', {name: 'Import 9 songs from ~/Music/Woodshed (2023)'}).waitFor();
       await t.capture('found');
       await page.getByRole('button', {name: 'Import 48 songs from ~/Library/Application Support/woodshed'}).click();
-      await waitRow(page, 'importLegacy', 'The old library couldn’t be imported. Import queue full. Import more after these finish.');
+      await waitRow(page, 'importLegacy', 'The old library couldn’t be imported.');
+      const alert = (await page.locator('[data-row=importLegacy] [role=alert]').innerText()).replace(/\s+/g, ' ').trim();
+      t.expect(alert === 'The old library couldn’t be imported.', `the failure is one sentence, no raw text (${alert})`);
+      const details = page.locator('[data-row=importLegacy] details.settings-error-details');
+      t.expect(await details.isVisible() && !(await details.evaluate(d => d.open)), 'Details, closed');
+      await details.locator('summary').click();
+      const raw = await details.locator('pre').innerText();
+      t.expect(raw === 'Import queue full. Import more after these finish.', `the raw text behind Details (${raw})`);
+      await expectTargets(t, page);
+      await t.capture('failed-details');
+    },
+  },
+  {
+    name: 'se2-companion-missing',
+    url: `${HARNESS}?section=processing&desktop=1&legacy=none&importFail=missing&originals=nojobs`,
+    opts: ONE,
+    async fn(page, t) {
+      await page.getByRole('button', {name: 'Find old library'}).click();
+      const field = page.getByRole('textbox', {name: 'Old library folder'});
+      await field.waitFor();
+      await field.fill('~/Music/Old Woodshd');
+      await page.getByRole('button', {name: 'Import from this folder'}).click();
+      await waitRow(page, 'importLegacy', 'There’s no old Woodshed library in that folder.');
+      t.expect(!(await rowText(page, 'importLegacy')).includes('ENOENT'), 'no raw ENOENT for a mistyped folder');
+      t.expect(!(await page.locator('[data-row=importLegacy] details.settings-error-details').isVisible()), 'nothing behind Details for a missing folder');
+      await page.getByRole('button', {name: 'Export original audio'}).click();
+      await waitRow(page, 'exportOriginals', 'There is no original audio on this computer yet.');
+      const text = await rowText(page, 'exportOriginals');
+      t.expect(!/ENOENT|scandir|couldn’t be exported/.test(text), `no jobs folder is no original audio (${text})`);
+      const calls = await page.evaluate(() => window.__settingsB.calls.filter(c => c.name === 'local'));
+      t.expect(JSON.stringify(calls).includes('7200000'), `export-originals waits long enough for the copy (${JSON.stringify(calls)})`);
+      await t.capture('missing');
+    },
+  },
+  {
+    name: 'se2-web-devices-loading',
+    url: `${HARNESS}?section=processing&devicesLoad=slow`,
+    opts: ONE,
+    async fn(page, t) {
+      await waitProcessor(page, 'Checking your computers…');
+      t.expect(!(await processorLine(page)).includes('No computer is connected yet'), 'never says no computer before the list loads');
+      t.expect(!(await page.locator('[data-row=devices]').isVisible()), 'Your computers waits for the list');
+      await t.capture('loading');
+      await waitProcessor(page, 'Studio MacBook is online');
+      await page.waitForSelector('.settings-device');
+      t.expect((await page.locator('.settings-device').count()) === 2, 'then the paired computers');
     },
   },
   {
@@ -384,6 +433,11 @@ module.exports = [
       await t.capture('error');
       await page.goto(`${t.base}${HARNESS}?section=plan&status=pastdue&usage=over`);
       await page.waitForSelector('[data-notice=pastDue]');
+      // The server writes a failed payment as access 'grace': the failed-payment notice replaces "has ended",
+      // Plus stays Your plan and Get Plus (a second subscription) is not offered.
+      t.expect(await page.locator('[data-notice=grace]').count() === 0, 'no "has ended" notice for a failed payment');
+      t.expect(await page.locator('.settings-plan[data-plan=plus][data-current=true]').count() === 1, 'Plus stays Your plan');
+      t.expect(await page.getByRole('button', {name: 'Get Plus'}).count() === 0, 'no Get Plus while a payment is retried');
       await waitRow(page, 'usage', 'Your library is over its storage limit.');
       t.expect((await page.getByRole('meter', {name: 'Cloud storage'}).getAttribute('aria-valuetext')) === '1.1 of 1.0 GB', 'over the limit');
       await t.capture('past-due');

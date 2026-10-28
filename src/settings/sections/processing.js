@@ -35,8 +35,12 @@
 //
 // Copy and controls are exported here (COPY, CONTROLS, ROWS) because settings.copy.js is SE1's
 // (architecture §9.0, "copy and controls tables"). Tests and harnesses may pass, beside the frame's
-// ctx: `companion` (a loader resolving to {legacyLibraries, importLegacy, localRequest}), `devicesApi`
-// ({rename, revoke}), `now` and `timers`.
+// ctx: `companion` (a loader resolving to {legacyLibraries, importLegacy, desktopStatus, request}),
+// `devicesApi` ({subscribeList, rename, revoke}), `now` and `timers`.
+//
+// A processor failure without a code shows its row's own sentence; the processor's raw words go behind
+// Details (mono, selectable). A missing folder reads as a plain sentence: no jobs folder yet means no
+// original audio, and a typed folder without library.json says so.
 
 import '../../styles/views/settings/sections.css';
 import '../../styles/views/settings/processing.css';
@@ -142,6 +146,8 @@ export const COPY = Object.freeze({
     skipped: count => `${count} ${count === 1 ? 'was' : 'were'} already in your library.`,
     nothingNew: 'Every song in this library is already in Woodshed or on its way.',
     failed: 'The old library couldn’t be imported.',
+    notFound: 'There’s no old Woodshed library in that folder. Check that it’s the folder that holds library.json.',
+    unrecognized: 'That folder’s library.json isn’t one Woodshed can read.',
   }),
   exportOriginals: Object.freeze({
     label: 'Export original audio',
@@ -152,12 +158,15 @@ export const COPY = Object.freeze({
     empty: 'There is no original audio on this computer yet.',
     failed: 'The original audio couldn’t be exported.',
   }),
+  /** The disclosure for a processor's raw error text. */
+  details: 'Details',
   web: Object.freeze({
     label: 'Processor',
     online: name => `${name} is online. Songs you add here are split on it.`,
     busy: name => `${name} is online and splitting a song. Songs you add here wait their turn.`,
     offline: name => `${name} is offline. Songs you add here start when it’s back.`,
     none: 'No computer is connected yet. Woodshed for desktop splits songs on your Mac, Windows or Linux computer, and they appear here.',
+    loading: 'Checking your computers…',
   }),
   devices: Object.freeze({
     label: 'Your computers',
@@ -325,12 +334,56 @@ export function originalsText(result) {
   return count ? C.exportOriginals.done(count, String(result?.directory ?? '')) : C.exportOriginals.empty;
 }
 
-/** A sentence for a failed local-processor request: error-copy for coded ones, else the processor's own words. */
-export function companionErrorText(err, lead) {
+const uncoded = err => {
   const code = typeof err?.code === 'string' ? err.code : 'unknown';
-  if (code !== 'unknown' && code !== 'invalid') return `${lead} ${describeError(err, {context: 'job'}).sentence}`;
-  const own = String(err?.message ?? '').trim();
-  return own ? `${lead} ${own}` : lead;
+  return code === 'unknown' || code === 'invalid';
+};
+
+/**
+ * A sentence for a failed local-processor request: the row's lead plus error-copy for a coded failure;
+ * the lead alone for an uncoded one (its raw text is companionErrorDetails, behind Details).
+ */
+export function companionErrorText(err, lead) {
+  return uncoded(err) ? lead : `${lead} ${describeError(err, {context: 'job'}).sentence}`;
+}
+
+/** The raw text of an uncoded processor failure, for Details ('' when there is none or it is coded). */
+export const companionErrorDetails = err => (uncoded(err) ? String(err?.message ?? '').trim() : '');
+
+/** An uncoded processor failure that is a missing file or folder (Node's ENOENT). */
+export const isMissingPath = err => uncoded(err) && /\bENOENT\b/.test(String(err?.message ?? ''));
+
+/** How long Export original audio waits: it copies every WAV and FLAC before it answers. */
+export const ORIGINALS_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * /export-originals with a bound long enough for the copy (localRequest has the 30 s default). Pairing
+ * is checked first, as localRequest does. A computer that has never split a song has no jobs folder:
+ * that is no original audio, not a failure.
+ */
+export async function requestOriginals(mod) {
+  await mod.desktopStatus();
+  try {
+    return await mod.request('/export-originals', {method: 'POST', body: {}, timeoutMs: ORIGINALS_TIMEOUT_MS});
+  } catch (err) {
+    if (isMissingPath(err)) return {count: 0};
+    throw err;
+  }
+}
+
+/** The failure line for an /import: a missing or unreadable folder in plain words, else companionErrorText. */
+export function importErrorText(err) {
+  if (isMissingPath(err)) return C.importLegacy.notFound;
+  // readLegacy: "Unrecognized library.json." or JSON.parse's SyntaxError on a damaged file.
+  if (uncoded(err) && /Unrecognized library\.json|JSON/.test(String(err?.message ?? ''))) return C.importLegacy.unrecognized;
+  return companionErrorText(err, C.importLegacy.failed);
+}
+
+/** "Details": a processor's raw error text behind a disclosure, mono and selectable. */
+function errorDetails() {
+  const raw = h('pre', {class: 'settings-error-raw'});
+  const el = h('details', {class: 'settings-error-details', hidden: true}, h('summary', {class: 'settings-error-summary'}, C.details), raw);
+  return {el, set(text) { raw.textContent = text || ''; el.hidden = !text; el.open = false; }};
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -520,21 +573,26 @@ function render(el, ctx) {
       const result = InlineStatus({tone: 'info', text: ''});
       result.el.hidden = true;
       keep(result);
+      const details = errorDetails();
       const button = keep(Button({label: C.exportOriginals.button, icon: 'download', onClick: async () => {
         result.el.hidden = true;
+        details.set('');
         button.set({busy: C.exportOriginals.exporting, disabled: true});
         try {
           const mod = await companion();
-          const answer = await mod.localRequest('/export-originals', {});
+          const answer = await requestOriginals(mod);
           if (!destroyed) result.set({tone: 'ok', text: originalsText(answer)});
         } catch (err) {
-          if (!destroyed) result.set({tone: 'error', text: companionErrorText(err, C.exportOriginals.failed)});
+          if (!destroyed) {
+            result.set({tone: 'error', text: companionErrorText(err, C.exportOriginals.failed)});
+            details.set(companionErrorDetails(err));
+          }
         } finally {
           if (!destroyed) { result.el.hidden = false; button.set({busy: false, disabled: false}); }
         }
       }}));
       rows.push(settingRow({row: 'exportOriginals', label: C.exportOriginals.label, hint: C.exportOriginals.hint, scope: 'info',
-        controls: [button, result.el]}));
+        controls: [button, result.el, details.el]}));
     }
 
     let shownModels = models(), shownBitrates = bitrates();
@@ -579,13 +637,14 @@ function render(el, ctx) {
     const L = C.importLegacy;
     const result = keep(InlineStatus({tone: 'info', text: ''}));
     result.el.hidden = true;
+    const details = errorDetails();
     const found = h('ul', {class: 'settings-legacy-found', role: 'list', hidden: true});
     const foundButtons = [];
     let folder = null, folderButton = null;
     const manual = h('div', {class: 'settings-legacy-manual', hidden: true});
     let busy = false;
 
-    const say = (tone, text) => { result.set({tone, text}); result.el.hidden = !text; };
+    const say = (tone, text, raw = '') => { result.set({tone, text}); result.el.hidden = !text; details.set(raw); };
     const setBusy = on => {
       busy = on;
       find.set({disabled: on});
@@ -603,7 +662,7 @@ function render(el, ctx) {
         const answer = await mod.importLegacy(directory);
         if (!destroyed) say('ok', importResultText(answer));
       } catch (err) {
-        if (!destroyed) say('error', companionErrorText(err, L.failed));
+        if (!destroyed) say('error', importErrorText(err), isMissingPath(err) ? '' : companionErrorDetails(err));
       } finally {
         if (!destroyed) { button?.set({busy: false}); setBusy(false); }
       }
@@ -646,12 +705,12 @@ function render(el, ctx) {
         found.hidden = !list.length;
         if (!list.length) { say('info', L.none); showManual(); }
       } catch (err) {
-        if (!destroyed) say('error', companionErrorText(err, L.failed));
+        if (!destroyed) say('error', companionErrorText(err, L.failed), companionErrorDetails(err));
       } finally {
         if (!destroyed) { find.set({busy: false}); setBusy(false); }
       }
     }}));
-    return settingRow({row: 'importLegacy', label: L.label, hint: L.hint, scope: 'info', controls: [find, found, result.el, manual]});
+    return settingRow({row: 'importLegacy', label: L.label, hint: L.hint, scope: 'info', controls: [find, found, result.el, details.el, manual]});
   }
 
   // ------------------------------------------------------------------- web
@@ -661,7 +720,13 @@ function render(el, ctx) {
     const fb = ctx.feedback ?? appFeedback;
     const now = ctx.now ?? clockNow;
     const timers = ctx.timers ?? globalThis;
-    const devices = () => (store?.library?.devices?.peek?.() ?? []).filter(Boolean);
+    // store.library.devices starts as [] before devices.list answers, which reads like "no computer":
+    // the section asks devices.list itself and says "Checking…" until the first answer (or until the
+    // store has one).
+    const stored = () => (store?.library?.devices?.peek?.() ?? []).filter(Boolean);
+    let own = null;
+    let loaded = stored().length > 0 || typeof devicesApi.subscribeList !== 'function';
+    const devices = () => (own ?? stored()).filter(Boolean);
 
     const dot = h('span', {class: 'settings-processor-dot', 'aria-hidden': 'true'});
     const label = h('span', {class: 'settings-processor-label'});
@@ -739,6 +804,13 @@ function render(el, ctx) {
     }
 
     function show() {
+      if (!loaded) {
+        label.textContent = C.web.loading;
+        line.dataset.state = 'loading';
+        dot.hidden = true;
+        devicesRow.el.hidden = true;
+        return;
+      }
       const all = devices();
       const status = webProcessorText(all, now());
       label.textContent = status.text;
@@ -747,9 +819,22 @@ function render(el, ctx) {
       reconcileList(list, all, {key: d => d.deviceId, create: deviceItem});
       devicesRow.el.hidden = !all.length;
     }
+    if (!loaded) {
+      offs.push(devicesApi.subscribeList(value => {
+        if (destroyed) return;
+        own = Array.isArray(value) ? value : [];
+        loaded = true;
+        show();
+      }, err => {
+        console.warn('[settings] the paired computers did not load:', err?.message ?? err);
+        if (destroyed || loaded) return;
+        loaded = true;   // fall back to the store's list
+        show();
+      }));
+    }
     show();
     const devicesSignal = store?.library?.devices;
-    if (devicesSignal?.subscribe) offs.push(devicesSignal.subscribe(() => show()));
+    if (devicesSignal?.subscribe) offs.push(devicesSignal.subscribe(() => { if (!own && stored().length) loaded = true; show(); }));
     const tick = timers.setInterval(() => { if (!destroyed) show(); }, appDevicesApi.RECHECK_MS);
     offs.push(() => timers.clearInterval(tick));
     offs.push(() => reconcileList(list, [], {key: d => d.deviceId, create: deviceItem}));

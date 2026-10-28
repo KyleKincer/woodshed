@@ -12,12 +12,12 @@ import {SECTION_MODULES, sectionPath} from '../src/settings/settings.js';
 import {COPY as FRAME_COPY, SECTION_TITLES} from '../src/settings/settings.copy.js';
 import processing, {
   COPY as PC, CONTROLS as PROCESSING_CONTROLS, ROWS as PROCESSING_ROWS, QUALITY_CHOICES,
-  companionErrorText, defaultLayout, deviceStatus, effectiveQuality, estimateText, importResultText, originalsText,
+  ORIGINALS_TIMEOUT_MS, companionErrorDetails, companionErrorText, importErrorText, isMissingPath, defaultLayout, deviceStatus, effectiveQuality, estimateText, importResultText, originalsText,
   platformName, qualityChoice, webProcessorText,
 } from '../src/settings/sections/processing.js';
 import plan, {
   COPY as LC, CONTROLS as PLAN_CONTROLS, ROWS as PLAN_ROWS, exportFailedText, formatBytes, formatPrice, initialInterval,
-  largestSongs, planNotices, planPrice, usageFraction, usageText,
+  currentPlan, largestSongs, paymentFailing, planNotices, planPrice, resetExport, runningExport, usageFraction, usageText,
 } from '../src/settings/sections/plan.js';
 import {createAccount} from '../src/app/account.js';
 import {normalizePrefs} from '../src/app/prefs.js';
@@ -122,7 +122,8 @@ function fakeCompanion({libraries = [], importResult = {count: 20, skipped: 0, r
   const mod = {
     legacyLibraries: vi.fn(async () => libraries),
     importLegacy: vi.fn(async () => importResult),
-    localRequest: vi.fn(async () => originals),
+    desktopStatus: vi.fn(async () => ({connected: true, deviceId: 'dev-local'})),
+    request: vi.fn(async () => originals),
   };
   return {mod, load: vi.fn(async () => mod)};
 }
@@ -175,6 +176,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const handle of opened.splice(0)) handle.destroy();
+  resetExport();
   vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.replaceChildren();
@@ -501,7 +503,25 @@ describe('Processing on the desktop', () => {
     await flush();
     expect(companion.mod.importLegacy).toHaveBeenLastCalledWith('/Users/kyle/old-woodshed');
     const alert = rowEl(body, 'importLegacy').querySelector('[role=alert]');
-    expect(collapse(alert.textContent)).toBe(`${PC.importLegacy.failed} Import queue full. Import more after these finish.`);
+    // An uncoded processor failure: the row's own sentence; the processor's words behind Details.
+    expect(collapse(alert.textContent)).toBe(PC.importLegacy.failed);
+    const details = rowEl(body, 'importLegacy').querySelector('details.settings-error-details');
+    expect(details.hidden).toBe(false);
+    expect(details.open).toBe(false);
+    expect(details.querySelector('summary').textContent).toBe(PC.details);
+    expect(details.querySelector('pre').textContent).toBe('Import queue full. Import more after these finish.');
+
+    // A mistyped folder: ENOENT on library.json reads as a plain sentence, nothing behind Details.
+    companion.mod.importLegacy.mockRejectedValueOnce(Object.assign(new Error("ENOENT: no such file or directory, open '/Users/kyle/old-woodshd/library.json'"), {code: 'unknown'}));
+    find(body, 'button', PC.importLegacy.importFolder).click();
+    await flush();
+    expect(collapse(rowEl(body, 'importLegacy').querySelector('[role=alert]').textContent)).toBe(PC.importLegacy.notFound);
+    expect(rowText(body, 'importLegacy')).not.toContain('ENOENT');
+    expect(details.hidden).toBe(true);
+    companion.mod.importLegacy.mockRejectedValueOnce(Object.assign(new Error('Unrecognized library.json.'), {code: 'unknown'}));
+    find(body, 'button', PC.importLegacy.importFolder).click();
+    await flush();
+    expect(collapse(rowEl(body, 'importLegacy').querySelector('[role=alert]').textContent)).toBe(PC.importLegacy.unrecognized);
   });
 
   test('Export original audio asks the processor and reports where the files went', async () => {
@@ -510,12 +530,34 @@ describe('Processing on the desktop', () => {
     const {body} = open(processing, e.ctx);
     find(body, 'button', PC.exportOriginals.button).click();
     await flush();
-    expect(companion.mod.localRequest).toHaveBeenCalledWith('/export-originals', {});
+    // Pairing first (as localRequest checks it), then a bound long enough for copying gigabytes.
+    expect(companion.mod.desktopStatus).toHaveBeenCalledTimes(1);
+    expect(companion.mod.request).toHaveBeenCalledWith('/export-originals', {method: 'POST', body: {}, timeoutMs: ORIGINALS_TIMEOUT_MS});
+    expect(ORIGINALS_TIMEOUT_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
     expect(rowText(body, 'exportOriginals')).toContain(PC.exportOriginals.done(48, '~/Downloads/Woodshed-originals'));
-    companion.mod.localRequest.mockRejectedValueOnce(Object.assign(new Error('x'), {code: 'processor_offline'}));
+    companion.mod.desktopStatus.mockRejectedValueOnce(Object.assign(new Error('x'), {code: 'processor_offline'}));
     find(body, 'button', PC.exportOriginals.button).click();
     await flush();
     expect(collapse(rowEl(body, 'exportOriginals').querySelector('[role=alert]').textContent)).toMatch(/^The original audio couldn’t be exported\. Woodshed’s processor isn’t running on this computer\./);
+    expect(companion.mod.request).toHaveBeenCalledTimes(1);
+    expect(rowEl(body, 'exportOriginals').querySelector('details.settings-error-details').hidden).toBe(true);
+  });
+
+  test('Export original audio on a computer that has never split a song (no jobs folder) says there is none', async () => {
+    const companion = fakeCompanion();
+    const e = processingEnv({companion});
+    const {body} = open(processing, e.ctx);
+    companion.mod.request.mockRejectedValueOnce(Object.assign(new Error("ENOENT: no such file or directory, scandir '/Users/kyle/Library/Application Support/Woodshed/accounts/u1/jobs'"), {code: 'unknown'}));
+    find(body, 'button', PC.exportOriginals.button).click();
+    await flush();
+    expect(rowText(body, 'exportOriginals')).toContain(PC.exportOriginals.empty);
+    expect(rowText(body, 'exportOriginals')).not.toMatch(/ENOENT|couldn’t be exported/);
+    // Any other uncoded failure: one sentence, the raw words behind Details.
+    companion.mod.request.mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied, mkdir \'/Users/kyle/Downloads/x\''), {code: 'unknown'}));
+    find(body, 'button', PC.exportOriginals.button).click();
+    await flush();
+    expect(collapse(rowEl(body, 'exportOriginals').querySelector('[role=alert]').textContent)).toBe(PC.exportOriginals.failed);
+    expect(rowEl(body, 'exportOriginals').querySelector('details.settings-error-details pre').textContent).toMatch(/^EACCES/);
   });
 });
 
@@ -544,6 +586,46 @@ describe('Processing on the web (B5)', () => {
     vi.advanceTimersByTime(30e3);
     expect(rowText(body, 'processor')).toContain(PC.web.offline('Studio MacBook'));
     expect(body.querySelector('.settings-device').dataset.state).toBe('offline');
+  });
+
+  test('before devices.list answers: "Checking your computers…", never "no computer" (the store starts empty)', () => {
+    const e = processingEnv({context: 'web', devices: []});
+    let answer = null, off = vi.fn();
+    e.ctx.devicesApi.subscribeList = vi.fn(onValue => { answer = onValue; return off; });
+    const {body, handle} = open(processing, e.ctx);
+    expect(e.ctx.devicesApi.subscribeList).toHaveBeenCalledTimes(1);
+    expect(rowText(body, 'processor')).toContain(PC.web.loading);
+    expect(rowText(body, 'processor')).not.toContain(PC.web.none);
+    expect(rowEl(body, 'devices').hidden).toBe(true);
+    answer(DEVICES);
+    expect(rowText(body, 'processor')).toContain(PC.web.busy('Studio MacBook'));
+    expect(body.querySelectorAll('.settings-device')).toHaveLength(2);
+    answer([]);
+    expect(rowText(body, 'processor')).toContain(PC.web.none);
+    handle.destroy();
+    expect(off).toHaveBeenCalledTimes(1);
+
+    // The store already has the list: no extra subscription, no loading line.
+    const ready = processingEnv({context: 'web'});
+    ready.ctx.devicesApi.subscribeList = vi.fn(() => () => {});
+    const shown = open(processing, ready.ctx).body;
+    expect(ready.ctx.devicesApi.subscribeList).not.toHaveBeenCalled();
+    expect(rowText(shown, 'processor')).not.toContain(PC.web.loading);
+
+    // The store's first answer also ends the loading line; a failed subscription falls back to the store.
+    const late = processingEnv({context: 'web', devices: []});
+    let fail = null;
+    late.ctx.devicesApi.subscribeList = vi.fn((onValue, onError) => { fail = onError; return () => {}; });
+    const lateBody = open(processing, late.ctx).body;
+    expect(rowText(lateBody, 'processor')).toContain(PC.web.loading);
+    late.store.library.devices.value = [DEVICES[1]];
+    expect(rowText(lateBody, 'processor')).toContain(PC.web.offline('DESKTOP-4F2K9'));
+    const failing = processingEnv({context: 'web', devices: []});
+    failing.ctx.devicesApi.subscribeList = vi.fn((onValue, onError) => { fail = onError; return () => {}; });
+    const failBody = open(processing, failing.ctx).body;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fail(new ApiError({code: 'network'}));
+    expect(rowText(failBody, 'processor')).toContain(PC.web.none);
   });
 
   test('no paired computer: the line says how songs get split, and the list is not shown', () => {
@@ -645,7 +727,15 @@ describe('Processing helpers', () => {
     expect(originalsText({count: 1, directory: '/x'})).toBe('Copied 1 file to /x.');
     expect(originalsText({count: 0})).toBe(PC.exportOriginals.empty);
     expect(companionErrorText({code: 'unknown', message: ''}, 'Lead.')).toBe('Lead.');
-    expect(companionErrorText(new Error('Disk is read-only.'), 'Lead.')).toBe('Lead. Disk is read-only.');
+    expect(companionErrorText(new Error('Disk is read-only.'), 'Lead.')).toBe('Lead.');
+    expect(companionErrorDetails(new Error('Disk is read-only.'))).toBe('Disk is read-only.');
+    expect(companionErrorDetails(Object.assign(new Error('x'), {code: 'processor_offline'}))).toBe('');
+    expect(companionErrorText(Object.assign(new Error('x'), {code: 'processor_offline'}), 'Lead.')).toMatch(/^Lead\. Woodshed’s processor/);
+    expect(isMissingPath(new Error("ENOENT: no such file or directory, scandir '/x/jobs'"))).toBe(true);
+    expect(isMissingPath(Object.assign(new Error('ENOENT'), {code: 'processor_offline'}))).toBe(false);
+    expect(importErrorText(new Error("ENOENT: no such file or directory, open '/x/library.json'"))).toBe(PC.importLegacy.notFound);
+    expect(importErrorText(new SyntaxError('Unexpected token } in JSON at position 4'))).toBe(PC.importLegacy.unrecognized);
+    expect(importErrorText(new Error('Busy.'))).toBe(PC.importLegacy.failed);
   });
 });
 
@@ -796,7 +886,11 @@ describe('Plan & storage: the plan', () => {
       'Your Plus plan has ended. By 2026-11-06, export your library or trim it to the free 1 GB to keep the songs you want; after that, the oldest songs over the limit are removed.'],
     ['cancel at period end', {access: 'paid', status: 'active', cancelAtPeriodEnd: true, periodEnd: Date.UTC(2026, 10, 9), hasCustomer: true}, 'ending',
       'Your Plus plan ends on 2026-11-09. Manage your subscription to keep it.'],
-    ['a failed payment', {access: 'paid', status: 'past_due', hasCustomer: true}, 'pastDue', LC.plan.pastDue],
+    // billingData.applySync writes a past_due/unpaid Plus account as access 'grace' (with graceEndsAt).
+    ['a failed payment (the server’s shape)', {access: 'grace', status: 'past_due', graceEndsAt: Date.UTC(2026, 10, 6), hasCustomer: true}, 'pastDue',
+      'Your last payment didn’t go through. Update your payment details in Manage subscription by 2026-11-06 to keep Plus.'],
+    ['an unpaid subscription', {access: 'grace', status: 'unpaid', graceEndsAt: Date.UTC(2026, 10, 6), hasCustomer: true}, 'pastDue', LC.plan.pastDueBy('2026-11-06')],
+    ['a failed payment without a grace date', {access: 'paid', status: 'past_due', hasCustomer: true}, 'pastDue', LC.plan.pastDue],
   ])('notice: %s', async (_, change, key, text) => {
     const e = planEnv({status: {...STATUS, ...change}});
     const {body} = open(plan, e.ctx);
@@ -806,6 +900,24 @@ describe('Plan & storage: the plan', () => {
     expect(body.querySelectorAll('[data-notice]')).toHaveLength(1);
     e.billing.push({...STATUS});
     expect(body.querySelectorAll('[data-notice]')).toHaveLength(0);
+  });
+
+  test('a failed payment keeps Plus as Your plan: Manage subscription, never Get Plus (a second subscription)', async () => {
+    const failing = {...STATUS, access: 'grace', status: 'past_due', graceEndsAt: Date.UTC(2026, 10, 6), hasCustomer: true};
+    expect(paymentFailing(failing)).toBe(true);
+    expect(currentPlan(failing)).toBe('plus');
+    expect(planNotices(failing, {format: () => 'D'}).map(n => n.key)).toEqual(['pastDue']);
+    expect(paymentFailing({...failing, status: 'canceled'})).toBe(false);
+    expect(currentPlan({...failing, status: 'canceled'})).toBe('free');
+    expect(paymentFailing({...failing, access: 'free'})).toBe(false);
+    const e = planEnv({status: failing});
+    const {body} = open(plan, e.ctx);
+    await flush();
+    expect(body.querySelector('[data-notice=grace]')).toBeNull();
+    expect(body.querySelector('.settings-plan[data-plan=plus]').dataset.current).toBe('true');
+    expect(body.querySelector('.settings-plan[data-plan=free]').dataset.current).toBe('false');
+    expect(has(body, 'button', LC.plan.getPlus)).toBe(false);
+    expect(has(body, 'button', LC.plan.manage)).toBe(true);
   });
 
   test('?checkout=success toasts once when the section opens (the query stays)', async () => {
@@ -865,6 +977,7 @@ describe('Plan & storage: export and cache', () => {
     button.click();
     expect(e.exporter).toHaveBeenCalledTimes(1);   // one export at a time
 
+    resetExport();   // the export belongs to the page: cancel it before starting another
     const done = planEnv();
     const second = open(plan, done.ctx).body;
     await flush();
@@ -898,6 +1011,80 @@ describe('Plan & storage: export and cache', () => {
     expect(collapse(rowEl(body, 'export').querySelector('[role=alert]').textContent)).toBe(`${LC.export.failed} ${EXPORT_COPY.tooLarge}`);
     expect(exportFailedText(new TypeError('x is undefined'))).toBe(`${LC.export.failed} ${LC.export.tryAgain}`);
     expect(exportFailedText(new ApiError({code: 'network'}))).toMatch(/^The export didn’t finish\. /);
+  });
+
+  test('a layout rebuild (iPad rotated) or leaving Settings never cancels the export; the next section shows it', async () => {
+    const e = planEnv();
+    let progress, finish, aborted = false;
+    e.exporter.mockImplementationOnce((onProgress, {signal}) => {
+      progress = onProgress;
+      signal.addEventListener('abort', () => { aborted = true; });
+      return new Promise(resolve => { finish = resolve; });
+    });
+    const first = open(plan, e.ctx);
+    await flush();
+    find(first.body, 'button', LC.export.button).click();
+    progress(EXPORT_COPY.song(2, 4, 'Bravo'), {phase: 'song', done: 2, total: 4, title: 'Bravo'});
+    first.handle.destroy();             // the frame rebuilds on a stack/split change
+    expect(aborted).toBe(false);
+    expect(runningExport()).not.toBeNull();
+    const second = open(plan, e.ctx).body;
+    await flush();
+    expect(rowText(second, 'export')).toContain('Exporting 2/4: Bravo');
+    expect(find(second, 'button', LC.export.exporting).getAttribute('aria-busy')).toBe('true');
+    expect(second.querySelector('.settings-export-running [role=progressbar]').getAttribute('aria-valuenow')).toBe('50');
+    progress(EXPORT_COPY.song(3, 4, 'Charlie'), {phase: 'song', done: 3, total: 4, title: 'Charlie'});
+    expect(rowText(second, 'export')).toContain('Exporting 3/4: Charlie');
+    find(second, 'button', LC.export.exporting).click();   // still one export at a time
+    expect(e.exporter).toHaveBeenCalledTimes(1);
+    for (const handle of opened.splice(0)) handle.destroy();   // left Settings while it finished
+    finish({songs: 4, bytes: 1});
+    await flush();
+    expect(runningExport()).toBeNull();
+    const third = open(plan, e.ctx).body;
+    await flush();
+    expect(collapse(third.querySelector('[data-row=export] [role=status]:not(.settings-export-progress)').textContent)).toBe(EXPORT_COPY.done(4));
+    expect(has(third, 'button', LC.export.button)).toBe(true);
+  });
+
+  test('Cancel in a rebuilt section cancels the export; signing out (or another account) cancels it too', async () => {
+    const listeners = new Set();
+    let user = {_id: 'u1'};
+    const auth = {user: () => user, onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); }};
+    const e = planEnv();
+    e.ctx.auth = auth;
+    const hanging = (onProgress, {signal}) => new Promise((resolve, reject) => {
+      onProgress(EXPORT_COPY.gathering, {phase: 'gather', done: 0, total: 0});
+      signal.addEventListener('abort', () => reject(new DOMException('The export was canceled.', 'AbortError')));
+    });
+    e.exporter.mockImplementationOnce(hanging).mockImplementationOnce(hanging).mockImplementationOnce(hanging);
+    const first = open(plan, e.ctx);
+    await flush();
+    find(first.body, 'button', LC.export.button).click();
+    first.handle.destroy();
+    const second = open(plan, e.ctx).body;
+    find(second, 'button', LC.export.cancel).click();
+    await flush();
+    expect(rowText(second, 'export')).toContain(LC.export.canceled);
+    expect(runningExport()).toBeNull();
+
+    find(second, 'button', LC.export.button).click();
+    expect(listeners.size).toBe(1);
+    for (const fn of listeners) fn({user: {_id: 'u1'}, status: {}});   // a live users.me update: keeps going
+    await flush();
+    expect(runningExport()).not.toBeNull();
+    user = null;
+    for (const fn of [...listeners]) fn({user: null, status: null});
+    await flush();
+    expect(runningExport()).toBeNull();
+    expect(listeners.size).toBe(0);
+    expect(rowText(second, 'export')).toContain(LC.export.canceled);
+
+    user = {_id: 'u1'};
+    find(second, 'button', LC.export.button).click();
+    for (const fn of [...listeners]) fn({user: {_id: 'u2'}, status: {}});
+    await flush();
+    expect(runningExport()).toBeNull();
   });
 
   test.each([
