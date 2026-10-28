@@ -309,41 +309,54 @@ const STATES = [
     // the button and its words) in the rail, the Focus mini rail and the dock, at every Distance, at
     // 1440 px and below 1280 px (the 32 px slimmer rail: Play is 78 px wide at Near). The capture is the
     // rail at Near on the laptop mid-decode, the I2a failure (94 px), and the runner's structure check runs on it.
-    name: 'st5-hud-loading-decoding', url: HUD('layout=rail&distance=near&load=decoding'), opts: {devices: ['laptop'], themes: ['light', 'dark']},
+    name: 'st5-hud-loading-decoding', url: HUD('layout=rail&distance=near&load=decoding'),
+    // One page load per viewport × layout × Distance (15), the five load points driven through
+    // window.__hud.setLoad on it (ticket I2a-17: a goto per combination, 75, ran past 60 s under
+    // --jobs 3). The timeout keeps a margin for --jobs 4 on a loaded machine.
+    opts: {devices: ['laptop'], themes: ['light', 'dark'], timeout: 120_000},
     async fn(page, t) {
+      // Each point is the whole `load` value (setLoad merges), so the order does not matter.
+      const at = (fields) => ({phase: 'decoding', loadedBytes: 4, totalBytes: 4, decoded: 0, tracks: 4, error: null, ...fields});
       const LOADS = [
-        ['decoding', {decoded: 0}, 'Decoding', '1 of 4'], ['decoding', {decoded: 3}, 'Decoding', '4 of 4'],
-        ['progress', {}, 'Loading', '62%'], ['progress', {loadedBytes: 100}, 'Loading', '100%'], ['preparing', {}, 'Preparing', null],
+        ['decoding 0', at({decoded: 0}), 'Decoding', '1 of 4'], ['decoding 3', at({decoded: 3}), 'Decoding', '4 of 4'],
+        ['progress 62', at({phase: 'loading', loadedBytes: 62, totalBytes: 100}), 'Loading', '62%'],
+        ['progress 100', at({phase: 'loading', loadedBytes: 100, totalBytes: 100}), 'Loading', '100%'],
+        ['preparing', at({phase: 'preparing', decoded: 4}), 'Preparing', null],
       ];
-      const measure = () => page.evaluate(() => {
+      const measure = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => {
         const b = document.querySelector('[data-ctl=play] .ui-button');
         const parts = [b, ...b.querySelectorAll('.ui-button-text, .ui-button-label, .ui-button-sublabel')];
-        return {
+        resolve({
+          mode: b.dataset.mode ?? null,
           label: b.querySelector('.ui-button-label')?.textContent ?? '', sublabel: b.querySelector('.ui-button-sublabel')?.textContent ?? null,
           clipped: parts.filter((el) => el.clientWidth > 0 && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1))
             .map((el) => `${el.className} ${el.scrollWidth}×${el.scrollHeight} in ${el.clientWidth}×${el.clientHeight}`),
-        };
-      });
+        });
+      })));
       const sweep = [];
+      let measured = 0;
       for (const [vw, vh] of [[1440, 900], [1100, 800]]) {
         await page.setViewportSize({width: vw, height: vh});
         for (const layout of ['rail', 'mini', 'dock']) {
           if (layout === 'dock' && vw !== 1440) continue;
           for (const distance of ['near', 'stand', 'kit']) {
             const q = layout === 'rail' ? 'layout=rail' : layout === 'mini' ? 'layout=rail&focus=1' : 'layout=band';
-            for (const [load, patch, label, sublabel] of LOADS) {
-              await page.goto(`${t.base}${HUD(`${q}&distance=${distance}&load=${load}`)}`);
-              await page.waitForSelector('[data-ctl=play] .ui-button[data-mode=loading]');
-              await page.evaluate((p) => window.__hud.setLoad(p), patch);
-              await page.evaluate(() => document.fonts.ready);
+            await page.goto(`${t.base}${HUD(`${q}&distance=${distance}&load=decoding`)}`);
+            await page.waitForSelector('[data-ctl=play] .ui-button[data-mode=loading]');
+            await page.evaluate(() => document.fonts.ready);
+            for (const [load, value, label, sublabel] of LOADS) {
+              await page.evaluate((v) => window.__hud.setLoad(v), value);
               const m = await measure();
+              measured++;
               const where = `${vw} ${layout} ${distance} ${load}`;
+              t.expect(m.mode === 'loading', `${where}: Play mode ${m.mode}`);
               t.expect(m.label === label && (m.sublabel || null) === sublabel, `${where}: "${m.label}" / "${m.sublabel}"`);
               if (m.clipped.length) sweep.push(`${where}: ${m.clipped.join('; ')}`);
             }
           }
         }
       }
+      t.expect(measured === 75, `${measured} of 75 combinations measured`);
       t.expect(!sweep.length, sweep.join('\n'));
       // The capture: the I2a failure's rail (Near, 1440 px), Play mid-decode.
       await page.setViewportSize({width: 1440, height: 900});

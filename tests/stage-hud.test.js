@@ -519,14 +519,14 @@ describe('the mounted HUD', () => {
     const tokens = [], calls = [];
     const real = session.undo;
     const undo = Object.create(real, {beginGesture: {value: (key) => {
-      const token = real.beginGesture ? real.beginGesture(key) : {key, active: true, end() {}};
+      const token = real.beginGesture(key);
       const spy = {key, ended: 0, token, get active() { return token.active; }, end() { spy.ended++; token.end(); }};
       tokens.push(spy);
       return spy;
     }}});
     const transport = Object.create(session.transport, {setSpeed: {value: (rate, opts) => {
       calls.push({rate, gesture: opts?.gesture ?? null});
-      // Hand the real token through, so the real stack sees the gesture when it has the API.
+      // Hand the real token through, so the real stack sees the gesture.
       return session.transport.setSpeed(rate, opts?.gesture ? {...opts, gesture: opts.gesture.token} : opts);
     }}});
     return {tokens, calls, wrap: (s) => Object.create(s, {undo: {value: undo}, transport: {value: transport}})};
@@ -575,13 +575,14 @@ describe('the mounted HUD', () => {
     expect(g.tokens[1].ended).toBe(1);
   });
 
-  // End to end on the real stack: these need undo.beginGesture on the session (I2a-1 in undo.js,
-  // I2a-2 in transport.js, and session.js's undo wrapper forwarding it); until then they report as skipped.
-  const hasGestureApi = (b) => typeof b.ts.session.undo.beginGesture === 'function';
+  // End to end on the real stack: undo.beginGesture (I2a-1, undo.js) reaches the HUD through
+  // session.js's undo facade (I2a-16), and transport.setSpeed passes the token through (I2a-2).
+  // The facade lacking it is a failure here, never a skip (ticket I2a-18).
+  const expectGestureApi = (b) => expect(typeof b.ts.session.undo.beginGesture).toBe('function');
 
-  test('a speed drag with a pause of more than 1 s mid-drag is one undo step', async (ctx) => {
+  test('a speed drag with a pause of more than 1 s mid-drag is one undo step', async () => {
     const b = await bed();
-    if (!hasGestureApi(b)) ctx.skip();
+    expectGestureApi(b);
     const speed = b.q('.hud-speed');
     speed.setPointerCapture = () => {};
     speed.releasePointerCapture = () => {};
@@ -602,9 +603,9 @@ describe('the mounted HUD', () => {
     expect(b.ts.undo.size.undo).toBe(0);
   });
 
-  test('a +/− tap just before a speed drag stays its own undo step', async (ctx) => {
+  test('a +/− tap just before a speed drag stays its own undo step', async () => {
     const b = await bed();
-    if (!hasGestureApi(b)) ctx.skip();
+    expectGestureApi(b);
     b.reg.run('speed.up', {source: 'pointer'});   // the + tap: 100% → 105%
     await settle();
     const tapped = b.ts.snapshot.rate;
