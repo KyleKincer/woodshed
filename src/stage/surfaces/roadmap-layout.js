@@ -266,23 +266,25 @@ export function cellOfTime(row, t, bars) {
 }
 
 /**
- * The time at content x on a row: {t, bar} (bar = the bar index on a Road map row, else null).
- * x is clamped to the row's band.
+ * The time at content x on a row: {t, bar, outside} (bar = the bar index on a Road map row, else
+ * null). x is clamped to the row's band; `outside` is true when x lies past the band's right end
+ * (a short row's blank end, the right padding), where t is the row's end and nothing is under it.
  */
 export function timeAtX(row, x, bars) {
-  if (!row) return {t: 0, bar: null};
+  if (!row) return {t: 0, bar: null, outside: true};
+  const outside = x > row.band.x + row.band.w + EPS;
   if (row.kind === 'wave') {
     const w = Math.max(EPS, row.band.w);
     const f = clamp((x - row.band.x) / w, 0, 1);
-    return {t: row.t0 + f * (row.t1 - row.t0), bar: null};
+    return {t: row.t0 + f * (row.t1 - row.t0), bar: null, outside};
   }
   const cells = row.cells;
-  if (!cells.length) return {t: row.t0, bar: row.first};
+  if (!cells.length) return {t: row.t0, bar: row.first, outside};
   const cw = Math.max(EPS, cells[0].w);
   const k = clamp(Math.floor((x - row.band.x) / cw), 0, cells.length - 1);
   const cell = cells[k], bar = bars[cell.bar];
   const f = clamp((x - cell.x) / cw, 0, 1);
-  return {t: bar.t0 + f * (bar.t1 - bar.t0), bar: cell.bar};
+  return {t: bar.t0 + f * (bar.t1 - bar.t0), bar: cell.bar, outside};
 }
 
 /** The scrollTop that puts a row's top on the follow line (30% down), clamped to the content. */

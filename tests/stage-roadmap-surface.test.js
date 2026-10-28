@@ -24,7 +24,7 @@ import {COPY, CONTROLS, FOLLOW_IDLE_MS, OVERSCAN, SCROLL_GUARD_MS, createRoadmap
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
 import {contextOf, flushFrames, installCanvasShim, installFrameShim, installResizeObserverShim, keydown, pointer, restoreDomShims, triggerResize} from './helpers/dom.js';
-import {sectioned, tempoOf} from './fixtures/maps.js';
+import {pickup, sectioned, tempoOf} from './fixtures/maps.js';
 
 let clock, restoreAudio, current = [];
 
@@ -66,11 +66,17 @@ function meterTempo() {
   return tempo;
 }
 
+/** A device-prefs stand-in (get/set by path), so no test leaks a row length into the next. */
+function memPrefs(initial = {}) {
+  const values = {...initial};
+  return {values, get: (k) => values[k] ?? null, set: (k, v) => { values[k] = v; }};
+}
+
 /**
  * A session, a registry with the transport commands and a mounted surface sized to `width` ×
  * `height` (the scroller). The scroller's scrollTop and scrollTo are recorded (happy-dom has no layout).
  */
-async function bed({width = 1176, height = 800, layout = 'rail', distance = 'stand', followStyle, ...options} = {}) {
+async function bed({width = 1176, height = 800, layout = 'rail', distance = 'stand', followStyle, prefs = memPrefs(), ...options} = {}) {
   const ts = await createTestSession({clock, ...options});
   const reg = createRegistry();
   const offTransport = defineTransportCommands({registry: reg});
@@ -81,7 +87,7 @@ async function bed({width = 1176, height = 800, layout = 'rail', distance = 'sta
   const log = {activate: [], edits: [], follow: [], scrolls: []};
   const stage = {layout: signal(layout), distance: signal(distance), followStyle: signal(followStyle ?? (layout === 'rail' ? 'scroll' : 'page'))};
   const surface = createRoadmapSurface(host, {
-    session: ts.session, stage, layout, distance, registry: reg,
+    session: ts.session, stage, layout, distance, registry: reg, prefs,
     onActivate: (e) => log.activate.push(e),
     onLoopEdit: (e) => log.edits.push(e),
     onFollowChange: (on) => log.follow.push(on),
@@ -93,7 +99,7 @@ async function bed({width = 1176, height = 800, layout = 'rail', distance = 'sta
   triggerResize(el, {x: 0, y: 0, width, height});
   current.push(async () => { surface.destroy(); offTransport(); await ts.dispose(); });
   const b = {
-    ts, reg, surface, el, host, log, stage,
+    ts, reg, surface, el, host, log, stage, prefs,
     get top() { return top; },
     /** A manual scroll (no programmatic guard). */
     userScroll(t) { top = t; el.dispatchEvent(new window.Event('scroll')); flushFrames(1); },
@@ -647,5 +653,222 @@ describe('frames from the session', () => {
     const b = await bed({practice: practiceOf({cue: 50})});
     b.surface.frame(readFrame(b.ts.session));
     expect(b.cell(25).hasAttribute('data-now')).toBe(true);   // 50 s: bar 26 (index 25)
+  });
+});
+
+describe('relayouts keep the current bar, keyboard focus and the device row length', () => {
+  /** The geometry of bar i's cell in the current model. */
+  const cellBox = (b, i) => {
+    const row = b.surface.model.rows.find((r) => r.first <= i && i <= r.last);
+    const cell = row.cells.find((c) => c.bar === i);
+    return {left: cell.x, width: cell.w, top: row.band.y, height: row.band.h};
+  };
+  const boxOf = (el) => ({left: num(el.style.left), width: num(el.style.width), top: num(el.style.top), height: num(el.style.height)});
+
+  test('the --now outline follows a Distance change and a new flag lane while stopped', async () => {
+    const b = await bed({width: 820, height: 860, layout: 'band'});
+    b.frame(33.25);   // stopped in bar 17 (index 16)
+    const now = b.el.querySelector('.roadmap-now');
+    const playhead = b.el.querySelector('.roadmap-playhead');
+    expect(boxOf(now)).toEqual(cellBox(b, 16));
+    b.surface.setDistance('kit');
+    expect(boxOf(now)).toEqual(cellBox(b, 16));
+    expect(boxOf(now).height).toBe(114);
+    expect(num(playhead.style.top)).toBe(cellBox(b, 16).top);
+    // A spot in row 0 adds a flag lane: every row below moves down.
+    const before = cellBox(b, 16).top;
+    b.ts.session.practice.addSpot({name: 'Fill', a: 4, b: 8, rate: 1});
+    await settle();
+    expect(cellBox(b, 16).top).toBeGreaterThan(before);
+    expect(boxOf(now)).toEqual(cellBox(b, 16));
+    expect(num(playhead.style.top)).toBe(cellBox(b, 16).top);
+  });
+
+  test('a focused bar keeps keyboard focus (and ctx.focused) across Distance, a new spot and a map revision', async () => {
+    const b = await bed({width: 820, layout: 'band'});
+    b.cell(0).focus();
+    keydown({key: 'ArrowRight', code: 'ArrowRight'}, {target: document.activeElement});
+    expect(document.activeElement).toBe(b.cell(1));
+    b.surface.setDistance('kit');
+    expect(document.activeElement).toBe(b.cell(1));
+    expect(b.reg.context().focused).toMatchObject({kind: 'bar', label: 'Bar 2'});
+    keydown({key: 'ArrowRight', code: 'ArrowRight'}, {target: document.activeElement});
+    expect(document.activeElement).toBe(b.cell(2));
+    b.ts.session.practice.patch({spots: [{id: 's1', name: 'Fill', a: 4, b: 8, rate: 1, passes: 0, updatedAt: 1}]});
+    await settle();
+    expect(b.surface.model.rows[0].flag).toBe(true);
+    expect(document.activeElement).toBe(b.cell(2));
+    expect(b.reg.context().focused).toMatchObject({label: 'Bar 3'});
+    b.ts.session.mapChange('Section', (m) => m.adopt(structuredClone(sectioned.tempo.songMap)));
+    await settle();
+    expect(document.activeElement).toBe(b.cell(2));
+    keydown({key: 'ArrowRight', code: 'ArrowRight'}, {target: document.activeElement});
+    expect(document.activeElement).toBe(b.cell(3));
+  });
+
+  test('a cell focused by a press stays focused across a relayout, still without ctx.focused', async () => {
+    const b = await bed({width: 820, layout: 'band'});
+    pointer(b.cell(3), 'pointerdown', {x: 10, y: 10, pointerType: 'mouse'});
+    b.cell(3).focus();
+    pointer(b.cell(3), 'pointerup', {x: 10, y: 10, pointerType: 'mouse'});
+    expect(b.reg.context().focused ?? null).toBeNull();
+    vi.advanceTimersByTime(1100);
+    b.surface.setDistance('near');
+    expect(document.activeElement).toBe(b.cell(3));
+    expect(b.reg.context().focused ?? null).toBeNull();
+  });
+
+  test('Wave page: = keeps focus on the row now holding the focused row\'s start; a bar grid moves it to that bar', async () => {
+    const b = await bed({mapped: false, duration: 128});
+    const row = (i) => b.el.querySelector(`.roadmap-wavecell[data-row="${i}"]`);
+    row(3).focus();
+    expect(b.reg.context().focused).toMatchObject({t0: 30, t1: 40, label: '0:30–0:40'});
+    expect(b.surface.zoom(1)).toBe(true);   // 8 s rows: 30 s is in row 3, 0:24–0:32
+    expect(document.activeElement).toBe(row(3));
+    expect(b.reg.context().focused).toMatchObject({t0: 24, t1: 32});
+    keydown({key: 'ArrowDown', code: 'ArrowDown'}, {target: document.activeElement});
+    expect(document.activeElement).toBe(row(4));
+    b.ts.session.mapChange('Bars found', (m) => m.adopt(structuredClone(sectioned.tempo.songMap)));
+    await settle();
+    expect(b.surface.kind).toBe('roadmap');
+    expect(document.activeElement).toBe(b.cell(16));   // 32 s: bar 17
+    expect(b.reg.context().focused).toMatchObject({kind: 'bar', bar: 17});
+  });
+
+  test('a tap past a short row\'s last cell does nothing (no cue at the next section)', async () => {
+    const tempo = tempoOf(sectioned);
+    tempo.songMap.measures[2].label = 'Verse A';   // a 2-bar Intro: row 0 holds two cells of eight
+    const b = await bed({tempo});
+    const row = b.surface.model.rows[0];
+    expect(row.cells).toHaveLength(2);
+    const y = row.band.y + row.band.h / 2, x = row.band.x + row.band.w + 300;
+    const target = b.rows()[0];
+    pointer(target, 'pointerdown', {x, y, pointerType: 'mouse'});
+    pointer(target, 'pointerup', {x, y, pointerType: 'mouse'});
+    target.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2}));
+    expect(b.log.activate).toEqual([]);
+    vi.advanceTimersByTime(400);
+    const at = cellCentre(b, 1);
+    pointer(b.cell(1), 'pointerdown', {x: at.x, y: at.y, pointerType: 'mouse'});
+    pointer(b.cell(1), 'pointerup', {x: at.x, y: at.y, pointerType: 'mouse'});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'tap', bar: 2});
+    expect(b.log.activate.at(-1).beatTime).toBeLessThan(b.ts.session.map.bars[2].t0);
+  });
+
+  test('a silent map.setDuration (the decoded length) rebuilds the rows', async () => {
+    const b = await bed({mapped: false, duration: 128});
+    expect(b.surface.model.rows).toHaveLength(13);
+    b.ts.session.map.setDuration(200);
+    b.frame(5);
+    expect(b.surface.model.rows).toHaveLength(20);
+    // While loading: the load signal's change after the session's own setDuration rebuilds them.
+    const c = await bed({mapped: false, duration: 128, load: false});
+    c.ts.session.map.setDuration(200);
+    const before = c.surface.model;
+    await c.ts.ready();
+    await settle();
+    expect(c.surface.model).not.toBe(before);
+    expect(c.surface.model.rows).toHaveLength(Math.ceil(c.ts.session.map.duration / 10 - 1e-6));
+  });
+
+  test('the Wave page row length is the device pref roadmap.waveRowSec (= / − and pinches write it)', async () => {
+    const prefs = memPrefs();
+    const b = await bed({mapped: false, duration: 128, prefs});
+    expect(b.surface.seconds).toBe(10);
+    b.surface.zoom(-1);
+    expect(prefs.values['roadmap.waveRowSec']).toBe(12);
+    b.surface.destroy();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const again = createRoadmapSurface(host, {session: b.ts.session, layout: 'band', prefs, registry: b.reg});
+    current.push(() => again.destroy());
+    expect(again.seconds).toBe(12);   // not the band's 8: the device's own choice
+    again.setLayout('rail');
+    expect(again.seconds).toBe(12);
+    // With no stored length, the layout's default follows the layout.
+    const fresh = createRoadmapSurface(host, {session: b.ts.session, layout: 'band', prefs: memPrefs(), registry: b.reg});
+    current.push(() => fresh.destroy());
+    expect(fresh.seconds).toBe(8);
+    fresh.setLayout('rail');
+    expect(fresh.seconds).toBe(10);
+    // A stored value off the steps snaps to the nearest one.
+    const odd = createRoadmapSurface(host, {session: b.ts.session, layout: 'band', prefs: memPrefs({'roadmap.waveRowSec': 11}), registry: b.reg});
+    current.push(() => odd.destroy());
+    expect([10, 12]).toContain(odd.seconds);
+  });
+
+  test('a pickup in 3/4 shows its meter chip on the first full bar', async () => {
+    const measures = Array.from({length: 12}, (_, i) => ({id: `w${i}`, numerator: 3, denominator: 4, length: i === 0 ? frac(1) : frac(3), label: ''}));
+    const tempo = {songMap: {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: frac(0), time: 0.5}], measures}};
+    const b = await bed({tempo, duration: 18, width: 820, layout: 'band'});
+    expect(b.ts.session.map.bars[0].pickup).toBe(true);
+    const chips = (i) => [...(b.cell(i)?.querySelectorAll('.roadmap-chip') ?? [])].map((c) => c.textContent);
+    expect(chips(0)).toEqual([]);
+    expect(chips(1)).toEqual(['3/4']);
+    expect(b.cell(1).getAttribute('aria-label')).toContain('3/4');
+    expect(chips(2)).toEqual([]);
+    // A 4/4 pickup: plain, no chip anywhere.
+    const plain = await bed({tempo: tempoOf(pickup), duration: 20, width: 820, layout: 'band'});
+    expect(plain.el.querySelectorAll('.roadmap-chip')).toHaveLength(0);
+  });
+});
+
+describe('loop handles through the surface', () => {
+  const handle = (b, edge) => [...b.el.querySelectorAll(`.loop-handle[data-edge=${edge}]`)].find((x) => !x.hidden);
+  /** Drags a loop handle to (x, y) in steps; returns the commit. */
+  function dragHandle(b, edge, to, mods = {}) {
+    const el = handle(b, edge);
+    const x0 = num(el.style.left) + 22, y0 = num(el.style.top) + 10;
+    pointer(el, 'pointerdown', {x: x0, y: y0, pointerType: 'mouse', pointerId: 21, ...mods});
+    for (let i = 1; i <= 4; i++) pointer(el, 'pointermove', {x: x0 + (to.x - x0) * i / 4, y: y0 + (to.y - y0) * i / 4, pointerType: 'mouse', pointerId: 21, ...mods});
+    pointer(el, 'pointerup', {x: to.x, y: to.y, pointerType: 'mouse', pointerId: 21, ...mods});
+    return b.log.edits.at(-1);
+  }
+  /** Content point at fraction f through bar i. */
+  const inBar = (b, i, f) => {
+    const row = b.surface.model.rows.find((r) => r.first <= i && i <= r.last);
+    const cell = row.cells.find((c) => c.bar === i);
+    return {x: cell.x + f * cell.w, y: row.band.y + row.band.h / 2};
+  };
+
+  test('an edge drag snaps to bar lines (Alt: beats, Shift: exact), previews, commits and springs for 120 ms', async () => {
+    const b = await bed({practice: practiceOf({cue: 8, loop: {on: true, a: 8, b: 18}})});
+    const map = b.ts.session.map;
+    const root = b.el.querySelector('.loop-handles');
+    const plain = dragHandle(b, 'b', inBar(b, 10, 0.7));
+    expect(plain).toMatchObject({phase: 'commit', a: 8, b: map.bars[10].t1});
+    expect(b.log.edits.some((e) => e.phase === 'preview')).toBe(true);
+    expect(root.hasAttribute('data-spring')).toBe(true);
+    vi.advanceTimersByTime(119);
+    expect(root.hasAttribute('data-spring')).toBe(true);
+    vi.advanceTimersByTime(2);
+    expect(root.hasAttribute('data-spring')).toBe(false);
+    b.surface.setLoop(plain);
+    const beat = dragHandle(b, 'b', inBar(b, 11, 0.7), {altKey: true});   // 23.4 s → the beat at 23.5
+    expect(beat.phase).toBe('commit');
+    expect(beat.b).toBeCloseTo(23.5, 6);
+    b.surface.setLoop(beat);
+    const exact = dragHandle(b, 'b', inBar(b, 12, 0.7), {shiftKey: true});
+    expect(exact.b).toBeCloseTo(25.4, 3);
+    // The a edge snaps too (to the nearest bar line).
+    b.surface.setLoop(exact);
+    const a = dragHandle(b, 'a', inBar(b, 5, 0.4));
+    expect(a).toMatchObject({phase: 'commit', a: map.bars[5].t0});
+  });
+
+  test('reduced motion: the handles jump (no spring)', async () => {
+    vi.stubGlobal('matchMedia', () => ({matches: true, addEventListener() {}, removeEventListener() {}}));
+    current.push(() => vi.unstubAllGlobals());
+    const b = await bed({practice: practiceOf({cue: 8, loop: {on: true, a: 8, b: 18}})});
+    dragHandle(b, 'b', inBar(b, 10, 0.7));
+    expect(b.el.querySelector('.loop-handles').hasAttribute('data-spring')).toBe(false);
+  });
+
+  test('Wave page: an edge drag snaps to 0.1 s', async () => {
+    const b = await bed({mapped: false, duration: 128, practice: practiceOf({cue: 12, loop: {on: true, a: 12, b: 15}})});
+    const row = b.surface.model.rows[1];
+    const x = (t) => row.band.x + ((t - row.t0) / 10) * row.band.w;
+    const commit = dragHandle(b, 'b', {x: x(17.34), y: row.band.y + 20});
+    expect(commit).toMatchObject({phase: 'commit', a: 12, b: 17.3});
   });
 });

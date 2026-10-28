@@ -136,7 +136,22 @@ describe('Road map rows', () => {
       expect(back.t).toBeCloseTo(t, 6);
       expect(back.bar).toBe(map.barIndexAt(t));
     }
-    expect(timeAtX(row, -50, map.bars)).toEqual({t: map.bars[0].t0, bar: 0});
+    expect(timeAtX(row, -50, map.bars)).toEqual({t: map.bars[0].t0, bar: 0, outside: false});
+  });
+
+  test('past a short row\'s last cell is outside the music (no bar there; t is the row\'s end)', () => {
+    // A 2-bar Intro on an 8-bar rail row leaves six empty cell widths.
+    const tempo = structuredClone(sectioned.tempo);
+    tempo.songMap.measures[2].label = 'Verse';
+    const map = SongMapStore.fromTempo(tempo, sectioned.duration);
+    const l = roadmapLayout({bars: map.bars, sections: map.sections, width: 1176, layout: 'rail'});
+    const row = l.rows[0];
+    expect(row.cells).toHaveLength(2);
+    const inside = timeAtX(row, row.band.x + row.band.w - 1, map.bars);
+    expect(inside).toMatchObject({bar: 1, outside: false});
+    const blank = timeAtX(row, row.band.x + row.band.w + 300, map.bars);
+    expect(blank).toMatchObject({bar: 1, outside: true});
+    expect(blank.t).toBeCloseTo(map.bars[1].t1, 9);
   });
 });
 
@@ -196,8 +211,8 @@ describe('Wave page rows', () => {
     const l = waveLayout({duration: 30, seconds: 10, width: 1032});
     const row = l.rows[1];
     expect(xOfTime(row, 15, null)).toBeCloseTo(PAD_X + 500, 6);
-    expect(timeAtX(row, PAD_X + 250, null)).toEqual({t: 12.5, bar: null});
-    expect(timeAtX(row, 99999, null).t).toBe(20);
+    expect(timeAtX(row, PAD_X + 250, null)).toEqual({t: 12.5, bar: null, outside: false});
+    expect(timeAtX(row, 99999, null)).toMatchObject({t: 20, outside: true});
   });
 });
 

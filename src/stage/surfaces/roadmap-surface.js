@@ -2,7 +2,8 @@
 //
 //   createRoadmapSurface(host, opts) → Surface
 //     opts: SurfaceOpts {session, stage, layout, distance, onActivate, onLoopEdit, onFollowChange, status}
-//           plus `registry` (default: the app's) for the stage.bars focus provider
+//           plus `registry` (default: the app's) for the stage.bars focus provider and `prefs`
+//           (default: the app's device prefs) for the Wave page row length (roadmap.waveRowSec)
 //     kind  'roadmap' while position.mapped, 'wave' otherwise; the surface switches by itself when
 //           the song gains (or loses) a bar grid
 //
@@ -40,6 +41,7 @@
 // it (focus.loop). On the Wave page each row is one cell.
 import '../../styles/views/stage/surface-roadmap.css';
 import {registry as appRegistry} from '../../app/commands.js';
+import {prefs as appPrefs} from '../../app/prefs.js';
 import {now as clockNow} from '../../app/clock.js';
 import {h} from '../../ui/h.js';
 import {Button} from '../../ui/button.js';
@@ -145,12 +147,16 @@ export function stemsOf(mix) {
 const barText = (bar) => (bar?.display == null ? COPY.pickup : String(bar.display));
 const barName = (bar) => (bar?.display == null ? COPY.pickup : COPY.bar(bar.display));
 
-/** A meter chip on bar 0 when it is not plain 4/4, and on every change (spec §4.4B). */
+/**
+ * A meter chip on the first full bar when it is not plain 4/4 (bar 0, or bar 1 after a pickup),
+ * and on every change (spec §4.4B).
+ */
 function meterChip(bar, i, map) {
   if (!bar) return null;
   const grouping = typeof map.beatGrouping === 'function' ? map.beatGrouping(i).label : '';
   const plain = bar.numerator === 4 && bar.denominator === 4 && !grouping;
-  if (i === 0 ? plain || bar.pickup : !bar.meterChange) return null;
+  const first = i === 0 ? !bar.pickup : i === 1 && !!map.bars?.[0]?.pickup;
+  if (first ? plain && !bar.meterChange : !bar.meterChange) return null;
   return COPY.meter(bar.numerator, bar.denominator, grouping);
 }
 
@@ -176,7 +182,17 @@ export function createRoadmapSurface(host, opts = {}) {
   let mapped = !!peek(position.mapped);
   let layoutName = opts.layout ?? peek(stage?.layout) ?? 'band';
   let distanceName = distanceOf(opts.distance ?? peek(stage?.distance));
-  let seconds = defaultSeconds(layoutName);
+  const prefs = opts.prefs ?? appPrefs;
+  /** The device's Wave page row length (roadmap.waveRowSec; null → the layout's default). */
+  const storedSeconds = () => {
+    try {
+      const v = prefs?.get?.('roadmap.waveRowSec');
+      return finite(v) ? nearestStep(v) : null;
+    } catch {
+      return null;
+    }
+  };
+  let seconds = storedSeconds() ?? defaultSeconds(layoutName);
   let model = null;
   let width = 0, viewportH = 0;
   let following = true;
@@ -225,7 +241,12 @@ export function createRoadmapSurface(host, opts = {}) {
     viewportH = el.clientHeight || 0;
   }
 
+  /** What the model was built from: a silent map change (setDuration on load) makes it stale. */
+  let built = {revision: -1, duration: -1};
+  const stale = () => built.revision !== map.revision || Math.abs(built.duration - duration()) > EPS;
+
   function computeModel() {
+    built = {revision: map.revision, duration: duration()};
     const flags = mapped ? liveSpots().map((s) => s.a) : [...liveSpots().map((s) => s.a), ...markers().map((m) => m.t)];
     if (mapped) {
       return roadmapLayout({bars: bars(), sections: map.sections, width, layout: layoutName, distance: factor(), flags, viewportH});
@@ -238,10 +259,17 @@ export function createRoadmapSurface(host, opts = {}) {
     grid.setAttribute('aria-label', mapped ? COPY.grid : COPY.waveGrid);
   }
 
-  /** Rebuilds the rows (geometry changed), keeping the time at the follow line where it was. */
-  function relayout({keep = true} = {}) {
+  /**
+   * Rebuilds the rows (geometry changed), keeping the time at the follow line where it was and
+   * keyboard focus on the cell that now holds the focused item's start (`focusTime` overrides it,
+   * for a switch between the Road map and the Wave page).
+   */
+  function relayout({keep = true, focusTime} = {}) {
     if (destroyed) return;
     const anchor = keep && model ? anchorTime() : null;
+    const hadFocus = grid.contains(doc.activeElement) || focusTime !== undefined;
+    const provided = !!offFocused;
+    const ft = focusTime !== undefined ? focusTime : hadFocus ? focusedItem()?.t0 ?? null : null;
     // The content's height changes: the browser's scroll clamp is not a manual scroll.
     guardUntil = clockNow() + SCROLL_GUARD_MS;
     measure();
@@ -250,7 +278,25 @@ export function createRoadmapSurface(host, opts = {}) {
     grid.setAttribute('aria-rowcount', String(model.rows.length));
     clearViews();
     lastFollowRow = -1;
+    // The current-bar outline and the lit beat are placed again in the new geometry.
+    nowBar = -1;
+    beatCache = {bar: -1, ticks: []};
+    restoring = hadFocus && finite(ft) && keyCount() > 0;
+    if (restoring) roving = keyOfTime(ft);
     renderRows();
+    if (restoring) {
+      restoring = false;
+      const target = cellEl(roving);
+      if (target) {
+        target.focus?.({preventScroll: true});
+        // A cell focused by a press stays without ctx.focused; a keyboard-focused one keeps it.
+        if (provided) provideFocused(); else withdrawFocused();
+      } else {
+        withdrawFocused();
+      }
+    } else if (hadFocus) {
+      withdrawFocused();
+    }
     if (anchor !== null) scrollToTop(followScrollTop(model.rows[rowOfTime(model.rows, anchor)], {viewportH, contentH: model.height}), false);
     paintNow(lastPos ?? transport.position());
     handles.update();
@@ -279,7 +325,7 @@ export function createRoadmapSurface(host, opts = {}) {
     const keep = new Set();
     for (let i = range.first; i <= range.last; i++) keep.add(i);
     const focusedRow = focusRowIndex();
-    if (focusedRow >= 0 && grid.contains(doc.activeElement)) keep.add(focusedRow);
+    if (focusedRow >= 0 && (restoring || grid.contains(doc.activeElement))) keep.add(focusedRow);
     for (const [i, view] of views) {
       if (!keep.has(i)) { view.el.remove(); views.delete(i); }
     }
@@ -518,6 +564,7 @@ export function createRoadmapSurface(host, opts = {}) {
       const cell = cellOfTime(row, t, bars());
       if (!cell) return;
       const bar = bars()[cell.bar];
+      if (!bar) return;
       if (cell.bar !== nowBar) {
         nowBar = cell.bar;
         place(nowBox, {left: cell.x, top: row.band.y, width: cell.w, height: row.band.h});
@@ -637,9 +684,11 @@ export function createRoadmapSurface(host, opts = {}) {
     const r = content.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     const row = model.rows[Math.max(0, rowAtY(model.rows, y))];
-    const {t, bar} = timeAtX(row, x, bars());
+    const {t, bar, outside} = timeAtX(row, x, bars());
     const time = clamp(t, 0, duration() || t);
     const out = {t: time, pointerType: e.pointerType || 'touch', clientX: e.clientX, clientY: e.clientY};
+    // Past the row's last cell (a short row's blank end): no bar there, and taps do nothing.
+    if (outside) out.outside = true;
     if (mapped && bar !== null) {
       const b = bars()[bar];
       out.barIndex = bar;
@@ -651,9 +700,9 @@ export function createRoadmapSurface(host, opts = {}) {
 
   const activate = (kind, e) => {
     const at = hit(e);
-    if (!at) return;
-    const {barIndex, ...payload} = at;
-    void barIndex;
+    if (!at || at.outside) return;
+    const {barIndex, outside, ...payload} = at;
+    void barIndex; void outside;
     opts.onActivate?.({kind, ...payload});
   };
 
@@ -745,6 +794,7 @@ export function createRoadmapSurface(host, opts = {}) {
     const s = nearestStep(next);
     if (s === seconds) { pinch.setBase(PINCH_REF / seconds); return false; }
     seconds = s;
+    try { prefs?.set?.('roadmap.waveRowSec', s); } catch { /* in memory only */ }
     pinch.setBase(PINCH_REF / seconds);
     if (!mapped) relayout();
     return true;
@@ -786,6 +836,7 @@ export function createRoadmapSurface(host, opts = {}) {
 
   // ---------------- keyboard: the stage.bars grid ----------------
   let roving = -1;       // bar index (mapped) or row index (wave) of the tabbable cell
+  let restoring = false; // a relayout is putting focus back on the rebuilt roving cell
   let offFocused = null;
   let pointerPress = false, pointerTimer = null;
 
@@ -801,6 +852,8 @@ export function createRoadmapSurface(host, opts = {}) {
   function focusRowIndex() { return roving >= 0 ? rowIndexOfKey(roving) : -1; }
   const cellEl = (key) => views.get(rowIndexOfKey(key))?.cells.get(key) ?? null;
   const keyCount = () => (mapped ? bars().length : model?.rows.length ?? 0);
+  /** The cell key holding time t: its bar (Road map) or row (Wave page). */
+  const keyOfTime = (t) => clamp(mapped ? map.barIndexAt(t) : rowOfTime(model?.rows ?? [], t), 0, Math.max(0, keyCount() - 1));
 
   function focusedItem() {
     if (roving < 0 || !model) return null;
@@ -928,19 +981,18 @@ export function createRoadmapSurface(host, opts = {}) {
   const onMapped = (value) => {
     const next = !!value;
     if (next === mapped) return;
+    // Keyboard focus moves to the cell of the other kind that holds the focused item's start.
+    const focusTime = grid.contains(doc.activeElement) ? focusedItem()?.t0 ?? null : undefined;
     mapped = next;
     roving = -1;
-    nowBar = -1;
     setKind();
-    relayout();
+    relayout({focusTime});
   };
   const offMapped = listen(position.mapped, onMapped);
   if (offMapped) offs.push(offMapped);
   const offRevision = listen(position.revision, () => {
     const next = !!map.isReal;
     if (next !== mapped) { onMapped(next); return; }
-    beatCache = {bar: -1, ticks: []};
-    nowBar = -1;
     relayout();
   });
   if (offRevision) offs.push(offRevision);
@@ -962,7 +1014,8 @@ export function createRoadmapSurface(host, opts = {}) {
   });
   if (offSnapshot) offs.push(offSnapshot);
 
-  const offLoad = listen(session.load, () => redrawAll());
+  // Loading ends with a silent map.setDuration (the decoded length): rebuild the rows from it.
+  const offLoad = listen(session.load, () => { if (stale()) relayout(); redrawAll(); });
   if (offLoad) offs.push(offLoad);
 
   const offGesture = typeof transport.on === 'function' ? transport.on('gesture', () => { if (!following) resumeFollow(); }) : null;
@@ -1016,6 +1069,7 @@ export function createRoadmapSurface(host, opts = {}) {
       if (destroyed || !f) return;
       const t = f.position;
       if (!finite(t)) return;
+      if (stale()) relayout();
       paintNow(t, f);
       const moving = !!(f.playing || f.counting);
       if (following && model?.rows.length) {
@@ -1061,9 +1115,9 @@ export function createRoadmapSurface(host, opts = {}) {
 
     setLayout(next) {
       if (!next || next === layoutName) return;
-      const wasDefault = seconds === defaultSeconds(layoutName);
       layoutName = next;
-      if (wasDefault) { seconds = defaultSeconds(layoutName); pinch.setBase(PINCH_REF / seconds); }
+      // The layout's default row length applies while the device has none of its own.
+      if (storedSeconds() === null) { seconds = defaultSeconds(layoutName); pinch.setBase(PINCH_REF / seconds); }
       relayout();
     },
 
