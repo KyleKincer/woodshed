@@ -271,20 +271,6 @@ export class SongMapStore {
     return {index: before, from, to, ramp: !!span?.ramp, startBpm, endBpm, open: before < 0 ? 'head' : !to ? 'tail' : null};
   }
 
-  /**
-   * Bar (1-based) and beat at a recording time; bar 0 before the first bar.
-   * Only the 1.9 player (`src/js/player.js`) reads it, and it is deleted with
-   * that module at I1; new code uses `barBeatAt`.
-   */
-  positionLabel(time) {
-    const q = this.positionAt(time);
-    if (q < -1e-9) return {bar: 0, beat: 0};
-    const index = this.barIndexAtQ(q), m = this.measure(index), offset = q - number(this.starts[index]);
-    let beat = 1, end = 0;
-    for (const group of beatGroups(m)) { end += group * 4 / m.denominator; if (offset < end - 1e-7) break; beat++; }
-    return {bar: index + 1, beat: Math.min(beat, beatGroups(m).length)};
-  }
-
   /** Nearest bar line or beat to a recording time, as a navigation line (linear: not for per-frame use). */
   nearestLine(time, {bars = false} = {}) {
     const lines = bars ? this.lines.filter((l) => l.downbeat) : this.lines;

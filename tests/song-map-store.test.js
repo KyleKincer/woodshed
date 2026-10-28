@@ -391,3 +391,11 @@ describe('barIndexAt is time-based (§4.3); barIndexAtQ keeps the quarter-note l
     expect(store.timeToBar(10).index).toBe(5);
   });
 });
+
+describe('1.9 player API is gone after I1 (ticket I1-3)', () => {
+  test('SongMapStore has no positionLabel; barBeatAt is the bar/beat lookup', () => {
+    const store = mapStore(sectioned);
+    expect('positionLabel' in store).toBe(false);
+    expect(typeof store.barBeatAt).toBe('function');
+  });
+});
