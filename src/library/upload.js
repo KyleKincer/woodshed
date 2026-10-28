@@ -108,7 +108,7 @@ function createHandle(file, {settings, title, device, turn}) {
   const state = signal('uploading');
   const error = signal(null);
   const titleOverride = clean(title, TITLE_MAX);
-  let deviceId = null;
+  const device$ = signal(null);   // read through a getter, so a Jobs row picks up the device line when it is known
   let jobId = null;
   let controller = null;
   let canceled = false;
@@ -123,7 +123,7 @@ function createHandle(file, {settings, title, device, turn}) {
     name,
     title: titleOverride || null,
     file,
-    get deviceId() { return deviceId; },
+    get deviceId() { return device$.value; },
     get jobId() { return jobId; },
     progress: readonly(progress),
     state: readonly(state),
@@ -156,7 +156,7 @@ function createHandle(file, {settings, title, device, turn}) {
         return;
       }
       if (run.stale()) return;
-      deviceId = id;
+      device$.value = id;
       controller = new AbortController();
       progress.value = {loaded: 0, total};
       let uploaded;
@@ -184,7 +184,7 @@ function createHandle(file, {settings, title, device, turn}) {
       try {
         created = await jobs.createSeparation({
           source: {type: 'upload', value: uploaded.id, filename: name.slice(0, FILENAME_MAX)},
-          deviceId,
+          deviceId: id,
           settings,
           label: name.slice(0, LABEL_MAX),
           ...(titleOverride ? {meta: {title: titleOverride}} : {}),
