@@ -979,3 +979,217 @@ describe('closing, accounts and the view', () => {
     store.library.devices.value = [];
   });
 });
+
+// =====================================================================================================
+describe('LB2b review fixes', () => {
+  test('a playlist link stays an error after an edit that keeps the same link (a trailing space)', async () => {
+    makeDeps();
+    d.lookups.resolveSource.mockRejectedValue({code: 'playlist', message: 'This is a playlist.'});
+    const url = 'https://www.youtube.com/playlist?list=PL1';
+    const sheet = open({}, {query: {q: url}});
+    await settle();
+    expect(submitBtn(sheet).getAttribute('aria-disabled')).toBe('true');
+    type(sheet, `${url} `);
+    await new Promise(r => setTimeout(r, DEBOUNCE_MS + 50));
+    await settle();
+    expect(d.lookups.resolveSource).toHaveBeenCalledTimes(1);
+    expect(sheet.el.querySelector('.lib-add-error').textContent).toContain('This link is a playlist. Add one song at a time.');
+    expect(sheet.state().canSubmit).toBe(false);
+    expect(submitBtn(sheet).getAttribute('aria-disabled')).toBe('true');
+    key(input(sheet), 'Enter');
+    submitBtn(sheet).click();
+    await settle();
+    expect(d.jobs.createSeparation).not.toHaveBeenCalled();
+    // Back to the same link after a different one: still blocked.
+    type(sheet, 'harbor lights');
+    expect(sheet.el.querySelector('.lib-add-error')).toBeNull();
+  });
+
+  test('a lookup that fell back while the processor was starting is asked again once it is ready', async () => {
+    makeDeps({phase: 'starting'});
+    d.lookups.searchSources.mockRejectedValueOnce({code: 'aborted'});
+    const sheet = open({}, {query: {q: 'harbor lights'}});
+    await settle();
+    expect(sheet.state().lookup.status).toBe('fallback');
+    expect(allByRole(sheet.el, 'radio')).toHaveLength(0);
+    s.processor.value = {...s.processor.peek(), phase: 'ready'};
+    await settle();
+    expect(d.lookups.searchSources).toHaveBeenCalledTimes(2);
+    expect(allByRole(sheet.el, 'radio')).toHaveLength(3);
+    // A fallback with the processor up and a real answer (bot check) is not asked again on the next tick.
+    sheets.pop().destroy();
+    makeDeps();
+    d.lookups.searchSources.mockRejectedValue({code: 'bot_check'});
+    const other = open({}, {query: {q: 'harbor lights'}});
+    await settle();
+    s.processor.value = {...s.processor.peek(), phase: 'busy'};
+    s.processor.value = {...s.processor.peek(), phase: 'ready'};
+    await settle();
+    expect(d.lookups.searchSources).toHaveBeenCalledTimes(1);
+    expect(other.state().lookup.status).toBe('fallback');
+  });
+
+  test('the title field keeps focus and the caret when the file’s duration arrives', async () => {
+    let finish;
+    makeDeps({durationOf: vi.fn(() => new Promise(r => { finish = r; }))});
+    staged = [audioFile('Harbor Lights.mp3')];
+    const sheet = open();
+    const field = byRole(sheet.el, 'textbox', COPY.titleField);
+    field.focus();
+    field.value = 'My Title';
+    field.dispatchEvent(new Event('input', {bubbles: true}));
+    field.setSelectionRange(2, 2);
+    finish(200);
+    await settle();
+    expect(sheet.el.querySelector('.lib-add-file-meta').textContent).toContain('3:20');
+    expect(document.activeElement).toBe(field);
+    expect(field.isConnected).toBe(true);
+    expect(field.selectionStart).toBe(2);
+  });
+
+  test('removing a file moves focus to the next row’s ✕ (the last one at the end)', async () => {
+    makeDeps();
+    staged = [audioFile('a.mp3'), audioFile('b.mp3'), audioFile('c.mp3')];
+    const sheet = open();
+    await settle();
+    byRole(sheet.el, 'button', COPY.removeFile('b.mp3')).click();
+    expect(document.activeElement.getAttribute('aria-label')).toBe(COPY.removeFile('c.mp3'));
+    byRole(sheet.el, 'button', COPY.removeFile('c.mp3')).click();
+    expect(document.activeElement.getAttribute('aria-label')).toBe(COPY.removeFile('a.mp3'));
+    byRole(sheet.el, 'button', COPY.removeFile('a.mp3')).click();
+    expect(document.activeElement).toBe(input(sheet));
+  });
+
+  test('closed while an add is in flight, a failure is reported in a toast', async () => {
+    makeDeps();
+    let fail;
+    d.jobs.createSeparation.mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const sheet = open({}, {query: {q: 'harbor lights'}});
+    await settle();
+    submitBtn(sheet).click();
+    await settle();
+    key(input(sheet), 'Escape');
+    expect(sheet.state().open).toBe(false);
+    fail({code: 'queue_full', message: 'Process the queued songs before adding more.', data: {}});
+    await settle();
+    expect(d.feedback.toast).toHaveBeenCalledTimes(1);
+    const [message, opts] = d.feedback.toast.mock.calls[0];
+    expect(message.startsWith('The song wasn’t added. Too many songs are waiting.')).toBe(true);
+    expect(opts.tone).toBe('warn');
+  });
+
+  test('"Use these for future songs" with a two-part layout saves only the quality', async () => {
+    makeDeps();
+    const sheet = open({}, {query: {q: 'harbor lights'}});
+    await settle();
+    sheet.el.querySelector('.lib-add-change').click();
+    const note = sheet.el.querySelector('.lib-add-two-part-note');
+    expect(note.hidden).toBe(true);
+    [...byRole(sheet.el, 'radiogroup', COPY.stemsLabel).querySelectorAll('[role=radio]')][STEM_OPTIONS.findIndex(x => x.value === 'drums')].click();
+    [...byRole(sheet.el, 'radiogroup', COPY.qualityLabel).querySelectorAll('[role=radio]')][0].click();
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(COPY.saveTwoPart);
+    const box = byRole(sheet.el, 'checkbox', COPY.saveDefaults);
+    box.checked = true;
+    box.dispatchEvent(new Event('change', {bubbles: true}));
+    submitBtn(sheet).click();
+    await settle();
+    expect(d.jobs.createSeparation.mock.calls[0][0].settings).toMatchObject({stemMode: 'drums', preset: 'fast'});
+    expect(d.account.patch).toHaveBeenCalledWith({preset: 'fast'});
+  });
+
+  test('desktop first run waits for the library: a user with songs keeps the flag', async () => {
+    makeDeps({songs: [], account: {onboarding: {}}});
+    s.library.loaded = signal(false);
+    const sheet = open();
+    expect(d.account.markOnboarding).not.toHaveBeenCalled();
+    expect(input(sheet).placeholder).toBe(COPY.placeholder);
+    s.library.songs.value = new Map(SONGS.map(x => [x.id, x]));
+    s.library.loaded.value = true;
+    await settle();
+    expect(d.account.markOnboarding).not.toHaveBeenCalled();
+    expect(input(sheet).placeholder).toBe(COPY.placeholder);
+    sheets.pop().destroy();
+    makeDeps({songs: [], account: {onboarding: {}}});
+    s.library.loaded = signal(false);
+    const fresh = open();
+    s.library.loaded.value = true;
+    await settle();
+    expect(d.account.markOnboarding).toHaveBeenCalledTimes(1);
+    expect(input(fresh).placeholder).toBe(COPY.placeholderFirst);
+  });
+
+  test('web with dropped files: the files reason is said once', async () => {
+    makeDeps({desktop: false});
+    staged = [audioFile('Harbor Lights.mp3')];
+    const sheet = open();
+    await settle();
+    const lines = [...sheet.el.querySelectorAll('p')].filter(p => visible(p) && p.textContent === COPY.filesWeb);
+    expect(lines).toHaveLength(1);
+  });
+
+  test('one paired computer still has the ▾ picker', async () => {
+    makeDeps({desktop: false, devices: [DEVICES[0]]});
+    const sheet = open();
+    byRole(sheet.el, 'button', COPY.chooseDevice('Studio MacBook')).click();
+    expect(allByRole(document.body, 'menuitemradio').map(nameOf)).toEqual(['Studio MacBook · Online']);
+  });
+
+  test('candidate rows carry a source icon', async () => {
+    makeDeps();
+    d.lookups.searchSources.mockResolvedValue({query: 'x', candidates: [RESULTS[0], {...RESULTS[1], provider: 'soundcloud'}, {...RESULTS[2], provider: 'vimeo'}]});
+    const sheet = open({}, {query: {q: 'harbor lights'}});
+    await settle();
+    expect([...sheet.el.querySelectorAll('.lib-add-candidate-meta > svg')].map(n => n.dataset.icon)).toEqual(['play', 'cloud', 'link']);
+  });
+
+  test('a Spotify link with no YouTube candidates gets the Spotify single-result line and still adds', async () => {
+    makeDeps();
+    d.lookups.resolveSource.mockResolvedValue({kind: 'spotify', query: 'Harbor Lights Ada Moreno', candidates: []});
+    const url = 'https://open.spotify.com/track/abc';
+    const sheet = open({}, {query: {q: url}});
+    await settle();
+    expect(sheet.el.querySelector('.lib-add-fallback').textContent).toBe(COPY.spotifyFallback);
+    expect(sheet.el.textContent).not.toContain(COPY.noResults(url));
+    submitBtn(sheet).click();
+    await settle();
+    expect(d.jobs.createSeparation.mock.calls[0][0]).toMatchObject({source: {type: 'spotify', value: url}, confirmed: false});
+  });
+
+  test('iPad: a swipe down on the header dismisses past a quarter of the height; a short one does not', () => {
+    const pointer = (type, y, target) => {
+      const e = new MouseEvent(type, {bubbles: true, cancelable: true, clientY: y, clientX: 100, button: 0});
+      Object.defineProperty(e, 'pointerId', {value: 1});
+      target.dispatchEvent(e);
+      return e;
+    };
+    makeDeps({desktop: false, coarse: true, ipad: true});
+    const sheet = open();
+    expect(sheet.state().presentation).toBe('sheet');
+    vi.spyOn(sheet.el, 'getBoundingClientRect').mockReturnValue({left: 0, right: 800, top: 100, bottom: 1000, width: 800, height: 900, x: 0, y: 100});
+    const head = sheet.el.querySelector('.lib-add-head');
+    pointer('pointerdown', 120, head);
+    pointer('pointermove', 180, head);
+    expect(sheet.el.style.getPropertyValue('translate')).toBe('0 60px');
+    pointer('pointerup', 180, head);
+    expect(sheet.state().open).toBe(true);
+    expect(d.router.back).not.toHaveBeenCalled();
+    pointer('pointerdown', 120, head);
+    pointer('pointermove', 400, head);
+    pointer('pointerup', 400, head);
+    expect(sheet.state().open).toBe(false);
+    expect(d.router.back).toHaveBeenCalledWith({fallback: '/'});
+  });
+
+  test('a pointerdown on the backdrop (outside the dialog box) closes; inside it does not', () => {
+    makeDeps();
+    const sheet = open();
+    vi.spyOn(sheet.el, 'getBoundingClientRect').mockReturnValue({left: 320, right: 960, top: 80, bottom: 600, width: 640, height: 520, x: 320, y: 80});
+    const down = (x, y) => sheet.el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, clientX: x, clientY: y}));
+    down(400, 200);
+    expect(sheet.state().open).toBe(true);
+    down(40, 200);
+    expect(sheet.state().open).toBe(false);
+    expect(d.router.back).toHaveBeenCalledWith({fallback: '/'});
+  });
+});

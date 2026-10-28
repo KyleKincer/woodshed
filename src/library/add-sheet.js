@@ -19,8 +19,10 @@
 //   desktop  a link → /resolve (one candidate row); free text → /search (3–5 radio rows, the first chosen, ↑/↓ move);
 //            a Spotify link → "Spotify doesn't allow downloads…" then /resolve's search candidates. A chosen
 //            candidate submits as a `url` source with confirmed: true and its meta (B4, D43). A lookup that fails
-//            (anything but `aborted`/`lookup_busy`, which are ignored) falls back to the honest single-result line;
-//            a playlist link is an inline error.
+//            falls back to the honest single-result line (`lookup_busy` is asked again after 1 s; one that failed
+//            while the processor was not up, or with aborted/timeout/processor_offline, is asked again once it is);
+//            a playlist link is an inline error kept with that link's lookup. A Spotify link with no YouTube
+//            candidates gets the Spotify single-result line.
 //   web/iPad always the single-result line (lookups need the local processor): a pasted link is confirmed: true, a
 //            search or a Spotify link confirmed: false (D43). Jobs go to the chosen paired computer (B5): the device
 //            line "Your MacBook Pro will split this · ● Online ▾" picks it (prefs.deviceId); an offline one queues
@@ -34,7 +36,9 @@
 // After submit: the sheet closes, the toast "Adding **Title** · [Undo]" (10 s; Undo → jobs.cancel or the upload's
 // cancel) and a polite announcement; the Library shows the new card first under "Adding" (home.js, LB1a) and this
 // module moves focus to it and rings it for 1.5 s. ⇧↵ submits and keeps the sheet open, cleared, for the next song.
-// "Use these for future songs" saves the Change choice with account.patch({stemMode, preset, addDefaultsSaved: true}).
+// "Use these for future songs" saves the Change choice with account.patch({stemMode, preset, addDefaultsSaved: true})
+// (a two-part layout is never a default: then only {preset} is saved). Closed while an add is in flight, a failure
+// is reported in a toast.
 // A sheet opened by "Search for another version" (history state {dismissJobId}) dismisses that failed job once the
 // new one is submitted. ?pick=1 focuses Choose files… and opens the picker at once when the page has a user
 // activation. An export-only account sees "Adding songs is paused on this account." [Plan & storage].
@@ -90,6 +94,14 @@ const META_MAX = 300;
 const LABEL_MAX = 500;
 const THUMB_MAX = 2000;
 const DOWNLOAD_PATH = '/download';
+/** Processor phases in which B4 lookups can answer. */
+const PROCESSOR_UP = new Set(['ready', 'busy']);
+/** Lookup failures that say nothing about the input: the lookup is asked again once the processor is up. */
+const TRANSIENT_LOOKUP = new Set(['aborted', 'timeout', 'processor_offline']);
+/** The source icon of a candidate row (spec §3.2; the sprite has no brand marks). */
+/** Layouts that split one part from the rest: never saved as the Add default. */
+const TWO_PART = new Set(['drums', 'vocals', 'bass']);
+const PROVIDER_ICONS = Object.freeze({youtube: 'play', soundcloud: 'cloud', other: 'link'});
 
 let sheetSeq = 0;
 
@@ -232,7 +244,9 @@ export function createAddSheet(options = {}) {
   const st = {
     text: '',
     input: classify(''),
-    lookup: {status: 'idle', key: null, kind: null, candidates: [], query: null},   // idle|loading|ready|fallback|error
+    // idle|loading|ready|fallback|error; `error` (a playlist link) and `retry` (a fallback while the processor was not
+    // up, or a transient code: asked again once it is) belong to the input `key`.
+    lookup: {status: 'idle', key: null, kind: null, candidates: [], query: null},
     selected: 0,
     files: [],            // {id, file, name, size, audio, tooLarge, duration, probing}
     title: '',            // the single file's title field
@@ -259,6 +273,7 @@ export function createAddSheet(options = {}) {
   const devices = () => o.store?.library?.devices?.peek?.() ?? [];
   const exportOnly = () => o.store?.session?.peek?.()?.status === 'export_only';
   const processor = () => o.store?.processor?.peek?.() ?? {phase: desktopApp ? 'starting' : 'web'};
+  const processorUp = () => PROCESSOR_UP.has(processor()?.phase);
   const at = () => o.now();
   const hasDevices = () => devices().length > 0;
   /** 'desktop' | 'web' (B5, a paired computer) | 'explainer' (web, none). */
@@ -469,7 +484,7 @@ export function createAddSheet(options = {}) {
       st.lookup = {status: 'idle', key: null, kind: null, candidates: [], query: null};
       return;
     }
-    if (st.lookup.key === key && st.lookup.status !== 'idle') return;
+    if (st.lookup.key === key && st.lookup.status !== 'idle' && !(st.lookup.status === 'fallback' && st.lookup.retry)) return;
     if (ms <= 0) { runLookup(); return; }
     debounceTimer = later(runLookup, ms);
   }
@@ -491,7 +506,10 @@ export function createAddSheet(options = {}) {
         : await o.lookups.resolveSource(input.value, {signal: controller.signal});
       if (controller !== lookupController || !st.open) return;
       const candidates = Array.isArray(result?.candidates) ? result.candidates.slice(0, input.kind === 'url' ? 1 : SEARCH_RESULTS) : [];
-      st.lookup = {status: 'ready', key, kind: input.kind, candidates, query: result?.query ?? null};
+      // A Spotify link whose YouTube search found nothing still adds: the Spotify single-result line.
+      st.lookup = input.kind === 'spotify' && !candidates.length
+        ? {status: 'fallback', key, kind: input.kind, candidates: [], query: result?.query ?? null}
+        : {status: 'ready', key, kind: input.kind, candidates, query: result?.query ?? null};
     } catch (error) {
       if (controller !== lookupController || !st.open) return;
       const code = error?.code;
@@ -502,11 +520,15 @@ export function createAddSheet(options = {}) {
         return;
       }
       if (code === 'playlist') {
-        st.lookup = {status: 'error', key, kind: input.kind, candidates: [], query: null};
-        st.error = describeError(error, {context: 'add', router: o.router ?? undefined, desktop: o.desktop});
+        // Kept with the lookup, not in st.error: an edit that leaves the same link still shows it and blocks Add.
+        st.lookup = {status: 'error', key, kind: input.kind, candidates: [], query: null,
+          error: describeError(error, {context: 'add', router: o.router ?? undefined, desktop: o.desktop})};
       } else {
-        // B4 failed (or the processor is still starting): the honest single-result line.
-        st.lookup = {status: 'fallback', key, kind: input.kind, candidates: [], query: null};
+        // B4 failed (or the processor is still starting): the honest single-result line. While the processor is not
+        // up (architecture appendix item 35: lookups reject at once with aborted/timeout while it starts) the lookup
+        // is asked again once it is.
+        const retry = TRANSIENT_LOOKUP.has(code) || !processorUp();
+        st.lookup = {status: 'fallback', key, kind: input.kind, candidates: [], query: null, retry};
       }
     } finally {
       if (controller === lookupController) lookupController = null;
@@ -548,12 +570,14 @@ export function createAddSheet(options = {}) {
   function removeFile(id) {
     const at = st.files.findIndex(f => f.id === id);
     if (at < 0) return;
+    const before = [...resolution.querySelectorAll('.lib-add-file-remove')];
+    const index = Math.max(0, before.findIndex(b => b.dataset.fileId === id));
     st.files.splice(at, 1);
     syncTitle();
     render();
-    // Focus stays in the list: the next row's ✕, else the omnibox.
-    const next = resolution.querySelector('.lib-add-file-remove');
-    (next ?? input).focus({preventScroll: true});
+    // Focus stays in the list: the next row's ✕ (the last one when the last row went), else the omnibox.
+    const after = [...resolution.querySelectorAll('.lib-add-file-remove')];
+    (after[Math.min(index, after.length - 1)] ?? input).focus({preventScroll: true});
   }
 
   function syncTitle() {
@@ -620,9 +644,15 @@ export function createAddSheet(options = {}) {
     anotherHint.hidden = coarse;
   }
 
+  /** The playlist error of the current input's lookup, or null. */
+  function lookupError() {
+    return st.lookup.status === 'error' && st.lookup.key === lookupKey(st.input) ? st.lookup.error ?? null : null;
+  }
+  const inlineError = () => st.error ?? lookupError();
+
   function canSubmit() {
     if (exportOnly() || mode() === 'explainer') return false;
-    if (st.error && st.lookup.status === 'error') return false;
+    if (lookupError()) return false;
     if (mode() === 'desktop' && audio().length) return true;
     if (st.input.kind === 'empty') return false;
     if (st.lookup.status === 'ready' && st.lookup.key === lookupKey(st.input) && !st.lookup.candidates.length) return false;
@@ -631,10 +661,11 @@ export function createAddSheet(options = {}) {
 
   let shownError;
   function renderError() {
-    if (shownError === st.error) return;
-    shownError = st.error;
+    const error = inlineError();
+    if (shownError === error) return;
+    shownError = error;
     errorSlot.replaceChildren();
-    if (st.error) errorSlot.append(errorBlock(st.error));
+    if (error) errorSlot.append(errorBlock(error));
   }
 
   /** One error (spec §3.6): the sentence, the primary (and secondary) action, Details with Copy. */
@@ -659,7 +690,7 @@ export function createAddSheet(options = {}) {
     toggle.addEventListener('click', () => { st.errorOpen = pre.hidden; open(pre.hidden); });
     if (described.detailsFirst) row.prepend(toggle); else row.append(toggle);
     row.append(copyBtn);
-    open(st.errorOpen && described === st.error);
+    open(st.errorOpen && described === inlineError());
     return h('div', {class: 'lib-add-error', role: 'alert'}, sentence, row, pre);
   }
 
@@ -672,7 +703,7 @@ export function createAddSheet(options = {}) {
 
   /** What the resolution area shows; it is rebuilt only when this changes (focus inside it survives store ticks). */
   function resolutionKey(m) {
-    const files = st.files.map(f => [f.id, f.probing, f.duration]);
+    const files = st.files.map(f => f.id);   // a duration arriving updates its row in place (updateFileMeta)
     const lookup = st.lookup.key === lookupKey(st.input) ? [st.lookup.status, st.lookup.candidates.map(c => c.id)] : ['loading'];
     return JSON.stringify([m, files, st.input.kind, st.input.value, lookup]);
   }
@@ -681,9 +712,37 @@ export function createAddSheet(options = {}) {
   function renderResolution() {
     const m = mode();
     const key = resolutionKey(m);
-    if (key === shownResolution) return;
+    if (key === shownResolution) { updateFileMeta(); return; }
     shownResolution = key;
+    // Focus inside the area (the title field, a row's ✕) survives a rebuild.
+    const active = doc.activeElement;
+    const kept = active && resolution.contains(active)
+      ? {selector: active.classList.contains('lib-add-title-input') ? '.lib-add-title-input' : null,
+        start: active.selectionStart ?? null, end: active.selectionEnd ?? null}
+      : null;
     resolution.replaceChildren();
+    buildResolution(m);
+    if (kept?.selector) {
+      const again = resolution.querySelector(kept.selector);
+      if (again) {
+        again.focus({preventScroll: true});
+        if (kept.start != null) { try { again.setSelectionRange(kept.start, kept.end ?? kept.start); } catch { /* not a text field */ } }
+      }
+    }
+  }
+
+  function fileMetaText(f) {
+    const duration = f.probing ? COPY.durationUnknown : formatDuration(f.duration) ?? COPY.durationUnknown;
+    return `${COPY.sizeMB(f.size)} · ${duration}`;
+  }
+  function updateFileMeta() {
+    for (const node of resolution.querySelectorAll('.lib-add-file-meta[data-file-id]')) {
+      const f = st.files.find(x => x.id === node.dataset.fileId);
+      if (f) { const text = fileMetaText(f); if (node.textContent !== text) node.textContent = text; }
+    }
+  }
+
+  function buildResolution(m) {
     const input = st.input;
     if (st.files.length) {
       resolution.append(filesList(m));
@@ -737,7 +796,8 @@ export function createAddSheet(options = {}) {
       thumb,
       h('span', {class: 'lib-add-candidate-text'},
         h('span', {class: 'lib-add-candidate-title', id: titleId}, c.title),
-        h('span', {class: 'lib-add-candidate-meta'}, COPY.candidateMeta(c.channel, PROVIDERS[c.provider] ?? PROVIDERS.other))),
+        h('span', {class: 'lib-add-candidate-meta'}, icon(PROVIDER_ICONS[c.provider] ?? PROVIDER_ICONS.other),
+          COPY.candidateMeta(c.channel, PROVIDERS[c.provider] ?? PROVIDERS.other))),
       h('span', {class: 'lib-add-candidate-end'},
         ...marks.map(b => h('span', {class: 'lib-add-badge', dataset: {badge: b.toLowerCase()}}, b)),
         c.live ? h('span', {class: 'lib-add-badge', dataset: {badge: 'stream'}}, COPY.liveStream) : null,
@@ -759,7 +819,7 @@ export function createAddSheet(options = {}) {
 
   function filesList(m) {
     const removeButton = f => {
-      const remove = h('button', {type: 'button', class: 'lib-add-file-remove', 'aria-label': COPY.removeFile(f.name)}, icon('x'));
+      const remove = h('button', {type: 'button', class: 'lib-add-file-remove', 'aria-label': COPY.removeFile(f.name), dataset: {fileId: f.id}}, icon('x'));
       remove.addEventListener('click', () => removeFile(f.id));
       return remove;
     };
@@ -771,18 +831,17 @@ export function createAddSheet(options = {}) {
         flags.push(h('p', {class: 'lib-add-flag', role: 'status'}, icon('alert-circle'), h('span', {class: 'selectable'}, text), removeButton(f)));
         continue;
       }
-      const duration = f.probing ? COPY.durationUnknown : formatDuration(f.duration) ?? COPY.durationUnknown;
       list.append(h('li', {class: 'lib-add-file', dataset: {disabled: m !== 'desktop' ? '' : null}},
         icon('file-audio'),
         h('span', {class: 'lib-add-file-name selectable'}, f.name),
-        h('span', {class: 'lib-add-file-meta tabular'}, `${COPY.sizeMB(f.size)} · ${duration}`),
+        h('span', {class: 'lib-add-file-meta tabular', dataset: {fileId: f.id}}, fileMetaText(f)),
         removeButton(f)));
     }
     const out = [];
     if (list.childNodes.length) out.push(list);
     out.push(...flags);
-    if (m !== 'desktop') out.push(h('p', {class: 'lib-add-line'}, COPY.filesWeb));
-    else if (audio().length === 1) out.push(titleField());
+    // On the web the reason is the files note under the omnibox (shown once).
+    if (m === 'desktop' && audio().length === 1) out.push(titleField());
     return h('div', {class: 'lib-add-files-block'}, ...out);
   }
 
@@ -844,7 +903,7 @@ export function createAddSheet(options = {}) {
   }
 
   // ---------- defaults line and Change
-  let stemsControl = null, qualityControl = null, saveBox = null, estimateNote = null;
+  let stemsControl = null, qualityControl = null, saveBox = null, estimateNote = null, twoPartNote = null;
   function renderDefaults() {
     const choice = resolvedChoice();
     defaultsText.replaceChildren(...defaultsParts(profile(), accountValue(), choice).map(p => (p.strong ? h('strong', {}, p.text) : p.text)));
@@ -892,12 +951,14 @@ export function createAddSheet(options = {}) {
         onChange: value => { st.choice.preset = value; renderDefaults(); }}));
       saveBox = h('input', {type: 'checkbox', id: saveId, class: 'lib-add-save-input', checked: st.saveDefaults});
       saveBox.addEventListener('change', () => { st.saveDefaults = saveBox.checked; });
+      twoPartNote = h('p', {class: 'lib-add-field-hint lib-add-two-part-note', hidden: true}, COPY.saveTwoPart);
       estimateNote = h('p', {class: 'lib-add-field-hint lib-add-estimate-note', hidden: true}, COPY.estimateNote);
       const customNote = h('p', {class: 'lib-add-field-hint'}, COPY.customHint);
       panel.append(
         h('div', {class: 'lib-add-panel-row'}, h('span', {class: 'lib-add-label', id: `${stemsId}-l`}, COPY.stemsLabel), stemsControl.el),
         h('div', {class: 'lib-add-panel-row'}, h('span', {class: 'lib-add-label', id: `${qualityId}-l`}, COPY.qualityLabel), qualityControl.el, estimateNote),
         h('label', {class: 'lib-add-save', for: saveId}, saveBox, h('span', {}, COPY.saveDefaults)),
+        twoPartNote,
         h('p', {class: 'lib-add-field-hint'}, COPY.qualityHint),
         customNote);
     }
@@ -905,6 +966,7 @@ export function createAddSheet(options = {}) {
     const opts = qualityOptions();
     qualityControl.set({options: opts, value: settings.preset});
     estimateNote.hidden = !opts.some((x, i) => x.label !== QUALITY_OPTIONS[i].label);
+    twoPartNote.hidden = !TWO_PART.has(settings.stemMode);
   }
 
   // ---------- device line
@@ -948,12 +1010,11 @@ export function createAddSheet(options = {}) {
         h('span', {class: 'lib-add-dot', dataset: {tone: 'ok'}, 'aria-hidden': 'true'}), ' ', COPY.online)
       : h('p', {class: 'lib-add-device-text'}, icon('wifi-off'), COPY.deviceOffline(name));
     deviceLine.append(textNode);
-    if (devices().length > 1) {
-      const pick = h('button', {type: 'button', class: 'lib-add-device-pick', 'aria-haspopup': 'menu', 'aria-label': COPY.chooseDevice(name)},
-        icon('chevron-down'));
-      pick.addEventListener('click', () => openDeviceMenu(pick));
-      deviceLine.append(pick);
-    }
+    // ▾ always (spec §3.3 B5): one paired computer still names itself and its state in the menu.
+    const pick = h('button', {type: 'button', class: 'lib-add-device-pick', 'aria-haspopup': 'menu', 'aria-label': COPY.chooseDevice(name)},
+      icon('chevron-down'));
+    pick.addEventListener('click', () => openDeviceMenu(pick));
+    deviceLine.append(pick);
   }
 
   function openDeviceMenu(anchor) {
@@ -1047,7 +1108,7 @@ export function createAddSheet(options = {}) {
       st.busy = false;
       st.error = describeError(error, {context: 'add', router: o.router ?? undefined, desktop: o.desktop, device: chosenDevice()?.name});
       st.errorOpen = false;
-      if (!st.open) return;
+      if (!st.open) { failedAfterClose(st.error); return; }
       render();
       input.focus({preventScroll: true});
       return;
@@ -1062,6 +1123,15 @@ export function createAddSheet(options = {}) {
       return;
     }
     close('submit', {added});
+  }
+
+  /** The sheet was closed while the add was in flight and the add failed: say so in a toast, with its action. */
+  function failedAfterClose(described) {
+    const action = described.primary?.run ? {label: described.primary.label, run: () => described.primary.run()} : undefined;
+    try {
+      o.feedback.toast(COPY.notAdded(described.sentence), {tone: 'warn', ...(action ? {action} : {}), key: 'add:failed'});
+    } catch (error) { console.error('[add] could not report the failed add', error); }
+    o.feedback.announce?.(COPY.notAdded(described.sentence), {politeness: 'assertive', key: 'add-sheet'});
   }
 
   async function submitText(item, m) {
@@ -1094,7 +1164,10 @@ export function createAddSheet(options = {}) {
   function afterAdd(added) {
     if (st.saveDefaults) {
       const settings = settingsNow();
-      Promise.resolve(o.account?.patch?.({stemMode: settings.stemMode, preset: settings.preset, addDefaultsSaved: true}))
+      // Two-part splits are never the default (spec §3.2, profile.js addDefaults): only the quality is saved then.
+      const patch = TWO_PART.has(settings.stemMode) ? {preset: settings.preset}
+        : {stemMode: settings.stemMode, preset: settings.preset, addDefaultsSaved: true};
+      Promise.resolve(o.account?.patch?.(patch))
         .catch(error => console.error('[add] saving the defaults failed', error));
       st.saveDefaults = false;
       st.choice = {stemMode: null, preset: null};
@@ -1161,8 +1234,21 @@ export function createAddSheet(options = {}) {
   }
 
   // ---------- live inputs
-  let firstRun = false;
+  // Desktop first run: the first-song placeholder, once (architecture §2.19). Decided only once the songs and the
+  // account have loaded (the router does not wait for them), so a user with songs never spends the flag.
+  let firstRun = false, firstRunDecided = !desktopApp;
+  function decideFirstRun() {
+    if (firstRunDecided || !st.open) return;
+    const libraryLoaded = o.store?.library?.loaded?.peek?.() ?? true;
+    const accountLoaded = o.account?.loaded?.peek?.() ?? (o.account?.value?.peek?.() != null);
+    if (!libraryLoaded || !accountLoaded) return;
+    firstRunDecided = true;
+    if (accountValue()?.onboarding?.desktopFirstRun === true || songs().size !== 0) return;
+    firstRun = true;
+    Promise.resolve(o.account?.markOnboarding?.('desktopFirstRun', true)).catch(() => {});
+  }
   const offs = [];
+  let wasUp = processorUp();
   offs.push(effect(() => {
     // Re-render when the account, the processor, the devices or the songs change.
     o.account?.value?.value;
@@ -1170,7 +1256,19 @@ export function createAddSheet(options = {}) {
     o.store?.library?.devices?.value;
     o.store?.library?.songs?.value;
     o.store?.session?.value;
-    untracked(() => render());
+    o.store?.library?.loaded?.value;
+    o.account?.loaded?.value;
+    untracked(() => {
+      decideFirstRun();
+      // The processor came up (it was starting or offline): a lookup that fell back because of it is asked again.
+      const up = processorUp(), cameUp = up && !wasUp;
+      wasUp = up;
+      if (cameUp && st.open && st.lookup.status === 'fallback' && st.lookup.retry && st.lookup.key === lookupKey(st.input)) {
+        st.lookup = {status: 'idle', key: null, kind: null, candidates: [], query: null};
+        scheduleLookup(0);
+      }
+      render();
+    });
   }));
   if (!desktopApp) {
     // "Online" is computed from lastSeenAt (D11): look again while the sheet is open.
@@ -1179,11 +1277,6 @@ export function createAddSheet(options = {}) {
   }
   cleanups.push(() => { for (const off of offs.splice(0)) off(); });
 
-  // Desktop first run: the first-song placeholder, once (architecture §2.19).
-  if (desktopApp && accountValue()?.onboarding?.desktopFirstRun !== true && songs().size === 0) {
-    firstRun = true;
-    Promise.resolve(o.account?.markOnboarding?.('desktopFirstRun', true)).catch(() => {});
-  }
 
   // Staged files (the Library's window drop, LB2a) arrive here.
   const staged = safe(() => o.takeStagedFiles?.() ?? [], []);

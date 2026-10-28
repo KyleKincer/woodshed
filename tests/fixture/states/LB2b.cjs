@@ -13,6 +13,8 @@
 //   lb2b-error-offline        the processor is down at submit: inline error [Restart processor] [Details], input kept
 //   lb2b-error-playlist       a playlist link: inline error, Add blocked
 //   lb2b-error-paused         an export-only account: "Adding songs is paused on this account." [Plan & storage]
+//   lb2b-error-queue-full     a createSeparation failure (the computer's queue is full): the inline sentence with
+//                             Details, the input kept, no job made
 //   lb2b-explainer            web without a paired computer: the explainer, download, links, example
 //   lb2b-picker-online        B5: "Your Studio MacBook will split this · ● Online ▾" with the computer menu open
 //   lb2b-picker-offline       B5: every computer offline: "… is offline. Songs you add start when it's back."
@@ -226,6 +228,31 @@ module.exports = [
       t.expect(f.text.includes('Adding songs is paused on this account.'), 'the paused sentence');
       t.expect(await page.getByRole('button', {name: 'Plan & storage'}).count() === 1, 'Plan & storage');
       t.expect(f.submitDisabled, 'Add is disabled');
+    },
+  },
+  {
+    name: 'lb2b-error-queue-full',
+    url: `${H}?fx-reset=1&fx-jobs=frozen&fx-devices=online&${NOW}&q=harbor`,
+    opts: {devices: LAPTOP},
+    async fn(page, t) {
+      // Fill Studio MacBook's queue (the fixture refuses a 21st queued job, as convex/jobs.ts does).
+      await page.evaluate(() => window.fixture.update(db => {
+        const settings = db.jobs.find(j => j.settings)?.settings ?? {preset: 'balanced', stemMode: 'full'};
+        const queued = db.jobs.filter(j => j.deviceId === 'dev1' && j.status === 'queued').length;
+        for (let i = queued; i < 20; i++) {
+          db.jobs.push({jobId: `job-fill-${i}`, kind: 'separate', deviceId: 'dev1', label: `Filler ${i}`, source: {type: 'search', value: `filler ${i}`},
+            settings, status: 'queued', stage: 'queued', percent: 0, attempts: 0, createdAt: Date.now(), updatedAt: Date.now()});
+        }
+      }));
+      const before = await page.evaluate(() => window.fixture.db().jobs.length);
+      await page.getByRole('button', {name: 'Add & split'}).click();
+      await page.waitForSelector('.lib-add-error');
+      const f = await facts(page);
+      await expectFrame(page, t, f);
+      t.expect(f.error.includes('Too many songs are waiting.'), `the inline sentence (${f.error})`);
+      t.expect(await page.locator('.lib-add-error').getByRole('button', {name: 'Details'}).count() === 1, 'Details');
+      t.expect(await page.locator('.lib-add-input').inputValue() === 'harbor', 'the input is kept');
+      t.expect(await page.evaluate(() => window.fixture.db().jobs.length) === before, 'no job was made');
     },
   },
   {

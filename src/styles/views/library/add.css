@@ -194,6 +194,7 @@
     white-space: nowrap;
   }
   .lib-add-candidate-meta { color: var(--ink-3); font-size: var(--fs-14); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lib-add-candidate-meta > .ui-icon { inline-size: 1em; block-size: 1em; margin-inline-end: var(--s1); vertical-align: -0.125em; }
   .lib-add-candidate-end { display: flex; align-items: center; gap: var(--s2); }
   .lib-add-badge {
     padding: 0 var(--s2);

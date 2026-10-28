@@ -74,6 +74,7 @@ export const COPY = Object.freeze({
   estimate: minutes => `~${minutes} min`,
   estimateNote: 'Estimates on this computer, from the songs it has split.',
   saveDefaults: 'Use these for future songs',
+  saveTwoPart: 'Two-part splits are for this song only. Only the quality is saved for future songs.',
   qualityHint: 'Higher quality takes longer. You can re-split any song later.',
   customHint: 'Custom model, passes and overlap stay in Settings → Processing.',
 
@@ -107,6 +108,8 @@ export const COPY = Object.freeze({
   undo: 'Undo',
   undone: title => `Stopped adding ${title}`,
   undoFailed: 'Too late to undo: it’s already being processed. Cancel it from Jobs.',
+  /** The sheet was closed while the add was in flight, and it failed. */
+  notAdded: sentence => `The song wasn’t added. ${sentence}`,
 
   // ---- errors (spec §3.6; the sentences are error-copy.js's)
   details: 'Details',
