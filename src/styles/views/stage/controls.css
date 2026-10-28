@@ -1,0 +1,204 @@
+@layer views {
+  /* The Stage control set (src/stage/controls.js; spec §4.6). Controls never scale with Distance.
+   *   dock  one row: [Again 72][Play 96][Loop 72][− 75% + 184][Count-in 80][Mix 104], 64 tall
+   *         (Play 80), 12 px gaps, 16 px padding = 700 px, plus the bottom safe area
+   *   rail  a 2-column grid of 56 px rows (Play 72), 8 px gaps: [speed][countIn|click][loop|mix][again|play]
+   *   mini  Speed + Play in the 120 px Focus rail;  slim  Edit's 56 px transport row
+   * Labels are 15/600 (no Stage text below 15 px); icons 24 px above the label in the dock.
+   * While playing the controls dim to 70% and stay live. */
+  .ctl-set {
+    --ctl-h: 64px;
+    --ctl-play-h: 80px;
+    box-sizing: border-box;
+    transition: opacity var(--motion-fast) var(--ease);
+  }
+  .ctl-set[data-playing] { opacity: .7; }
+  /* Full strength under a mouse or keyboard focus (a tap's sticky hover and focus do not count). */
+  .ctl-set[data-playing]:has(:focus-visible) { opacity: 1; }
+  @media (hover: hover) and (pointer: fine) {
+    .ctl-set[data-playing]:hover { opacity: 1; }
+  }
+
+  .ctl { display: flex; min-inline-size: 0; }
+  .ctl > .ui-button,
+  .ctl > .ui-stepper,
+  .ctl > .ctl-mix { flex: 1 1 auto; min-inline-size: 0; }
+
+  /* Stage labels: 15/600, never below 15 px; sublabels (the count-in length, OUT) the same size. */
+  .ctl-set .ui-button { padding: 2px var(--s1); }
+  .ctl-set .ui-button-label,
+  .ctl-set .ui-button[data-size=dock] .ui-button-label,
+  .ctl-set .ui-button[data-size=play] .ui-button-label {
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+    line-height: 1.05;
+  }
+  .ctl-set .ui-button-sublabel {
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+    line-height: 1.05;
+    color: var(--ink-2);
+  }
+  .ctl-set .ui-button[aria-pressed=true] .ui-button-sublabel { color: inherit; }
+  .ctl-set .ui-button[data-size=dock],
+  .ctl-set .ui-button[data-size=play] { gap: 2px; }
+  /* A disabled reason is read through aria-describedby; Click shows it ("Needs a bar grid"). */
+  .ctl-set .ui-button-reason { display: none; }
+  .ctl-set [data-ctl=click] .ui-button-reason {
+    display: block;
+    flex-basis: auto;
+    padding: 0;
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+    line-height: 1.05;
+    white-space: normal;
+    text-align: center;
+  }
+  .ctl-set [data-ctl=click] .ui-button[aria-disabled=true] .ui-button-text { display: none; }
+
+  /* Lit states. Loop on: --loop fill; Count-in, Click and Minus me pressed: the accent (button.css). */
+  .ctl-set [data-ctl=loop] .ui-button[aria-pressed=true] {
+    background: var(--loop-fill);
+    border-color: var(--loop);
+    color: var(--loop);
+  }
+
+  /* Play: the ring replaces the icon while audio loads; ✕ Count while counting. */
+  .ctl-ring { flex: none; color: var(--on-accent); }
+  .ctl-set .ui-button[data-mode=counting] { background: var(--surface); border-color: var(--now); color: var(--now); }
+  .ctl-set .ui-button[data-mode=loading] { cursor: progress; }
+  .ctl-set .ui-button[data-mode=loading] > .ui-icon { display: none; }
+  .ctl-set .ui-button[data-armed] { box-shadow: 0 0 0 2px var(--focus-ring); }
+
+  /* Speed stepper: tabular value; − and + fill the height. */
+  .ctl-set .ui-stepper { --ui-stepper-h: calc(var(--ctl-h) - 2px); min-block-size: var(--ctl-h); }
+  .ctl-set .ui-stepper-button { inline-size: 56px; }
+  .ctl-set .ui-stepper-value {
+    min-inline-size: 0;
+    padding: 0 var(--s1);
+    font: var(--fw-bold) var(--fs-20)/1 var(--font-mono);
+  }
+
+  /* Mix: the main zone (Minus me) and the 44 px ⌃ zone (the Mix sheet). */
+  .ctl-mix { display: flex; gap: 0; }
+  .ctl-mix .ctl-mix-main {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .ctl-mix .ctl-mix-caret {
+    flex: none;
+    inline-size: 44px;
+    min-inline-size: 44px;
+    border-inline-start: 0;
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+  }
+
+  /* ---- dock (band, 700 px) ---- */
+  .ctl-set[data-variant=dock] {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    inline-size: 700px;
+    max-inline-size: 100%;
+    margin-inline: auto;
+    padding: 4px 16px calc(4px + env(safe-area-inset-bottom, 0px));
+  }
+  .ctl-set[data-variant=dock] .ctl { flex: none; block-size: var(--ctl-h); }
+  .ctl-set[data-variant=dock] [data-ctl=again] { inline-size: 72px; }
+  .ctl-set[data-variant=dock] [data-ctl=play] { inline-size: 96px; block-size: var(--ctl-play-h); }
+  .ctl-set[data-variant=dock] [data-ctl=loop] { inline-size: 72px; }
+  .ctl-set[data-variant=dock] [data-ctl=speed] { inline-size: 184px; }
+  .ctl-set[data-variant=dock] [data-ctl=countIn] { inline-size: 80px; }
+  .ctl-set[data-variant=dock] [data-ctl=mix] { inline-size: 104px; }
+  .ctl-set[data-variant=dock] .ui-button { min-block-size: var(--ctl-h); min-inline-size: 0; block-size: 100%; }
+  .ctl-set[data-variant=dock] [data-ctl=play] .ui-button { min-block-size: var(--ctl-play-h); }
+  .ctl-set[data-variant=dock] .ui-stepper-button { inline-size: 56px; }
+
+  /* ---- rail (2 columns, 56 px rows, Play 72) ---- */
+  .ctl-set[data-variant=rail] {
+    --ctl-h: 56px;
+    --ctl-play-h: 72px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "speed   speed"
+      "countIn click"
+      "loop    mix"
+      "again   play";
+    grid-template-rows: 56px 56px 56px 72px;
+    gap: 8px;
+    padding: var(--s3) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px));
+  }
+  .ctl-set[data-variant=rail] [data-ctl=speed] { grid-area: speed; }
+  .ctl-set[data-variant=rail] [data-ctl=countIn] { grid-area: countIn; }
+  .ctl-set[data-variant=rail] [data-ctl=click] { grid-area: click; }
+  .ctl-set[data-variant=rail] [data-ctl=loop] { grid-area: loop; }
+  .ctl-set[data-variant=rail] [data-ctl=mix] { grid-area: mix; }
+  .ctl-set[data-variant=rail] [data-ctl=again] { grid-area: again; }
+  .ctl-set[data-variant=rail] [data-ctl=play] { grid-area: play; }
+  .ctl-set[data-variant=rail] .ui-button {
+    flex-direction: row;
+    min-block-size: 0;
+    min-inline-size: 0;
+    block-size: 100%;
+    gap: var(--s2);
+  }
+  .ctl-set[data-variant=rail] .ui-stepper-button { inline-size: 56px; }
+  /* The rail's Mix main zone is text only ("Drums" over "OUT"), so it fits beside the ⌃ zone. */
+  .ctl-set[data-variant=rail] .ctl-mix-main > .ui-icon { display: none; }
+  .ctl-set[data-variant=rail] .ctl-mix-main .ui-button-text { align-items: flex-start; }
+
+  /* ---- mini (Focus mini rail, 120 px) ---- */
+  .ctl-set[data-variant=mini] {
+    --ctl-h: 56px;
+    --ctl-play-h: 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: var(--s2) var(--s2) calc(var(--s2) + env(safe-area-inset-bottom, 0px));
+  }
+  .ctl-set[data-variant=mini] [data-ctl=speed] { block-size: var(--ctl-h); }
+  .ctl-set[data-variant=mini] [data-ctl=play] { block-size: var(--ctl-play-h); }
+  .ctl-set[data-variant=mini] .ui-button { min-block-size: 0; min-inline-size: 0; block-size: 100%; }
+  .ctl-set[data-variant=mini] .ui-stepper-button { inline-size: 30px; }
+  .ctl-set[data-variant=mini] .ui-stepper-value { padding: 0 2px; font-size: var(--fs-16); }
+  /* Coarse pointers: 44 px − and + do not fit side by side in 104 px, so + sits above the value. */
+  @media (pointer: coarse) {
+    .ctl-set[data-variant=mini] [data-ctl=speed] { block-size: auto; }
+    .ctl-set[data-variant=mini] .ui-stepper { flex-direction: column-reverse; }
+    .ctl-set[data-variant=mini] .ui-stepper-button { inline-size: auto; block-size: 44px; }
+    .ctl-set[data-variant=mini] .ui-stepper-value { min-block-size: 40px; border-inline: 0; border-block: 1px solid var(--line); }
+  }
+
+  /* ---- slim (Edit's 56 px transport) ---- */
+  .ctl-set[data-variant=slim] {
+    --ctl-h: var(--h-md);
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: 56px;
+    padding: 0 var(--s3);
+    overflow-x: auto;
+  }
+  .ctl-set[data-variant=slim] .ctl { flex: none; }
+  .ctl-set[data-variant=slim] .ui-button { min-block-size: var(--h-md); padding: 0 var(--s3); }
+  .ctl-set[data-variant=slim] [data-ctl=again] .ui-button,
+  .ctl-set[data-variant=slim] [data-ctl=play] .ui-button,
+  .ctl-set[data-variant=slim] [data-ctl=pause] .ui-button { inline-size: var(--h-md); padding: 0; }
+  .ctl-set[data-variant=slim] [data-ctl=position] { margin-inline: var(--s2); }
+  .ctl-position {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    white-space: nowrap;
+  }
+  .ctl-pos-main { display: inline-flex; align-items: baseline; font: var(--fw-bold) var(--fs-20)/1 var(--font-mono); font-variant-numeric: tabular-nums; min-inline-size: 5ch; }
+  .ctl-pos-sep { padding: 0 .12em; color: var(--ink-3); font-family: var(--font-ui); }
+  .ctl-pos-sub { color: var(--ink-3); font: var(--fw-semibold) var(--fs-16)/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .ctl-set[data-variant=slim] .ui-stepper { min-block-size: var(--h-md); }
+  /* A load error (spec §4.12): the Speed stepper reads disabled like the buttons (controls.js lockStepper). */
+  .ctl-set .ui-stepper[data-disabled] .ui-stepper-value { color: var(--ink-3); cursor: not-allowed; }
+}
