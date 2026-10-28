@@ -157,13 +157,13 @@ function choose(b, items, label) {
   return true;
 }
 
-/** The scenario predicates of CONTROLS' `when`. */
-function scenario({mapped = true, part = false, chart = false, sectionsMissing = false, shared = false} = {}) {
+/** The scenario predicates of CONTROLS' `when`; `surface` is the kind the Stage shows (the bed's default: the Road map). */
+function scenario({mapped = true, part = false, surface = 'roadmap', sectionsMissing = false, shared = false} = {}) {
   const one = (when) => {
     if (when === 'mapped') return mapped;
     if (when === 'unmapped') return !mapped;
     if (when === 'part') return part;
-    if (when === 'chart') return chart;
+    if (when === 'follows') return surface === 'chart' || (surface === 'roadmap' && mapped);
     if (when === 'sections-missing') return mapped && sectionsMissing;
     if (when === 'owner') return !shared;
     return false;
@@ -188,7 +188,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     const b = await bed({surface: 'chart', score: emptyScore(128, 120)});
     expect(b.ts.session.notation.part).toBeTruthy();
     const rows = rowsOf(stageMenu(b.ts.session, b.stage, b.opts), b.reg);
-    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({part: true, chart: true})(c.when));
+    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({part: true, surface: 'chart'})(c.when));
     for (const c of wanted) {
       const r = row(rows, c.name, c.parent ?? null);
       expect(r, `${c.name} (${c.parent ?? 'top'})`).toBeTruthy();
@@ -208,13 +208,62 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     const b = await bed({mapped: false, surface: 'wave'});
     const items = stageMenu(b.ts.session, b.stage, b.opts);
     const rows = rowsOf(items, b.reg);
-    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({mapped: false})(c.when));
+    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({mapped: false, surface: 'wave'})(c.when));
     expect(rows.map((r) => r.name).sort()).toEqual(wanted.map((c) => c.name).sort());
     expect(row(rows, 'Wave page', 'View').checked).toBe(true);
     expect(row(rows, 'Get bars…')).toBeTruthy();
     expect(row(rows, 'Detect beats')).toBeUndefined();
     expect(row(rows, 'Display')).toBeUndefined();
     expect(row(rows, 'Follow')).toBeUndefined();
+  });
+
+  test('the CONTROLS table on the mapped Road map: Follow ▸ (Scroll · Page) is offered, checked from stage.followStyle (I2b-7)', async () => {
+    const b = await bed({surface: 'roadmap'});
+    const items = stageMenu(b.ts.session, b.stage, b.opts);
+    const rows = rowsOf(items, b.reg);
+    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({surface: 'roadmap'})(c.when));
+    for (const c of wanted) {
+      const r = row(rows, c.name, c.parent ?? null);
+      expect(r, `${c.name} (${c.parent ?? 'top'})`).toBeTruthy();
+      expect(r.role, c.name).toBe(c.role);
+      if (c.command) expect(r.command, c.name).toBe(c.command);
+    }
+    expect(rows.length).toBe(wanted.length);
+    expect(labels(items, b.reg)).toEqual([
+      'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
+      'Share…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
+    expect(row(rows, 'Road map', 'View').checked).toBe(true);
+    // The radios read stage.followStyle (the Road map's default is Scroll, spec §4.4B) …
+    expect(row(rows, 'Scroll', 'Follow')).toMatchObject({role: 'menuitemradio', command: 'view.followStyle', checked: true});
+    expect(row(rows, 'Page', 'Follow')).toMatchObject({role: 'menuitemradio', command: 'view.followStyle', checked: false});
+    // … and choosing one sets it through view.followStyle.
+    choose(b, find(items, 'Follow').items, 'Page');
+    expect(b.stage.setFollowStyle).toHaveBeenCalledWith('page');
+    let again = rowsOf(stageMenu(b.ts.session, b.stage, b.opts), b.reg);
+    expect(row(again, 'Page', 'Follow').checked).toBe(true);
+    expect(row(again, 'Scroll', 'Follow').checked).toBe(false);
+    // A followStyle the Stage changes on its own (another layout, another surface's choice) shows too.
+    b.followStyle.value = 'scroll';
+    again = rowsOf(stageMenu(b.ts.session, b.stage, b.opts), b.reg);
+    expect(row(again, 'Scroll', 'Follow').checked).toBe(true);
+  });
+
+  test('Follow ▸ is not offered on the Wave page (an unmapped song’s Road map) or on Stems', async () => {
+    // The Stage may report the unmapped song's surface as 'roadmap' (the kind) or 'wave' (its placeholder): neither follows by rows.
+    for (const surface of ['roadmap', 'wave']) {
+      const u = await bed({mapped: false, surface});
+      const rows = rowsOf(stageMenu(u.ts.session, u.stage, u.opts), u.reg);
+      expect(row(rows, 'Follow'), surface).toBeUndefined();
+      expect(row(rows, 'Scroll'), surface).toBeUndefined();
+      expect(row(rows, 'Wave page', 'View'), surface).toBeTruthy();
+      const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({mapped: false, surface})(c.when));
+      expect(rows.map((r) => r.name).sort(), surface).toEqual(wanted.map((c) => c.name).sort());
+    }
+    const s = await bed({surface: 'stems'});
+    const rows = rowsOf(stageMenu(s.ts.session, s.stage, s.opts), s.reg);
+    expect(row(rows, 'Follow')).toBeUndefined();
+    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({surface: 'stems'})(c.when));
+    expect(rows.map((r) => r.name).sort()).toEqual(wanted.map((c) => c.name).sort());
   });
 
   test('mapped without sections offers Suggest sections; with sections it does not', async () => {
@@ -292,7 +341,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(b.stage.setSurface).toHaveBeenCalledWith('stems');
     rows = rowsOf(stageMenu(b.ts.session, b.stage, b.opts), b.reg);
     expect(row(rows, 'Hands & feet', 'Display').checked).toBe(true);
-    expect(row(rows, 'Page', 'Follow')).toBeUndefined();   // Follow is the Chart's; Stems now shows
+    expect(row(rows, 'Page', 'Follow')).toBeUndefined();   // Follow is the Chart's and the Road map's; Stems now shows
     expect(row(rows, 'Kit', 'Distance').checked).toBe(true);
     expect(row(rows, 'Stems', 'View').checked).toBe(true);
   });
