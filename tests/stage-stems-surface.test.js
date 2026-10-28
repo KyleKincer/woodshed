@@ -15,7 +15,7 @@ import {clock as appClock} from '../src/app/clock.js';
 import {signal} from '../src/app/store.js';
 import {clearHatchCache} from '../src/stage/wave-render.js';
 import {
-  COMMAND_IDS, CONTROLS, COPY, FOLLOW_LINE, GRID_MIN_PX, MIN_SPAN, SCOPE, ZOOM_SAVE_MS,
+  COMMAND_IDS, CONTROLS, COPY, FOLLOW_IDLE_MS, FOLLOW_LINE, GRID_MIN_PX, MIN_SPAN, SCOPE, ZOOM_SAVE_MS,
   clampView, createStemsSurface, defineStemsCommands, loopView, rowState, rowWord, rulerMarks, stemsCommandDefs, timeLabel, zoomView,
 } from '../src/stage/surfaces/stems-surface.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
@@ -86,9 +86,10 @@ const laptop = () => ({isIPad: false, coarse: signal(false)});
 const ipad = () => ({isIPad: true, coarse: signal(true)});
 
 /** A session, an isolated registry, and a mounted surface with a measured lanes box. */
-async function bed({prefs = fakePrefs(), platform = laptop(), stage = null, dispatcher = false, ...options} = {}) {
+async function bed({prefs = fakePrefs(), platform = laptop(), stage = null, dispatcher = false, beforeMount = null, ...options} = {}) {
   const ts = await createTestSession({clock, ...options});
   const reg = createRegistry();
+  beforeMount?.(reg);
   reg.provide('session', () => ts.session);
   reg.provide('transport', () => ts.session.transport);
   const host = document.createElement('div');
@@ -339,10 +340,18 @@ describe('drawing', () => {
 });
 
 describe('the pointer model', () => {
-  test('a mouse click activates a tap at the snapped time (bars with Snap on), even while playing', async () => {
+  test('a mouse click activates a tap at the nearest beat (Snap on, spec §4.9), even while playing', async () => {
     const b = await bed();
     mouseClick(b.lanes, b.xOf(64.6));
-    expect(b.activations.at(-1)).toMatchObject({kind: 'tap', pointerType: 'mouse', t: 64, beatTime: 64, bar: 33});
+    expect(b.activations.at(-1)).toMatchObject({kind: 'tap', pointerType: 'mouse', t: 64.5, beatTime: 64.5, bar: 33});
+    // A finer grid (¼ of a beat) is the tap's division; Bar or Off grids still cue to beats.
+    b.prefs.set('stems.grid', 'quarter');
+    mouseClick(b.lanes, b.xOf(64.6));
+    expect(b.activations.at(-1).t).toBeCloseTo(64.625, 6);
+    b.prefs.set('stems.grid', 'off');
+    mouseClick(b.lanes, b.xOf(65.3));
+    expect(b.activations.at(-1).t).toBe(65.5);
+    b.prefs.set('stems.grid', 'bar');
     b.prefs.set('stems.snap', false);
     mouseClick(b.lanes, b.xOf(64.64));
     expect(b.activations.at(-1).t).toBeCloseTo(64.64, 1);
@@ -392,6 +401,21 @@ describe('the pointer model', () => {
     expect(b.edits).toHaveLength(0);
     b.lanes.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: b.xOf(20), clientY: TOP + 50, button: 2, detail: 1}));
     expect(b.activations.at(-1)).toMatchObject({kind: 'context', bar: 11});
+  });
+
+  test('the bar menu acts on the bar under the pointer: right-click and long-press late in bar 11 report bar 11', async () => {
+    const b = await bed();
+    b.lanes.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: b.xOf(21.8), clientY: TOP + 50, button: 2, detail: 1}));
+    expect(b.activations.at(-1).kind).toBe('context');
+    expect(b.activations.at(-1).bar).toBe(11);
+    expect(b.activations.at(-1).t).toBeCloseTo(21.8, 1);
+    expect(b.activations.at(-1).t).toBeLessThan(22);
+    pointer(b.lanes, 'pointerdown', {x: b.xOf(21.8), y: TOP + 50, pointerType: 'touch', pointerId: 9});
+    vi.advanceTimersByTime(360);
+    pointer(b.lanes, 'pointerup', {x: b.xOf(21.8), y: TOP + 50, pointerType: 'touch', pointerId: 9});
+    expect(b.activations.at(-1).kind).toBe('long');
+    expect(b.activations.at(-1).bar).toBe(11);
+    expect(b.activations.at(-1).t).toBeLessThan(22);
   });
 
   test('loop handles drag an edge (resize) and the band (move) with the mouse', async () => {
@@ -513,6 +537,96 @@ describe('Follow, the viewport and the zoom pref', () => {
     await b.ts.play();
     expect(b.surface.following).toBe(true);
     expect(b.follows).toEqual([false, true]);
+  });
+
+  test('Play after Pause resumes a paused Follow', async () => {
+    const b = await bed({prefs: fakePrefs({zoom: 16})});
+    await b.ts.play();
+    b.surface.frame({position: 1, playing: true});
+    wheel(b.lanes, {deltaX: 300, clientX: b.xOf(5)});
+    expect(b.surface.following).toBe(false);
+    b.ts.session.transport.pause();
+    await settle();
+    b.surface.frame({position: 1, playing: false});
+    await b.ts.play();
+    await settle();
+    expect(b.surface.following).toBe(true);
+  });
+
+  test('Again while playing resumes a paused Follow (the transport gesture)', async () => {
+    const b = await bed({prefs: fakePrefs({zoom: 16})});
+    await b.ts.play();
+    b.surface.frame({position: 1, playing: true});
+    wheel(b.lanes, {deltaX: 300, clientX: b.xOf(5)});
+    expect(b.surface.following).toBe(false);
+    await b.ts.session.transport.again();
+    await settle();
+    expect(b.surface.following).toBe(true);
+    expect(b.follows).toEqual([false, true]);
+  });
+
+  test('a paused Follow resumes after 8 s without navigation; each navigation restarts the wait', async () => {
+    const b = await bed({prefs: fakePrefs({zoom: 16})});
+    await b.ts.play();
+    b.surface.frame({position: 1, playing: true});
+    wheel(b.lanes, {deltaX: 300, clientX: b.xOf(5)});
+    expect(b.surface.following).toBe(false);
+    vi.advanceTimersByTime(FOLLOW_IDLE_MS - 1000);
+    wheel(b.lanes, {deltaX: 300, clientX: b.xOf(5)});
+    vi.advanceTimersByTime(FOLLOW_IDLE_MS - 1000);
+    expect(b.surface.following).toBe(false);
+    vi.advanceTimersByTime(1000);
+    expect(b.surface.following).toBe(true);
+    expect(b.follows).toEqual([false, true]);
+    expect(b.root.querySelector('[data-follow-pill]').hidden).toBe(true);
+  });
+
+  test('the pill shows only while playing: Pause hides it, Stop clears the paused Follow', async () => {
+    const b = await bed({prefs: fakePrefs({zoom: 16})});
+    await b.ts.play();
+    b.surface.frame({position: 1, playing: true});
+    wheel(b.lanes, {deltaX: 300, clientX: b.xOf(5)});
+    const pill = b.root.querySelector('[data-follow-pill]');
+    expect(pill.hidden).toBe(false);
+    b.ts.session.transport.pause();
+    await settle();
+    b.surface.setGlass(false);
+    b.surface.frame({position: 1, playing: false});
+    expect(pill.hidden).toBe(true);
+    b.ts.session.transport.stop();
+    await settle();
+    expect(b.surface.following).toBe(true);
+    expect(b.follows).toEqual([false, true]);
+    expect(pill.hidden).toBe(true);
+  });
+
+  test('navigation that does not move the window (zoom out at Fit, pan at an end) leaves Follow on', async () => {
+    const b = await bed();
+    await b.ts.play();
+    b.surface.frame({position: 0, playing: true});
+    wheel(b.lanes, {deltaY: 100, clientX: b.xOf(10)});
+    expect(b.surface.view).toMatchObject({t0: 0, t1: DURATION});
+    expect(b.surface.following).toBe(true);
+    wheel(b.lanes, {deltaY: -400, clientX: b.xOf(0)});   // zoom in at the start: moves, pauses
+    expect(b.surface.following).toBe(false);
+    b.surface.setFollow(true);
+    expect(b.surface.view.t0).toBe(0);
+    wheel(b.lanes, {deltaX: -300, clientX: b.xOf(5)});   // pan left at the start: nothing moves
+    expect(b.surface.following).toBe(true);
+  });
+
+  test('in the Stage the pill runs view.followResume', async () => {
+    const runs = [];
+    const b = await bed({beforeMount: (reg) => reg.register({id: 'view.followResume', title: 'Back to playhead', group: 'View',
+      scopes: ['stage'], run: () => runs.push('resume')})});
+    await b.ts.play();
+    b.surface.frame({position: 0, playing: true});
+    wheel(b.lanes, {deltaY: -100, clientX: b.xOf(10)});
+    expect(b.surface.following).toBe(false);
+    const pill = b.root.querySelector('[data-follow-pill]');
+    expect(pill.hidden).toBe(false);
+    pill.click();
+    expect(runs).toEqual(['resume']);
   });
 
   test('viewport: the visible window for the strip bracket; dragging the bracket moves the window', async () => {

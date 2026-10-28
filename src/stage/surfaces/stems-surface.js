@@ -18,7 +18,9 @@
 // Rows (canonical stem order, so row N is key N): a header of 168 px (laptop) or 128 px (iPad,
 // or any coarse pointer) with the colour bar, the name (16/700), the key-cap, the OUT / SOLO word,
 // [M] [S] (32 px fine, 44 coarse) and, on a laptop, a 120 px fader with its % value (on the iPad
-// the fader lives in the Mix sheet). The waveforms are one canvas (wave-render.js drawRows):
+// the fader lives in the Mix sheet). Laptop lines: name · word · key / M S … % / fader (spec §10.7
+// "1 ▌Drums OUT"); iPad lines: name · key / M S, then the word (it wraps under M S when the 44 px
+// buttons leave no room in the 128 px header). The waveforms are one canvas (wave-render.js drawRows):
 // muted rows as an outline with a 45° hatch (never opacity), soloed rows full, the others as
 // outlines while anything is soloed. Grid lines (drawGrid): beats at 8% --ink, bars at 18%, each
 // kind only when its lines are ≥ 6 px apart.
@@ -32,9 +34,15 @@
 //           pill, no loop drags (glass).
 //   wheel   as 1.9 (timeline-navigation.js wheelNavigation): vertical zooms at the cursor,
 //           horizontal or Shift pans, ⌘/Ctrl or a trackpad pinch zooms.
-// Manual navigation while playing (wheel, two-finger pan, pinch, the strip's viewport bracket)
-// pauses Follow and the Stage shows "⤓ Back to playhead" (onFollowChange(false)); the next Play,
-// Back to playhead (setFollow(true)) or F resumes it.
+// Manual navigation that moves the window while playing (wheel, two-finger pan, pinch, the strip's
+// viewport bracket) pauses Follow and shows "⤓ Back to playhead" (view.followResume) while the
+// transport plays (onFollowChange(false)). It resumes after FOLLOW_IDLE_MS without navigation, on
+// Play / Again / Play from (the transport's 'gesture'), on the pill or F; a Stop clears it (spec §4.9).
+//
+// Taps cue to the nearest beat when mapped (spec §4.9), or to a finer grid division (½, ¼) with
+// Snap on; Snap off or Shift gives the exact time. Loop drags snap to the grid division (bars when
+// the grid is off). Right-click and long-press (the bar menu) report the time under the pointer
+// and the bar that contains it, never a snapped neighbour.
 //
 // Device prefs (prefs.stems): grid, snap, follow and zoom (the visible seconds, null = Fit),
 // restored when the surface opens. While the surface is shown the dispatcher's surface scope is
@@ -50,7 +58,7 @@ import {effect, signal, untracked} from '../../app/store.js';
 import {h} from '../../ui/h.js';
 import {Button, IconButton} from '../../ui/button.js';
 import {Toggle} from '../../ui/toggle.js';
-import {Fader} from '../../ui/fader.js';
+import {Fader, percent} from '../../ui/fader.js';
 import {Kbd} from '../../ui/kbd.js';
 import {Menu} from '../../ui/menu.js';
 import {stemColor} from '../../ui/stem-pad.js';
@@ -88,6 +96,10 @@ export const HEADER_PX = Object.freeze({laptop: 168, ipad: 128});
 export const RULER_MIN_PX = Object.freeze({bar: 40, time: 64});
 /** The zoom pref is written this long after the last zoom (wheel and pinch fire many). */
 export const ZOOM_SAVE_MS = 300;
+/** A paused Follow resumes after this long without manual navigation while playing (spec §4.9). */
+export const FOLLOW_IDLE_MS = 8000;
+/** The registry command the Follow pill runs (architecture §3: '⤓ Back to playhead' pill). */
+export const FOLLOW_RESUME_COMMAND = 'view.followResume';
 /** Grid divisions in toolbar order. */
 export const GRID_CHOICES = Object.freeze(['off', 'bar', 'beat', 'half', 'quarter']);
 const TIME_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
@@ -141,7 +153,7 @@ export const CONTROLS = Object.freeze([
   Object.freeze({role: 'button', name: COPY.mute('Drums'), context: 'row'}),
   Object.freeze({role: 'button', name: COPY.solo('Drums'), context: 'row'}),
   Object.freeze({role: 'slider', name: COPY.level('Drums'), context: 'laptop'}),
-  Object.freeze({role: 'button', name: COPY.backToPlayhead, context: 'paused'}),
+  Object.freeze({role: 'button', name: COPY.backToPlayhead, command: FOLLOW_RESUME_COMMAND, context: 'paused'}),
 ]);
 
 // ------------------------------------------------------------------ pure helpers
@@ -331,6 +343,7 @@ export function createStemsSurface(host, opts = {}) {
   let view = {t0: 0, span: 0};
   let width = 0, height = 0;
   let zoomTimer = null;
+  let idleTimer = null;
   let zoomDirty = false;
   const viewport = signal(null);
 
@@ -377,10 +390,15 @@ export function createStemsSurface(host, opts = {}) {
   }));
   const snapToggle = keep(Toggle({label: COPY.snap, icon: 'magnet', command: COMMAND_IDS.snap, size: 'sm', variant: 'quiet', registry}));
   const followToggle = keep(Toggle({label: COPY.follow, icon: 'arrow-down-to-line', command: COMMAND_IDS.follow, size: 'sm', variant: 'quiet', registry}));
+  followToggle.el.classList.add('stems-follow');   // right-aligned (spec §10.7)
   toolbar.append(zoomGroup, zoomLoopButton.el, gridButton.el, snapToggle.el, followToggle.el);
-  // The Follow pill (56 px, bottom centre) while manual navigation has paused Follow.
+  // The Follow pill (56 px, bottom centre) while manual navigation has paused Follow. In the Stage it
+  // runs view.followResume (stage.resumeFollow → setFollow(true)); a bare mount resumes directly.
+  const pillAction = registry.get?.(FOLLOW_RESUME_COMMAND)
+    ? {command: 'view.followResume', registry}
+    : {onClick: () => resumeFollow()};
   const pill = keep(Button({label: COPY.backToPlayhead, icon: 'arrow-down-to-line', variant: 'primary', className: 'stems-pill',
-    dataset: {followPill: ''}, onClick: () => resumeFollow()}));
+    dataset: {followPill: ''}, ...pillAction}));
   pill.el.hidden = true;
   pillHost.append(pill.el);
 
@@ -392,7 +410,8 @@ export function createStemsSurface(host, opts = {}) {
     root.dataset.grid = grid;
     root.toggleAttribute('data-snap', snapOn);
     root.toggleAttribute('data-follow', followOn && !followPaused);
-    pill.el.hidden = !(followOn && followPaused);
+    // Only while the transport plays (spec §4.9's Playing columns).
+    pill.el.hidden = !(followOn && followPaused && playing);
   }
 
   function openGridMenu() {
@@ -427,14 +446,34 @@ export function createStemsSurface(host, opts = {}) {
   function notifyFollow() {
     try { opts.onFollowChange?.(!followPaused); } catch (err) { console.error('[stems] onFollowChange failed', err); }
   }
+  function clearIdle() { clearTimeout(idleTimer); idleTimer = null; }
+  /** (Re)starts the idle timer: FOLLOW_IDLE_MS without navigation while playing resumes Follow. */
+  function armIdle() {
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      if (!destroyed && playing && followOn && followPaused) resumeFollow();
+    }, FOLLOW_IDLE_MS);
+  }
   /** Manual navigation while playing pauses Follow (the Stage shows "Back to playhead"). */
   function pauseFollow() {
-    if (!followOn || followPaused || !playing) return;
+    if (!followOn || !playing) return;
+    armIdle();
+    if (followPaused) return;
     followPaused = true;
     notifyFollow();
     changed({draw: false});
   }
+  /** A Stop ends a paused Follow (the pill goes; the next Play follows anyway). */
+  function clearPausedFollow() {
+    clearIdle();
+    if (!followPaused) return;
+    followPaused = false;
+    notifyFollow();
+    changed({draw: false});
+  }
   function resumeFollow({notify = true} = {}) {
+    clearIdle();
     const was = followPaused;
     followPaused = false;
     if (was && notify) notifyFollow();
@@ -450,6 +489,17 @@ export function createStemsSurface(host, opts = {}) {
     changed({draw: false});
   }
 
+  /**
+   * A tap's or double-tap's division (spec §4.9: the nearest beat when mapped): beats, or the grid's
+   * ½ / ¼ when finer, with Snap on; the exact time with Snap off or Shift; Alt is beats.
+   */
+  function tapDivision({alt = false, shift = false} = {}) {
+    if (shift) return null;
+    if (!mapped()) return snapOn ? 'bar' : null;
+    if (alt) return 'beat';
+    if (!snapOn) return null;
+    return grid === 'half' || grid === 'quarter' ? grid : 'beat';
+  }
   /** The snap division (null: no snapping). Shift never snaps; Alt snaps to beats (mapped). */
   function snapDivision({alt = false, shift = false} = {}) {
     if (shift) return null;
@@ -459,7 +509,7 @@ export function createStemsSurface(host, opts = {}) {
     return grid === 'off' ? 'bar' : grid;
   }
   function snapAt(t, mods = {}) {
-    const division = snapDivision(mods);
+    const division = mods.division !== undefined ? mods.division : snapDivision(mods);
     if (!division || !finite(t)) return t;
     try {
       return clamp(snapTime(mapped() ? map : null, t, division, {mode: mods.mode ?? 'nearest'}), 0, duration());
@@ -487,9 +537,10 @@ export function createStemsSurface(host, opts = {}) {
   function setView(next, {manual = false, zoom = false} = {}) {
     const v = clampView(next, duration());
     const same = Math.abs(v.t0 - view.t0) < EPS && Math.abs(v.span - view.span) < EPS;
-    if (manual) pauseFollow();
     if (zoom && Math.abs(v.span - view.span) > EPS) saveZoomSoon();
     if (same) return false;
+    // Only navigation that moves the window pauses Follow (zooming out at Fit or panning at an end does not).
+    if (manual) pauseFollow();
     view = v;
     writeViewport();
     scheduleDraw();
@@ -573,19 +624,35 @@ export function createStemsSurface(host, opts = {}) {
       pressed: false, onClick: () => { const t = trackOf(track.name); if (t) transport.setMuted(track.name, !t.muted); }});
     const solo = Button({label: COPY.soloShort, size: 'sm', variant: 'secondary', className: 'stems-ms', attrs: {'aria-label': COPY.solo(label)},
       pressed: false, onClick: () => { const t = trackOf(track.name); if (t) transport.setSoloed(track.name, !t.soloed); }});
+    // The fader's % is shown beside M S (the 120 px control fills the third line); the slider
+    // still announces it (aria-valuetext).
+    const level = h('span', {class: 'stems-level', 'aria-hidden': 'true'});
+    const showLevel = (v) => { level.textContent = percent(v); };
     const fader = Fader({label: COPY.level(label), value: finite(track.volume) ? track.volume : 1, variant: 'inline', className: 'stems-fader',
-      onInput: (v) => transport.setVolume(track.name, v), onChange: (v) => transport.setVolume(track.name, v)});
-    const line1 = h('div', {class: 'stems-head-line'}, name, kbdHost);
-    const line2 = h('div', {class: 'stems-head-line'}, mute.el, solo.el, word);
+      showValue: false,
+      onInput: (v) => { showLevel(v); transport.setVolume(track.name, v); },
+      onChange: (v) => { showLevel(v); transport.setVolume(track.name, v); }});
+    showLevel(fader.value);
+    const line1 = h('div', {class: 'stems-head-line stems-head-title'}, name, kbdHost);
+    const line2 = h('div', {class: 'stems-head-line stems-head-buttons'}, mute.el, solo.el, level);
     const line3 = h('div', {class: 'stems-head-line stems-head-level'}, fader.el);
     const head = h('div', {class: 'stems-head', role: 'listitem'},
       h('div', {class: 'stems-head-body', role: 'group', attrs: {'aria-label': label}}, color, line1, line2, line3));
     const lane = h('div', {class: 'stems-lane', 'aria-hidden': 'true'});
     // The laptop fader; on an iPad (or any coarse pointer) the level lives in the Mix sheet.
-    line3.hidden = compact();
-    const row = {name: track.name, head, lane, word, mute, solo, fader, kbdHost, kbd: null, index: -1, line3};
+    const row = {name: track.name, head, lane, word, mute, solo, fader, level, showLevel, kbdHost, kbd: null, index: -1, line1, line2, line3};
+    placeRowParts(row);
     updateRow(row, track, index, false);
     return row;
+  }
+
+  /** Laptop: the word on the name line and the % beside M S; compact: the word after M S, no fader. */
+  function placeRowParts(row) {
+    const small = compact();
+    row.line3.hidden = small;
+    row.level.hidden = small;
+    if (small) { if (row.word.parentNode !== row.line2) row.line2.append(row.word); }
+    else if (row.word.parentNode !== row.line1) row.line1.insertBefore(row.word, row.kbdHost);
   }
 
   function updateRow(row, track, index, anySolo) {
@@ -607,7 +674,10 @@ export function createStemsSurface(host, opts = {}) {
     row.word.textContent = rowWord(track, anySolo);
     row.mute.set({pressed: !!track.muted});
     row.solo.set({pressed: !!track.soloed});
-    if (!row.fader.dragging && finite(track.volume) && Math.abs(row.fader.value - track.volume) > 1e-4) row.fader.set({value: track.volume});
+    if (!row.fader.dragging && finite(track.volume) && Math.abs(row.fader.value - track.volume) > 1e-4) {
+      row.fader.set({value: track.volume});
+      row.showLevel(row.fader.value);
+    }
   }
 
   const trackOf = (name) => tracks().find((t) => t.name === name) ?? null;
@@ -758,10 +828,15 @@ export function createStemsSurface(host, opts = {}) {
   }
 
   // ---------------------------------------------------------------- gestures
-  /** A gesture at a client point: the time, the snapped time and the bar there. */
-  function hit(e) {
+  /**
+   * A gesture at a client point. Taps and double-taps: the time snapped by tapDivision (beatTime is
+   * the same, so the Stage does not snap again). The bar menu ('context', 'long'): the time under
+   * the pointer and the bar containing it (Loop this bar loops that bar, not the nearest bar line's).
+   */
+  function hit(e, kind) {
     const raw = clientToT(e.clientX);
-    const t = snapAt(raw, {alt: e.altKey, shift: e.shiftKey});
+    const menu = kind === 'context' || kind === 'long';
+    const t = menu ? raw : snapAt(raw, {alt: e.altKey, shift: e.shiftKey, division: tapDivision({alt: e.altKey, shift: e.shiftKey})});
     const out = {t, beatTime: t, pointerType: e.pointerType || 'touch', clientX: e.clientX, clientY: e.clientY};
     if (mapped()) {
       const bar = map.bars[map.barIndexAt(t)];
@@ -770,7 +845,7 @@ export function createStemsSurface(host, opts = {}) {
     return out;
   }
   const activate = (kind, e) => {
-    try { opts.onActivate?.({kind, ...hit(e)}); } catch (err) { console.error('[stems] onActivate failed', err); }
+    try { opts.onActivate?.({kind, ...hit(e, kind)}); } catch (err) { console.error('[stems] onActivate failed', err); }
   };
 
   /** A new loop dragged from `from` (time): previewed on the handles, committed on release. */
@@ -937,7 +1012,7 @@ export function createStemsSurface(host, opts = {}) {
   function applyCompact() {
     root.toggleAttribute('data-compact', compact());
     root.toggleAttribute('data-coarse', coarse());
-    for (const row of rows.values()) row.line3.hidden = compact();
+    for (const row of rows.values()) placeRowParts(row);
     root.dataset.layout = stage?.layout?.peek?.() ?? opts.layout ?? '';
   }
   applyCompact();
@@ -954,11 +1029,19 @@ export function createStemsSurface(host, opts = {}) {
     root.dataset.phase = s.phase ?? 'stopped';
     renderRows();
     const isPlaying = s.phase === 'playing' || s.phase === 'counting';
-    // A new Play resumes a paused Follow (the user asked to hear it from somewhere).
-    if (isPlaying && !(lastPhase === 'playing' || lastPhase === 'counting' || lastPhase === 'paused') && followPaused) resumeFollow();
+    // A Play (also from Pause) resumes a paused Follow; a Stop clears it. Again and Play from while
+    // playing keep the phase: the transport's 'gesture' event below covers them.
+    if (isPlaying && !(lastPhase === 'playing' || lastPhase === 'counting') && followPaused) resumeFollow();
+    else if (s.phase === 'stopped' && followPaused) clearPausedFollow();
     lastPhase = s.phase;
     placeLines();
     scheduleDraw();
+  }
+
+  // Play, Again, Play from and an armed Play (spec §4.9: Follow resumes on Play/Again).
+  if (typeof transport.on === 'function') {
+    const offGesture = transport.on('gesture', () => { if (!destroyed && followPaused) resumeFollow(); });
+    if (typeof offGesture === 'function') offs.push(offGesture);
   }
 
   // The map (grid, ruler, snapping), the load (duration, peaks).
@@ -1027,7 +1110,7 @@ export function createStemsSurface(host, opts = {}) {
       if (destroyed || !f) return;
       const pos = finite(f.position) ? f.position : position();
       const isPlaying = !!(f.playing || f.counting);
-      if (isPlaying !== playing) { playing = isPlaying; root.toggleAttribute('data-playing', playing); handles.update(); }
+      if (isPlaying !== playing) { playing = isPlaying; root.toggleAttribute('data-playing', playing); handles.update(); renderToolbar(); }
       if (playing && followOn && !followPaused && view.span > 0 && (pos < view.t0 || pos > view.t0 + view.span * FOLLOW_EDGE)) {
         if (setView({t0: pos - view.span * FOLLOW_LINE, span: view.span})) {
           if (drawQueued != null) { caf(drawQueued); drawQueued = null; }
@@ -1045,8 +1128,10 @@ export function createStemsSurface(host, opts = {}) {
       playing = !!on;
       root.toggleAttribute('data-playing', playing);
       handles.update();
+      renderToolbar();
     },
     setFollow(on) {
+      clearIdle();
       if (on) resumeFollow({notify: false});
       else if (followOn && !followPaused) { followPaused = true; changed({draw: false}); }
     },
@@ -1068,6 +1153,7 @@ export function createStemsSurface(host, opts = {}) {
       if (destroyed) return;
       destroyed = true;
       saveZoom();
+      clearIdle();
       if (drawQueued != null) { caf(drawQueued); drawQueued = null; }
       gridMenu?.close?.();
       endDrag({commit: false});

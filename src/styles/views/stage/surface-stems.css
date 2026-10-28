@@ -41,6 +41,8 @@
   }
   .stems-toolbar::-webkit-scrollbar { display: none; }
   .stems-toolbar > * { flex: none; }
+  /* Follow sits at the far end (spec §10.7: "… Snap ● (⇧S)   …   Follow ●"). */
+  .stems-toolbar > .stems-follow { margin-inline-start: auto; }
 
   .stems-tool-group {
     display: inline-flex;
@@ -151,6 +153,8 @@
   }
   .stems-head[data-state=out] .stems-name { color: var(--ink-2); }
   .stems-key { flex: none; display: inline-flex; }
+  /* iPad: the 44 px M S leave no room for the word in a 128 px header, so it wraps under them. */
+  .stems-head-buttons { flex-wrap: wrap; row-gap: var(--s1); }
 
   .ui-button.stems-ms {
     width: var(--h-sm);
@@ -160,6 +164,7 @@
   }
 
   .stems-word {
+    flex: none;
     margin-inline-start: var(--s1);
     font-size: 0.9375rem;   /* 15 px */
     font-weight: var(--fw-heavy);
@@ -169,21 +174,21 @@
   .stems-head[data-state=out] .stems-word { color: var(--out); text-decoration: line-through; text-decoration-thickness: 2px; }
   .stems-head[data-state=solo] .stems-word { color: var(--accent); }
 
-  /* The laptop fader (120 px with its % value); the iPad's lives in the Mix sheet. */
-  .stems-head-level .ui-fader.stems-fader {
-    gap: var(--s1);
-    width: 100%;
-    font-size: 0.9375rem;
-  }
-  .stems-head-level .stems-fader .ui-slider-control { min-width: 0; }
-  .stems-head-level .stems-fader .ui-slider-value {
+  /* The laptop fader: a 120 px control on its own line, its % value at the end of the M S line
+   * (168 px leaves no room for both on one line). The iPad's lives in the Mix sheet. */
+  .stems-head-level .ui-fader.stems-fader { width: 120px; }
+  .stems-head-level .stems-fader .ui-slider-control { flex: none; width: 120px; min-width: 120px; }
+  .stems-level {
     flex: none;
+    margin-inline-start: auto;
     min-width: 4ch;
+    font-size: 0.9375rem;   /* 15 px */
     font-variant-numeric: tabular-nums;
     text-align: end;
     color: var(--ink-2);
   }
-  .stems[data-compact] .stems-head-level { display: none; }
+  .stems[data-compact] .stems-head-level,
+  .stems[data-compact] .stems-level { display: none; }
 
   .stems-lane {
     grid-column: 2;

@@ -3,11 +3,13 @@
 //   st11-stems-rail          laptop: the 40 px toolbar, the bar ruler, four rows split equally (≥ 72 px) with
 //                            168 px headers, 32 px M/S, the 120 px fader with its %, waveforms drawn, axe
 //   st11-stems-band          iPad: 128 px headers, 44 px M/S, no fader (the Mix sheet has it), targets
-//   st11-stems-mix           drums OUT (struck through, hatched), bass SOLO (accent ring), the others outlines
+//   st11-stems-mix           drums OUT (struck through, hatched), bass SOLO (accent ring), the others outlines; every
+//                            word (and, on the laptop, the 120 px fader and its %) lies inside its header
 //   st11-stems-unmapped      times on the ruler, no Grid control, no "Bar" anywhere on the surface
 //   st11-stems-keys          = − \ Z G ⇧S F through the dispatcher ('stage.stems' scope): F is Follow, not Focus
-//   st11-stems-mouse         click cues at a bar line; a drag makes a bar-snapped loop; its edge resizes it
-//   st11-stems-wheel         playing: the wheel zooms at the cursor and pauses Follow; the 56 px pill resumes it
+//   st11-stems-mouse         click cues to the nearest beat; a drag makes a bar-snapped loop; its edge resizes it
+//   st11-stems-wheel         playing: the wheel zooms at the cursor and pauses Follow; the 56 px pill (view.followResume)
+//                            resumes it; paused again, Pause hides the pill
 //   st11-stems-follow        playing with a 16 s window: Follow pages the playhead back to 10 %
 //   st11-stems-zoom          prefs.stems.zoom: = then a reload opens at the same zoom, around the cue
 //   st11-stems-viewport      the strip's viewport bracket shows the window; dragging it moves the window
@@ -45,14 +47,17 @@ function facts() {
     ruler: box(root.querySelector('.stems-ruler')),
     lanes: box(root.querySelector('.stems-lanes')),
     heads: heads.map((el) => ({...box(el), name: el.querySelector('.stems-name').textContent, state: el.dataset.state,
-      word: el.querySelector('.stems-word').textContent, fader: box(el.querySelector('.stems-head-level:not([hidden]) .ui-slider-control')),
-      value: el.querySelector('.stems-head-level:not([hidden]) .ui-slider-value')?.textContent ?? null,
+      word: el.querySelector('.stems-word').textContent, wordBox: box(el.querySelector('.stems-word')),
+      fader: box(el.querySelector('.stems-head-level:not([hidden]) .ui-slider-control')),
+      value: (() => { const v = el.querySelector('.stems-level:not([hidden])'); return v && v.offsetParent ? v.textContent : null; })(),
+      valueBox: box(el.querySelector('.stems-level:not([hidden])')),
       ms: [...el.querySelectorAll('.stems-ms')].map(box)})),
     marks: [...root.querySelectorAll('.stems-mark')].map((m) => m.textContent),
     t0: Number(root.dataset.t0), t1: Number(root.dataset.t1),
     grid: root.querySelector('canvas').dataset.gridDrawn ?? null,
     ruler: root.dataset.ruler,
     pill: !root.querySelector('.stems-pill').hidden,
+    followBox: box(root.querySelector('.stems-follow')),
   };
 }
 
@@ -64,6 +69,9 @@ const snap = (page) => page.evaluate(() => {
 /** The client x of time t on the lanes (from the window the surface shows). */
 const xOf = (f, t) => f.lanes.x + ((t - f.t0) / (f.t1 - f.t0)) * f.lanes.w;
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+/** Box `inner` lies inside box `outer` (half a pixel of rounding). */
+const inside = (inner, outer) => !!inner && !!outer && inner.x >= outer.x - 0.5 && inner.y >= outer.y - 0.5
+  && inner.x + inner.w <= outer.x + outer.w + 0.5 && inner.y + inner.h <= outer.y + outer.h + 0.5;
 const view = (page) => page.evaluate(() => {
   const root = document.querySelector('section.stems');
   return {t0: Number(root.dataset.t0), t1: Number(root.dataset.t1)};
@@ -100,9 +108,11 @@ module.exports = [
         t.expect(near(r.w, 168, 0.5), `a 168 px header (got ${r.w})`);
         t.expect(r.h >= 72 && near(r.h, f.heads[0].h, 1), `rows split equally, ≥ 72 px (got ${r.h})`);
         t.expect(r.ms.length === 2 && r.ms.every((b) => near(b.w, 32, 0.5) && near(b.h, 32, 0.5)), `32 px M/S (got ${JSON.stringify(r.ms)})`);
-        t.expect(r.fader && r.fader.w >= 96 && r.fader.x + r.fader.w <= r.x + r.w, `the fader fits its header (got ${JSON.stringify(r.fader)})`);
-        t.expect(r.value === '100%', `the fader's % value (got ${r.value})`);
+        t.expect(r.fader && near(r.fader.w, 120, 0.5) && inside(r.fader, r), `a 120 px fader inside its header (got ${JSON.stringify(r.fader)})`);
+        t.expect(r.value === '100%' && inside(r.valueBox, r), `the fader's % value inside the header (got ${r.value} ${JSON.stringify(r.valueBox)})`);
       }
+      t.expect(f.followBox && near(f.followBox.x + f.followBox.w, f.toolbar.x + f.toolbar.w - 12, 1.5),
+        `Follow is right-aligned in the toolbar (got ${JSON.stringify(f.followBox)} in ${JSON.stringify(f.toolbar)})`);
       t.expect(near(f.t0, 0, 0.01) && near(f.t1, 128, 0.01), `opens at Fit (got ${f.t0}–${f.t1})`);
       t.expect(f.grid === 'bar', `at Fit only bar lines are drawn (got ${f.grid})`);
       const name = await page.$eval('.stems-name', (el) => {
@@ -136,6 +146,10 @@ module.exports = [
       const f = await page.evaluate(facts);
       t.expect(f.heads.map((r) => r.state).join() === 'out,solo,dim,dim', `states (got ${f.heads.map((r) => r.state)})`);
       t.expect(f.heads[0].word === 'OUT' && f.heads[1].word === 'SOLO', `words (got ${f.heads.map((r) => r.word)})`);
+      for (const r of f.heads.slice(0, 2)) {
+        t.expect(inside(r.wordBox, r), `${r.name}'s ${r.word} lies inside its header (got ${JSON.stringify(r.wordBox)} in ${JSON.stringify({x: r.x, y: r.y, w: r.w, h: r.h})})`);
+        if (r.fader) t.expect(inside(r.fader, r) && inside(r.valueBox, r), `${r.name}'s fader and % lie inside its header`);
+      }
       const looks = await page.evaluate(() => {
         const [drums, bass] = document.querySelectorAll('.stems-head');
         const probe = document.createElement('span');
@@ -205,7 +219,8 @@ module.exports = [
       let f = await page.evaluate(facts);
       const y = f.lanes.y + 60;
       await page.mouse.click(xOf(f, 64.6), y);
-      await page.waitForFunction(() => window.__stems.session.transport.snapshot.peek().cue === 64);
+      // Snap on, Grid: Bar: a click cues to the nearest beat (spec §4.9), not to the bar line.
+      await page.waitForFunction(() => window.__stems.session.transport.snapshot.peek().cue === 64.5);
       // A drag makes a loop, snapped out to the bars it touches.
       await page.mouse.move(xOf(f, 17), y);
       await page.mouse.down();
@@ -253,6 +268,15 @@ module.exports = [
       t.expect(near(centre, f.root.x + f.root.w / 2, 2), `bottom centre (got ${centre} in ${JSON.stringify(f.root)})`);
       await t.capture('paused');
       await pill.click();
+      await page.waitForFunction(() => document.querySelector('section.stems .stems-pill').hidden);
+      // The pill ran view.followResume: the Stage follows again, so the command is off.
+      const resume = await page.evaluate(() => window.__stems.registry.state('view.followResume')?.enabled ?? null);
+      t.expect(resume === false, `view.followResume is done (enabled: ${resume})`);
+      // Paused again, then the transport pauses: the pill is only for the Playing columns (spec §4.9).
+      await page.mouse.wheel(0, -200);
+      await page.waitForFunction(() => !document.querySelector('section.stems .stems-pill').hidden);
+      await page.evaluate(() => window.__stems.session.transport.pause());
+      await t.transportPhase('paused');
       await page.waitForFunction(() => document.querySelector('section.stems .stems-pill').hidden);
       await stop(page, t);
     },
@@ -331,7 +355,8 @@ module.exports = [
       let f = await page.evaluate(facts);
       const y = f.lanes.y + 60;
       await touch.tap({x: xOf(f, 40.4), y});
-      await page.waitForFunction(() => window.__stems.session.transport.snapshot.peek().cue === 40);
+      // A tap cues to the nearest beat (spec §4.9).
+      await page.waitForFunction(() => window.__stems.session.transport.snapshot.peek().cue === 40.5);
       await touch.drag({x: xOf(f, 17), y}, {x: xOf(f, 47), y}, {holdMs: 450});
       await page.waitForFunction(() => window.__stems.session.transport.snapshot.peek().loop.on);
       const s = await snap(page);
