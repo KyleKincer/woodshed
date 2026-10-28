@@ -109,6 +109,23 @@ function combine(signal, timeoutMs) {
   return { combined: controller.signal, timeout };
 }
 
+/** The CompanionError for a fired request bound: the caller's abort wins over the timeout. */
+const boundError = (signal, timeout) => (signal?.aborted ? abortedError(signal) : timeoutError(timeout.reason ?? null));
+
+/**
+ * endpoint(), but this caller stops waiting when its signal or its timeout fires
+ * (the processor may take up to START_WAIT_MS to start). The shared start wait
+ * keeps running for everyone else.
+ */
+function endpointWithin(signal, { combined, timeout }) {
+  if (combined.aborted) return Promise.reject(boundError(signal, timeout));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(boundError(signal, timeout));
+    combined.addEventListener('abort', onAbort, { once: true });
+    endpoint().then(resolve, reject).finally(() => combined.removeEventListener('abort', onAbort));
+  });
+}
+
 /** A non-2xx companion answer → CompanionError with the server's code when it sent one. */
 function answerError(status, body) {
   const { error, code, ...data } = body && typeof body === 'object' ? body : {};
@@ -121,14 +138,14 @@ function answerError(status, body) {
   });
 }
 
-async function send(path, { method, body, signal, timeoutMs }) {
+async function send(path, { method, body, signal, timeoutMs, bounds }) {
   if (signal?.aborted) throw abortedError(signal);
   const blob = typeof Blob !== 'undefined' && body instanceof Blob;
   const verb = (method ?? (body === undefined ? 'GET' : 'POST')).toUpperCase();
   const withBody = body !== undefined && verb !== 'GET' && verb !== 'HEAD';
   const headers = { authorization: `Bearer ${token}` };
   if (withBody) headers['content-type'] = blob ? 'application/octet-stream' : 'application/json';
-  const { combined, timeout } = combine(signal, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const { combined, timeout } = bounds ?? combine(signal, timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let response, result;
   try {
     response = await fetch(origin + path, { method: verb, headers, body: withBody ? (blob ? body : JSON.stringify(body)) : undefined, signal: combined });
@@ -155,8 +172,10 @@ async function send(path, { method, body, signal, timeoutMs }) {
  */
 export async function request(path, { method, body, signal, timeoutMs } = {}) {
   if (signal?.aborted) throw abortedError(signal);
-  await endpoint();
-  return send(path, { method, body, signal, timeoutMs });
+  // One bound for the whole call, including any wait for the processor to start.
+  const bounds = combine(signal, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  await endpointWithin(signal, bounds);
+  return send(path, { method, body, signal, bounds });
 }
 
 /** GET /status → {name, connected, deviceId, userId, busy, …}. Needs no pairing. */
@@ -229,8 +248,10 @@ export async function searchSources(q, { n = 5, signal } = {}) {
  */
 export async function uploadXHR(file, { signal, onProgress, timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   if (signal?.aborted) throw abortedError(signal);
-  await endpoint();
+  const started = Date.now();
+  await endpointWithin(signal, combine(signal, timeoutMs));
   if (signal?.aborted) throw abortedError(signal);
+  const remaining = Math.max(1, timeoutMs - (Date.now() - started));
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const total = file?.size ?? 0;
@@ -244,7 +265,7 @@ export async function uploadXHR(file, { signal, onProgress, timeoutMs = UPLOAD_T
     const onAbort = () => { finish(reject, abortedError(signal)); xhr.abort(); };
     signal?.addEventListener('abort', onAbort, { once: true });
     xhr.open('POST', `${origin}/upload`);
-    xhr.timeout = timeoutMs;
+    xhr.timeout = remaining;
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Filename', encodeURIComponent(file?.name ?? 'upload'));

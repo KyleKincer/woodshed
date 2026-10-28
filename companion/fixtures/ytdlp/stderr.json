@@ -1,5 +1,5 @@
 {
- "$comment": "yt-dlp stderr from failed lookups, one string per case (classified by companion/lookup.mjs classifyFailure).",
+ "$comment": "yt-dlp stderr from failed lookups, one string per case (classified by companion/lookup.mjs classifyFailure). SYNTHESIZED, not recorded: built by hand from yt-dlp 2026.10.26 extractor source (no live access to YouTube, SoundCloud, Bandcamp or Spotify from the build container). Replace with a live recording at gate G6.",
  "bot_check": "WARNING: [youtube] hL7aQ2mR9sE: Signature extraction failed: Some formats may be missing\nERROR: [youtube] hL7aQ2mR9sE: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies\n",
  "bot_check_search": "ERROR: [youtube:search] harbor lights ada moreno: Sign in to confirm you're not a bot. This helps protect our community. Learn more\n",
  "age_gate": "ERROR: [youtube] Zp3kW8vYt0c: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.\n",

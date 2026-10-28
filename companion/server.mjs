@@ -243,6 +243,7 @@ server.listen(port,'127.0.0.1',()=>{
 });
 if(config.convexUrl) connect(config.convexUrl).catch(error=>console.error('Desktop processor connection:',error.message));
 async function shutdown(forUpdate = false){acceptingJobs=false;
+  lookupRoutes.abortAll();  // B4: kill yt-dlp lookups now (lookup.mjs also kills any left on exit)
   const jobId = current?.id;
   const cancellation = identity ? path.join(accountDir(), 'update-cancellation.json') : null;
   if(forUpdate && jobId && cancellation) await fs.writeFile(cancellation,JSON.stringify({jobId}));

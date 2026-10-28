@@ -3,10 +3,17 @@ from __future__ import annotations
 import json, os, pathlib, re, subprocess, sys
 
 
+# Used only when ytdlp-args.json is not shipped (a processor built without
+# `--add-data companion/ytdlp-args.json`): jobs keep working and stderr says why.
+# companion/lookup.test.mjs checks this equals the file's 'base' list.
+FALLBACK_YTDLP_ARGS = ["--js-runtimes", "node", "--remote-components", "ejs:github", "--ignore-config", "--no-playlist"]
+
+
 def _load_ytdlp_args() -> list[str]:
     """The base yt-dlp arguments, shared with companion/lookup.mjs through ytdlp-args.json.
 
-    Frozen builds carry the file next to the bundled modules (sys._MEIPASS).
+    Frozen builds carry the file next to the bundled modules (sys._MEIPASS). A missing
+    file falls back to FALLBACK_YTDLP_ARGS with a warning; an unreadable one still raises.
     """
     roots = [pathlib.Path(__file__).resolve().parent]
     if getattr(sys, "_MEIPASS", None):
@@ -18,7 +25,8 @@ def _load_ytdlp_args() -> list[str]:
             if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
                 raise RuntimeError(f"{path} has no valid 'base' argument list.")
             return args
-    raise RuntimeError("ytdlp-args.json is missing from the processor.")
+    print("Warning: ytdlp-args.json is missing from the processor; using the built-in yt-dlp arguments.", file=sys.stderr)
+    return list(FALLBACK_YTDLP_ARGS)
 
 
 YTDLP_ARGS = _load_ytdlp_args()

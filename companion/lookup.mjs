@@ -62,6 +62,7 @@ export class LookupError extends Error {
 // later will not help, so it counts as unavailable.
 export const BOT_CHECK = /not a bot|sign in to confirm(?! your age)/i;
 const UNAVAILABLE = /private video|video is private|video unavailable|is not available|available in your (?:country|region)|geo.?restrict|has been removed|members-only|account .* terminated|confirm your age|age.?restricted|premieres in|live event will begin|copyright (?:claim|grounds)/i;
+const NO_FORMATS = /requested format is not available|no video formats found/i;
 const NOT_FOUND = /unsupported url|http error 404|\b404\b.*not found|not found|does not exist|no such (?:track|video|user)/i;
 
 /** The last `ERROR:` line of a yt-dlp stderr, without its prefixes. */
@@ -75,6 +76,10 @@ export function errorLine(stderr) {
 export function classifyFailure(stderr) {
   const text = String(stderr ?? '');
   if (BOT_CHECK.test(text)) return 'bot_check';
+  // Format selection failed (n-challenge / EJS solver failure, SABR-only answers): the
+  // video exists, the lookup could not finish. LOOKUP_ARGS has --ignore-no-formats-error,
+  // so this only reaches here from an older yt-dlp or a changed args file.
+  if (NO_FORMATS.test(text)) return 'lookup_unavailable';
   if (UNAVAILABLE.test(text)) return 'unavailable';
   if (NOT_FOUND.test(text)) return 'not_found';
   return 'lookup_unavailable';
@@ -99,6 +104,31 @@ export function failureFrom(stderr, exitCode) {
 /** The yt-dlp command: frozen builds run `WOODSHED_PROCESSOR --module yt_dlp`, dev runs `python -m yt_dlp`. */
 export function ytDlpCommand({ processor, python }) {
   return processor ? { command: processor, prefix: ['--module', 'yt_dlp'] } : { command: python, prefix: ['-m', 'yt_dlp'] };
+}
+
+/**
+ * Live lookup children. yt-dlp runs in its own process group, so it would outlive the
+ * companion: every child still running when the process exits is killed (contract:
+ * the child dies with its request).
+ */
+const live = new Set();
+let exitHookInstalled = false;
+function track(child, kill) {
+  const entry = { child, kill };
+  live.add(entry);
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    process.once('exit', killAllLookupChildren);
+  }
+  return () => live.delete(entry);
+}
+
+/** Kill every running lookup child (also runs on process exit). */
+export function killAllLookupChildren() {
+  for (const entry of [...live]) {
+    live.delete(entry);
+    try { entry.kill(entry.child); } catch { /* best effort */ }
+  }
 }
 
 /** Kill a child and its descendants (yt-dlp starts node for YouTube's JS challenge). */
@@ -131,6 +161,7 @@ export function createYtDlp({ command, prefix = [], env = process.env, spawn = n
         reject(new LookupError('lookup_unavailable', 'The processor could not start a lookup.', { detail: error.message }));
         return;
       }
+      const untrack = track(child, kill);
       const out = [];
       let outBytes = 0, stderr = '', settled = false;
       const finish = (fn, value) => {
@@ -139,6 +170,7 @@ export function createYtDlp({ command, prefix = [], env = process.env, spawn = n
         signal?.removeEventListener('abort', onAbort);
         fn(value);
       };
+      child.on('exit', untrack);
       const onAbort = () => { kill(child); finish(reject, abortError(signal)); };
       signal?.addEventListener('abort', onAbort, { once: true });
       child.stdout.on('data', chunk => {
@@ -149,8 +181,11 @@ export function createYtDlp({ command, prefix = [], env = process.env, spawn = n
         } else out.push(chunk);
       });
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8000); });
-      child.on('error', error => finish(reject, new LookupError('lookup_unavailable',
-        error.code === 'ENOENT' ? 'The processor is not installed on this computer.' : 'The processor could not start a lookup.', { detail: error.message })));
+      child.on('error', error => {
+        untrack();
+        finish(reject, new LookupError('lookup_unavailable',
+          error.code === 'ENOENT' ? 'The processor is not installed on this computer.' : 'The processor could not start a lookup.', { detail: error.message }));
+      });
       child.on('close', code => {
         if (settled) return;
         if (code !== 0) { finish(reject, failureFrom(stderr, code)); return; }
@@ -169,9 +204,13 @@ export function searchArgs(provider, query, n) {
   return [...BASE_ARGS, ...LOOKUP_ARGS, '--flat-playlist', '--', `${key}${n}:${query}`];
 }
 
-/** yt-dlp args for a full extraction of one page. */
+/**
+ * yt-dlp args for a full extraction of one page. `--flat-playlist` keeps a collection
+ * page (channel, album, user page, list-only watch URL) from resolving every entry: it
+ * comes back at once as `_type: playlist` (→ 422). A single video is extracted as before.
+ */
 export function resolveArgs(url) {
-  return [...BASE_ARGS, ...LOOKUP_ARGS, '--', url];
+  return [...BASE_ARGS, ...LOOKUP_ARGS, '--flat-playlist', '--', url];
 }
 
 // ---------------------------------------------------------------- mapping
@@ -304,6 +343,7 @@ export function parseResolveInput(raw) {
   }
   const youtube = host === 'youtube.com' || host.endsWith('.youtube.com');
   if (youtube && url.pathname === '/playlist') throw new LookupError('playlist', PLAYLIST_MESSAGE);
+  if (youtube && url.pathname === '/watch' && url.searchParams.get('list') && !url.searchParams.get('v')) throw new LookupError('playlist', PLAYLIST_MESSAGE);
   if (host === 'soundcloud.com' && /^\/[^/]+\/sets\/[^/]+/.test(url.pathname)) throw new LookupError('playlist', PLAYLIST_MESSAGE);
   return { kind: 'url', url: url.href };
 }
@@ -396,14 +436,26 @@ export function createLookup({ ytDlp, fetch = globalThis.fetch, cache = createLr
     }
   }
 
+  /**
+   * Spotify's oEmbed title (+ artist) as a search query. A bad link (4xx, or no title)
+   * is not_found; no connection, a 5xx or a 429 is lookup_unavailable, like yt-dlp's.
+   */
   async function spotifyQuery(url, signal) {
-    let body;
+    const down = detail => new LookupError('lookup_unavailable', 'Spotify could not be reached.', { detail });
+    let response;
     try {
-      const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, { signal, headers: { accept: 'application/json' } });
-      if (response.ok) body = await response.json();
-    } catch {
+      response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, { signal, headers: { accept: 'application/json' } });
+    } catch (error) {
       if (signal.aborted) throw abortError(signal);
-      body = null;
+      throw down(`Spotify oEmbed: ${error?.message ?? error}`);
+    }
+    if (response.status === 429 || response.status >= 500) throw down(`Spotify oEmbed answered ${response.status}.`);
+    let body = null;
+    if (response.ok) {
+      try { body = await response.json(); } catch (error) {
+        if (signal.aborted) throw abortError(signal);
+        throw down(`Spotify oEmbed sent unreadable data: ${error?.message ?? error}`);
+      }
     }
     const title = str(body?.title);
     if (!title) throw new LookupError('not_found', 'Could not resolve this Spotify link.');
@@ -457,11 +509,15 @@ function send(res, status, body) {
  * `handle(req, res) → Promise<boolean>`: answers /resolve and /search (true), else false.
  * The caller has already checked host, origin and the bearer token. One lookup is in
  * flight per route: a new request aborts the previous one (409 lookup_busy), and a closed
- * request kills its child.
+ * request kills its child. `handle.abortAll()` aborts every in-flight lookup (shutdown).
  */
 export function createLookupRoutes(lookup, { log = (...args) => console.error(...args) } = {}) {
   const inflight = { resolve: null, search: null };
-  return async function handle(req, res) {
+  handle.abortAll = (reason = new LookupError('aborted', 'The processor is shutting down.')) => {
+    for (const route of Object.keys(inflight)) inflight[route]?.abort(reason);
+  };
+  return handle;
+  async function handle(req, res) {
     const url = new URL(req.url, 'http://127.0.0.1');
     const route = ROUTES[url.pathname];
     if (!route) return false;
@@ -483,5 +539,5 @@ export function createLookupRoutes(lookup, { log = (...args) => console.error(..
       if (inflight[route] === controller) inflight[route] = null;
     }
     return true;
-  };
+  }
 }

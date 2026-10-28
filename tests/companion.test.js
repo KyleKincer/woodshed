@@ -160,6 +160,59 @@ describe('pairing', () => {
     expect([error.code, error.message]).toEqual(['processor_offline', 'The local processor stopped.']);
   });
 
+  // While the processor starts (up to 2 min), each caller's own signal and timeout still bound its wait.
+  function startingDesktop() {
+    const listeners = [];
+    const state = { started: false };
+    const bridge = desktop({
+      info: vi.fn(async () => (state.started ? { companion: { port: PORT, token }, processor: { phase: 'ready' } } : { companion: null, processor: { phase: 'starting' } })),
+      onProcessorState: vi.fn(cb => { listeners.push(cb); return () => listeners.splice(listeners.indexOf(cb), 1); }),
+    });
+    const ready = () => { state.started = true; for (const cb of [...listeners]) cb({ phase: 'ready' }); };
+    return { bridge, ready, listeners };
+  }
+
+  test('an abort while the processor is starting rejects at once; the start wait carries on', async () => {
+    const { ready, listeners } = startingDesktop();
+    serve({ ...defaultRoutes(), '/search': () => json(200, { query: 'harbor', provider: 'youtube', candidates: [candidate()] }) });
+    const local = await load();
+    const controller = new AbortController();
+    const pending = local.searchSources('harbor', { signal: controller.signal });
+    const other = local.status();
+    await vi.waitFor(() => expect(listeners).toHaveLength(1));
+    controller.abort();
+    const error = await pending.catch(e => e);
+    expect([error.code, error.name]).toEqual(['aborted', 'AbortError']);
+    expect(fetch).not.toHaveBeenCalled();
+    ready();
+    await expect(other).resolves.toEqual(STATUS);
+    await expect(local.searchSources('harbor')).resolves.toMatchObject({ provider: 'youtube' });
+  });
+
+  test('timeoutMs bounds the wait for a starting processor', async () => {
+    startingDesktop();
+    const local = await load();
+    const started = Date.now();
+    const error = await local.request('/status', { timeoutMs: 50 }).catch(e => e);
+    expect(error.code).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('uploadXHR: an abort while the processor is starting rejects without opening an XHR', async () => {
+    startingDesktop();
+    const opened = vi.fn();
+    vi.stubGlobal('XMLHttpRequest', class { constructor() { opened(); } });
+    const local = await load();
+    const controller = new AbortController();
+    const pending = local.uploadXHR(new Blob(['x']), { signal: controller.signal });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    controller.abort();
+    expect(await codeOf(pending)).toBe('aborted');
+    expect(await codeOf(local.uploadXHR(new Blob(['x']), { timeoutMs: 30 }))).toBe('timeout');
+    expect(opened).not.toHaveBeenCalled();
+  });
+
   test('no companion and not starting is processor_offline', async () => {
     desktop({ info: async () => ({ companion: null, processor: { phase: 'stopped' } }) });
     const local = await load();
@@ -349,7 +402,8 @@ describe('uploadXHR', () => {
     const xhr = xhrs[0];
     expect([xhr.method, xhr.url]).toEqual(['POST', `${ORIGIN}/upload`]);
     expect(xhr.headers).toEqual({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent('Harbor Lights (demo) #2.wav') });
-    expect(xhr.timeout).toBe(600_000);
+    expect(xhr.timeout).toBeLessThanOrEqual(600_000);
+    expect(xhr.timeout).toBeGreaterThan(599_000);
     xhr.progress(250, 1000);
     xhr.progress(1000, 1000);
     xhr.respond(200, { id: 'b1f0c5a2-6d3e-4f3a-9a7b-2c1d0e9f8a7b' });
@@ -374,7 +428,8 @@ describe('uploadXHR', () => {
 
     const slow = local.uploadXHR(file(), { timeoutMs: 5000 });
     await vi.waitFor(() => expect(xhrs).toHaveLength(3));
-    expect(xhrs[2].timeout).toBe(5000);
+    expect(xhrs[2].timeout).toBeLessThanOrEqual(5000);
+    expect(xhrs[2].timeout).toBeGreaterThan(4000);
     xhrs[2].dispatchEvent(new Event('timeout'));
     expect(await codeOf(slow)).toBe('timeout');
 

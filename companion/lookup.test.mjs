@@ -1,18 +1,22 @@
 // B4 lookups (architecture §6.10 CPA): flat-entry mapping, playlist rejection,
 // Spotify fallback, bot-check fallback, the LRU, the yt-dlp runner and the HTTP
-// routes, on recorded yt-dlp JSON (companion/fixtures/ytdlp/*.json).
+// routes. The yt-dlp JSON in companion/fixtures/ytdlp/*.json is SYNTHESIZED from
+// yt-dlp 2026.10.26's extractor source (each file's $comment says so), not recorded
+// live: this container's proxy blocks YouTube, SoundCloud and Spotify. A live
+// recording on a real machine replaces them at gate G6.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, copyFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   BASE_ARGS, LOOKUP_ARGS, BOT_CHECK, LookupError, STATUS,
   classifyFailure, errorLine, ytDlpCommand, createYtDlp, searchArgs, resolveArgs,
   mapFlatEntry, mapSearchResult, mapResolvedInfo, pickThumbnail, providerOf,
-  parseResolveInput, parseSearchInput, createLru, createLookup, createLookupRoutes,
+  parseResolveInput, parseSearchInput, createLru, createLookup, createLookupRoutes, killAllLookupChildren,
 } from './lookup.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -48,10 +52,13 @@ describe('shared yt-dlp arguments', () => {
   test('lookup.mjs and pipeline.py read the same ytdlp-args.json', () => {
     const file = JSON.parse(readFileSync(path.join(here, 'ytdlp-args.json'), 'utf8'));
     assert.deepEqual([...BASE_ARGS], file.base);
-    assert.deepEqual([...LOOKUP_ARGS], ['--skip-download', '--no-warnings', '--dump-single-json']);
+    assert.deepEqual([...LOOKUP_ARGS], ['--skip-download', '--ignore-no-formats-error', '--no-warnings', '--dump-single-json'],
+      'lookups need metadata only, so a missing playable format must not fail them');
     const source = readFileSync(path.join(here, 'pipeline.py'), 'utf8');
     assert.match(source, /ytdlp-args\.json/);
-    assert.doesNotMatch(source, /'--remote-components'/, 'pipeline.py must not keep its own copy of the base args');
+    const fallback = /^FALLBACK_YTDLP_ARGS = (\[.*\])$/m.exec(source);
+    assert.ok(fallback, 'pipeline.py has a one-line FALLBACK_YTDLP_ARGS');
+    assert.deepEqual(JSON.parse(fallback[1]), file.base, 'pipeline.py FALLBACK_YTDLP_ARGS must match ytdlp-args.json base');
   });
 
   test('pipeline.YTDLP_ARGS equals the shared base list', { skip: spawnSync('python3', ['--version']).status !== 0 && 'python3 not available' }, () => {
@@ -60,19 +67,31 @@ describe('shared yt-dlp arguments', () => {
     assert.deepEqual(JSON.parse(run.stdout), [...BASE_ARGS]);
   });
 
+  test('a processor built without ytdlp-args.json falls back to the built-in list and warns', { skip: spawnSync('python3', ['--version']).status !== 0 && 'python3 not available' }, () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cpa-pipeline-'));
+    try {
+      copyFileSync(path.join(here, 'pipeline.py'), path.join(dir, 'pipeline.py'));
+      const run = spawnSync('python3', ['-I', '-c', 'import sys, json; sys.path.insert(0, sys.argv[1]); import pipeline; print(json.dumps(pipeline.YTDLP_ARGS))', dir], { encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stderr);
+      assert.deepEqual(JSON.parse(run.stdout), [...BASE_ARGS]);
+      assert.match(run.stderr, /ytdlp-args\.json is missing/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   test('frozen builds run the processor module, dev runs python -m', () => {
     assert.deepEqual(ytDlpCommand({ processor: '/App/woodshed-processor', python: '/venv/python' }), { command: '/App/woodshed-processor', prefix: ['--module', 'yt_dlp'] });
     assert.deepEqual(ytDlpCommand({ processor: undefined, python: '/venv/python' }), { command: '/venv/python', prefix: ['-m', 'yt_dlp'] });
   });
 
-  test('search is one flat request; resolve is a full extraction; the target always follows --', () => {
+  test('search is one flat request; resolve extracts one page, collections flat; the target always follows --', () => {
     const yt = searchArgs('youtube', '-rf harbor lights', 5);
     assert.deepEqual(yt.slice(0, BASE_ARGS.length), [...BASE_ARGS]);
     assert.ok(yt.includes('--flat-playlist') && yt.includes('--dump-single-json') && yt.includes('--skip-download'));
     assert.deepEqual(yt.slice(-2), ['--', 'ytsearch5:-rf harbor lights']);
     assert.deepEqual(searchArgs('soundcloud', 'x', 3).slice(-1), ['scsearch3:x']);
     const one = resolveArgs('https://youtu.be/hL7aQ2mR9sE');
-    assert.ok(!one.includes('--flat-playlist'));
+    assert.ok(one.includes('--flat-playlist'), 'a collection page must come back as a flat playlist (→ 422), not resolve every entry');
+    assert.ok(one.includes('--no-playlist') && one.includes('--ignore-no-formats-error'));
     assert.deepEqual(one.slice(-2), ['--', 'https://youtu.be/hL7aQ2mR9sE']);
   });
 });
@@ -180,6 +199,8 @@ describe('failures', () => {
     for (const [name, code] of Object.entries(expected)) assert.equal(classifyFailure(STDERR[name]), code, name);
     assert.ok(BOT_CHECK.test('Sign in to confirm you’re not a bot'));
     assert.ok(!BOT_CHECK.test('Sign in to confirm your age'));
+    assert.equal(classifyFailure('ERROR: [youtube] hL7aQ2mR9sE: Requested format is not available. Use --list-formats for a list of available formats'), 'lookup_unavailable',
+      'a format-selection failure is not "this video isn’t available"');
   });
 
   test('the message is the last ERROR line without its prefixes', () => {
@@ -200,7 +221,8 @@ describe('input validation', () => {
 
   test('known playlist shapes are rejected without a lookup', () => {
     for (const url of ['https://www.youtube.com/playlist?list=PLr3b0Wp6Jq1', 'https://music.youtube.com/playlist?list=OLAK5uy', 'https://soundcloud.com/adamoreno/sets/salt-signal',
-      'https://open.spotify.com/album/1A2b3C', 'https://open.spotify.com/playlist/37i9dQZF1DX', 'spotify:playlist:37i9dQZF1DX'])
+      'https://open.spotify.com/album/1A2b3C', 'https://open.spotify.com/playlist/37i9dQZF1DX', 'spotify:playlist:37i9dQZF1DX',
+      'https://www.youtube.com/watch?list=PLr3b0Wp6Jq1', 'https://music.youtube.com/watch?list=OLAK5uy&index=2'])
       assert.throws(() => parseResolveInput(url), e => e.code === 'playlist' && e.status === 422, url);
   });
 
@@ -334,15 +356,30 @@ describe('lookups', () => {
     assert.equal(target(calls[0]), 'ytsearch5:Harbor Lights');
   });
 
-  test('Spotify: an oEmbed failure is 404 not_found; a Spotify playlist never fetches', async () => {
+  test('Spotify: a bad link is 404 not_found; a Spotify playlist never fetches', async () => {
     const { ytDlp, calls } = scriptedYtDlp({});
-    for (const fetch of [async () => ({ ok: false, status: 404, json: async () => ({}) }), async () => { throw new TypeError('fetch failed'); }, async () => ({ ok: true, json: async () => ({ type: 'rich' }) })]) {
+    for (const fetch of [async () => ({ ok: false, status: 404, json: async () => ({}) }), async () => ({ ok: false, status: 400, json: async () => ({}) }), async () => ({ ok: true, status: 200, json: async () => ({ type: 'rich' }) })]) {
       await assert.rejects(createLookup({ ytDlp, fetch }).resolve('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC'),
         e => e.code === 'not_found' && e.status === 404 && e.message === 'Could not resolve this Spotify link.');
     }
     let fetched = false;
     await rejectsCode(createLookup({ ytDlp, fetch: async () => { fetched = true; } }).resolve('https://open.spotify.com/playlist/37i9dQZF1DX'), 'playlist');
     assert.equal(fetched, false);
+    assert.equal(calls.length, 0);
+  });
+
+  test('Spotify: no connection, a 5xx, a 429 or unreadable data is 502 lookup_unavailable, not a bad link', async () => {
+    const { ytDlp, calls } = scriptedYtDlp({});
+    const answers = [
+      async () => { throw new TypeError('fetch failed'); },
+      async () => ({ ok: false, status: 503, json: async () => ({}) }),
+      async () => ({ ok: false, status: 429, json: async () => ({}) }),
+      async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } }),
+    ];
+    for (const fetch of answers) {
+      await assert.rejects(createLookup({ ytDlp, fetch }).resolve('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC'),
+        e => e.code === 'lookup_unavailable' && e.status === 502 && typeof e.detail === 'string' && e.detail.length > 0);
+    }
     assert.equal(calls.length, 0);
   });
 
@@ -433,6 +470,36 @@ describe('the yt-dlp runner (real child processes)', () => {
     const { ytDlp, children } = runner('ok');
     await rejectsCode(ytDlp(['x'], { signal: AbortSignal.abort() }), 'aborted');
     assert.equal(children.length, 0);
+  });
+
+  test('children still running when the companion exits are killed', { skip: process.platform === 'win32' && 'POSIX process groups' }, async () => {
+    const lookupUrl = new URL('./lookup.mjs', import.meta.url).href;
+    const parent = `
+      import { createYtDlp } from ${JSON.stringify(lookupUrl)};
+      const ytDlp = createYtDlp({ command: process.execPath, prefix: ['-e', 'setInterval(() => {}, 1000)', '--'],
+        spawn: (cmd, args, opts) => { const child = (globalThis.spawnImpl)(cmd, args, opts); process.stdout.write(child.pid + '\\n'); return child; } });
+      ytDlp(['x']).catch(() => {});
+      setTimeout(() => process.exit(0), 200);
+    `;
+    const prelude = `import { spawn } from 'node:child_process'; globalThis.spawnImpl = spawn;`;
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', prelude + parent], { encoding: 'utf8', timeout: 10_000 });
+    assert.equal(run.status, 0, run.stderr);
+    const pid = Number(run.stdout.trim());
+    assert.ok(pid > 0, run.stdout);
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    for (let i = 0; i < 100 && alive(); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    if (alive()) process.kill(-pid, 'SIGKILL');
+    assert.equal(alive(), false, 'the orphaned yt-dlp child must die with the companion');
+  });
+
+  test('killAllLookupChildren kills every running child', async () => {
+    const { ytDlp, children } = runner('hang');
+    const pending = [ytDlp(['a']), ytDlp(['b'])].map(p => p.catch(error => error));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    killAllLookupChildren();
+    await Promise.all(children.map(exited));
+    assert.deepEqual(children.map(c => c.signalCode), ['SIGTERM', 'SIGTERM']);
+    for (const result of await Promise.all(pending)) assert.ok(result instanceof LookupError);
   });
 
   test('the deadline kills a hung child (504 timeout)', async () => {
@@ -542,6 +609,24 @@ describe('HTTP routes', () => {
       release();
       assert.equal((await resolving).status, 200);
     } finally { await app.close(); }
+  });
+
+  test('abortAll aborts every in-flight lookup (server shutdown calls it)', async () => {
+    const signals = [];
+    const lookup = createLookup({ ytDlp: (args, options) => new Promise((_, reject) => { signals.push(options.signal); options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }); }) });
+    const handle = createLookupRoutes(lookup, { log: () => {} });
+    const server = http.createServer(async (req, res) => { await handle(req, res); });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const answers = [fetch(`${base}/search?q=harbor`), fetch(`${base}/resolve?url=${encodeURIComponent('https://youtu.be/hL7aQ2mR9sE')}`)];
+      while (signals.length < 2) await new Promise(resolve => setTimeout(resolve, 5));
+      handle.abortAll();
+      assert.ok(signals.every(s => s.aborted && s.reason.code === 'aborted'));
+      for (const answer of await Promise.all(answers)) assert.equal(answer.status, 499);
+    } finally { await new Promise(resolve => server.close(resolve)); }
+    assert.match(readFileSync(path.join(here, 'server.mjs'), 'utf8'), /async function shutdown\([^)]*\)\{[^\n]*\n\s*lookupRoutes\.abortAll\(\);/,
+      'server.mjs shutdown() aborts lookups first');
   });
 
   test('closing the request aborts its lookup', async () => {
