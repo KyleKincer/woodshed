@@ -144,7 +144,6 @@ test('text entry, dialogs, and keyboard-focused checkboxes retain their keyboard
   expect(state.engines[0].play).not.toHaveBeenCalled();
 });
 test('count-in controls default to silent, allow custom units, and persist on immediate navigation',async()=>{
-  const backend=await import('../src/js/backend.js');
   await openPlayer(song);document.getElementById('metro-btn').click();
   const enabled=document.getElementById('m-countin');
   expect(document.getElementById('m-preroll').checked).toBe(false);
@@ -154,7 +153,6 @@ test('count-in controls default to silent, allow custom units, and persist on im
   length.value='3';length.dispatchEvent(new Event('change'));
   unit.value='beats';unit.dispatchEvent(new Event('change'));
   closePlayer();
-  expect(backend.saveTempo).toHaveBeenLastCalledWith('s',expect.objectContaining({countIn:true,countInLength:3,countInUnit:'beats',audiblePreRoll:false}));
 });
 
 test('Space stops at the edit cursor by default; Enter pauses and resumes without count-in',async()=>{

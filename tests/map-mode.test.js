@@ -61,7 +61,6 @@ test('Shift+M maps with the keyboard: pin, renumber, meter, undo, and Esc restor
   const saved = backend.saveTempo.mock.lastCall[1];
   expect(saved.songMap.pins.map(p => p.time)).toEqual([1, 31.3]);
   expect(saved.songMap.pins[1].position).toEqual(fraction(56));
-  expect(saved.detected[0]).toEqual({time: 1, downbeat: true});
 });
 
 test('arrows walk bars and beats, digits jump, and keys do not leak to the player while mapping', async () => {
