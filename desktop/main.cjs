@@ -131,12 +131,28 @@ function createWindow(windowState) {
   window.webContents.on('did-navigate', () => handlers?.resetActivity());
 }
 
+// --smoke-test shell check (§6.11 item 12). SMOKE_PAGE_PROBE runs in the page;
+// smokeShellProblems is pure and lists why the run fails (empty: it passes).
+// The 2.0 shell is #app under html[data-startup]; #app-header and #sidebar are
+// 1.9 markup and must not exist. main.test.cjs runs both against fake pages.
+const SMOKE_PAGE_PROBE = `({title:document.title,bridge:!!window.woodshedDesktop,app:!!document.querySelector('#app'),startup:document.documentElement.hasAttribute('data-startup')?document.documentElement.getAttribute('data-startup'):null,header:!!document.querySelector('#app-header'),sidebar:!!document.querySelector('#sidebar')})`;
+function smokeShellProblems({ processor, page }) {
+  const problems = [];
+  if (!processor) problems.push('Local processor did not start');
+  if (!page?.bridge) problems.push('desktop bridge (window.woodshedDesktop) missing');
+  if (!page?.app) problems.push('#app missing');
+  if (typeof page?.startup !== 'string') problems.push('html[data-startup] missing');
+  if (page?.header) problems.push('1.9 #app-header present');
+  if (page?.sidebar) problems.push('1.9 #sidebar present');
+  return problems;
+}
+
 async function runSmokeTest() {
-  // The DOM assertions move to the new shell in integration I1 (§6.11 item 12).
   if (!companion.info()) throw Error('Local processor did not start');
   const info=await companion.status();
-  const page=await window.webContents.executeJavaScript(`({title:document.title,bridge:!!window.woodshedDesktop,header:!!document.querySelector('#app-header'),sidebar:!!document.querySelector('#sidebar')})`);
-  if(!page.bridge||!page.header||page.sidebar)throw Error('Desktop UI smoke check failed');
+  const page=await window.webContents.executeJavaScript(SMOKE_PAGE_PROBE);
+  const problems = smokeShellProblems({ processor: companion.info(), page });
+  if (problems.length) throw Error(`Desktop UI smoke check failed: ${problems.join('; ')}`);
   const appearance = await window.webContents.executeJavaScript(`(async () => {
     if(!window.woodshedAppearance)throw Error('Appearance bootstrap missing');
     // apply() paints without persisting (theme-init.js, §2.5); setTheme drives nativeTheme.
@@ -251,3 +267,6 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('window-all-closed', () => app.quit());
 }
+
+// For main.test.cjs; Electron ignores an entry script's exports.
+module.exports = { SMOKE_PAGE_PROBE, smokeShellProblems };

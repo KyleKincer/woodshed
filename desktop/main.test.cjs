@@ -25,7 +25,7 @@ test('main.cjs requires the factored modules and defines no IPC handler itself',
 // ---------- wiring, with a fake Electron ----------
 
 const log = [];
-let electron, updater, userData, restore = [];
+let electron, updater, userData, mainExports, restore = [];
 
 function fakeModule(id, exports) {
   const resolved = require.resolve(id, { paths: [__dirname] });
@@ -157,7 +157,7 @@ before(async () => {
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ busy: false }) });
   restore.push(() => { globalThis.fetch = realFetch; });
   delete require.cache[MAIN];
-  require(MAIN);
+  mainExports = require(MAIN);
   electron.app.ready();
   for (let i = 0; i < 20 && !log.some(entry => entry[0] === 'loadURL'); i++) await tick();
 });
@@ -329,4 +329,69 @@ test('the smoke appearance step passes against the real theme-init.js and persis
     assert.equal(page.context.window.woodshedAppearance.preference, 'system');
     assert.deepEqual(page.writes, [], 'the smoke never writes storage');
   }
+});
+
+// ---------- --smoke-test shell check against the 2.0 index.html (I1-4, §6.11 item 12) ----------
+
+/** A page whose document answers the probe from static HTML (ids and the <html> attributes). */
+function probePage(html, { bridge = true } = {}) {
+  const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
+  const htmlTag = html.match(/<html\b[^>]*>/i)?.[0] ?? '';
+  const attributes = new Map([...htmlTag.matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]]));
+  const context = {
+    document: {
+      title: html.match(/<title>([^<]*)<\/title>/)?.[1] ?? '',
+      documentElement: { hasAttribute: name => attributes.has(name), getAttribute: name => attributes.get(name) ?? null },
+      querySelector: selector => {
+        assert.match(selector, /^#[\w-]+$/, 'the probe queries ids only');
+        return ids.has(selector.slice(1)) ? {} : null;
+      },
+    },
+  };
+  context.window = bridge ? { woodshedDesktop: {} } : {};
+  vm.createContext(context);
+  return vm.runInContext(mainExports.SMOKE_PAGE_PROBE, context);
+}
+
+const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const LEGACY_HTML = '<!doctype html><html lang="en"><head><title>Woodshed</title></head><body><header id="app-header"></header><nav id="sidebar"></nav><main id="main"></main></body></html>';
+const PROCESSOR = { port: 47999, token: 'f'.repeat(64) };
+
+test('the smoke shell check passes on the 2.0 index.html (#app, html[data-startup], no 1.9 markup)', () => {
+  const page = probePage(INDEX_HTML);
+  assert.equal(page.app, true);
+  assert.equal(page.startup, 'loading');
+  assert.equal(page.header, false);
+  assert.equal(page.sidebar, false);
+  assert.deepEqual(mainExports.smokeShellProblems({ processor: PROCESSOR, page }), []);
+  // Any startup state counts: the probe runs after load, when boot may have moved on.
+  for (const startup of ['ready', 'signin', 'download']) {
+    assert.deepEqual(mainExports.smokeShellProblems({ processor: PROCESSOR, page: { ...page, startup } }), [], startup);
+  }
+});
+
+test('the smoke shell check fails on the 1.9 shell, on 2.0 markup mixed with 1.9 markup, and without the bridge', () => {
+  const legacy = mainExports.smokeShellProblems({ processor: PROCESSOR, page: probePage(LEGACY_HTML) });
+  assert.deepEqual(legacy, ['#app missing', 'html[data-startup] missing', '1.9 #app-header present', '1.9 #sidebar present']);
+  const mixed = INDEX_HTML.replace('<div id="app"></div>', '<div id="app"><header id="app-header"></header><nav id="sidebar"></nav></div>');
+  assert.notEqual(mixed, INDEX_HTML, 'index.html still has <div id="app"></div>');
+  assert.deepEqual(mainExports.smokeShellProblems({ processor: PROCESSOR, page: probePage(mixed) }), ['1.9 #app-header present', '1.9 #sidebar present']);
+  const noStartup = INDEX_HTML.replace(/\sdata-startup="[^"]*"/, '');
+  assert.deepEqual(mainExports.smokeShellProblems({ processor: PROCESSOR, page: probePage(noStartup) }), ['html[data-startup] missing']);
+  assert.deepEqual(mainExports.smokeShellProblems({ processor: PROCESSOR, page: probePage(INDEX_HTML, { bridge: false }) }), ['desktop bridge (window.woodshedDesktop) missing']);
+});
+
+test('the smoke shell check fails when the local processor did not start', () => {
+  const page = probePage(INDEX_HTML);
+  assert.deepEqual(mainExports.smokeShellProblems({ processor: null, page }), ['Local processor did not start']);
+  // runSmokeTest stops before probing the page when the processor never started.
+  const body = smokeSource();
+  assert.ok(body.indexOf("if (!companion.info()) throw Error('Local processor did not start')") < body.indexOf('executeJavaScript(SMOKE_PAGE_PROBE)'));
+});
+
+test('runSmokeTest throws on any shell problem and no longer requires #app-header', () => {
+  const body = smokeSource();
+  assert.match(body, /const page=await window\.webContents\.executeJavaScript\(SMOKE_PAGE_PROBE\);/);
+  assert.match(body, /const problems = smokeShellProblems\(\{ processor: companion\.info\(\), page \}\);\n\s*if \(problems\.length\) throw Error\(`Desktop UI smoke check failed: \$\{problems\.join\('; '\)\}`\);/);
+  assert.doesNotMatch(body, /page\.header|!page\.header/);
 });
