@@ -219,8 +219,11 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     await listen(webServer, UI_ORIGIN);
-    // A processor that fails to start leaves phase 'stopped'; the app still opens (Restart processor).
-    await companion.start().catch(error => console.error(error.message));
+    // The window opens while the processor starts: the renderer reads phase
+    // 'starting' from info() and gets 'ready' or 'stopped' live. A processor
+    // that fails (or hangs until the 20 s timeout) leaves phase 'stopped' and
+    // the app usable (Restart processor).
+    const processorStarted = companion.start().catch(error => console.error(error.message));
     setupUpdates();
     const { screen } = require('electron');
     createWindow(createWindowState({ file: path.join(userData, 'window-state.json'), screen }));
@@ -229,7 +232,10 @@ if (!app.requestSingleInstanceLock()) {
       getWindow, trusted, updateController: updates, companion, nativeTheme, mediaProxy, menu, prefs, themeFile,
     });
     await window.loadURL(UI_ORIGIN);
-    if (smokeTest) await runSmokeTest();
+    if (smokeTest) {
+      await processorStarted;
+      await runSmokeTest();
+    }
   }).catch(error => {
     if (smokeTest) { console.error(error); app.exit(1); return; }
     dialog.showErrorBox('Woodshed could not start', error.message);

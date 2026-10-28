@@ -71,7 +71,7 @@ test('bad ids are rejected', () => {
 });
 
 test('bad accelerators are rejected and plain keys are never accepted', () => {
-  for (const accelerator of ['Space', 'L', 'Shift+L', 'Alt+Left', 'Control+Alt+Space', 'CmdOrCtrl', 'CmdOrCtrl+Shift+Shift+K', 'CmdOrCtrl+Hyper+K',
+  for (const accelerator of ['Space', 'L', 'Shift+L', 'Alt+Left', 'Shift+Ctrl+K', 'Ctrl+Ctrl+K', 'Ctrl', 'CmdOrCtrl', 'CmdOrCtrl+Shift+Shift+K', 'CmdOrCtrl+Hyper+K',
     'CmdOrCtrl+KK', 'CmdOrCtrl+k', 'Cmd+K', 'CmdOrCtrl+K;rm', 42, 'CmdOrCtrl+F25']) {
     const spec = goodSpec();
     spec[2].items[0].accelerator = accelerator;
@@ -81,6 +81,56 @@ test('bad accelerators are rejected and plain keys are never accepted', () => {
     assert.ok(isAccelerator(accelerator), accelerator);
   }
   assert.equal(canonicalAccelerator('CmdOrCtrl+Shift+Alt+Enter'), 'Mod+Alt+Shift+Return');
+});
+
+test('Ctrl-led accelerators (keys.js accelerator() output) are accepted, not the whole spec rejected', () => {
+  for (const accelerator of ['Ctrl+Alt+Space', 'Control+Alt+Space', 'Ctrl+Shift+L', 'CmdOrCtrl+Ctrl+F', 'Ctrl+K']) {
+    assert.ok(isAccelerator(accelerator), accelerator);
+  }
+  assert.equal(canonicalAccelerator('Control+Shift+Alt+Space'), 'Ctrl+Alt+Shift+Space');
+  const spec = validateMenuSpec([{ menu: 'transport', items: [{ id: 'transport.loopToggle', label: 'Loop', enabled: true, accelerator: 'Ctrl+Alt+L' }] }]);
+  assert.ok(spec);
+  assert.equal(find(buildTemplate(spec, opts()), 'transport.loopToggle').accelerator, 'Ctrl+Alt+L');
+});
+
+test('off macOS Ctrl+K and CmdOrCtrl+K are the same key: the first wins, reserved ones never register', () => {
+  const spec = validateMenuSpec([{ menu: 'transport', items: [
+    { id: 'transport.first', label: 'First', enabled: true, accelerator: 'CmdOrCtrl+K' },
+    { id: 'transport.second', label: 'Second', enabled: true, accelerator: 'Ctrl+K' },
+    { id: 'transport.undoish', label: 'Undoish', enabled: true, accelerator: 'Ctrl+Z' },
+  ] }]);
+  const win = buildTemplate(spec, opts({ isMac: false }));
+  assert.equal(find(win, 'transport.first').accelerator, 'CmdOrCtrl+K');
+  assert.equal(find(win, 'transport.second').accelerator, undefined);
+  assert.equal(find(win, 'transport.undoish').accelerator, undefined);
+  const mac = buildTemplate(spec, opts({ isMac: true }));
+  assert.equal(find(mac, 'transport.second').accelerator, 'Ctrl+K', 'on macOS ⌃K is a different key from ⌘K');
+  assert.equal(find(mac, 'transport.undoish').accelerator, 'Ctrl+Z');
+});
+
+test('a nested or repeated Close Song / Settings never doubles ⌘W or ⌘,', () => {
+  const spec = validateMenuSpec([
+    { menu: 'file', items: [{ id: 'file.more', label: 'More', enabled: true, submenu: [
+      { id: 'stage.close', label: 'Close Song', enabled: true },
+      { id: 'nav.settings', label: 'Settings', enabled: true },
+    ] }] },
+    { menu: 'view', items: [{ id: 'library.add', label: 'Add', enabled: true }, { id: 'library.add', label: 'Add again', enabled: true }] },
+  ]);
+  assert.ok(spec);
+  for (const isMac of [true, false]) {
+    const template = buildTemplate(spec, opts({ isMac, songOpen: true }));
+    const items = flatten(template);
+    assert.equal(items.filter(item => item.id === 'stage.close').length, 1, 'no second Close Song appended');
+    assert.equal(items.filter(item => item.id === 'nav.settings').length, 1, 'a nested main-owned id is filtered');
+    const accelerators = items.filter(item => item.accelerator).map(item => item.accelerator);
+    for (const fixed of ['CmdOrCtrl+W', 'CmdOrCtrl+,', 'CmdOrCtrl+N']) {
+      assert.equal(accelerators.filter(a => a === fixed).length, 1, `${fixed} once (isMac ${isMac})`);
+    }
+    assert.equal(find(template, 'stage.close').accelerator, 'CmdOrCtrl+W');
+  }
+  // Close Song in another menu also counts: File gets none appended.
+  const elsewhere = buildTemplate(validateMenuSpec([{ menu: 'view', items: [{ id: 'stage.close', label: 'Close Song', enabled: true }] }]), opts());
+  assert.equal(flatten(elsewhere).filter(item => item.id === 'stage.close').length, 1);
 });
 
 test('depth beyond one submenu level is rejected', () => {
@@ -216,7 +266,8 @@ test('the controller installs the fallback, keeps the previous menu on a bad spe
   const installed = [];
   const Menu = { buildFromTemplate: template => ({ template }), setApplicationMenu: menu => installed.push(menu.template) };
   const sent = [];
-  const controller = createMenuController({ Menu, ...opts({ send: id => sent.push(id) }) });
+  const logs = [];
+  const controller = createMenuController({ Menu, log: message => logs.push(message), ...opts({ send: id => sent.push(id) }) });
   controller.install();
   assert.equal(installed.length, 1);
   assert.equal(find(installed[0], 'transport.playStop'), undefined);
@@ -225,6 +276,8 @@ test('the controller installs the fallback, keeps the previous menu on a bad spe
   assert.ok(find(installed[1], 'transport.playStop'));
   assert.equal(controller.setSpec([{ menu: 'file', items: [{ id: 'BAD', label: 'x' }] }]), false);
   assert.equal(installed.length, 2, 'a rejected spec keeps the previous menu');
+  assert.equal(logs.length, 1, 'a rejection is logged, not silent');
+  assert.match(logs[0], /rejected/);
   assert.equal(find(installed[1], 'stage.close').enabled, false);
   controller.setSongOpen(true);
   assert.equal(installed.length, 3);
@@ -234,4 +287,20 @@ test('the controller installs the fallback, keeps the previous menu on a bad spe
   assert.equal(installed.length, 3, 'no rebuild without a change');
   find(installed[2], 'stage.close').click();
   assert.deepEqual(sent, ['stage.close']);
+});
+
+test('reset (renderer reload or crash) drops the old registry items: back to the fallback menu', () => {
+  const installed = [];
+  const Menu = { buildFromTemplate: template => ({ template }), setApplicationMenu: menu => installed.push(menu.template) };
+  const controller = createMenuController({ Menu, ...opts() });
+  controller.install();
+  controller.setSpec(goodSpec());
+  controller.setSongOpen(true);
+  controller.reset();
+  const after = installed.at(-1);
+  assert.equal(find(after, 'transport.playStop'), undefined);
+  assert.equal(controller.songOpen, false);
+  const strip = template => JSON.parse(JSON.stringify(template));
+  assert.deepEqual(strip(after), strip(fallbackTemplate(opts())));
+  assert.deepEqual(strip(controller.template()), strip(installed[0]));
 });

@@ -116,7 +116,9 @@ function makeElectron() {
         };
         child.kill = () => child.emit('exit', null);
         children.push(child);
-        queueMicrotask(() => child.emit('message', { port: 47999, token: 'f'.repeat(64) }));
+        log.push(['fork']);
+        // The processor answers later than the window opens (it never blocks startup).
+        setImmediate(() => child.emit('message', { port: 47999, token: 'f'.repeat(64) }));
         return child;
       },
     },
@@ -166,15 +168,25 @@ after(() => {
   fs.rmSync(userData, { recursive: true, force: true });
 });
 
-test('startup order: app user model id, fallback menu, UI server, companion, window, handlers, load', () => {
+test('startup order: app user model id, fallback menu, UI server, companion fork, window, handlers, load', () => {
   const kinds = log.map(entry => entry[0]);
   assert.deepEqual(log.find(entry => entry[0] === 'appUserModelId'), ['appUserModelId', 'com.kylekincer.woodshed']);
   const at = kind => kinds.indexOf(kind);
-  assert.ok(at('appUserModelId') < at('menu') && at('menu') < at('listen') && at('listen') < at('window') && at('window') < at('loadURL'));
+  assert.ok(at('appUserModelId') < at('menu') && at('menu') < at('listen') && at('listen') < at('fork') && at('fork') < at('window') && at('window') < at('loadURL'));
   assert.deepEqual(log.find(entry => entry[0] === 'listen'), ['listen', 47832, '127.0.0.1']);
   assert.deepEqual(log.find(entry => entry[0] === 'loadURL'), ['loadURL', 'http://127.0.0.1:47832']);
   const fallback = log.find(entry => entry[0] === 'menu')[1];
   assert.ok(fallback.some(menu => menu.label === 'Edit'));
+});
+
+test('the window does not wait for the processor: it opens during starting and gets ready live', async () => {
+  const [win] = electron.BrowserWindow.instances;
+  const states = () => win.webContents.sent.filter(([channel]) => channel === 'desktop:processor-state').map(([, state]) => state.phase);
+  for (let i = 0; i < 20 && !states().includes('ready'); i++) await tick();
+  assert.deepEqual(states(), ['ready'], 'the ready phase reaches the already-open window');
+  const info = await electron.ipcMain.handlers.get('desktop:info')({ senderFrame: win.webContents.mainFrame, sender: win.webContents });
+  assert.deepEqual(info.processor, { phase: 'ready' });
+  assert.equal(info.companion.port, 47999);
 });
 
 test('the companion forks with the 2.0 env and reaches phase ready', () => {

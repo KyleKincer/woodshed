@@ -88,7 +88,7 @@ function setup({ prefsFile, platform = 'linux', shortcut = fakeGlobalShortcut(),
   const blocker = { started: new Set(), next: 1, starts: [], isStarted: id => blocker.started.has(id) };
   blocker.start = type => { const id = blocker.next++; blocker.started.add(id); blocker.starts.push(type); return id; };
   blocker.stop = id => blocker.started.delete(id);
-  const menu = { specs: [], songOpen: [], setSpec(spec) { this.specs.push(spec); return true; }, setSongOpen(on) { this.songOpen.push(on); } };
+  const menu = { specs: [], songOpen: [], resets: 0, setSpec(spec) { this.specs.push(spec); return true; }, setSongOpen(on) { this.songOpen.push(on); }, reset() { this.resets++; } };
   const updates = { playing: [], shows: 0, getState: () => ({ status: 'current', version: '2.0.0', percent: 0, message: '' }),
     show: async () => { updates.shows++; }, setPlaying(on) { this.playing.push(on); } };
   const companion = {
@@ -213,12 +213,12 @@ test('desktop:activity drives the wake blocker, Close Song and update deferral',
   assert.deepEqual(h.updates.playing, [true, false], 'invalid payloads are ignored');
 });
 
-test('resetActivity forgets the page: blocker released, no song, not playing', () => {
+test('resetActivity forgets the page: blocker released, fallback menu, not playing', () => {
   const h = setup();
   h.ipcMain.emit('desktop:activity', h.event, { playing: true, songOpen: true, keepAwake: true });
   h.handlers.resetActivity();
   assert.equal(h.blocker.started.size, 0);
-  assert.equal(h.menu.songOpen.at(-1), false);
+  assert.equal(h.menu.resets, 1, 'the menu goes back to the fallback (no stale registry items, no song)');
   assert.equal(h.updates.playing.at(-1), false);
 });
 
@@ -475,6 +475,46 @@ test('restart: restarting → starting → ready, returning the new {port, token
   h.children[1].emit('message', { port: 2, token: 'old' });
   assert.deepEqual(await restarted, { port: 2, token: 'old' });
   assert.deepEqual(h.states.map(s => s.phase), ['starting', 'ready', 'restarting', 'starting', 'ready']);
+});
+
+test('stop during a pending start cancels it: a late {port, token} is not kept and no ready is reported', async () => {
+  const h = host({ exitOnShutdown: false });
+  const started = h.companion.start();
+  const stopped = h.companion.stop();
+  h.children[0].emit('message', { port: 1234, token: 't' });
+  await assert.rejects(started, /stopped while starting/);
+  h.children[0].emit('exit', 0);
+  await stopped;
+  assert.equal(h.companion.info(), null);
+  assert.equal(h.companion.isRunning(), false);
+  assert.deepEqual(h.states.map(s => s.phase), ['starting', 'stopped']);
+  assert.deepEqual(h.companion.state(), { phase: 'stopped' });
+  assert.equal(h.timers.pending.size, 0, 'start timer cleared');
+  // An exit before any message is a cancel too, not a start failure.
+  const early = host();
+  const pending = early.companion.start();
+  const stopping = early.companion.stop();
+  await assert.rejects(pending, /stopped while starting/);
+  await stopping;
+  assert.deepEqual(early.states.map(s => s.phase), ['starting', 'stopped']);
+  assert.deepEqual(early.companion.state(), { phase: 'stopped' });
+});
+
+test('restart during a pending start reports restarting, never a spurious stopped', async () => {
+  const h = host();
+  const first = h.companion.start();
+  const restarted = h.companion.restart();
+  h.children[0].emit('message', { port: 1, token: 'old' });
+  await first;
+  await tick();
+  await tick();
+  assert.equal(h.children.length, 2);
+  h.children[1].emit('message', { port: 2, token: 'new' });
+  assert.deepEqual(await restarted, { port: 2, token: 'new' });
+  const phases = h.states.map(s => s.phase);
+  assert.ok(!phases.includes('stopped'), phases.join(' > '));
+  assert.deepEqual(phases, ['starting', 'restarting', 'ready', 'restarting', 'starting', 'ready']);
+  assert.deepEqual(h.companion.info(), { port: 2, token: 'new' });
 });
 
 test('restart from a stopped processor starts it again', async () => {

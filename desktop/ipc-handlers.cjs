@@ -161,6 +161,7 @@ function createGlobalShortcuts({ globalShortcut, systemPreferences, platform, se
 const PROCESSOR_MESSAGES = Object.freeze({
   startFailed: 'The local processor did not start.',
   stopped: 'The local processor stopped.',
+  startCancelled: 'The local processor was stopped while starting.',
 });
 
 const validInfo = info => info && Number.isInteger(info.port) && info.port > 0 && typeof info.token === 'string';
@@ -212,6 +213,14 @@ function createCompanionHost({
       }
       child = proc;
       let settled = false;
+      // stop() ran while this start was pending (e.g. quit during startup): the
+      // start is cancelled; stop() reports the phase, and no info is kept.
+      const cancelled = () => child !== proc || stopping.has(proc);
+      const cancel = () => {
+        settled = true;
+        timers.clearTimeout(timer);
+        reject(new Error(PROCESSOR_MESSAGES.startCancelled));
+      };
       const fail = (exitCode) => {
         settled = true;
         stopping.add(proc); // a kill after a failed start is not a second, unexpected stop
@@ -220,6 +229,10 @@ function createCompanionHost({
       };
       const timer = timers.setTimeout(() => {
         if (settled) return;
+        if (cancelled()) {
+          cancel();
+          return;
+        }
         fail(undefined);
         if (child === proc) child = null;
         try {
@@ -230,6 +243,10 @@ function createCompanionHost({
       }, startTimeoutMs);
       proc.once('message', message => {
         if (settled) return;
+        if (cancelled()) {
+          cancel();
+          return;
+        }
         timers.clearTimeout(timer);
         if (!validInfo(message)) {
           fail(undefined);
@@ -248,12 +265,14 @@ function createCompanionHost({
       });
       proc.on('exit', code => {
         timers.clearTimeout(timer);
+        const wasCancelled = cancelled();
         if (child === proc) {
           child = null;
           info = null;
         }
         if (!settled) {
-          fail(code ?? undefined);
+          if (wasCancelled) cancel();
+          else fail(code ?? undefined);
           return;
         }
         if (stopping.has(proc)) return;
@@ -304,7 +323,11 @@ function createCompanionHost({
     if (restarting) return restarting;
     restarting = (async () => {
       setState({ phase: 'restarting' });
-      if (starting) await starting.catch(() => {});
+      if (starting) {
+        await starting.catch(() => {});
+        // The pending start may have reported 'ready' or 'stopped' meanwhile.
+        if (state.phase !== 'restarting') setState({ phase: 'restarting' });
+      }
       await stop();
       return start();
     })().finally(() => {
@@ -413,7 +436,7 @@ function companionEnv({ baseEnv = process.env, uiOrigin, userData, resources, ap
  *   updateController: {getState(): object, show(): Promise<void>, setPlaying(playing: boolean): unknown},
  *   companion: ReturnType<typeof createCompanionHost>,
  *   nativeTheme: Electron.NativeTheme, mediaProxy: {register(url: string): string},
- *   menu: {setSpec(spec): boolean, setSongOpen(on: boolean): void},
+ *   menu: {setSpec(spec): boolean, setSongOpen(on: boolean): void, reset(): void},
  *   prefs: ReturnType<typeof createDesktopPrefs>, themeFile: string, fs?: typeof import('node:fs'), platform?: string,
  * }} deps
  */
@@ -548,9 +571,10 @@ function createHandlers({
   return {
     shortcuts,
     /** A reload or renderer crash forgets the old page's activity. */
+    /** The page reloaded or crashed: its activity and its registry menu items are gone (fallback menu). */
     resetActivity() {
       setKeepAwake(false);
-      menu.setSongOpen(false);
+      menu.reset();
       void updateController.setPlaying(false);
     },
     get keepAwake() {

@@ -4,8 +4,9 @@
 // The renderer sends a MenuSpec built from the command registry; main
 // validates it, merges it with the main-owned items (macOS app menu, Edit
 // roles, zoom, Help) and installs it. Clicking an item sends
-// `desktop:command` {id, source: 'menu'}. Only Mod (CmdOrCtrl) accelerators
-// are ever registered; plain keys stay with the renderer's dispatcher.
+// `desktop:command` {id, source: 'menu'}. Only Mod (CmdOrCtrl) or Ctrl
+// accelerators are ever registered; plain keys stay with the renderer's
+// dispatcher (D41).
 
 const MENUS = Object.freeze(['file', 'edit', 'view', 'transport', 'help']);
 const MENU_LABELS = Object.freeze({ file: 'File', edit: 'Edit', view: 'View', transport: 'Transport', help: 'Help' });
@@ -14,20 +15,26 @@ const ITEM_TYPES = new Set(['normal', 'separator', 'checkbox', 'radio']);
 const LIMITS = Object.freeze({ menus: 6, items: 60, label: 80 });
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
-// Accelerator allow-list: CmdOrCtrl first, then optional distinct extra
-// modifiers, then one key. Anything without CmdOrCtrl is a plain key (D41).
+// Accelerator allow-list (the grammar F3's keys.js accelerator() emits):
+// CmdOrCtrl or Ctrl first, then optional distinct extra modifiers, then one
+// key — 'CmdOrCtrl+Shift+M', 'CmdOrCtrl+Ctrl+F', 'Ctrl+Alt+Space'. Anything
+// without CmdOrCtrl/Ctrl is a plain key (D41).
 const MOD = new Set(['CmdOrCtrl', 'CommandOrControl']);
+const CTRL = new Set(['Ctrl', 'Control']);
 const EXTRA_MODIFIERS = Object.freeze({ Shift: 'Shift', Alt: 'Alt', Option: 'Alt', Ctrl: 'Ctrl', Control: 'Ctrl' });
 const KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Return|Enter|Escape|Backspace|Delete|Tab|Up|Down|Left|Right|Home|End|PageUp|PageDown|Plus|[,./\\[\];'`=-])$/;
 
-/** Canonical form for collision checks ('Mod+Shift+Z'), or null when not allowed. */
+/** Canonical form for collision checks ('Mod+Shift+Z', 'Ctrl+Alt+Space'), or null when not allowed. */
 function canonicalAccelerator(value) {
   if (typeof value !== 'string' || value.length > 48) return null;
   const parts = value.split('+');
   if (parts.length < 2) return null;
   const key = parts.pop();
-  if (!MOD.has(parts.shift())) return null;
+  const lead = parts.shift();
   const modifiers = new Set();
+  if (CTRL.has(lead)) modifiers.add('Ctrl');
+  else if (!MOD.has(lead)) return null;
+  const prefix = MOD.has(lead) ? ['Mod'] : [];
   for (const part of parts) {
     const canonical = Object.hasOwn(EXTRA_MODIFIERS, part) ? EXTRA_MODIFIERS[part] : null;
     if (!canonical || modifiers.has(canonical)) return null;
@@ -35,7 +42,15 @@ function canonicalAccelerator(value) {
   }
   if (!KEY_PATTERN.test(key)) return null;
   const order = ['Ctrl', 'Alt', 'Shift'].filter(m => modifiers.has(m));
-  return ['Mod', ...order, key === 'Enter' ? 'Return' : key].join('+');
+  return [...prefix, ...order, key === 'Enter' ? 'Return' : key].join('+');
+}
+
+/** The collision key on this platform: off macOS CmdOrCtrl is Ctrl, so 'Ctrl+K' and 'Mod+Ctrl+K' are 'Mod+K'. */
+function platformAccelerator(canonical, isMac) {
+  if (isMac || !canonical) return canonical;
+  if (canonical.startsWith('Ctrl+')) return `Mod+${canonical.slice(5)}`;
+  if (canonical.startsWith('Mod+Ctrl+')) return `Mod+${canonical.slice(9)}`;
+  return canonical;
 }
 
 const isAccelerator = value => canonicalAccelerator(value) !== null;
@@ -115,11 +130,17 @@ const RESERVED = new Set([
 
 const sep = () => ({ type: 'separator' });
 
+function convertItems(items, ctx) {
+  return (items || [])
+    .filter(item => item.type === 'separator' || !MAIN_OWNED_IDS.has(item.id))
+    .map(item => convert(item, ctx));
+}
+
 function convert(item, ctx) {
   if (item.type === 'separator') return sep();
   const out = { id: item.id, label: item.label, enabled: item.enabled !== false };
   if (item.submenu) {
-    out.submenu = item.submenu.map(child => convert(child, ctx));
+    out.submenu = tidy(convertItems(item.submenu, ctx));
     return out;
   }
   if (item.type === 'checkbox' || item.type === 'radio') {
@@ -128,8 +149,10 @@ function convert(item, ctx) {
   }
   const fixed = FIXED_ACCELERATORS[item.id];
   const accelerator = fixed ?? item.accelerator;
-  const canonical = canonicalAccelerator(accelerator);
-  if (canonical && (fixed || (!RESERVED.has(canonical) && !ctx.used.has(canonical)))) {
+  const canonical = platformAccelerator(canonicalAccelerator(accelerator), ctx.isMac);
+  // A fixed accelerator ignores RESERVED (it is one of them) but, like any
+  // other, goes to the first item only: a repeated id never doubles ⌘W.
+  if (canonical && !ctx.used.has(canonical) && (fixed || !RESERVED.has(canonical))) {
     out.accelerator = accelerator;
     ctx.used.add(canonical);
   }
@@ -140,9 +163,13 @@ function convert(item, ctx) {
 }
 
 function registryItems(byMenu, menu, ctx) {
-  return (byMenu.get(menu) || [])
-    .filter(item => item.type === 'separator' || !MAIN_OWNED_IDS.has(item.id))
-    .map(item => convert(item, ctx));
+  return convertItems(byMenu.get(menu), ctx);
+}
+
+/** Whether any item in the spec, at any depth, has this id. */
+function specHas(spec, id) {
+  const has = items => (items || []).some(item => item.id === id || has(item.submenu));
+  return (spec || []).some(menu => has(menu.items));
 }
 
 function tidy(items) {
@@ -165,7 +192,7 @@ function command(ctx, id, label, extra = {}) {
  * @param {{isMac: boolean, isPackaged: boolean, songOpen?: boolean, appName?: string, send: (id: string) => void, openUpdates: () => void, openLicenses: () => void}} options
  */
 function buildTemplate(spec, { isMac, isPackaged, songOpen = false, appName = 'Woodshed', send, openUpdates, openLicenses }) {
-  const ctx = { send, songOpen, used: new Set() };
+  const ctx = { send, songOpen, isMac, used: new Set() };
   const byMenu = new Map((spec || []).map(menu => [menu.menu, menu.items]));
   const settings = command(ctx, 'nav.settings', 'Settings…', { accelerator: FIXED_ACCELERATORS['nav.settings'] });
   const template = [];
@@ -191,7 +218,7 @@ function buildTemplate(spec, { isMac, isPackaged, songOpen = false, appName = 'W
   }
 
   const file = registryItems(byMenu, 'file', ctx);
-  if (!file.some(item => item.id === 'stage.close')) {
+  if (!specHas(spec, 'stage.close')) {
     file.push(convert({ id: 'stage.close', label: 'Close Song', type: 'normal', enabled: true }, ctx));
   }
   if (!isMac) file.push(sep(), settings, sep(), { role: 'quit', label: 'Exit' });
@@ -252,10 +279,11 @@ function fallbackTemplate(options) {
 
 /**
  * Owns the installed menu: keeps the last valid spec and rebuilds on a new
- * spec or a songOpen change.
- * @param {{Menu: typeof Electron.Menu, isMac: boolean, isPackaged: boolean, appName?: string, send: (id) => void, openUpdates: () => void, openLicenses: () => void}} options
+ * spec or a songOpen change. reset() goes back to the fallback menu (the
+ * renderer reloaded or crashed, so its registry items are gone).
+ * @param {{Menu: typeof Electron.Menu, isMac: boolean, isPackaged: boolean, appName?: string, send: (id) => void, openUpdates: () => void, openLicenses: () => void, log?: (message: string) => void}} options
  */
-function createMenuController({ Menu, ...options }) {
+function createMenuController({ Menu, log = message => console.error(message), ...options }) {
   let spec = [];
   let songOpen = false;
   const template = () => buildTemplate(spec, { ...options, songOpen });
@@ -268,7 +296,10 @@ function createMenuController({ Menu, ...options }) {
     /** @returns {boolean} false when the spec was rejected (the previous menu stays). */
     setSpec(raw) {
       const valid = validateMenuSpec(raw);
-      if (!valid) return false;
+      if (!valid) {
+        log('desktop:menu: the MenuSpec was rejected (bad id, label, accelerator, type or depth); the previous menu stays.');
+        return false;
+      }
       spec = valid;
       install();
       return true;
@@ -277,6 +308,11 @@ function createMenuController({ Menu, ...options }) {
       const next = on === true;
       if (next === songOpen) return;
       songOpen = next;
+      install();
+    },
+    reset() {
+      spec = [];
+      songOpen = false;
       install();
     },
     get songOpen() {
