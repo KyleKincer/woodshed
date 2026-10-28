@@ -3,7 +3,10 @@
 // trainer, only/minus/mute, sections/spots/markers, `re-split` and the other title commands, song titles), ranking
 // (group order, tiers, frecency, the 200-entry cap), the ⌘Enter variants, disabledReason rows, the Shared Stage
 // switches, custom providers, and the overlay itself (modal, combobox/listbox roles, keys, band top sheet).
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
+import {parse, stripComments} from '../scripts/check-css.mjs';
 import * as clock from '../src/app/clock.js';
 import {createRegistry} from '../src/app/commands.js';
 import {openOverlays, startDispatcher} from '../src/app/dispatch.js';
@@ -673,4 +676,76 @@ describe('the overlay', () => {
     expect(options(handle)[0].getAttribute('aria-disabled')).toBe('true');
     handle.close();
   });
+});
+
+// VF1-4: the selected row's secondary text (the subtitle and the ⌘Enter modifier hint) sits on --accent-soft,
+// where --ink-3 measured 4.46:1 (paper) and 4.3:1 (night). Resolve the colours palette.css gives them on the
+// selected row through every token set of tokens.css and hold them to WCAG 1.4.3's 4.5:1.
+describe('selected-row contrast (WCAG 1.4.3)', () => {
+  const root = path.resolve(import.meta.dirname, '..');
+  const rulesOf = file => {
+    const out = [];
+    const visit = items => {
+      for (const it of items) {
+        if (it.type !== 'rule') continue;
+        if (it.prelude.startsWith('@layer') || it.prelude.startsWith('@media')) { visit(it.children); continue; }
+        if (it.prelude.startsWith('@')) continue;
+        const decls = new Map();
+        for (const d of it.children) if (d.type === 'decl') decls.set(d.prop, d.value.trim());
+        out.push({prelude: it.prelude.replace(/\s+/g, ' ').trim(), decls});
+      }
+    };
+    visit(parse(stripComments(readFileSync(path.join(root, file), 'utf8'))));
+    return out;
+  };
+  const tokens = rulesOf('src/styles/tokens.css');
+  const palette = rulesOf('src/styles/views/app/palette.css');
+  const SETS = {
+    paper: [':root'],
+    night: [':root', ':root[data-theme=dark]'],
+    stage: [':root', ':root[data-theme=dark]', ':root[data-place=stage][data-stage-theme=dark]'],
+  };
+  const tokenIn = (set, name) => {
+    let value;
+    for (const sel of SETS[set]) for (const r of tokens) if (r.prelude === sel && r.decls.has(name)) value = r.decls.get(name);
+    if (!/^#[0-9a-f]{6}$/i.test(value ?? '')) throw new Error(`${set} ${name} is not an opaque hex colour: ${value}`);
+    return value;
+  };
+  const luminance = hex => {
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const SELECTED = '.app-palette-row[aria-selected=true]';
+  // The last rule scoped to the selected row that colours `cls` (a descendant selector, plain or inside :is()).
+  const selectedDecl = (cls, prop) => {
+    let value = null;
+    for (const r of palette) {
+      if (!r.decls.has(prop)) continue;
+      const scoped = r.prelude.split(/,(?![^(]*\))/).map(s => s.trim()).some(s => s === (cls ? `${SELECTED} ${cls}` : SELECTED)
+        || (cls && s.startsWith(`${SELECTED} :is(`) && new RegExp(`\\${cls}(?![\\w-])`).test(s)));
+      if (scoped) value = r.decls.get(prop);
+    }
+    return value;
+  };
+  const varName = v => /^var\((--[\w-]+)\)$/.exec(v ?? '')?.[1];
+
+  test('the selection background is --accent-soft', () => {
+    expect(varName(selectedDecl(null, 'background'))).toBe('--accent-soft');
+  });
+
+  for (const cls of ['.app-palette-sub', '.app-palette-mod']) {
+    test(`${cls} on the selected row is at least 4.5:1 in paper, night and stage`, () => {
+      const token = varName(selectedDecl(cls, 'color'));
+      expect(token, `${SELECTED} ${cls} has no colour of its own`).toBeTruthy();
+      for (const set of Object.keys(SETS)) {
+        const ratio = contrast(tokenIn(set, token), tokenIn(set, '--accent-soft'));
+        expect(ratio, `${set}: ${token} on --accent-soft`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
 });

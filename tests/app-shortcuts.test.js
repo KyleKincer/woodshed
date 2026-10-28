@@ -150,6 +150,36 @@ describe('the overlay', () => {
     stop();
   });
 
+  // VF1-5: axe landmark-unique. A named <section> is a region landmark; the per-scope groups repeat names
+  // ("Transport", "Loop") from scope to scope, so they are labelled groups and only the scopes are regions.
+  test('landmarks: only the scopes are regions, each uniquely named; groups are labelled role=group', () => {
+    const handle = openShortcuts({registry: reg, chain: ['stage.strip', 'stage', 'global']});
+    const el = handle.el;
+    const nameOf = node => node.getAttribute('aria-labelledby').split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent ?? '').join(' ').trim();
+    const LANDMARK_ROLES = new Set(['region', 'navigation', 'main', 'complementary', 'banner', 'contentinfo', 'form', 'search']);
+    const landmarks = [...el.querySelectorAll('*')].filter(n => {
+      const role = n.getAttribute('role');
+      if (role) return LANDMARK_ROLES.has(role);
+      return n.tagName === 'SECTION' && (n.hasAttribute('aria-labelledby') || n.hasAttribute('aria-label'));
+    });
+    expect(landmarks.length).toBeGreaterThan(1);
+    expect(landmarks.every(n => n.matches('.app-shortcuts-body, .app-shortcuts-section'))).toBe(true);
+    const names = landmarks.map(n => `${n.getAttribute('role') ?? 'region'}:${nameOf(n)}`);
+    expect(names.every(n => !n.endsWith(':'))).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    const groups = [...el.querySelectorAll('.app-shortcuts-group')];
+    expect(groups.length).toBeGreaterThan(0);
+    for (const g of groups) {
+      expect(g.getAttribute('role')).toBe('group');
+      expect(nameOf(g)).toBe(g.querySelector('h4').textContent);
+    }
+    // The case that failed: the same group name under more than one scope.
+    const groupNames = groups.map(nameOf);
+    expect(new Set(groupNames).size).toBeLessThan(groupNames.length);
+    handle.close();
+  });
+
   test('blocked keys say which focused scope blocks them', () => {
     const handle = openShortcuts({registry: reg, chain: ['edit.chart.score', 'edit.chart', 'edit', 'global']});
     const count = handle.el.querySelector('[data-section=here] [data-command-id="click.countIn"]');

@@ -186,7 +186,9 @@ function renderRow(row, made) {
 function renderGroups(groups, idPrefix, made) {
   return h('div', {class: 'app-shortcuts-groups'}, ...groups.map(({group, rows}) => {
     const id = `${idPrefix}-${group.toLowerCase()}`;
-    return h('section', {class: 'app-shortcuts-group', 'aria-labelledby': id, dataset: {group}},
+    // A labelled group, not a landmark: only the scope sections are regions (their names are unique),
+    // whereas group names such as "Transport" repeat from scope to scope (axe landmark-unique).
+    return h('div', {class: 'app-shortcuts-group', role: 'group', 'aria-labelledby': id, dataset: {group}},
       h('h4', {class: 'app-shortcuts-group-title', id}, group),
       h('ul', {class: 'app-shortcuts-rows'}, ...rows.map(row => renderRow(row, made))));
   }));
