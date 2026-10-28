@@ -11,6 +11,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { qualityKey, sourceKey, urlKey } from './lib/dedupe';
 import type { Quality } from './lib/presets';
+import { mapSummaryFor } from './migrations';
 import { r2 } from './r2';
 
 type Source = Doc<'songs'>['source'];
@@ -70,6 +71,10 @@ export async function claimInto(
     renditionId: rendition._id,
     addedAt,
     metadataStatus: 'pending',
+    // B1 fields at insert, so `migrations.isUpgraded` holds and the I0B
+    // backfill cron never visits it: a claimed song has no tempo and no chart.
+    hasChart: false,
+    mapSummary: mapSummaryFor({ tempo: undefined, duration: rendition.duration, hasChart: false }),
   });
   await ctx.scheduler.runAfter(0, internal.metadataLookup.enrich, {id:songId});
   return songId;
