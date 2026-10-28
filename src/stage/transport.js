@@ -416,8 +416,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (!stopAtPending) return;
     stopAtPending = false;
     // A discontinuity clears it in the engine; a plan change (a loop edit that keeps the position) does not.
-    // TODO(F4b): engine.cancelStopAt() once it is public; no `?.` so a rename fails loudly.
-    if (engine.stopAtWhen != null) engine._clearStopAt();
+    engine.cancelStopAt();
   }
 
   /** Rule 7: any seek, stop, manual speed change, loop edit or jump starts the pass count again. */
@@ -427,17 +426,6 @@ export function createTransport({engine, metronome, map, position, practice, und
     eligible = loop.on && pos <= loop.a + PASS_START_EPS;
     clearStopAt();
     dirty = true;
-  }
-
-  /**
-   * The next arrival at `b` after now. At a wrap the engine can report the wrap it is
-   * emitting (its time rounds to just after now); then it is the one a pass later.
-   */
-  function upcomingWrap() {
-    const at = engine.nextWrapAt();
-    if (at == null || at > ctxNow() + SAME_TIME) return at;
-    const loop = engine.loop, gap = engine.loopGap?.sec ?? 0;
-    return at + ((loop.b - loop.a) + gap) / (engine.rate || 1);
   }
 
   // ---- engine events ------------------------------------------------------------------
@@ -504,7 +492,7 @@ export function createTransport({engine, metronome, map, position, practice, und
   function playTimesArm() {
     const loop = pv().loop;
     if (!engine.playing || engine.countingIn || stopAtPending || !loop.on || !(loop.playTimes > 0) || pass < loop.playTimes - 1) return;
-    const at = upcomingWrap();
+    const at = engine.nextWrapAt();
     if (at != null) { stopAtPending = true; engine.stopAt(at); }
   }
 
@@ -631,7 +619,7 @@ export function createTransport({engine, metronome, map, position, practice, und
   function jumpWhen(pos) {
     const loop = applied.loop !== 'off' && pv().loop.on ? pv().loop : null;
     const now = ctxNow(), soon = now + engine.lookahead + JUMP_MARGIN;
-    const wrapAt = loop ? upcomingWrap() : null;
+    const wrapAt = loop ? engine.nextWrapAt() : null;
     const period = loop ? ((loop.b - loop.a) + (engine.loopGap?.sec ?? 0)) / (engine.rate || 1) : 0;
     const wrapAfter = (t) => {
       if (wrapAt == null) return null;
@@ -1245,7 +1233,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (next >= trainer.rates.length) return;
     const passes = trainer.cfg.passes;
     if (passes > 1 && trainer.passInStep < passes - 1) return;
-    const at = upcomingWrap();
+    const at = engine.nextWrapAt();
     if (at == null || at <= ctxNow() + engine.lookahead) return;
     engine.setSpeed(trainer.rates[next], {at});
     trainer.pending = {at, index: next};
@@ -1284,7 +1272,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (!crWanted()) { crReset(); return; }
     // A switch whose wrap has come is the current role now (a plan event can precede the wrap event).
     if (cr.pending && cr.pending.at <= ctxNow() + 1e-9) { cr.role = cr.pending.role; cr.pending = null; }
-    const at = upcomingWrap();
+    const at = engine.nextWrapAt();
     if (cr.pending && at != null && Math.abs(cr.pending.at - at) < SAME_TIME) return;
     if (cr.pending) { engine.setTrackGains(crGains(cr.role, cr.names), {at: cr.pending.at}); cr.pending = null; }
     if (at == null) return;

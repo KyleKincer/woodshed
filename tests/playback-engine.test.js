@@ -6,7 +6,6 @@ vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuff
 import { MultitrackEngine, MIN_RATE } from '../src/js/engine.js';
 import { Metronome } from '../src/js/metronome.js';
 import { SongMapStore } from '../src/js/song-map.js';
-import { defaultSongMap } from '../shared/song-map.ts';
 let engine;
 beforeEach(() => {
   const param = () => ({cancelScheduledValues:vi.fn(), setValueAtTime:vi.fn(), setTargetAtTime:vi.fn()});
@@ -197,9 +196,9 @@ test('toggle() is gone; seek(t, {cue: false}) leaves the cue', async () => {
 test('sectionAt finds the bar by quarters, not seconds, across a meter change (I0A-1)', () => {
   // 120 qpm: two 4/4 bars (q 0-8, 0-4 s), then 6/8 bars of three quarters each (q 8, 11, 14, ...).
   const bar = (id, numerator, denominator) => ({id, numerator, denominator, length: {n: 4 * numerator, d: denominator}, label: ''});
-  const metro = new Metronome(engine, new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1));
-  metro.load({songMap: {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
-    measures: [bar('a', 4, 4), bar('b', 4, 4), ...Array.from({length: 40}, (_, i) => bar(`c${i}`, 6, 8))]}});
+  const songMap = {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
+    measures: [bar('a', 4, 4), bar('b', 4, 4), ...Array.from({length: 40}, (_, i) => bar(`c${i}`, 6, 8))]};
+  const metro = new Metronome(engine, new SongMapStore(songMap, engine.duration || 1));
   // t = 1.5 s is q = 3: still bar 0 (a quarters-as-seconds lookup lands in bar 1 at 2 s).
   expect(metro.sectionAt(1.5)).toMatchObject({t: 0, beatsPerBar: 4, unit: 4});
   // t = 5 s is q = 10: the first 6/8 bar, starting at q 8 = 4 s (the seconds lookup lands at q 20 = 10 s).
