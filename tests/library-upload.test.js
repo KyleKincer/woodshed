@@ -10,7 +10,7 @@ vi.mock('../src/js/companion.js', () => ({requireCompanion: vi.fn(), uploadXHR: 
 const jobs = await import('../src/api/jobs.js');
 const companion = await import('../src/js/companion.js');
 const {store} = await import('../src/app/store.js');
-const {MAX_UPLOAD_BYTES, COPY, startUpload, startUploads, uploadDevice, uploadError} = await import('../src/library/upload.js');
+const {CANCEL_RETRY_MS, MAX_UPLOAD_BYTES, COPY, startUpload, startUploads, uploadDevice, uploadError} = await import('../src/library/upload.js');
 const {describeError} = await import('../src/app/error-copy.js');
 
 const flush = async (n = 6) => { for (let i = 0; i < n; i++) await Promise.resolve(); await new Promise(r => setTimeout(r, 0)); };
@@ -145,13 +145,75 @@ describe('cancel (S1: no job after a cancel)', () => {
     expect(jobs.createSeparation).toHaveBeenCalledTimes(1);
     h.dismiss();                            // ignored: the upload is still live
     expect(entries()).toEqual([h]);
-    await h.cancel();
+    const canceling = h.cancel();           // the answer waits for the job the in-flight call makes
     expect(h.state.value).toBe('canceled');
     expect(entries()).toEqual([]);
     created({jobId: 'job-late'});
     await flush();
     expect(jobs.cancel).toHaveBeenCalledWith({jobId: 'job-late'});
+    await expect(canceling).resolves.toBe(true);
     await expect(h.promise).resolves.toBeNull();
+  });
+
+  test('while createSeparation is in flight and it then fails: no job, the cancel stands', async () => {
+    let refuse;
+    jobs.createSeparation.mockImplementation(() => new Promise((_, rej) => { refuse = rej; }));
+    const h = startUpload(file('a.wav'), {settings: SETTINGS});
+    await flush();
+    uploads[0].resolve('u-1');
+    await flush();
+    const canceling = h.cancel();
+    refuse(Object.assign(new Error('queue full'), {code: 'queue_full'}));
+    await expect(canceling).resolves.toBe(true);
+    await expect(h.promise).resolves.toBeNull();
+    expect(jobs.cancel).not.toHaveBeenCalled();
+    expect(h.state.value).toBe('canceled');
+    expect(entries()).toEqual([]);
+  });
+
+  describe('a cancel that raced createSeparation, when jobs.cancel fails', () => {
+    beforeEach(() => { vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']}); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    async function raced() {
+      let created;
+      jobs.createSeparation.mockImplementation(() => new Promise(r => { created = r; }));
+      const h = startUpload(file('a.wav'), {settings: SETTINGS});
+      await vi.advanceTimersByTimeAsync(10);
+      uploads[0].resolve('u-1');
+      await vi.advanceTimersByTimeAsync(10);
+      const canceling = h.cancel();
+      created({jobId: 'job-late'});
+      return {h, canceling};
+    }
+
+    test('it is tried again with backoff, and the cancel goes through', async () => {
+      jobs.cancel.mockReset()
+        .mockRejectedValueOnce(new Error('network'))
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      const {h, canceling} = await raced();
+      await vi.advanceTimersByTimeAsync(CANCEL_RETRY_MS[0] + CANCEL_RETRY_MS[1] + 10);
+      await expect(canceling).resolves.toBe(true);
+      expect(jobs.cancel).toHaveBeenCalledTimes(3);
+      await expect(h.promise).resolves.toBeNull();
+      expect(h.state.value).toBe('canceled');
+    });
+
+    test('if it never goes through, cancel() says so and the handle is queued with its job', async () => {
+      jobs.cancel.mockReset().mockRejectedValue(new Error('network'));
+      const {h, canceling} = await raced();
+      await vi.advanceTimersByTimeAsync(CANCEL_RETRY_MS.reduce((a, b) => a + b, 0) + 10);
+      await expect(canceling).resolves.toBe(false);
+      expect(jobs.cancel).toHaveBeenCalledTimes(CANCEL_RETRY_MS.length + 1);
+      expect(h.state.value).toBe('queued');
+      expect(h.jobId).toBe('job-late');
+      await expect(h.promise).resolves.toEqual({jobId: 'job-late'});
+      expect(entries()).toEqual([]);          // the job exists: its Jobs row (with Cancel) takes over
+      jobs.cancel.mockReset().mockResolvedValue(true);
+      await expect(h.cancel()).resolves.toBe(true);   // Undo can be tried again on the queued job
+      expect(jobs.cancel).toHaveBeenCalledWith({jobId: 'job-late'});
+    });
   });
 
   test('after the job exists: cancel is the Undo, jobs.cancel', async () => {
@@ -163,6 +225,36 @@ describe('cancel (S1: no job after a cancel)', () => {
     expect(jobs.cancel).toHaveBeenCalledWith({jobId: 'job-1'});
     jobs.cancel.mockRejectedValueOnce(new Error('gone'));
     await expect(h.cancel()).resolves.toBe(false);
+  });
+});
+
+describe('the settings a job runs with (add-model.js jobSettings)', () => {
+  const sent = () => jobs.createSeparation.mock.calls.map(([args]) => args.settings);
+  const STORED = {preset: 'studio', stemMode: 'drums', bitrate: 256};
+  async function run(options) {
+    const h = startUpload(file('a.wav'), {deviceId: 'dev-1', ...options});
+    await flush();
+    uploads.at(-1).resolve('u');
+    await h.promise;
+  }
+
+  test('a stored two-part split (1.9) is never sent unless it was chosen', async () => {
+    await run({settings: STORED, profile: {instruments: ['drums'], primary: 'drums'}});
+    expect(sent().at(-1)).toEqual({...STORED, stemMode: 'full', preset: 'studio'});
+    await run({settings: STORED, profile: {instruments: ['drums'], primary: 'drums'}, choice: {stemMode: 'drums'}});
+    expect(sent().at(-1)).toMatchObject({stemMode: 'drums', preset: 'studio'});
+  });
+
+  test('guitar or keys means 6 stems; an unsaved legacy full is not a choice', async () => {
+    await run({settings: {preset: 'balanced', stemMode: 'full'}, profile: {instruments: ['guitar'], primary: 'guitar'}});
+    expect(sent().at(-1)).toMatchObject({stemMode: 'six', preset: 'balanced'});
+    await run({settings: {preset: 'balanced', stemMode: 'full', addDefaultsSaved: true}, profile: {instruments: ['guitar'], primary: 'guitar'}});
+    expect(sent().at(-1)).toMatchObject({stemMode: 'full'});
+  });
+
+  test('the Change choice of preset; no profile still drops a two-part default', async () => {
+    await run({settings: STORED, choice: {preset: 'fast'}});
+    expect(sent().at(-1)).toMatchObject({stemMode: 'full', preset: 'fast', bitrate: 256});
   });
 });
 

@@ -153,6 +153,51 @@ describe('on the Library', () => {
     expect(isShown()).toBe(false);
   });
 
+  test('the idle time is above the HTML spec\'s worst-case dragover gap while the pointer is still (350 ± 200 ms)', () => {
+    expect(DRAG_IDLE_MS).toBeGreaterThan(550);
+    vi.useFakeTimers();
+    const dt = transfer({files: [file('a.mp3')]});
+    drag('dragenter', dt);
+    for (let i = 0; i < 5; i++) { vi.advanceTimersByTime(550); drag('dragover', dt); }
+    expect(isShown()).toBe(true);
+    expect(feedback.announce).toHaveBeenCalledTimes(1);
+  });
+
+  test('re-shown by a dragover after the idle hide: crossing between elements does not hide it again', () => {
+    vi.useFakeTimers();
+    const dt = transfer({files: [file('a.mp3')]});
+    const a = document.body.appendChild(document.createElement('div'));
+    const b = document.body.appendChild(document.createElement('div'));
+    drag('dragenter', dt, a);
+    vi.advanceTimersByTime(DRAG_IDLE_MS + 10);
+    expect(isShown()).toBe(false);
+    drag('dragover', dt, a);                       // the pointer was there all along
+    expect(isShown()).toBe(true);
+    drag('dragenter', dt, b);
+    drag('dragleave', dt, a);
+    expect(isShown()).toBe(true);
+    drag('dragover', dt, b);
+    expect(feedback.announce).toHaveBeenCalledTimes(2);   // once per showing, no flicker
+    drag('dragleave', dt, b);                      // out of the window
+    expect(isShown()).toBe(false);
+  });
+
+  test('a dragenter ignored while a dialog was open: the dragover that shows it counts the pointer as inside', () => {
+    const dialog = document.body.appendChild(document.createElement('dialog'));
+    dialog.setAttribute('open', '');
+    const dt = transfer({files: [file('a.mp3')]});
+    const a = document.body.appendChild(document.createElement('div'));
+    const b = document.body.appendChild(document.createElement('div'));
+    drag('dragenter', dt, a);
+    expect(isShown()).toBe(false);
+    dialog.remove();
+    drag('dragover', dt, a);
+    expect(isShown()).toBe(true);
+    drag('dragenter', dt, b);
+    drag('dragleave', dt, a);
+    expect(isShown()).toBe(true);
+  });
+
   test('dragend hides it too', () => {
     drag('dragenter', transfer({files: [file('a.mp3')]}));
     drag('dragend', transfer({files: []}));

@@ -5,9 +5,10 @@
 //   badges(title)                   → Array<'Official'|'Live'|'Cover'|'Lyrics'>
 //   findDuplicate({url?, title?, artist?, duration?}, songs) → Song|null
 //   describeDefaults(profile, settings) → 'Split for drums · Balanced quality · 4 stems'
-//   removesMyStem(profile, stemMode) → Instrument|null
+//   removesMyStem(profile, stemMode, settings?) → Instrument|null
 //
-// Helpers the sheet also uses: defaultsParts (the defaults line with its emphasised words), stemsFor / stemCount
+// Helpers the sheet also uses: defaultsParts (the defaults line with its emphasised words), jobSettings (the
+// settings a job runs with: addDefaults plus the Change choice; upload.js uses it too), stemsFor / stemCount
 // (what each stem layout makes), isAudioFile / audioFiles (the accepted formats) and COPY (this module's strings:
 // its row lists no .copy.js, so the module exports them, §9.0).
 
@@ -82,19 +83,57 @@ export function classify(input) {
 
 // ---------------------------------------------------------------- badges
 
+/** The separators a video title puts between its parts: "Artist - Title - Live at Wembley", "Title | Drum Cover". */
+const SEGMENT_SEPARATOR = /\s+[-–—]\s+|\s*\|\s*/;
+
+/** The title's dash- or bar-separated parts; part 0 is usually the artist, part 1 the song name. */
+function segmentsOf(text) {
+  return text.split(SEGMENT_SEPARATOR).map(part => part.trim()).filter(Boolean);
+}
+
+/** Bracketed parts: "(Live at Wembley)", "[Drum Cover]". */
+const bracketsOf = text => [...text.matchAll(/[([{]([^)\]}]*)[)\]}]/g)].map(m => m[1]);
+
+/**
+ * A performance marker. "Live" counts inside brackets ("(Live)", "[Live at Wembley]"), before a performance word
+ * anywhere ("Live at …", "Live from …", "Live Session"), as a whole separated part ("Title - Live"), or opening a part
+ * after the song name ("Artist - Title - Live in Paris"). A song whose name starts or ends with the word ("Oasis - Live
+ * Forever", "Wings - Live and Let Die", "I Want to Live") gets no badge.
+ */
+const LIVE_WORDS = /\blive\s+(?:at|from|session|sessions|version|video|performance|recording|acoustic|concert|cover|in\s+concert|on\s+(?:stage|air|tv|kexp|letterman))\b/i;
+function isLive(text) {
+  if (LIVE_WORDS.test(text)) return true;
+  if (bracketsOf(text).some(inner => /\blive\b/i.test(inner))) return true;
+  const parts = segmentsOf(text.replace(/[([{][^)\]}]*[)\]}]/g, ' '));
+  return parts.some((part, i) => (i >= 1 && /^live$/i.test(part)) || (i >= 2 && /^live\b/i.test(part)));
+}
+
+/** Instrument and style words that make "… cover" a cover ("Drum Cover", "Acoustic Cover"). */
+const COVER_KIND = /\b(?:live|drum|drums|guitar|bass|piano|keys|keyboard|vocal|vocals|acoustic|metal|punk|rock|jazz|cello|violin|ukulele|sax|saxophone|band|full\s+band|instrumental|orchestral|a\s+cappella|lofi|lo-fi)\s+cover\b/i;
+/**
+ * A cover marker. "Cover" counts inside brackets ("(Bob Dylan cover)"), after an instrument or style word
+ * ("Drum Cover"), as "cover by" / "cover version", as a whole separated part ("Title - Cover"), or anywhere in a part
+ * after the song name ("Artist - Title - Piano cover"). A song named "Cover Me" or "Under Cover of Darkness" gets none.
+ */
+function isCover(text) {
+  if (COVER_KIND.test(text) || /\bcover(?:ed)?\s+by\b|\bcover\s+version\b/i.test(text)) return true;
+  if (bracketsOf(text).some(inner => /\bcover(?:ed)?\b/i.test(inner))) return true;
+  const parts = segmentsOf(text.replace(/[([{][^)\]}]*[)\]}]/g, ' '));
+  return parts.some((part, i) => (i >= 1 && /^cover$/i.test(part)) || (i >= 2 && /\bcover(?:ed)?\b/i.test(part)));
+}
+
 const BADGE_RULES = [
-  ['Official', /\bofficial\b/i],
-  // "Live" only where a title marks a performance, not a song called "Live Forever".
-  ['Live', /(?:[([{|\-–—:]\s*live\b|\blive\s+(?:at|from|in|on|session|sessions|version|video|performance|recording|acoustic|concert)\b|\blive\s*[)\]}]|\(live\b|\blive\s*$)/i],
-  ['Cover', /\bcover(?:ed)?\b/i],
-  ['Lyrics', /\blyrics?\b/i],
+  ['Official', text => /\bofficial\b/i.test(text)],
+  ['Live', isLive],
+  ['Cover', isCover],
+  ['Lyrics', text => /\blyrics?\b/i.test(text)],
 ];
 
 /** Badges derived from a candidate's title (spec §3.2 item 3), in the order Official, Live, Cover, Lyrics. */
 export function badges(title) {
   const text = typeof title === 'string' ? title : '';
   if (!text.trim()) return [];
-  return BADGE_RULES.filter(([, re]) => re.test(text)).map(([name]) => name);
+  return BADGE_RULES.filter(([, test]) => test(text)).map(([name]) => name);
 }
 
 // ---------------------------------------------------------------- duplicates
@@ -129,9 +168,13 @@ function songArtists(song) {
   return [song?.artist, song?.albumArtist, song?.uploader].map(artistOf).filter(Boolean);
 }
 
+/**
+ * Same artist, or no artist on either side (an untagged file added twice: "" equals "" once case-folded). An
+ * uploader is a channel or upload name, not an artist, so it does not stop an artist-less match.
+ */
 function sameArtist(candidate, song) {
   const want = artistOf(candidate);
-  if (!want) return false;
+  if (!want) return !artistOf(song?.artist) && !artistOf(song?.albumArtist);
   return songArtists(song).some(a => a === want || squash(a) === squash(want));
 }
 
@@ -199,8 +242,8 @@ const listOf = songs => {
 /**
  * The library song this candidate already is (spec §3.2 item 3, "Duplicate"), or null: the same source link,
  * or the same title and artist (case- and accent-folded; a video title's "(Official Audio)" and an "Artist - Title"
- * reading are understood; the artist matches the song's artist, album artist or uploader) with durations
- * within ±2 s. Without both durations a title match is not enough.
+ * reading are understood; the artist matches the song's artist, album artist or uploader, and no artist on
+ * either side counts as the same) with durations within ±2 s. Without both durations a title match is not enough.
  * @param {{url?: string, title?: string, artist?: string, duration?: number}} candidate
  * @param {Map<string, object>|object[]} songs  store.library.songs.value or a list of rows
  */
@@ -238,14 +281,36 @@ const STEMS = Object.freeze({
 /** Stem layouts in the order the Change panel lists them (spec §3.2 item 4). */
 export const STEM_MODES = Object.freeze(['full', 'six', 'drums', 'vocals', 'bass']);
 
-/** The stem names a layout makes; [] for an unknown layout. */
-export function stemsFor(stemMode) {
-  return STEMS[stemMode] ?? [];
+/** The 6-stem model (convex/lib/presets.ts SIX_STEM_MODEL): a `full` split with it makes six stems. */
+const SIX_STEM_MODEL = 'htdemucs_6s';
+
+/**
+ * The stem names a layout makes; [] for an unknown layout. `settings` (optional) is what the job runs with: a
+ * `full` split on the Custom preset with the 6-stem model makes six stems, as convex/lib/presets.ts expectedStems says.
+ * `preset` overrides settings.preset (the Change panel's choice).
+ */
+export function stemsFor(stemMode, settings = null, preset = settings?.preset) {
+  const stems = STEMS[stemMode] ?? [];
+  if (stemMode === 'full' && preset === 'custom' && settings?.custom?.model === SIX_STEM_MODEL) return STEMS.six;
+  return stems;
 }
 
-/** How many stems a layout makes (4, 6 or 2); 0 for an unknown layout. */
-export function stemCount(stemMode) {
-  return stemsFor(stemMode).length;
+/** How many stems a layout makes (4, 6 or 2; 6 for `full` on the Custom 6-stem model); 0 for an unknown layout. */
+export function stemCount(stemMode, settings = null, preset = settings?.preset) {
+  return stemsFor(stemMode, settings, preset).length;
+}
+
+/**
+ * The settings a new job runs with (spec §3.2 item 4): the stored account settings with the stem layout and preset
+ * the Add sheet shows, i.e. profile.js addDefaults (a stored two-part split or an unsaved legacy `full` is never a
+ * default) unless the Change panel chose otherwise (`choice` = {stemMode?, preset?}).
+ */
+export function jobSettings(profile, settings, choice = null) {
+  const stored = settings && typeof settings === 'object' ? settings : {};
+  const defaults = addDefaults(profile, stored);
+  const stemMode = STEMS[choice?.stemMode] ? choice.stemMode : defaults.stemMode;
+  const preset = typeof choice?.preset === 'string' && choice.preset ? choice.preset : defaults.preset;
+  return {...stored, stemMode, preset};
 }
 
 /** The profile's instruments, known names only and deduplicated, with the primary first. */
@@ -268,14 +333,13 @@ function splitInstrument(profile) {
  * The "Split for" clause is left out when the profile names no instrument with a word of its own (none, or Other).
  */
 export function defaultsParts(profile, settings, choice = null) {
-  const defaults = addDefaults(profile, settings);
-  const stemMode = STEMS[choice?.stemMode] ? choice.stemMode : defaults.stemMode;
-  const preset = typeof choice?.preset === 'string' && choice.preset ? choice.preset : defaults.preset;
+  const resolved = jobSettings(profile, settings, choice);
+  const {stemMode, preset} = resolved;
   const word = COPY.instruments[splitInstrument(profile)] ?? null;
   const label = COPY.presets[preset] ?? COPY.presets.balanced;
   const parts = [];
   if (word) parts.push({text: COPY.splitFor, strong: false}, {text: word, strong: true}, {text: COPY.separator, strong: false});
-  parts.push({text: label, strong: true}, {text: COPY.quality + COPY.separator, strong: false}, {text: COPY.stems(stemCount(stemMode)), strong: false});
+  parts.push({text: label, strong: true}, {text: COPY.quality + COPY.separator, strong: false}, {text: COPY.stems(stemCount(stemMode, resolved)), strong: false});
   return parts;
 }
 
@@ -291,10 +355,12 @@ export function describeDefaults(profile, settings) {
  * The profile instrument (the primary first) that would not get its own track with this stem layout, or null:
  * guitar or keys on a 4-stem split (they land in Other), or anything a two-part split leaves out (spec §3.2:
  * "Your guitar won't be a separate track with this layout."). Other is never separate except as `other` itself.
+ * `settings` (optional, the job's settings as jobSettings gives them) makes a `full` split on the Custom 6-stem model
+ * count as six stems.
  */
-export function removesMyStem(profile, stemMode) {
-  const stems = STEMS[stemMode];
-  if (!stems) return null;
+export function removesMyStem(profile, stemMode, settings = null) {
+  if (!STEMS[stemMode]) return null;
+  const stems = stemsFor(stemMode, settings);
   for (const instrument of instrumentsOf(profile)) {
     const {fallbacks, missing} = myStems({instruments: [instrument]}, stems);
     if (fallbacks.length || missing.length) return instrument;

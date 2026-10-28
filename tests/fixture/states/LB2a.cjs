@@ -4,8 +4,9 @@
 //   lb2a-drop-target      a 3-file drag over the Library: the "Drop to add 3 files" target is a popover in the
 //                         top layer over the dimmed window, takes no focus, is announced, and a dragover anywhere is
 //                         accepted; captured
-//   lb2a-drop-add         the drop stages the three files and opens /add (LB2b's sheet takes them; until it
-//                         lands /add is the placeholder); nothing is uploaded and no job is created
+//   lb2a-drop-add         the drop stages the three files and opens /add (LB2b's sheet takes them and lists them by
+//                         name; until it lands /add is the placeholder and they stay staged); nothing is uploaded
+//                         and no job is created
 //   lb2a-drop-elsewhere   on /welcome (Library place, but not the Library): no target, and a dropped file is
 //                         swallowed: the app stays where it is
 'use strict';
@@ -95,8 +96,15 @@ module.exports = [
       });
       // LB2b's sheet takes the files when it mounts; while /add is the placeholder they wait here for it.
       const placeholder = await page.evaluate(() => document.body.textContent.includes('Not built yet'));
-      t.expect(placeholder ? JSON.stringify(staged) === JSON.stringify(FILES) : staged.length === 0,
-        `the three files are staged for the sheet (${placeholder ? 'placeholder' : 'sheet'}: ${staged})`);
+      if (placeholder) {
+        t.expect(JSON.stringify(staged) === JSON.stringify(FILES), `the three files are staged for the sheet (placeholder: ${staged})`);
+      } else {
+        // The sheet took them: it lists each dropped file by name (notes.pdf in its "isn't audio" line).
+        await page.waitForFunction(names => names.every(name => document.body.innerText.includes(name.replace(/\.[^.]+$/, ''))), FILES, {timeout: 5000}).catch(() => {});
+        const shown = await page.evaluate(names => names.filter(name => document.body.innerText.includes(name.replace(/\.[^.]+$/, ''))), FILES);
+        t.expect(staged.length === 0 && shown.length === FILES.length,
+          `the sheet took the three staged files and lists them (left staged: ${staged}; listed: ${shown})`);
+      }
       const after = await page.evaluate(() => window.fixture.db().jobs.length);
       t.expect(after === before, `nothing was uploaded or queued (${before} → ${after} jobs)`);
       const uploads = await page.evaluate(() => window.__woodshed.store.library.uploads.peek().length);

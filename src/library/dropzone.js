@@ -26,8 +26,11 @@ export const COPY = Object.freeze({
   dropTarget: n => (Number.isInteger(n) && n > 0 ? `Drop to add ${n} ${n === 1 ? 'file' : 'files'}` : 'Drop to add files'),
 });
 
-/** No dragover for this long means the drag left without a dragleave we could see (Esc, a dragend elsewhere). */
-export const DRAG_IDLE_MS = 400;
+/**
+ * No dragover for this long means the drag left without a dragleave we could see (Esc, a dragend elsewhere).
+ * Above the HTML spec's worst-case gap between dragovers while the pointer is still (350 ms ± 200 ms).
+ */
+export const DRAG_IDLE_MS = 1000;
 const ADD_PATH = '/add';
 const ANNOUNCE_KEY = 'library-drop';
 
@@ -128,6 +131,9 @@ export function startLibraryDrop({router = null, doc = globalThis.document, win 
     if (active()) {
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
       if (!shown) show(fileCount(e.dataTransfer));
+      // Shown by a dragover with no dragenter counted (after the idle hide, or a dragenter ignored while a dialog
+      // was open): the pointer is inside the window, so a boundary crossing must not bring the count to 0.
+      if (depth === 0) depth = 1;
       keepAlive();
       return;
     }

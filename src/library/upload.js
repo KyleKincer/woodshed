@@ -3,7 +3,8 @@
 // (jobs.createSeparation). Canceling before the job exists never creates it: the S1 bug of 1.9, where the
 // in-flight upload still queued the song after its card was removed, is gone.
 //
-//   startUploads(files, {settings, deviceId?, title?, titles?}) → UploadHandle[]
+//   startUploads(files, {settings, profile?, choice?, deviceId?, title?, titles?}) → UploadHandle[]
+//       settings = the stored account settings; the job gets jobSettings(profile, settings, choice) (add-model.js)
 //       one batch: the processor's device id is fetched once (requireCompanion) unless the caller passes it, and
 //       the files upload one after another in the order given (a file waiting for its turn is already
 //       'uploading', at 0 bytes), so their jobs queue in that order too. `title` overrides a single file's title; `titles` (array or Map by file) per file.
@@ -19,7 +20,8 @@
 //   promise   resolves {jobId} once the job exists, null when canceled; rejects with the mapped error
 //             (a handler is attached, so an unawaited failure is not reported as unhandled). retry() replaces it.
 //   cancel()  queued or uploading: aborts, no job is created; while createSeparation is in flight, the job it
-//             returns is canceled at once; queued: jobs.cancel({jobId}) (the Add toast's Undo, spec §3.2).
+//             returns is canceled at once (tried again on a failure) and cancel() resolves with whether that worked
+//             (false: the handle is 'queued' again); queued: jobs.cancel({jobId}) (the Add toast's Undo, spec §3.2).
 //   retry()   a failed upload uploads the same file again (a local failure has no job to retry, S2).
 //   dismiss() removes a failed or canceled entry.
 //
@@ -29,6 +31,7 @@
 import {readonly, signal, store} from '../app/store.js';
 import * as jobs from '../api/jobs.js';
 import {requireCompanion, uploadXHR} from '../js/companion.js';
+import {jobSettings} from './add-model.js';
 
 /** The companion refuses bodies over 1 GB (companion/server.mjs /upload); refuse them before sending a byte. */
 export const MAX_UPLOAD_BYTES = 1_000_000_000;
@@ -36,6 +39,8 @@ export const MAX_UPLOAD_BYTES = 1_000_000_000;
 const LABEL_MAX = 500;
 const FILENAME_MAX = 500;
 const TITLE_MAX = 300;
+/** Waits between the tries of a cancel that raced the job's creation (the job must not run, S1). */
+export const CANCEL_RETRY_MS = Object.freeze([250, 1000, 3000]);
 
 export const COPY = Object.freeze({
   tooLarge: 'This file is larger than 1 GB, the most Woodshed can add.',
@@ -101,6 +106,17 @@ const fileName = file => (typeof file?.name === 'string' && file.name ? file.nam
  * One upload. `turn` is the promise the batch hands out: it resolves when the previous file has finished
  * uploading (or ended), so this file may start. `device()` resolves the batch's device id.
  */
+/** jobs.cancel, tried again after CANCEL_RETRY_MS on a failure; true once the job is canceled. */
+async function cancelJob(jobId) {
+  for (let i = 0; ; i += 1) {
+    try {
+      if ((await jobs.cancel({jobId})) !== false) return true;
+    } catch { /* tried again below */ }
+    if (i >= CANCEL_RETRY_MS.length) return false;
+    await new Promise(res => setTimeout(res, CANCEL_RETRY_MS[i]));
+  }
+}
+
 function createHandle(file, {settings, title, device, turn}) {
   const name = fileName(file);
   const total = Math.max(0, Number(file?.size) || 0);
@@ -116,6 +132,7 @@ function createHandle(file, {settings, title, device, turn}) {
   let attempt = 0;
   let retrying = false;       // a retry asks for the device again if the batch's lookup failed
   let settle = null;          // resolves the current attempt's promise
+  let cancelOutcome = null;   // a cancel during createSeparation: resolves with whether the new job was canceled
   let release = () => {};     // lets the next file of the batch start
 
   const handle = {
@@ -191,15 +208,22 @@ function createHandle(file, {settings, title, device, turn}) {
         });
       } catch (createFailure) {
         creating = false;
-        if (canceled) return;
+        if (canceled) { settleCancel(true); return; }   // no job was made: the cancel stands
         fail(uploadError(createFailure) ?? {code: 'unknown', message: '', data: {}, raw: createFailure}, run);
         return;
       }
       creating = false;
       jobId = created?.jobId ?? null;
       if (canceled) {
-        // Canceled while the job was being created: the job must not run (S1).
-        if (jobId) await jobs.cancel({jobId}).catch(() => false);
+        // Canceled while the job was being created: the job must not run (S1). A failed jobs.cancel is tried again;
+        // if it never goes through, the cancel did not happen: the handle is queued (the Jobs row offers Cancel)
+        // and cancel() reports false, so the toast's Undo does not claim success.
+        if (!jobId || await cancelJob(jobId)) { settleCancel(true); return; }
+        canceled = false;
+        state.value = 'queued';
+        removeEntry(handle);
+        run.resolve({jobId});
+        settleCancel(false);
         return;
       }
       state.value = 'queued';
@@ -208,6 +232,12 @@ function createHandle(file, {settings, title, device, turn}) {
     } finally {
       release();
     }
+  }
+
+  function settleCancel(ok) {
+    if (ok) settle?.(null);
+    cancelOutcome?.resolve(ok);
+    cancelOutcome = null;
   }
 
   /** Starts an attempt; `wait` is the batch turn (the first attempt) or nothing (a retry). */
@@ -244,6 +274,15 @@ function createHandle(file, {settings, title, device, turn}) {
     controller?.abort();
     state.value = 'canceled';
     removeEntry(handle);
+    if (creating) {
+      // createSeparation is in flight: the answer is whether the job it makes gets canceled (attemptUpload).
+      if (!cancelOutcome) {
+        let resolve;
+        const promise = new Promise(res => { resolve = res; });
+        cancelOutcome = {promise, resolve};
+      }
+      return cancelOutcome.promise;
+    }
     settle?.(null);
     return true;
   }
@@ -271,13 +310,18 @@ function createHandle(file, {settings, title, device, turn}) {
 /**
  * Starts a batch of uploads (spec §3.2: the files confirmed in the Add sheet). The device id is fetched once for
  * the whole batch unless `deviceId` is passed; files upload one at a time, in order.
+ * `settings` is the stored account settings; the job runs with add-model.js jobSettings(profile, settings, choice):
+ * the Add defaults (a stored two-part split or an unsaved legacy `full` is never sent) unless `choice`
+ * ({stemMode?, preset?}, the Change panel) says otherwise.
  * @param {Iterable<File>} files
- * @param {{settings: object, deviceId?: string, title?: string, titles?: Array<string>|Map<File, string>}} options
+ * @param {{settings: object, profile?: object, choice?: {stemMode?: string, preset?: string}, deviceId?: string,
+ *          title?: string, titles?: Array<string>|Map<File, string>}} options
  * @returns {UploadHandle[]}
  */
-export function startUploads(files, {settings, deviceId, title, titles} = {}) {
+export function startUploads(files, {settings: stored, profile = null, choice = null, deviceId, title, titles} = {}) {
   const list = [...(files ?? [])].filter(Boolean);
   if (!list.length) return [];
+  const settings = jobSettings(profile, stored, choice);
   let pending = null, failed = false;
   const device = (fresh = false) => {
     if (deviceId) return Promise.resolve(deviceId);
@@ -303,6 +347,6 @@ export function startUploads(files, {settings, deviceId, title, titles} = {}) {
 }
 
 /** One file (a batch of one); `deviceId` is the processor's device when the caller has it. */
-export function startUpload(file, {settings, deviceId, title} = {}) {
-  return startUploads([file], {settings, deviceId, title})[0];
+export function startUpload(file, {settings, profile, choice, deviceId, title} = {}) {
+  return startUploads([file], {settings, profile, choice, deviceId, title})[0];
 }

@@ -3,7 +3,7 @@
 import {describe, expect, test} from 'vitest';
 import {
   AUDIO_EXTENSIONS, COPY, STEM_MODES, audioFiles, badges, canonicalUrl, classify, defaultsParts, describeDefaults,
-  findDuplicate, isAudioFile, removesMyStem, removesMyStemLine, stemCount, stemsFor,
+  findDuplicate, isAudioFile, jobSettings, removesMyStem, removesMyStemLine, stemCount, stemsFor,
 } from '../src/library/add-model.js';
 import {addDefaults} from '../src/app/profile.js';
 
@@ -69,6 +69,32 @@ describe('badges', () => {
     ['Harbor Lights - Live Cover with Lyrics (Official)', ['Official', 'Live', 'Cover', 'Lyrics']],
     ['Live Forever', []],
     ['Live and Let Die', []],
+    // Video titles in the "Artist - Title" form: a song name that starts or ends with Live or Cover gets no badge.
+    ['Oasis - Live Forever (Official Video)', ['Official']],
+    ['Oasis - Live Forever', []],
+    ['Wings - Live and Let Die', []],
+    ['Paul McCartney & Wings - Live And Let Die', []],
+    ['I Want to Live', []],
+    ['Ada Moreno - I Want to Live', []],
+    ['Portugal. The Man - Live in the Moment', []],
+    ['The Strokes - Under Cover of Darkness (Official Video)', ['Official']],
+    ['Bruce Springsteen - Cover Me', []],
+    ['Bruce Springsteen - Cover Me (Official Audio)', ['Official']],
+    ['Ada Moreno - Discover', []],
+    // … while a performance or cover marked after the song name still counts.
+    ['Oasis - Live Forever (Live at Knebworth)', ['Live']],
+    ['Oasis - Live Forever - Live in Paris', ['Live']],
+    ['Oasis - Live Forever | Live', ['Live']],
+    ['Ada Moreno - Harbor Lights - Live', ['Live']],
+    ['Ada Moreno - Harbor Lights (Live from Austin)', ['Live']],
+    ['Ada Moreno - Harbor Lights live at KEXP', ['Live']],
+    ['Ada Moreno - Harbor Lights | Drum Cover', ['Cover']],
+    ['Harbor Lights - Cover', ['Cover']],
+    ['Harbor Lights (Ada Moreno cover)', ['Cover']],
+    ['Harbor Lights cover by StickWorks', ['Cover']],
+    ['StickWorks - Harbor Lights - Ada Moreno cover', ['Cover']],
+    ['Harbor Lights acoustic cover', ['Cover']],
+    ['Bruce Springsteen - Cover Me (Live 1984)', ['Live']],
     ['Undercover Martyn', []],
     ['Officially Missing You', []],
     ['Harbor Lights', []],
@@ -108,7 +134,10 @@ describe('findDuplicate', () => {
     ['accents and case fold', {title: 'SECOND WÍND', artist: 'the gales', duration: 249}, 's3'],
     ['album artist matches', {title: 'Second Wind', artist: 'The Gales', duration: 251.9}, 's3'],
     ['an upload: uploader counts as artist', {title: 'Night Bus', artist: 'Uploaded file', duration: 185}, 's2'],
-    ['no artist at all never matches by title', {title: 'Night Bus', artist: '', duration: 184}, null],
+    ['no artist on either side: title + duration match (an untagged file added twice)', {title: 'Night Bus', artist: '', duration: 184}, 's2'],
+    ['no artist on either side, no artist field at all', {title: 'Night Bus', duration: 186}, 's2'],
+    ['no artist on either side, duration outside ±2 s', {title: 'Night Bus', duration: 187}, null],
+    ['no artist on the candidate, the song has one', {title: 'Harbor Lights', duration: 221}, null],
     ['an empty candidate', {}, null],
   ])('%s', (_, candidate, expected) => {
     expect(findDuplicate(candidate, songs)?.id ?? null).toBe(expected);
@@ -124,6 +153,14 @@ describe('findDuplicate', () => {
   test('the link match wins over a title match on another song', () => {
     const twin = {...harbor, id: 's9', source: {type: 'upload', value: 'u9'}};
     expect(findDuplicate({url: 'https://youtu.be/HARBOR12345', title: 'Harbor Lights', artist: 'Ada Moreno', duration: 221}, [twin, harbor]).id).toBe('s1');
+  });
+
+  test('an untagged file added twice is a duplicate; an artist on one side only is not', () => {
+    const take = {id: 'u', title: 'garage-take-4', artist: '', duration: 180, source: {type: 'upload', value: 'abc', filename: 'garage-take-4.wav'}};
+    expect(findDuplicate({title: 'garage-take-4', duration: 180}, [take])).toBe(take);
+    expect(findDuplicate({title: 'garage-take-4', artist: '', duration: 181.5}, [take])).toBe(take);
+    expect(findDuplicate({title: 'garage-take-4', artist: 'StickWorks', duration: 180}, [take])).toBeNull();
+    expect(findDuplicate({title: 'garage-take-4'}, [take])).toBeNull();
   });
 
   test('canonicalUrl', () => {
@@ -158,6 +195,9 @@ describe('describeDefaults (through profile.addDefaults)', () => {
     ['saved full for a guitarist', profile(['guitar']), {...stock, addDefaultsSaved: true}, 'Split for guitar · Balanced quality · 4 stems'],
     ['saved six for a drummer', profile(['drums']), {...stock, stemMode: 'six', addDefaultsSaved: true}, 'Split for drums · Balanced quality · 6 stems'],
     ['a stored two-part mode is never the default', profile(['drums']), {...stock, stemMode: 'drums', addDefaultsSaved: true}, 'Split for drums · Balanced quality · 4 stems'],
+    ['custom 6-stem model on a saved full split: 6 stems', profile(['guitar']), {...stock, preset: 'custom', custom: {model: 'htdemucs_6s'}, addDefaultsSaved: true}, 'Split for guitar · Custom quality · 6 stems'],
+    ['custom 4-stem model on a saved full split: 4 stems', profile(['guitar']), {...stock, preset: 'custom', custom: {model: 'htdemucs_ft'}, addDefaultsSaved: true}, 'Split for guitar · Custom quality · 4 stems'],
+    ['a 6-stem custom model off the Custom preset does not count', profile(['drums']), {...stock, preset: 'balanced', custom: {model: 'htdemucs_6s'}}, 'Split for drums · Balanced quality · 4 stems'],
   ])('%s', (_, p, settings, line) => {
     expect(describeDefaults(p, settings)).toBe(line);
   });
@@ -214,6 +254,15 @@ describe('removesMyStem', () => {
     expect(removesMyStem(p, stemMode)).toBe(expected);
   });
 
+  test('a full split on the Custom 6-stem model keeps guitar and keys separate', () => {
+    const six = {preset: 'custom', custom: {model: 'htdemucs_6s'}, stemMode: 'full'};
+    expect(removesMyStem(profile(['guitar']), 'full', six)).toBeNull();
+    expect(removesMyStem(profile(['keys']), 'full', six)).toBeNull();
+    expect(removesMyStem(profile(['guitar']), 'full', {...six, preset: 'studio'})).toBe('guitar');
+    expect(removesMyStem(profile(['guitar']), 'full', {...six, custom: {model: 'htdemucs'}})).toBe('guitar');
+    expect(removesMyStem(profile(['guitar']), 'drums', six)).toBe('guitar');
+  });
+
   test('the warning line names the instrument', () => {
     expect(removesMyStemLine('guitar')).toBe('Your guitar won’t be a separate track with this layout.');
     expect(removesMyStemLine('keys')).toBe('Your keys won’t be a separate track with this layout.');
@@ -229,6 +278,30 @@ describe('stem layouts', () => {
     expect(stemsFor('vocals')).toEqual(['vocals', 'no_vocals']);
     expect(stemsFor('nope')).toEqual([]);
     expect(stemCount('nope')).toBe(0);
+  });
+
+  test('a full split on the Custom 6-stem model makes six stems (convex/lib/presets.ts expectedStems)', () => {
+    const custom6 = {preset: 'custom', custom: {model: 'htdemucs_6s'}};
+    expect(stemCount('full', custom6)).toBe(6);
+    expect(stemsFor('full', custom6)).toEqual(stemsFor('six'));
+    expect(stemCount('full', custom6, 'balanced')).toBe(4);   // the Change panel chose another preset
+    expect(stemCount('full', {preset: 'balanced', custom: {model: 'htdemucs_6s'}}, 'custom')).toBe(6);
+    expect(stemCount('drums', custom6)).toBe(2);
+    expect(stemCount('full', {preset: 'custom', custom: {model: 'htdemucs'}})).toBe(4);
+  });
+});
+
+describe('jobSettings', () => {
+  const stored = {preset: 'studio', stemMode: 'drums', bitrate: 256, custom: {model: 'htdemucs', shifts: 1, overlap: 0.25}};
+  test('the stored settings with the Add defaults: a stored two-part split is never sent', () => {
+    expect(jobSettings(profile(['drums']), stored)).toEqual({...stored, stemMode: 'full', preset: 'studio'});
+    expect(jobSettings(profile(['guitar']), {...stored, stemMode: 'full'})).toEqual({...stored, stemMode: 'six', preset: 'studio'});
+    expect(jobSettings(null, undefined)).toEqual({stemMode: 'full', preset: 'balanced'});
+  });
+  test('the Change choice wins; an unknown layout is ignored', () => {
+    expect(jobSettings(profile(['drums']), stored, {stemMode: 'drums'})).toMatchObject({stemMode: 'drums', preset: 'studio'});
+    expect(jobSettings(profile(['drums']), stored, {preset: 'fast'})).toMatchObject({stemMode: 'full', preset: 'fast'});
+    expect(jobSettings(profile(['drums']), stored, {stemMode: 'nope'})).toMatchObject({stemMode: 'full'});
   });
 });
 
