@@ -19,8 +19,11 @@
 //   st4-frame-review         "Is this the right recording?" floating over the music; Play hides it and
 //                            the music box stays exactly where it was (spec §4.10)
 //   st4-frame-offer          "Bars found while you were away [Use them] [Not now]" in the status line
-//   st4-frame-markers        the markers offer after the song becomes mapped
-//   st4-frame-unmapped       an unmapped song (the Wave page placeholder)
+//   st4-frame-markers        the markers offer after the song becomes mapped; the Wave page turns into the
+//                            Road map in place (stage.surface, the layer's data-surface, the =/− titles)
+//   st4-frame-unmapped       an unmapped song: the real Wave page (.roadmap[data-kind=wave]) in the music
+//   st4-frame-follow-pill    Follow paused (a manual scroll) with a status line showing: the floating status line
+//                            sits above the 56 px "Back to playhead" pill, never over it
 //   st4-frame-sheet          J opens the Spots sheet: a rail popover left of the controls / a bottom sheet
 //   st4-frame-esc            Esc stopped leaves (laptop); on iPad it never does
 // The app on the fixture database:
@@ -286,6 +289,15 @@ module.exports = [
       const text = await statusText(page);
       t.expect(text.includes('Turn 2 markers into sections'), `the markers offer (${text})`);
       t.expect(await page.getByRole('button', {name: 'Turn into sections'}).isVisible(), '[Turn into sections]');
+      // The Wave page became the Road map in place: the Stage reads the surface's live kind again.
+      const kind = await page.waitForFunction(() => {
+        const layer = document.querySelector('.stage-surface:not([data-leaving])');
+        const kindNow = layer?.querySelector('.roadmap')?.getAttribute('data-kind');
+        return kindNow === 'roadmap' && layer.dataset.surface === 'roadmap' ? {layer: layer.dataset.surface, kind: kindNow,
+          title: window.__frame.registry.state('view.bigger').title} : false;
+      }, null, {timeout: 5000}).then((h) => h.jsonValue()).catch(() => null);
+      t.expect(!!kind, 'the Wave page turned into the Road map (stage-surface[data-surface=roadmap])');
+      t.expect(kind && !/wave/i.test(kind.title), `view.bigger has the Road map's title (${kind?.title})`);
     },
   },
   {
@@ -294,8 +306,47 @@ module.exports = [
     opts: FRAME,
     async fn(page, t) {
       await loaded(t);
-      const later = await page.evaluate(() => document.querySelector('.stage-surface-later')?.textContent ?? '');
-      t.expect(later.includes('Wave page'), `the Wave page placeholder (${later})`);
+      const wave = await page.waitForSelector('.stage-surface[data-surface="wave"] .roadmap[data-kind="wave"]', {state: 'visible', timeout: 5000})
+        .then(() => true, () => false);
+      t.expect(wave, 'the Wave page in the music (.stage-surface .roadmap[data-kind="wave"])');
+      const placeholder = await page.evaluate(() => !!document.querySelector('.stage-surface-later'));
+      t.expect(!placeholder, 'no "Not built yet" placeholder');
+    },
+  },
+  {
+    name: 'st4-frame-follow-pill',
+    url: frame('mapped=0&distance=kit'),
+    opts: FRAME,
+    async fn(page, t) {
+      await loaded(t);
+      await page.waitForSelector('.stage-surface .roadmap[data-kind="wave"]', {state: 'visible', timeout: 5000});
+      // A status line with an action (as "Started over [Undo]" or the resume chip's [Start over]).
+      await page.evaluate(() => window.__frame.feedback.status('Started over', {key: 'start-over', durationMs: Infinity,
+        action: {label: 'Undo', run() {}}}));
+      // A manual scroll of the music pauses Follow: "⤓ Back to playhead" shows.
+      const scrollable = await page.evaluate(() => {
+        const el = document.querySelector('.stage-surface .roadmap');
+        return el.scrollHeight > el.clientHeight + 40;
+      });
+      t.expect(scrollable, 'the Wave page at Kit scrolls');
+      const music = await page.$eval('.stage-music', (el) => { const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
+      await page.mouse.move(music.x, music.y);
+      await page.mouse.wheel(0, 400);
+      await page.waitForSelector('.stage[data-follow-paused]', {state: 'attached', timeout: 3000});
+      const boxes = await page.evaluate(() => {
+        const box = (el) => { const r = el?.getBoundingClientRect(); return r && r.width ? {x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right} : null; };
+        const pill = [...document.querySelectorAll('.stage-surface button')].find((b) => /Back to playhead/.test(b.textContent));
+        return {pill: box(pill), status: box(document.querySelector('.stage-status')),
+          text: (document.querySelector('.stage-status')?.textContent ?? '').replace(/\s+/g, ' ').trim()};
+      });
+      t.expect(boxes.pill && boxes.pill.h >= 56, `the 56 px pill shows (${JSON.stringify(boxes.pill)})`);
+      t.expect(boxes.status && boxes.text.startsWith('Started over'), `the status line shows (${boxes.text})`);
+      const overlap = boxes.pill && boxes.status && boxes.status.bottom > boxes.pill.y && boxes.status.y < boxes.pill.bottom
+        && boxes.status.right > boxes.pill.x && boxes.status.x < boxes.pill.right;
+      t.expect(!overlap && boxes.status.bottom <= boxes.pill.y, `the status line sits above the pill (${JSON.stringify(boxes)})`);
+      await t.capture('paused');
+      await page.getByRole('button', {name: /Back to playhead/}).click();
+      await page.waitForFunction(() => !document.querySelector('.stage').hasAttribute('data-follow-paused'), null, {timeout: 3000});
     },
   },
   {

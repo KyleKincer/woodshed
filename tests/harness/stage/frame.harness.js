@@ -5,7 +5,7 @@
 // Stage tokens apply (the harness host sets html[data-place=stage][data-stage-theme=dark]).
 //
 // Query:
-//   mapped=0          a song nobody mapped (the Wave page placeholder, time readouts)
+//   mapped=0          a song nobody mapped (the Wave page, time readouts)
 //   practice=resume   saved practice: the Chorus looped at 75 % with the drums out (the resume chip)
 //   error=storage     signing the stems fails (the load error in the music area)
 //   error=missing     no stem URLs (the missing-stems error with Re-split)
@@ -15,7 +15,7 @@
 //   markers=1         an unmapped song with two markers that becomes mapped (the markers offer)
 //   distance=near|stand|kit, focus=1   device prefs before mounting
 //   ipad=1            platform.isIPad (Esc never leaves)
-// window.__frame = {ts, view, router, registry, run(id, args)} for the states (tests/fixture/states/ST4.cjs).
+// window.__frame = {ts, view, router, registry, feedback, run(id, args)} for the states (tests/fixture/states/ST4.cjs).
 //
 // stage.js imports ST5's hud.js and controls.js and ST6's strip.js (same-wave peers): the states
 // declare them in opts.requires. Surfaces, menus and sheets of later waves render "Not built yet".
@@ -106,6 +106,6 @@ export default async function mount(el, {query, h}) {
     feedback.status('Bars found while you were away', {action: {label: 'Use them', run() {}}, key: 'detect-offer', durationMs: Infinity});
   }
   if (markers) ts.session.mapChange('Bars found', (m) => m.adopt(structuredClone(sectioned.tempo.songMap)));
-  window.__frame = {ts, view, router, registry, run: (id, args) => registry.run(id, {source: 'key', args})};
+  window.__frame = {ts, view, router, registry, feedback, run: (id, args) => registry.run(id, {source: 'key', args})};
   return window.__frame;
 }

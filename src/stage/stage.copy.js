@@ -108,6 +108,8 @@ export const COPY = Object.freeze({
     speed: 'Speed & trainer', click: 'Click & count-in', mix: 'Mix', loop: 'Loop',
     spots: 'Spots', notes: 'Notes', tapBeat: 'Tap the beat', getBars: 'Get bars',
   }),
+  // The accessible names of the music's target menus (spec §8 "Defined menus"); the others are "More…".
+  menuLabels: Object.freeze({spot: 'Spot', marker: 'Marker', loopBand: 'Loop', stem: 'Stem'}),
   // Command titles (§3.2).
   commands: Object.freeze({
     markerAdd: 'Add marker at playhead',
