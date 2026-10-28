@@ -11,7 +11,8 @@ import schema from './schema';
 import { api } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { defaultSongMap } from '../shared/song-map';
-import { LIST_PER_STATUS, QUEUE_CAP, RESUME_MESSAGE, jobRowValidator, jobDetailValidator } from './jobs';
+import { LIST_PER_STATUS, PRESENCE_ONLINE_MS, QUEUE_CAP, RESUME_MESSAGE, jobRowValidator, jobDetailValidator } from './jobs';
+import { resolveQuality } from './lib/presets';
 
 const modules = import.meta.glob('./**/*.ts');
 const quality = { model: 'htdemucs', shifts: 1, overlap: 0.25, format: 'opus' as const, bitrate: 192 };
@@ -107,7 +108,8 @@ describe('listActive', () => {
       message: 'Downloading…', error: 'Sign in to confirm', meta: { title: 'Weird Fishes/Arpeggi', thumbnail: 'https://i.ytimg.com/x.jpg' },
       deviceId: mac, createdAt: T0 + 1, startedAt: T0 + 5, updatedAt: T0 + 9, attempts: 2, errorCode: 'bot_check', retryAt: T0 + 300_000,
       chainedFrom: null, confirmed: true, source: { type: 'upload', value: 'up-1', filename: 'take 3.wav' },
-      settingsSummary: { preset: 'fast', stemMode: 'six', model: 'htdemucs' },
+      // The model is whatever the worker resolves for `six` (BK4 forces htdemucs_6s), never a literal here.
+      settingsSummary: { preset: 'fast', stemMode: 'six', model: resolveQuality({ preset: 'fast', stemMode: 'six' }).model },
     });
     expect(rows.find(r => r.jobId === beats)).toMatchObject({ kind: 'beats', chainedFrom: chain, settingsSummary: null, confirmed: false });
     expect(rows.find(r => r.jobId === legacy)).toMatchObject({
@@ -222,7 +224,9 @@ describe('createSeparation', () => {
     expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: mac, source: search(), settings: {}, label: 'x' }))).toMatchObject({ code: 'queue_full' });
     await expect(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: search(), settings: {}, label: 'x' })).resolves.toHaveProperty('jobId');
     expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: search(), settings: {}, label: 'x'.repeat(501) }))).toMatchObject({ code: 'invalid', field: 'label' });
-    expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: search('x'.repeat(2001)), settings: {}, label: 'x' }))).toMatchObject({ code: 'invalid', field: 'source' });
+    expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: search('x'.repeat(2001)), settings: {}, label: 'x' }))).toMatchObject({ code: 'invalid', field: 'source', message: 'The source is too long (2000 characters max).' });
+    // A blank source is not "too long".
+    expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: search('   '), settings: {}, label: 'x' }))).toMatchObject({ code: 'invalid', field: 'source', message: 'Enter a link or search.' });
   });
 
   test('account states: signed out, export-only and suspended are refused with codes', async () => {
@@ -233,6 +237,21 @@ describe('createSeparation', () => {
     const exportOnly = await errorOf(alice.mutation(api.jobs.createSeparation, args));
     expect(exportOnly.code).toBe('account_export_only');
     expect(String(exportOnly.message)).toContain('export-only');
+  });
+
+  test('a suspended account can do nothing with jobs', async () => {
+    const { t, alice, mac, songId } = await setup();
+    const jobId = await insertJob(t, job('alice', { kind: 'beats', songId, deviceId: mac, status: 'done', stage: 'done', result: { beats: [] } }));
+    await setAccount(t, 'alice', 'suspended');
+    expect(await codeOf(alice.mutation(api.jobs.createSeparation, { deviceId: mac, source: search(), settings: {}, label: 'x' }))).toBe('account_suspended');
+    expect(await codeOf(alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac }))).toBe('account_suspended');
+    expect(await codeOf(alice.mutation(api.jobs.cancel, { jobId }))).toBe('account_suspended');
+    expect(await codeOf(alice.mutation(api.jobs.dismiss, { jobId }))).toBe('account_suspended');
+    expect(await codeOf(alice.mutation(api.jobs.markApplied, { jobId }))).toBe('account_suspended');
+    expect(await codeOf(alice.mutation(api.jobs.retry, { jobId }))).toBe('account_suspended');
+    expect(await codeOf(alice.query(api.jobs.listActive, {}))).toBe('account_suspended');
+    expect(await codeOf(alice.query(api.jobs.get, { jobId }))).toBe('account_suspended');
+    expect(await codeOf(alice.query(api.jobs.latestDetection, { songId }))).toBe('account_suspended');
   });
 });
 
@@ -268,12 +287,71 @@ describe('createBeatDetection', () => {
     const { t, alice, mac, pc, songId } = await setup();
     // No presence and two computers: the caller has to choose.
     expect(await codeOf(alice.mutation(api.jobs.createBeatDetection, { songId }))).toBe('device_unpaired');
-    await t.run(async ctx => {
-      await ctx.db.insert('devicePresence', { deviceId: mac, userId: 'alice', lastSeenAt: T0 + 100, state: 'offline' });
-      await ctx.db.insert('devicePresence', { deviceId: pc, userId: 'alice', lastSeenAt: T0 + 50, state: 'idle' });
-    });
+    const now = Date.now();
+    const presence = await t.run(async ctx => ({
+      mac: await ctx.db.insert('devicePresence', { deviceId: mac, userId: 'alice', lastSeenAt: now - 1_000, state: 'offline' }),
+      pc: await ctx.db.insert('devicePresence', { deviceId: pc, userId: 'alice', lastSeenAt: now - 30_000, state: 'idle' }),
+    }));
     const { jobId } = await alice.mutation(api.jobs.createBeatDetection, { songId });
     expect((await readJob(t, jobId))?.deviceId).toBe(pc);
+    // A computer that stopped heartbeating without saying so (§6.6: not seen for 150 s) is offline,
+    // so a cleanly shut-down computer seen more recently wins.
+    await t.run(async ctx => {
+      await ctx.db.delete('jobs', jobId);
+      await ctx.db.patch('devicePresence', presence.pc, { lastSeenAt: now - 30 * 86_400_000 });
+      await ctx.db.patch('devicePresence', presence.mac, { lastSeenAt: now - 60_000 });
+    });
+    const viaMac = (await alice.mutation(api.jobs.createBeatDetection, { songId })).jobId;
+    expect((await readJob(t, viaMac))?.deviceId).toBe(mac);
+    // Just inside the window, the PC is online again and wins.
+    await t.run(async ctx => {
+      await ctx.db.delete('jobs', viaMac);
+      await ctx.db.patch('devicePresence', presence.pc, { lastSeenAt: Date.now() - PRESENCE_ONLINE_MS + 10_000 });
+    });
+    expect((await readJob(t, (await alice.mutation(api.jobs.createBeatDetection, { songId })).jobId))?.deviceId).toBe(pc);
+  });
+
+  test('dedupe never returns a detection no computer can run', async () => {
+    const { t, alice, mac, pc, bobPc, songId } = await setup();
+    const first = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac });
+    // The computer it was queued on is revoked: the stale job is canceled and a new one runs on the computer chosen now.
+    await t.run(ctx => ctx.db.patch('devices', mac, { revoked: true, revokedBy: 'user' }));
+    const second = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: pc });
+    expect(second.jobId).not.toBe(first.jobId);
+    expect(await readJob(t, first.jobId)).toMatchObject({ status: 'canceled' });
+    expect(await readJob(t, second.jobId)).toMatchObject({ status: 'queued', deviceId: pc });
+    // A gone computer (no deviceId given): replaced on the default computer.
+    await t.run(ctx => ctx.db.delete('devices', pc));
+    await t.run(ctx => ctx.db.patch('devices', mac, { revoked: false, revokedBy: undefined }));
+    const third = await alice.mutation(api.jobs.createBeatDetection, { songId });
+    expect(third.jobId).not.toBe(second.jobId);
+    expect(await readJob(t, third.jobId)).toMatchObject({ status: 'queued', deviceId: mac });
+    // Another account's computer is refused even while a live detection exists.
+    expect(await codeOf(alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: bobPc }))).toBe('device_unpaired');
+  });
+
+  test('dedupe follows the computer the web chose, unless the job is already running', async () => {
+    const { t, alice, mac, pc, songId } = await setup();
+    const first = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac });
+    // Queued on an offline Mac, and the web now picks the online PC: moved, not ignored.
+    const moved = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: pc });
+    expect(moved.jobId).not.toBe(first.jobId);
+    expect((await readJob(t, first.jobId))?.status).toBe('canceled');
+    expect((await alice.query(api.jobs.listActive, {})).map(r => r.jobId)).toEqual([moved.jobId]);
+    // Once a computer is running it, it is reused whichever computer is chosen.
+    await t.run(ctx => ctx.db.patch('jobs', moved.jobId, { status: 'running', stage: 'detect' }));
+    expect(await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac })).toEqual(moved);
+    expect(await alice.mutation(api.jobs.createBeatDetection, { songId })).toEqual(moved);
+  });
+
+  test('a user request that reuses a chained B6 job makes it user-started (D44)', async () => {
+    const { t, alice, mac, songId } = await setup();
+    const chain = await insertJob(t, job('alice', { status: 'done', stage: 'done' }));
+    const chained = await insertJob(t, job('alice', { kind: 'beats', songId, deviceId: mac, chainedFrom: chain, settings: { sections: true } }));
+    expect(await alice.mutation(api.jobs.createBeatDetection, { songId })).toEqual({ jobId: chained });
+    expect((await readJob(t, chained))?.chainedFrom).toBeUndefined();
+    await t.run(ctx => ctx.db.patch('jobs', chained, { status: 'done', stage: 'done', result: { beats: [[0.5, 1]] } }));
+    expect(await alice.query(api.jobs.latestDetection, { songId })).toMatchObject({ jobId: chained });
   });
 
   test('without a deviceId, a single paired computer is used; none is refused', async () => {
@@ -369,6 +447,20 @@ describe('retry', () => {
     const deviceless = await insertJob(t, failedJob(mac, { deviceId: undefined }));
     expect(await codeOf(alice.mutation(api.jobs.retry, { jobId: deviceless }))).toBe('retry_wrong_device');
     expect(await codeOf(bob.mutation(api.jobs.retry, { jobId: revoked }))).toBe('not_found');
+  });
+
+  test('a failed detection is not re-queued beside a newer live one (one live detection per song)', async () => {
+    const { t, alice, mac, songId } = await setup();
+    const a = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac });
+    await t.run(ctx => ctx.db.patch('jobs', a.jobId, { status: 'error', stage: 'error', errorCode: 'beats_unavailable' }));
+    const b = await alice.mutation(api.jobs.createBeatDetection, { songId, deviceId: mac });
+    expect(b.jobId).not.toBe(a.jobId);
+    expect(await errorOf(alice.mutation(api.jobs.retry, { jobId: a.jobId }))).toMatchObject({ code: 'job_live', jobId: b.jobId });
+    expect((await readJob(t, a.jobId))?.status).toBe('error');
+    // Once the newer one is finished, the failed one can run again.
+    await t.run(ctx => ctx.db.patch('jobs', b.jobId, { status: 'done', stage: 'done' }));
+    await alice.mutation(api.jobs.retry, { jobId: a.jobId });
+    expect((await readJob(t, a.jobId))?.status).toBe('queued');
   });
 });
 

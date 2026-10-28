@@ -56,6 +56,8 @@ const SONG_SCAN = 50;
 const LATEST_SCAN = 5;
 /** Paired computers scanned for the default detection device. */
 const DEVICE_SCAN = 20;
+/** Presence older than this reads as offline, as the client reads `devices.list` (§6.6). */
+export const PRESENCE_ONLINE_MS = 150_000;
 
 const NO_COMPANION = 'Connect this computer’s companion in Settings first.';
 const ADMIN_REVOKED = 'This computer was disconnected by an administrator.';
@@ -181,19 +183,21 @@ async function pairedDevice(ctx: Ctx, userId: string, deviceId: Id<'devices'>): 
 }
 
 /**
- * The computer a detection runs on: the one the web chose, else the caller's
- * most recently seen paired computer, an online one first. The desktop app's
- * companion heartbeats while it runs, so on the desktop that is its own
+ * The computer a detection runs on when the caller did not choose one: the
+ * caller's most recently seen paired computer, an online one first (online is
+ * the client's rule: not `offline` and seen in the last 150 s). The desktop
+ * app's companion heartbeats while it runs, so on the desktop that is its own
  * computer. With no presence recorded at all, a single paired computer is used.
  */
-async function detectionDevice(ctx: MutationCtx, userId: string, deviceId: Id<'devices'> | undefined): Promise<Device> {
-  if (deviceId) return pairedDevice(ctx, userId, deviceId);
+async function defaultDevice(ctx: MutationCtx, userId: string): Promise<Device> {
   const devices = (await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', userId)).take(DEVICE_SCAN)).filter(d => !d.revoked);
   if (devices.length === 0) fail('device_unpaired', 'Connect the local companion first.');
+  const now = Date.now();
   let best: { device: Device; online: boolean; seen: number } | null = null;
   for (const device of devices) {
     for (const presence of await ctx.db.query('devicePresence').withIndex('by_deviceId', q => q.eq('deviceId', device._id)).take(5)) {
-      const next = { device, online: presence.state !== 'offline', seen: presence.lastSeenAt };
+      const online = presence.state !== 'offline' && now - presence.lastSeenAt < PRESENCE_ONLINE_MS;
+      const next = { device, online, seen: presence.lastSeenAt };
       if (!best || (next.online && !best.online) || (next.online === best.online && next.seen > best.seen)) best = next;
     }
   }
@@ -202,10 +206,43 @@ async function detectionDevice(ctx: MutationCtx, userId: string, deviceId: Id<'d
   fail('device_unpaired', 'Choose which computer should do this.');
 }
 
-/** A queued or running detection of this kind for the song, if one exists. */
-async function liveDetection(ctx: MutationCtx, userId: string, songId: Id<'songs'>, kind: 'beats' | 'sections') {
+/** A queued or running detection of this kind for the song, if one exists (other than `except`). */
+async function liveDetection(ctx: MutationCtx, userId: string, songId: Id<'songs'>, kind: 'beats' | 'sections', except?: Id<'jobs'>) {
   const rows = await ctx.db.query('jobs').withIndex('by_song', q => q.eq('songId', songId)).order('desc').take(SONG_SCAN);
-  return rows.find(j => j.userId === userId && j.kind === kind && (j.status === 'queued' || j.status === 'running')) ?? null;
+  return rows.find(j => j._id !== except && j.userId === userId && j.kind === kind && (j.status === 'queued' || j.status === 'running')) ?? null;
+}
+
+/**
+ * One live detection per song (§6.4), started by the user. The chosen computer
+ * (if any) is validated first. A live detection is reused only while a computer
+ * can still run it: its computer is owned and paired, and, when the caller chose
+ * a computer, it is that one or the job is already running. A stale queued job
+ * (its computer revoked or gone, or not the one now chosen) is canceled and
+ * replaced. A reused B6 chained job loses `chainedFrom`: a user now waits on it,
+ * so its result is offered like any user-started detection (D44).
+ */
+async function startDetection(
+  ctx: MutationCtx, userId: string, song: Song, kind: 'beats' | 'sections', deviceId: Id<'devices'> | undefined,
+  fields: { label: string; settings?: Job['settings'] },
+): Promise<{ jobId: Id<'jobs'> }> {
+  const chosen = deviceId ? await pairedDevice(ctx, userId, deviceId) : null;
+  const live = await liveDetection(ctx, userId, song._id, kind);
+  if (live) {
+    const runner = live.deviceId ? await ctx.db.get('devices', live.deviceId) : null;
+    const runnable = !!runner && runner.userId === userId && !runner.revoked;
+    if (runnable && (!chosen || live.status === 'running' || live.deviceId === chosen._id)) {
+      if (live.chainedFrom) await ctx.db.patch('jobs', live._id, { chainedFrom: undefined, updatedAt: Date.now() });
+      return { jobId: live._id };
+    }
+    await ctx.db.patch('jobs', live._id, { status: 'canceled', retryAt: undefined, updatedAt: Date.now() });
+  }
+  const device = chosen ?? await defaultDevice(ctx, userId);
+  const now = Date.now();
+  const jobId = await ctx.db.insert('jobs', {
+    userId, deviceId: device._id, kind, songId: song._id, ...fields,
+    status: 'queued', stage: 'queued', percent: 0, attempts: 0, createdAt: now, updatedAt: now,
+  });
+  return { jobId };
 }
 
 async function accountSettings(ctx: MutationCtx, userId: string) {
@@ -335,7 +372,8 @@ export const createSeparation = mutation({
     const source = args.source ?? song?.source;
     if (!source) fail('resplit_no_source', NO_SOURCE);
     if (args.label.length > LABEL_MAX) fail('invalid', `The label is too long (${LABEL_MAX} characters max).`, { field: 'label' });
-    if (!source.value.trim() || source.value.length > SOURCE_MAX) fail('invalid', 'Source is too long.', { field: 'source' });
+    if (!source.value.trim()) fail('invalid', 'Enter a link or search.', { field: 'source' });
+    if (source.value.length > SOURCE_MAX) fail('invalid', `The source is too long (${SOURCE_MAX} characters max).`, { field: 'source' });
     if (source.filename !== undefined && source.filename.length > FILENAME_MAX) fail('invalid', `The file name is too long (${FILENAME_MAX} characters max).`, { field: 'source.filename' });
 
     const device = await pairedDevice(ctx, userId, args.deviceId);
@@ -383,27 +421,9 @@ export const createBeatDetection = mutation({
   handler: async (ctx, args) => {
     const userId = await requireWritableUserId(ctx);
     const song = await ownSong(ctx, userId, args.songId);
-    const live = await liveDetection(ctx, userId, song._id, 'beats');
-    if (live) return { jobId: live._id };
-    const device = await detectionDevice(ctx, userId, args.deviceId);
     // B7: the companion also suggests sections unless the account turned that off.
     const sections = (await accountSettings(ctx, userId)).autoSections !== false;
-    const now = Date.now();
-    const jobId = await ctx.db.insert('jobs', {
-      userId,
-      deviceId: device._id,
-      kind: 'beats',
-      songId: song._id,
-      label: `Finding bars — ${song.title}`,
-      settings: { sections },
-      status: 'queued',
-      stage: 'queued',
-      percent: 0,
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return { jobId };
+    return startDetection(ctx, userId, song, 'beats', args.deviceId, { label: `Finding bars — ${song.title}`, settings: { sections } });
   },
 });
 
@@ -415,24 +435,7 @@ export const createSectionDetection = mutation({
     const userId = await requireWritableUserId(ctx);
     const song = await ownSong(ctx, userId, args.songId);
     if (!hasRealMap(song.tempo, { hasPart: song.hasChart === true })) fail('invalid', 'Find the bars before suggesting sections.');
-    const live = await liveDetection(ctx, userId, song._id, 'sections');
-    if (live) return { jobId: live._id };
-    const device = await detectionDevice(ctx, userId, args.deviceId);
-    const now = Date.now();
-    const jobId = await ctx.db.insert('jobs', {
-      userId,
-      deviceId: device._id,
-      kind: 'sections',
-      songId: song._id,
-      label: `Finding sections — ${song.title}`,
-      status: 'queued',
-      stage: 'queued',
-      percent: 0,
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return { jobId };
+    return startDetection(ctx, userId, song, 'sections', args.deviceId, { label: `Finding sections — ${song.title}` });
   },
 });
 
@@ -485,6 +488,11 @@ export const retry = mutation({
     const owned = !!device && device.userId === userId;
     if (!owned || device.revoked || (args.deviceId !== undefined && args.deviceId !== job.deviceId)) {
       fail('retry_wrong_device', 'Retry from the original processing computer.', owned ? { deviceName: deviceName(device) } : {});
+    }
+    // One live detection per song: a newer one started since this one failed already covers it.
+    if ((job.kind === 'beats' || job.kind === 'sections') && job.songId) {
+      const live = await liveDetection(ctx, userId, job.songId, job.kind, job._id);
+      if (live) fail('job_live', 'This song is already being checked.', { jobId: live._id });
     }
 
     const patch: Partial<Job> = {

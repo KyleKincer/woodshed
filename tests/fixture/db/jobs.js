@@ -11,6 +11,10 @@
 //     db/index.js calls `settle()` on boot and on every job-creep tick, and `resume()`
 //     re-arms the timers. A detection's id is `beats-<songId>`;
 //   - a section detection (`sections-<songId>`) is claimed at once and keeps running;
+//   - `jobs:retry` runs the job again the way creating it did (a separation is claimed
+//     after 1.5 s, a detection at once), so "Try again" never leaves a stuck queued row;
+//   - where the server cancels a stale live detection and inserts a new one, the fixture
+//     replaces the row under the same `beats-<songId>` id;
 //   - the seeded running detections (`job-beats`, `job-sections`) are display rows
 //     that never finish, so a user-started detection is never folded into them:
 //     only a live detection the fixture created is reused;
@@ -20,6 +24,7 @@
 // finished chains); listActive returns queued, running and failed jobs only.
 import {db, fx, changed, clone, findSong, convexError} from './runtime.js';
 import {PRESETS, STEM_MODES, resolveQuality, withDefaults} from '../../../convex/lib/presets.ts';
+import {hasRealMap as songHasRealMap} from '../../../shared/song-map.ts';
 
 const LIST_PER_STATUS = 50;
 const QUEUE_CAP = 20;
@@ -33,6 +38,8 @@ const RESUME_MESSAGE = 'Resuming local files…';
 const PRESET_IDS = [...Object.keys(PRESETS), 'custom'];
 const STEM_MODE_IDS = [...new Set([...Object.keys(STEM_MODES), 'six'])];
 const NO_COMPANION = 'Connect this computer’s companion in Settings first.';
+const PRESENCE_ONLINE_MS = 150_000;
+const CLAIM_MS = 1500;
 
 const fail = (code, message, data = {}) => { throw convexError({...data, code, message}); };
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -103,15 +110,15 @@ function pairedDevice(deviceId) {
   return device;
 }
 
-/** convex/jobs.ts detectionDevice: the chosen computer, else the most recently seen one (online first), else the only one. */
-function detectionDevice(deviceId) {
-  if (deviceId) return pairedDevice(deviceId);
+/** convex/jobs.ts defaultDevice: the most recently seen computer (online first: not offline and seen in the last 150 s), else the only one. */
+function defaultDevice() {
   const devices = (db.devices ?? []).filter(d => !d.revoked);
   if (!devices.length) fail('device_unpaired', 'Connect the local companion first.');
+  const now = Date.now();
   let best = null;
   for (const device of devices) {
     for (const p of (db.devicePresence ?? []).filter(row => row.deviceId === device.id)) {
-      const next = {device, online: p.state !== 'offline', seen: p.lastSeenAt};
+      const next = {device, online: p.state !== 'offline' && now - p.lastSeenAt < PRESENCE_ONLINE_MS, seen: p.lastSeenAt};
       if (!best || (next.online && !best.online) || (next.online === best.online && next.seen > best.seen)) best = next;
     }
   }
@@ -158,8 +165,8 @@ function cleanMeta(meta) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** convex/jobs.ts needs a real map for sections: the seed's `mapSummary.real`, a stored map with an origin, or a drum chart. */
-const hasRealMap = song => song.mapSummary?.real === true || !!song.tempo?.songMap?.origin || song.hasChart === true;
+/** convex/jobs.ts needs a real map for sections: the same `shared/song-map.ts` rule, a drum chart counting. */
+const hasRealMap = song => songHasRealMap(song.tempo, {hasPart: song.hasChart === true});
 
 // ---- detections that finish on their own ---------------------------------------------
 
@@ -187,6 +194,48 @@ export function resume(now = Date.now()) {
 
 /** A live detection of this kind for the song that the fixture created (see the header). */
 const liveDetection = (songId, kind) => db.jobs.find(j => j.jobId === `${kind}-${songId}` && isLive(j));
+
+/**
+ * convex/jobs.ts startDetection: the chosen computer is checked first; a live detection
+ * is reused only while its computer is paired and, when a computer was chosen, it is
+ * that one or the job is running. Returns `{device}` for a new job or `{jobId}` to reuse.
+ */
+function detectionTarget(songId, kind, deviceId) {
+  const chosen = deviceId ? pairedDevice(deviceId) : null;
+  const live = liveDetection(songId, kind);
+  if (live) {
+    const runner = findDevice(live.deviceId);
+    if (runner && !runner.revoked && (!chosen || live.status === 'running' || live.deviceId === chosen.id)) {
+      if (live.chainedFrom) { delete live.chainedFrom; live.updatedAt = Date.now(); }
+      return {jobId: live.jobId};
+    }
+  }
+  return {device: chosen ?? defaultDevice()};
+}
+
+/** A beat detection claimed now (on creation or retry); it finishes on its own after 1.5 s (8 s with fx-detect=slow). */
+function runBeats(j, now = Date.now()) {
+  const ms = fx.detect === 'slow' ? 8000 : 1500;
+  Object.assign(j, {status: 'running', stage: 'detect', percent: 20, message: 'Listening for beats…', attempts: (j.attempts ?? 0) + 1, startedAt: now, updatedAt: now, finishAt: now + ms});
+  setTimeout(() => { if (settle()) changed(); }, ms);
+}
+
+/** A section detection claimed now; it keeps running. */
+function runSections(j, now = Date.now()) {
+  Object.assign(j, {status: 'running', stage: 'detect', percent: 30, message: 'Suggesting sections…', attempts: (j.attempts ?? 0) + 1, startedAt: now, updatedAt: now});
+}
+
+/** The computer claims a queued separation after 1.5 s and reports the recording's details, as the companion's meta event would. */
+function claimLater(jobId) {
+  setTimeout(() => {
+    const j = db?.jobs.find(x => x.jobId === jobId);
+    if (!j || j.status !== 'queued' || j.kind !== 'separate') return;
+    const at = Date.now(), upload = j.source?.type === 'upload';
+    Object.assign(j, {status: 'running', stage: 'download', percent: 8, message: 'Downloading audio…', attempts: (j.attempts ?? 0) + 1, startedAt: at, updatedAt: at,
+      meta: {...j.meta, title: j.meta?.title || (upload ? j.source.filename : 'Harbor Lights'), channel: j.meta?.channel || 'Ada Moreno', duration: j.meta?.duration ?? 204}});
+    changed();
+  }, CLAIM_MS);
+}
 
 // ---- handlers --------------------------------------------------------------------------
 
@@ -218,7 +267,8 @@ export const handlers = {
     const source = given ?? song?.source;
     if (!source) fail('resplit_no_source', 'This song can’t be split again — its original audio is gone.');
     if (typeof label !== 'string' || label.length > LABEL_MAX) fail('invalid', `The label is too long (${LABEL_MAX} characters max).`, {field: 'label'});
-    if (!String(source.value ?? '').trim() || source.value.length > SOURCE_MAX) fail('invalid', 'Source is too long.', {field: 'source'});
+    if (!String(source.value ?? '').trim()) fail('invalid', 'Enter a link or search.', {field: 'source'});
+    if (source.value.length > SOURCE_MAX) fail('invalid', `The source is too long (${SOURCE_MAX} characters max).`, {field: 'source'});
     if (source.filename !== undefined && source.filename.length > FILENAME_MAX) fail('invalid', `The file name is too long (${FILENAME_MAX} characters max).`, {field: 'source.filename'});
     const device = pairedDevice(deviceId);
     // D38: an uploaded song's original file lives only on the computer that added it.
@@ -236,32 +286,22 @@ export const handlers = {
     if (confirmed !== undefined) row.confirmed = confirmed;
     db.jobs.push(row);
     changed();
-    // The computer claims it and reports the recording's details, as the companion's meta event would.
-    setTimeout(() => {
-      const j = db?.jobs.find(x => x.jobId === jobId);
-      if (!j || j.status !== 'queued') return;
-      const at = Date.now();
-      Object.assign(j, {status: 'running', stage: 'download', percent: 8, message: 'Downloading audio…', attempts: 1, startedAt: at, updatedAt: at,
-        meta: {...j.meta, title: j.meta?.title || (source.type === 'upload' ? source.filename : 'Harbor Lights'), channel: j.meta?.channel || 'Ada Moreno', duration: j.meta?.duration ?? 204}});
-      changed();
-    }, 1500);
+    claimLater(jobId);
     return {jobId};
   },
 
   'jobs:createBeatDetection': ({songId, deviceId}) => {
     account({write: true});
     const song = ownSong(songId);
-    const live = liveDetection(songId, 'beats');
-    if (live) return {jobId: live.jobId};
-    const device = detectionDevice(deviceId);
+    const target = detectionTarget(songId, 'beats', deviceId);
+    if (target.jobId) { changed(); return {jobId: target.jobId}; }
     const sections = withDefaults(db.settings).autoSections !== false;
-    const jobId = `beats-${songId}`;
-    const ms = fx.detect === 'slow' ? 8000 : 1500, now = Date.now();
+    const jobId = `beats-${songId}`, now = Date.now();
     db.jobs = db.jobs.filter(j => j.jobId !== jobId);
-    db.jobs.push({jobId, kind: 'beats', songId, deviceId: device.id, status: 'running', stage: 'detect', percent: 20, message: 'Listening for beats…',
-      label: `Finding bars — ${song.title}`, settings: {sections}, attempts: 1, createdAt: now, startedAt: now, updatedAt: now, finishAt: now + ms});
+    const j = {jobId, kind: 'beats', songId, deviceId: target.device.id, label: `Finding bars — ${song.title}`, settings: {sections}, attempts: 0, createdAt: now};
+    runBeats(j, now);
+    db.jobs.push(j);
     changed();
-    setTimeout(() => { if (settle()) changed(); }, ms);
     return {jobId};
   },
 
@@ -269,13 +309,13 @@ export const handlers = {
     account({write: true});
     const song = ownSong(songId);
     if (!hasRealMap(song)) fail('invalid', 'Find the bars before suggesting sections.');
-    const live = liveDetection(songId, 'sections');
-    if (live) return {jobId: live.jobId};
-    const device = detectionDevice(deviceId);
+    const target = detectionTarget(songId, 'sections', deviceId);
+    if (target.jobId) { changed(); return {jobId: target.jobId}; }
     const jobId = `sections-${songId}`, now = Date.now();
     db.jobs = db.jobs.filter(j => j.jobId !== jobId);
-    db.jobs.push({jobId, kind: 'sections', songId, deviceId: device.id, status: 'running', stage: 'detect', percent: 30, message: 'Suggesting sections…',
-      label: `Finding sections — ${song.title}`, attempts: 1, createdAt: now, startedAt: now, updatedAt: now});
+    const j = {jobId, kind: 'sections', songId, deviceId: target.device.id, label: `Finding sections — ${song.title}`, attempts: 0, createdAt: now};
+    runSections(j, now);
+    db.jobs.push(j);
     changed();
     return {jobId};
   },
@@ -308,6 +348,10 @@ export const handlers = {
     const device = findDevice(j.deviceId);
     if (!device || device.revoked || (deviceId !== undefined && deviceId !== j.deviceId))
       fail('retry_wrong_device', 'Retry from the original processing computer.', device ? {deviceName: deviceName(device)} : {});
+    if ((j.kind === 'beats' || j.kind === 'sections') && j.songId) {
+      const live = db.jobs.find(x => x.jobId !== j.jobId && x.songId === j.songId && x.kind === j.kind && isLive(x));
+      if (live) fail('job_live', 'This song is already being checked.', {jobId: live.jobId});
+    }
     let settings = j.settings;
     if (preset !== undefined) {
       if (j.kind !== 'separate') fail('invalid', 'Only song processing has a quality preset.', {field: 'preset'});
@@ -318,6 +362,10 @@ export const handlers = {
     Object.assign(j, {status: 'queued', stage: 'queued', percent: 0, message: RESUME_MESSAGE, updatedAt: Date.now()});
     if (settings !== undefined) j.settings = settings;
     for (const key of ['error', 'errorCode', 'retryAt']) delete j[key];
+    // Run it again the way creating it did (see the header).
+    if (j.kind === 'beats') runBeats(j);
+    else if (j.kind === 'sections') runSections(j);
+    else claimLater(j.jobId);
     changed();
     return null;
   },

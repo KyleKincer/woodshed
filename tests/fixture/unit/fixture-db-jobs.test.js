@@ -84,6 +84,8 @@ describe('createSeparation', () => {
     expect(await errorOf(call('mutation', 'jobs:createSeparation', separation({meta: {title: 'x'.repeat(301)}})))).toMatchObject({code: 'invalid', field: 'meta.title'});
     expect(await errorOf(call('mutation', 'jobs:createSeparation', separation({settings: {stemMode: 'eight'}})))).toMatchObject({code: 'invalid', field: 'settings.stemMode'});
     expect(await errorOf(call('mutation', 'jobs:createSeparation', separation({label: 'x'.repeat(501)})))).toMatchObject({code: 'invalid', field: 'label'});
+    expect(await errorOf(call('mutation', 'jobs:createSeparation', separation({source: {type: 'url', value: '   '}})))).toMatchObject({code: 'invalid', field: 'source', message: 'Enter a link or search.'});
+    expect(await errorOf(call('mutation', 'jobs:createSeparation', separation({source: {type: 'search', value: 'x'.repeat(2001)}})))).toMatchObject({code: 'invalid', field: 'source', message: 'The source is too long (2000 characters max).'});
     expect(await codeOf(call('mutation', 'jobs:createSeparation', separation({deviceId: 'dev9'})))).toBe('device_unpaired');
     runtime.db.devices.find(d => d.id === 'dev2').revoked = true;
     runtime.db.devices.find(d => d.id === 'dev2').revokedBy = 'admin';
@@ -128,6 +130,35 @@ describe('detections', () => {
     expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'}))).toBe('device_unpaired');
   });
 
+  it('a stale live detection (its computer revoked) is replaced; a running one is reused whichever computer is chosen', async () => {
+    vi.useFakeTimers({now: NOW});
+    const first = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev2'});
+    expect(await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev1'})).toEqual(first);
+    expect(raw(first.jobId).deviceId).toBe('dev2');
+    runtime.db.devices.find(d => d.id === 'dev2').revoked = true;
+    await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev1'});
+    expect(raw(first.jobId)).toMatchObject({deviceId: 'dev1', status: 'running'});
+    expect(runtime.db.jobs.filter(j => j.jobId === first.jobId)).toHaveLength(1);
+    expect(await codeOf(call('mutation', 'jobs:createBeatDetection', {songId: 'velvet', deviceId: 'dev9'}))).toBe('device_unpaired');
+  });
+
+  it('without a deviceId, presence older than 150 s reads as offline', async () => {
+    const presence = id => runtime.db.devicePresence.find(p => p.deviceId === id);
+    Object.assign(presence('dev1'), {state: 'idle', lastSeenAt: Date.now() - 30 * 86_400_000});
+    Object.assign(presence('dev2'), {state: 'offline', lastSeenAt: Date.now() - 60_000});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
+    expect(raw(jobId).deviceId).toBe('dev2');
+  });
+
+  it('section detection uses the server’s real-map rule (shared/song-map.ts)', async () => {
+    const {hasRealMap} = await import('../../../shared/song-map.ts');
+    for (const song of runtime.db.songs) {
+      const result = await codeOf(call('mutation', 'jobs:createSectionDetection', {songId: song.id}));
+      expect(result, song.id).toBe(hasRealMap(song.tempo, {hasPart: song.hasChart === true}) ? null : 'invalid');
+    }
+    for (const songId of ['secondwind', 'cobblestone', 'nightbus']) expect(raw(`sections-${songId}`), songId).toMatchObject({kind: 'sections', status: 'running'});
+  });
+
   it('section detection needs a real map and is deduplicated', async () => {
     expect(await codeOf(call('mutation', 'jobs:createSectionDetection', {songId: 'quiet'}))).toBe('invalid');
     const first = await call('mutation', 'jobs:createSectionDetection', {songId: 'glasshouse'});
@@ -145,6 +176,30 @@ describe('job card actions', () => {
     await call('mutation', 'jobs:retry', {jobId: 'job-bot', preset: 'fast'});
     expect(raw('job-bot').settings).toMatchObject({preset: 'fast', model: 'htdemucs', shifts: 0});
     expect((await call('query', 'jobs:listActive')).find(r => r.jobId === 'job-bot').settingsSummary).toEqual({preset: 'fast', stemMode: 'full', model: 'htdemucs'});
+  });
+
+  it('retry runs the job again: a separation is claimed, a failed detection runs and finishes', async () => {
+    vi.useFakeTimers({now: NOW});
+    await call('mutation', 'jobs:retry', {jobId: 'job-fail'});
+    vi.advanceTimersByTime(1600);
+    expect(raw('job-fail')).toMatchObject({status: 'running', stage: 'download'});
+    start('?fx-detect=fail');
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'glasshouse'});
+    vi.advanceTimersByTime(1600);
+    expect(raw(jobId)).toMatchObject({status: 'error', errorCode: 'beats_unavailable'});
+    runtime.fx.detect = 'ok';
+    await call('mutation', 'jobs:retry', {jobId});
+    expect(raw(jobId)).toMatchObject({status: 'running', stage: 'detect', finishAt: expect.any(Number)});
+    vi.advanceTimersByTime(1600);
+    expect(raw(jobId)).toMatchObject({status: 'done', percent: 100});
+    expect((await call('mutation', 'jobs:createBeatDetection', {songId: 'glasshouse'})).jobId).toBe(jobId);
+    expect(raw(jobId).status).toBe('running');
+  });
+
+  it('a failed detection is not retried beside a newer live one', async () => {
+    runtime.db.jobs.push({jobId: 'beats-old', kind: 'beats', songId: 'quiet', deviceId: 'dev1', status: 'error', stage: 'error', percent: 0, label: 'x', createdAt: NOW, updatedAt: NOW});
+    expect(await errorOf(call('mutation', 'jobs:retry', {jobId: 'beats-old'}))).toMatchObject({code: 'job_live', jobId: 'job-beats'});
+    expect(raw('beats-old').status).toBe('error');
   });
 
   it('retry refusals', async () => {
