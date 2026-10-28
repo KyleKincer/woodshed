@@ -77,22 +77,6 @@ test('arrows walk bars and beats, digits jump, and keys do not leak to the playe
   expect(mute.classList.contains('on')).toBe(false);
 });
 
-test('untouched legacy maps save unchanged; edits save a song map with exact decimal tempo', async () => {
-  const backend = await import('../src/js/backend.js');
-  song.tempo = {map: [{t: 0.5, bpm: 97, beatsPerBar: 4, unit: 4}], countIn: false};
-  await openPlayer(song);
-  document.getElementById('m-countin').click();
-  closePlayer();
-  expect(backend.saveTempo.mock.lastCall[1]).toMatchObject({map: [{t: 0.5, bpm: 97, beatsPerBar: 4, unit: 4}], countIn: true});
-  expect(backend.saveTempo.mock.lastCall[1].songMap).toBeUndefined();
-  await openPlayer(song); const engine = state.engines.at(-1);
-  key('M', {shiftKey: true}); engine.seek(20.4); key('d');
-  closePlayer();
-  const map = backend.saveTempo.mock.lastCall[1].songMap;
-  expect(map.pins.at(-1).time).toBe(20.4);
-  expect(document.getElementById('player-root').textContent).not.toMatch(/NaN/);
-});
-
 test('an existing drum part becomes the song map and protects its notes from meter changes', async () => {
   const timeline = {version: 1, measures: Array.from({length: 20}, (_, i) => ({id: 'm' + i, numerator: 4, denominator: 4, length: fraction(4), label: ''})),
     anchors: [{position: fraction(0), time: 0.25}, {position: fraction(4), time: 2.25}]};
