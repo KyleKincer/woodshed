@@ -1,0 +1,324 @@
+@layer views {
+  /* Administration (src/settings/admin/{admin,account}.js; spec §6.4). A calm desk page in the top-bar
+   * frame: one [data-scroller] (D26), a column of at most 880 px inside the app content width, and
+   * sections of cards, forms and rows built from the primitives. Desk type scale (spec §8.1): 32 title,
+   * 20 section titles, 16 body, 14 meta. */
+  .admin-scroller {
+    block-size: 100%;
+    scrollbar-gutter: stable;
+  }
+  .admin-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s7);
+    padding-block-start: var(--s6);
+  }
+  .admin-page > * {
+    inline-size: 100%;
+    max-inline-size: 880px;
+  }
+  .admin-account-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s7);
+  }
+  @media (max-width: 1199px), (pointer: coarse) {
+    .admin-page,
+    .admin-account-body { gap: var(--s6); }
+    .admin-page { padding-block-start: var(--s5); }
+  }
+
+  /* ---------- header ---------- */
+  .admin-header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s2);
+  }
+  .admin-back { margin-inline-start: calc(-1 * var(--s2)); }
+  .admin-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-32)/1.15 var(--font-ui);
+    overflow-wrap: anywhere;
+  }
+  .admin-lead,
+  .admin-meta {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+  .admin-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s4);
+    font-size: var(--fs-14);
+  }
+
+  /* ---------- sections ---------- */
+  .admin-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+  }
+  .admin-section-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-20)/1.2 var(--font-ui);
+  }
+  .admin-subtitle {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-16)/1.3 var(--font-ui);
+  }
+  .admin-note,
+  .admin-empty {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .admin-warn {
+    margin: 0;
+    color: var(--warn);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .admin-mono { font-family: var(--font-mono); font-size: var(--fs-14); }
+  .admin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .admin-load-error { max-inline-size: 640px; }
+
+  /* ---------- overview cards and meters ---------- */
+  .admin-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--s4);
+  }
+  .admin-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    min-inline-size: 0;
+    padding: var(--s4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .admin-card-title {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.3 var(--font-ui);
+  }
+  .admin-card-value {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-24)/1.2 var(--font-ui);
+  }
+  .admin-meter { margin-block: var(--s1); }
+  .admin-meter[data-tone=warn] .ui-progress-rail-fill { background: var(--warn); }
+  .admin-usage { max-inline-size: 480px; }
+
+  /* ---------- forms ---------- */
+  .admin-policy,
+  .admin-field-form,
+  .admin-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+  .admin-policy {
+    padding: var(--s4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .admin-policy-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 280px));
+    gap: var(--s4);
+  }
+  .admin-override-field { max-inline-size: 320px; }
+  .admin-notes-field { max-inline-size: 640px; }
+  .admin-access { align-self: flex-start; max-inline-size: 100%; }
+
+  /* ---------- account search and list ---------- */
+  .admin-search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--s3);
+  }
+  .admin-search-field { flex: 1 1 280px; max-inline-size: 480px; }
+  .admin-search-actions { display: flex; gap: var(--s2); }
+  .admin-accounts-box,
+  .admin-audit-box {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+  .admin-more { align-self: flex-start; }
+
+  .admin-account-list,
+  .admin-items,
+  .admin-audit {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+    list-style: none;
+    overflow: hidden;
+  }
+  .admin-account-list:empty,
+  .admin-items:empty,
+  .admin-audit:empty { display: none; }
+  .admin-account-row + .admin-account-row,
+  .admin-item + .admin-item,
+  .admin-audit-row + .admin-audit-row { border-block-start: 1px solid var(--line); }
+
+  .admin-account-link {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name meta" "email meta";
+    align-items: center;
+    gap: 0 var(--s4);
+    min-block-size: 56px;
+    padding: var(--s2) var(--s4);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .admin-account-link:hover { background: var(--surface-2); }
+  .admin-account-link:focus-visible { outline-offset: -3px; }
+  .admin-account-name {
+    grid-area: name;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-inline-size: 0;
+    font-weight: var(--fw-semibold);
+    overflow-wrap: anywhere;
+  }
+  .admin-account-email {
+    grid-area: email;
+    min-inline-size: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    overflow-wrap: anywhere;
+  }
+  .admin-account-meta {
+    grid-area: meta;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .admin-account-usage[data-tone=warn] { color: var(--warn); font-weight: var(--fw-semibold); }
+  @media (max-width: 640px) {
+    .admin-account-link { grid-template-columns: minmax(0, 1fr); grid-template-areas: "name" "email" "meta"; }
+    .admin-account-meta { justify-content: flex-start; }
+  }
+
+  /* Status and Admin badges: text plus an edge, never colour alone. */
+  .admin-status,
+  .admin-badge {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 24px;
+    padding: 0 var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-12)/1 var(--font-ui);
+    white-space: nowrap;
+  }
+  .admin-status[data-status=export_only] { border-color: var(--warn); color: var(--ink); }
+  .admin-status[data-status=suspended] { border-color: var(--danger); color: var(--danger); }
+  .admin-badge { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- computers and jobs ---------- */
+  .admin-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    min-block-size: 56px;
+    padding: var(--s2) var(--s4);
+  }
+  .admin-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+  .admin-item-title { font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
+  .admin-item-meta,
+  .admin-item-when {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .admin-item-meta[data-state=online] { color: var(--ok); font-weight: var(--fw-semibold); }
+  .admin-item-meta[data-status=error] { color: var(--danger); }
+  .admin-item-error {
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    overflow-wrap: anywhere;
+  }
+  .admin-item-action { flex: none; }
+
+  /* ---------- audit history ---------- */
+  .admin-audit-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    padding: var(--s3) var(--s4);
+  }
+  .admin-audit-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s1) var(--s3);
+  }
+  .admin-audit-title { font-weight: var(--fw-semibold); }
+  .admin-audit-target,
+  .admin-audit-actor,
+  .admin-time {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .admin-audit-head .admin-time { margin-inline-start: auto; }
+  .admin-audit-changes {
+    margin: 0;
+    padding-inline-start: var(--s4);
+    color: var(--ink);
+    font-size: var(--fs-14);
+  }
+  .admin-audit-reason {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    overflow-wrap: anywhere;
+  }
+
+  /* Text links: at least --h-sm tall targets (32 fine, 44 coarse) without moving the text. */
+  .admin-link {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--h-sm);
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    border-radius: var(--r-control);
+    overflow-wrap: anywhere;
+  }
+}
