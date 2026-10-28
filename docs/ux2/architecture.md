@@ -1,19 +1,17 @@
 # Woodshed 2.0 "Stage": architecture (binding contract)
 
-This document is the technical contract for building all of `docs/ux2/spec.md`: Phases 0–5, backend items B1, B2, B3, B4, B5, B6 and B8, and engine item E1. Implementers follow it literally. Where it is silent, the spec decides the UX and the subsystem maps (`docs/ux2/maps/*.md`) describe today's code. Where this document and a map disagree, this document wins. Where this document and the spec disagree, the spec wins on user-visible behaviour, except for the decisions recorded in §0.3, which resolve gaps and contradictions in the spec.
+This document is the technical contract for building all of `docs/ux2/spec.md`: Phases 0–5, every backend item (B1–B8), and engine item E1. Implementers follow it literally. Where it is silent, the spec decides the UX and the subsystem maps (`docs/ux2/maps/*.md`) describe today's code. Where this document and a map disagree, this document wins. Where this document and the spec disagree, the spec wins on user-visible behaviour, except for the decisions recorded in §0.3, which resolve gaps and contradictions in the spec. Appendix C records how each review critique was resolved.
 
-Baseline: commit `820f4db` (v1.9.0). Line references point at that tree.
+Baseline: commit `820f4db` (v1.9.0). Line references point at that tree. (HEAD `9b828b2` differs only under `docs/`.)
 
 **Owner decisions (final).**
-- All "Decisions for the owner" recommendations in the spec are accepted: Enter = Again with Pause on ⇧Space; the laptop right rail; Atkinson Hyperlegible Next and Mono; the Stage is always dark by default; Transcribe keeps 16-bar pages; setlists (B3) are built.
-- **There are no users to protect.** Nothing is built for transition. There are no Classic keys, no key-change hint, no "What's changed" sheet, no "new" badges, no `ws.flags` rollout gating, and no `legacy` CSS layer (§7.1).
-- Data the owner already has is still read correctly through cheap one-way upgrades with no UI: `songs.practice` v1, the 13 `ws.*` localStorage keys, legacy tempo maps (`tempo.map`, `tempo.detected`, 1.6–1.9 `songMap` without `origin`), version-1 notation parts and IndexedDB drafts, existing `jobs`/`devices`/`userSettings` rows, and legacy-library `library.json` imports.
+- All "Decisions for the owner" recommendations in the spec are accepted: Enter = Again with Pause on ⇧Space; the laptop right rail; Atkinson Hyperlegible Next and Mono; the Stage is always dark by default; Transcribe keeps 16-bar pages (continuous scroll is built as an opt-in Edit · Chart paging mode, D48); setlists (B3) are built.
+- **There are no users to protect.** Nothing is built for transition. There are no Classic keys, no key-change hint, no "What's changed" sheet, no "new" badges, no `ws.flags` rollout gating, no safe-mode or kill-switch setting, and no `legacy` CSS layer (§7.1).
+- Data the owner already has is still read correctly through cheap one-way upgrades with no UI: `songs.practice` v1, the 13 `ws.*` localStorage keys, legacy tempo maps (`tempo.map`, `tempo.detected`, 1.6–1.9 `songMap` without `origin`), the click settings stored inside `tempo` (moved into practice, D51), version-1 notation parts and IndexedDB drafts, existing `jobs`/`devices`/`userSettings` rows, and legacy-library `library.json` imports.
 
-**Out of scope (decided):**
-- **B7 ML section detection is not built.** It is large ML work on the companion; nothing here is "trivially cheap" about it. The sections lane, strip and HUD are designed so a later B7 only adds a data source.
-- The Transcribe continuous-scroll experiment is not built. Edit · Chart keeps 16-bar pages.
-- Local processing-disk cleanup (`/local-usage`, `/cleanup`) is not built.
-- A silent looping `<audio>` element for Safari headset control is not built (see D13).
+**Scope.** Everything in the spec is built, including the items the spec marks optional: B7 ML section suggestions (D47), the continuous-scroll Transcribe view (D48), and the silent-audio Media Session path for iPad (D13).
+
+**Out of scope (not in the spec):** local processing-disk cleanup (`/local-usage`, `/cleanup` in `maps/companion-desktop.md`). The spec's only disk item is the "Disk full (local)" error copy, which is built.
 
 ---
 
@@ -26,10 +24,15 @@ Baseline: commit `820f4db` (v1.9.0). Line references point at that tree.
 - **Every new network call goes through `src/api/*.js`** (§2.1). New code never imports `src/js/backend.js`, which is deleted in integration I3.
 - **Web storage is touched only by** `public/theme-init.js` (read only), `src/app/prefs.js`, and `src/app/router.js` (the `sessionStorage` intended-route stash). A guard test enforces this (§7.6). IndexedDB stays in `notation/store.js`.
 - **Keyboard:** `src/app/dispatch.js` installs the only document-level `keydown`/`keyup` listeners. A guard test enforces this. Components may listen on their own elements, and must mark the keys they consume with `data-consume-keys` (§2.6).
+- **Command definitions are eager, implementations lazy (D46).** Every `*/commands.js` module (and `src/stage/transport-commands.js`) imports only `src/app/commands.js`, `src/app/keys.js` and pure helpers. Any heavy work in `run` goes through a context provider or a dynamic `import()`. `main.js` imports every commands module at boot, so the palette, menus and registry CI see every command before any view loads. A guard test enforces the import rule.
+- **Wall clock:** `src/app/clock.js` `now()` is the only wall-clock source in `src/` (undo coalescing, pedal timing, toasts, the wake-lock policy, presence "online", relative times, frecency, practice `updatedAt`). A guard test bans `Date.now()` and `performance.now()` elsewhere in the new top-level directories; audio time is `ctx.currentTime`.
+- **Layout code takes dimensions as inputs.** Pure layout functions (`layout.js`, `roadmap-layout.js`, `position.js` in `src/ui`, the map lanes' geometry) receive widths, heights and font metrics as arguments; DOM measurement happens only at their call sites. This keeps them testable without a layout engine.
 - **No `alert`, `confirm` or `prompt`.** A guard test enforces this.
 - **Tests:** `vitest` with `// @vitest-environment happy-dom` for DOM tests (the repo default is `edge-runtime`, `vitest.config.ts`). Convex tests use `convex-test` in `convex/*.test.ts` (read `convex/_generated/ai/guidelines.md` first, as `CLAUDE.md` requires). Desktop tests are `desktop/*.test.cjs` (`node --test`). Companion Node tests are `companion/*.test.mjs` (`node --test`); Python tests are `companion/test_*.py`.
-- **Playwright** is the preinstalled `/opt/node-tools/node_modules/playwright` (run with `NODE_PATH=/opt/node-tools/node_modules`). It is not added to `package.json`.
-- **New devDependencies (exact versions, all verified with `npm view` on 2026-10-28):**
+- **What happy-dom can and cannot prove** (checked on happy-dom 20.14): it has no Popover API, no 2D canvas context, no layout (every rect is 0×0), no `document.fonts`, a `matchMedia` that is always false, and a `getComputedStyle` that ignores `@layer`, `var()` and `calc()`. Unit tests therefore assert behaviour, DOM structure, roles and names through the shims in `tests/helpers/dom.js` (§11.3). **Every computed-size, computed-style, geometry or engraving assertion is a Playwright probe** (§11.5) run against a harness page or the fixture, never a vitest test.
+- **Playwright** is the preinstalled `/opt/node-tools/node_modules/playwright` (Chromium only; run with `NODE_PATH=/opt/node-tools/node_modules`). It is not added to `package.json`. `@playwright/test` is not used; probes and flows are plain scripts on the runner in §11.4.
+- **Build process:** every package runs in its own git worktree and branch; see §9.0 and §11.1.
+- **New devDependencies** (exact versions, all verified with `npm view` on 2026-10-28; installed once by package P0 before wave 0A, never by a wave package):
   - `@fontsource-variable/atkinson-hyperlegible-next@5.3.0`: the woff2 has `wght` 200–800 and the `tnum` and `pnum` features (checked with fontTools);
   - `@fontsource-variable/atkinson-hyperlegible-mono@5.3.0`: `wght` 200–800, monospaced;
   - `lucide-static@1.62.0`: 1,908 icons;
@@ -37,15 +40,15 @@ Baseline: commit `820f4db` (v1.9.0). Line references point at that tree.
   - No new runtime dependencies.
 
 ### 0.2 Concepts deleted outright
-The edit cursor (renamed **cue**), the seconds-only practice strip, the metronome popover, the workspace nav and nested mode tabs, "loop the visible window", the chart's long-press-then-tap pending loop, the overview minimap, the header band and header update icon, `confirmModal`, the desktop-setup gate, the silent global drop upload, the tempo-sources inert freeze, the dual-write of legacy `tempo.source/map/detected`, `songs.rename`, `settings.format`, `worker.cancelForUpdate`, and every one of the six ad-hoc `keydown` listeners.
+The edit cursor (renamed **cue**), the seconds-only practice strip, the metronome popover, the workspace nav and nested mode tabs, "loop the visible window", the chart's long-press-then-tap pending loop, the overview minimap, the header band and header update icon, `confirmModal`, the desktop-setup gate, the silent global drop upload, the tempo-sources inert freeze, the dual-write of legacy `tempo.source/map/detected`, `songs.rename`, `settings.format`, `worker.cancelForUpdate`, the engine's and metronome's self-pause during a count-in (the transport decides, §2.14.3 rule 21), click settings stored in `tempo` (D51), and every one of the six ad-hoc `keydown` listeners.
 
 ### 0.3 Decisions made in this document
 These resolve open points in the spec and the maps. They are final.
 
 | # | Decision |
 |---|---|
-| D1 | **No `legacy` CSS layer.** Old CSS is deleted in integration I1, the moment the new shell replaces `index.html`. Between waves, places that are not built yet render a placeholder view (D2). |
-| D2 | **No adapters for old views.** Routes whose new view does not exist yet render `src/app/placeholder.js` ("Not built yet"). Placeholder routes are excluded from fixture captures until their wave. `placeholder.js` is deleted in wave 4. |
+| D1 | **No `legacy` CSS layer.** Old CSS is deleted in integration I1, the moment the new shell replaces `index.html`, with one exception: `src/js/notation/notation.css`, `src/js/modal-focus.js` and `src/js/interactions.js` stay until ED5, because `notation/editor.js` imports them and its suites must stay green; ED5 removes the imports and deletes the files. Between waves, places that are not built yet render a placeholder view (D2). |
+| D2 | **No adapters for old views.** `routes.js` resolves each view through `import.meta.glob` over the contract paths; a path with no file yet renders `src/app/placeholder.js` ("Not built yet") automatically, so `vite build` never sees an unresolved import and no integration edits the route table to swap a placeholder out (§2.3). Placeholder routes are excluded from fixture captures until their wave; the structural capture check fails on an unexpected "Not built yet" (§11.4). `placeholder.js` is deleted in wave 4. |
 | D3 | **Stage tokens live on the root element:** `html[data-place=stage][data-stage-theme=dark]`. The router and `theme-init.js` set the attributes. Every canvas and alphaTab reader that reads tokens from `document.documentElement` therefore gets Stage colours without changes. |
 | D4 | **B1 moves practice into a `songPractice` table.** `songs.list` returns a slim row. `songTempo` is **not** split out; instead the legacy `detected`/`map`/`source` dual-write is dropped, which roughly halves `tempo`. |
 | D5 | `practiceSummary` carries the top 3 spots, and `mapSummary` carries up to 64 section names (for Continue chips and section search). |
@@ -53,32 +56,32 @@ These resolve open points in the spec and the maps. They are final.
 | D7 | **The demo token is a server env var** `DEMO_SHARE_TOKEN`, read by the public query `settings.demo`. `VITE_DEMO_SHARE_TOKEN` is not used. |
 | D8 | **Pins and setlists both exist.** Home shows a Setlists row (when any exist) **and** a Pinned row (when pins exist). |
 | D9 | **The Electron static server serves any existing file under `dist/`, else `index.html`.** The allow-list goes. The MIME map gains `.webmanifest`, `.txt`, `.wasm`. |
-| D10 | **Export-only accounts** may change practice, tempo, metadata and settings (personal state). They may not add songs, re-split, detect beats, pair devices, create shares or setlists, or upload artwork. A Banner says so (spec §6.3). |
+| D10 | **Export-only accounts** may change practice, tempo, notation (chart edits; `notation.save` accepts export-only, BK1), metadata and settings: personal state with no new stored media. They may not add songs, re-split, detect beats or sections, pair devices, create shares or setlists, or upload artwork. A Banner says so (spec §6.3). |
 | D11 | **Device presence is a `devicePresence` table** written by a device-token heartbeat, not `@convex-dev/presence`. Presence belongs to a device token, not a user session; "online" is computed on the client from `lastSeenAt`, so no query reads the wall clock. |
-| D12 | **App updates pause jobs instead of cancelling them.** `process.py` is resumable, and `worker.next` resumes a `running` job first. `worker.cancelForUpdate` and the companion's `update-cancellation.json` marker are deleted. The restart prompt's busy copy becomes "Song processing will pause and resume after the restart." |
-| D13 | **Media Session handlers are always registered.** No UI copy mentions headset or media-key control. Settings → This device shows whether Media Session is supported. |
-| D14 | **One audio kill switch:** `prefs.audio.safeMode` (Settings → This device, "Safe audio mode", default **off**). When on: speed is clamped to 50–150%, segmented (gap) loops are disabled, so "count in every pass" counts the first pass only and "rest" is ignored, and trainer steps apply with an immediate `setSpeed` at the wrap event instead of a scheduled one. |
+| D12 | **App updates pause jobs instead of cancelling them.** `process.py` is resumable, and `worker.next` resumes a `running` job first. `worker.cancelForUpdate` and the companion's `update-cancellation.json` marker are deleted together in CPB (wave 1a), because `companion/server.mjs:56,244` calls the mutation until then. The restart prompt's busy copy becomes "Song processing will pause and resume after the restart." |
+| D13 | **Media Session handlers are always registered.** On iPadOS and iOS, `platform.js` also plays a silent looping `<audio>` element (a 1 s silent WAV blob, `loop`, volume 1) while the transport plays, started synchronously inside the Play gesture (the transport's `gesture` event, §2.14.3), so Safari routes headset and lock-screen buttons to the page; it pauses on stop and on interruption. No UI copy promises headset control (spec §4.2); Settings → This device shows "Media keys: supported / not supported" from `'mediaSession' in navigator`. The real-device matrix (§10.7) records whether headset buttons work. |
+| D14 | **Count-in and Click are one state:** `practice.click = {countIn: {on, length, unit}, mode: 'off'\|'countin'\|'always', accent, volume, preRoll}` (§2.21). `C` toggles `countIn.on`. `K` toggles between `'always'` and the last non-`always` mode (`lastMode`, initially `'countin'`); `'off'` is chosen only in the Click sheet. Truth table (metronome flags from `metronome.configure`, §5.2): <br>• `countIn.on` false: `off`/`countin` → no count-in, no clicks; `always` → continuous click, no count-in. <br>• `countIn.on` true: `off` → a **silent count** (the count-in plate and lamps count, no click sound; pre-roll audio if `preRoll`); `countin` → count-in clicks only (the default); `always` → count-in clicks and the continuous click. <br>Unmapped songs: any `countIn.on` is the 2 s Lead-in, and no click ever sounds. The account default (`account.practice.countIn` and `.click`) applies only while the song's practice has no `click` key; the first change on a song writes the whole `click` object. No safe mode or kill switch exists. |
 | D15 | **Beat lamps:** one dot per meter unit (the numerator: 4 for 4/4, 7 for 7/8, 6 for 6/8), grouped by `beatGroups` with a gap between groups. A group's first dot (a counted beat, which clicks) is larger; the downbeat dot is largest. A bar with more than 12 units shows one dot per group instead. This matches wireframe §10.5 (`● ●  ● ◉  ○ ○ ○`). |
 | D16 | **"next" readout:** `next: {name} · {n} bars` gives the bars remaining until that section's downbeat. In the last 2 bars it becomes `{name} in {B} · {b}` (§4.4). Unmapped songs with markers show `next: {label} · {m:ss}`, the time remaining. |
 | D17 | **Between passes** (Loop card): `None`; `1 bar rest`, a segmented-loop gap of one bar at the loop start's meter and tempo (clicks play in it unless Click is Off); and `Call & response`, gapless passes that alternate: odd passes play the mix as set, even passes mute *your* stems (Minus me) via `setTrackGains` scheduled exactly at the wrap. Call & response is disabled, with a reason, when no profile stem exists. |
-| D18 | **Transcribe keys:** digits keep today's internals (1 = 1/64, 2 = 1/32, 3 = 1/16, 4 = 1/8, 5 = 1/4). 6 and 7 are unbound. The toolbar key-caps read 5·4·3·2·1. Drum letters win inside the score surface. C, K, L and E act on the posture only when focus is outside the surface (or through the toolbar and slim transport). Drum-key validation reserves every key bound in `edit.chart.score`. |
+| D18 | **Transcribe keys:** digits keep today's internals (1 = 1/64, 2 = 1/32, 3 = 1/16, 4 = 1/8, 5 = 1/4). 6 and 7 are unbound. The toolbar key-caps read 5·4·3·2·1. Drum letters win inside the score surface. `edit.chart.score` is a **stop scope** (D45): while it has focus, only Space, ⇧Space, Enter, Esc, PageUp, PageDown, ⌘K and `?` pass through to the outer scopes; every other key ends there. C, K, L and E act on the posture only when focus is outside the surface (or through the toolbar and slim transport). Spec §5.2 also lists E as passing through, but E is the default Crash 2 letter (`shared/notation.ts:40`), so E passes through only when no drum letter uses it. Drum letters are KeyStrings matched on `e.code` (D56). Drum-key validation reserves every key bound in `edit.chart.score`. |
 | D19 | **Edit · Map keys:** digits + Enter go to a bar (stems are muted with row M/S buttons in this posture); E focuses the inspector's Meter → Beats stepper; Space is Play/Stop (taps are D and T); Enter goes to the typed bar or applies the focused inspector field (never Again here); ⌫ unpins and never clears the loop. |
-| D20 | **Find a chart without a freeze:** while auditioning, every map-mutating command and lane edit is disabled through `when: c => !c.map.auditioning`. The audition runs inside one `beginBatch()`, and tempo saves, notation map-sync saves and bar re-anchoring are suspended. Commits: `Use their map`, `Use map + drum chart (N hits)`, `Keep my map`. Esc means Keep my map; there is no separate Cancel. Leaving Edit · Map mid-audition asks "Use this map?" [Use it] [Keep my map]. |
+| D20 | **Find a chart without a freeze:** while auditioning, every map-mutating command and lane edit is disabled through `when: c => !c.map.auditioning`. The audition runs inside one `beginBatch()`, and tempo saves, notation map-sync saves and bar re-anchoring are suspended. `map.undo`/`map.redo` are disabled while auditioning. Commits: `Use their map` and `Use map + drum chart (N hits)` end the batch (one undo step); `Keep my map` calls `abortBatch()`, which restores the pre-audition data silently and leaves the undo stack exactly as it was. Esc means Keep my map; there is no separate Cancel. Leaving Edit · Map mid-audition asks "Use this map?" [Use it] [Keep my map]. |
 | D21 | `hasRealMap` includes both recommended additions from `maps/mapedit.md` §11.1 (§4.1). |
 | D22 | **Tap the beat** builds its map with a new `fromTaps` (least-squares period and phase), not `fromBeats` (§4.6). |
-| D23 | **A section rename from the Stage** strip goes on the *practice* undo stack, as a forward inverse map edit; it never calls `map.undo()`. |
+| D23 | **One undo stack per posture for map changes.** A map change made while Edit · Map is mounted goes on the map stack (`SongMapStore` undo). A map change made anywhere else (strip rename, `S` adding a section on a mapped song, Tap the beat [Use it], a detection result, B6 adoption, Keep all section suggestions, markers → sections from the Stage) is **one practice-undo step**: `session.mapChange(label, fn)` runs `fn` with map edits flagged `{undo: false}`, snapshots the data before and after, and pushes a compound entry whose `undo`/`redo` call `map.restore(snapshot)` (no map-stack entry, origin kept). It never calls `map.undo()`. |
 | D24 | **The `stage.stems` scope is active whenever the Stems surface is shown** (it is a surface mode, not focus-based). `edit.chart.score` is focus-based. |
 | D25 | **F in the Stage:** if Follow is paused, F resumes it; otherwise F toggles Focus. On the Stems surface, F toggles Follow (spec §7.2). |
 | D26 | **Scrolling:** `html` and `body` never scroll. Each place has exactly one scroller, marked `[data-scroller]`. The router saves and restores its `scrollTop` per history entry. |
 | D27 | **The notation part, `DrumAudio` and the notation map guard are session-scoped.** Mix "Chart playback" is stored as `practice.chartAudio` (`off \| quiet \| loud`). |
 | D28 | **Starting the trainer with no loop** first sets the loop to the trainer's target range (the current section, else the whole song) as one undo step. |
-| D29 | **A quantized jump to a target outside an active loop** clears the loop as part of the same undo step. |
-| D30 | **E1 is built:** the speed range is **25–150%** unless safe mode is on. Preset chips are unchanged (50…125); the stepper, `,` and `.` reach 25%. |
+| D29 | **A quantized jump to a target outside an active loop** clears the loop as part of the same undo step. The loop change rides on the pending segment (`engine.seekAt(target, when, {loop: {enabled: false}})`), so the jump stays quantized; the transport never calls `setLoop` separately for it. |
+| D30 | **E1 is built:** the speed range is **25–150%** (`MIN_RATE = 0.25`, a constant in `engine.js`). Preset chips are unchanged (50…125); the stepper, `,` and `.` reach 25%. |
 | D31 | **Web MIDI pedals are built** (Phase 5): Chromium and Electron only, behind a permission allow-list for the UI origin. |
 | D32 | **Icons are one Lucide sprite**, built by a script, imported with `?raw` and inlined into `<body>` at boot. Icons use `<svg><use href="#i-name"/></svg>`. |
 | D33 | **Fonts are vendored** into `src/styles/fonts/` by `scripts/vendor-fonts.mjs` from the pinned fontsource packages, and the woff2 files are committed. |
 | D34 | **The bulk Details route** is `/edit/details?ids=a,b,c` (≤ 100 ids). |
-| D35 | **In the Stage and Edit postures,** Space always goes to the registry, even on a focused button. Enter on a keyboard-focused button, link, menu item, tab, checkbox or option activates it natively; elsewhere Enter goes to the registry. |
+| D35 | **In the Stage and Edit postures,** Space always goes to the registry, even on a focused button. Enter on a keyboard-focused button, link, menu item, tab, checkbox or option activates it natively, unless the innermost focus scope binds Enter (`stage.strip`, `stage.bars`, D45); elsewhere Enter goes to the registry. The keyup of a Space the registry consumed is also `preventDefault()`ed (Firefox activates buttons on keyup). |
 | D36 | **Two overlay classes.** *Modal* overlays (Dialog, palette, menus, the `/add` sheet, Edit iPad inspector sheets) take all keys except their own bindings and Esc. *Non-modal* overlays (Stage sheets and popovers, the Notes card, the Jobs popover) let registry keys through. |
 | D37 | **Profile-to-stem mapping:** drums → `drums`; bass → `bass`; vocals → `vocals`; guitar → `guitar`, else `other`; keys → `piano`, else `other`; other → `other`. On a 2-stem song only an exact stem name matches; `no_*` stems never match. If no instrument matches, Minus me opens the Mix sheet. |
 | D38 | **A re-split of an upload-sourced song** must run on the device that holds the original file (`songs.originDeviceId`). Any other device is refused with a coded error. |
@@ -86,6 +89,22 @@ These resolve open points in the spec and the maps. They are final.
 | D40 | **Settings scope** (account vs device) follows spec §6.2: only items marked "(this device)" are device prefs, plus Settings → This device and everything listed under `ws.prefs` in §2.5. |
 | D41 | **The Electron menu registers only modifier accelerators** (⌘N, ⌘W, ⌘, and other Mod combos). Plain keys are not shown in native menus; the `?` sheet shows them. |
 | D42 | `settings.save` is deleted. Every settings write goes through `settings.patch` (§6.5). |
+| D43 | **Two review flags.** `songs.recordingUnconfirmed` means "is this the right recording?" (spec §3.5): set by `worker.finish` when the job was a search that the user did not confirm against a B4 candidate (`job.confirmed !== true`; web searches are always unconfirmed). `songs.needsReview` is metadata only (an untitled upload, G6). The Library `review` filter and the "Is this right?" chip use `needsReview \|\| metadataStatus === 'uncertain'`, computed into the list row as `reviewMetadata`. The Stage banner (ST4) uses `recordingUnconfirmed`; `songs.confirmRecording` clears it; `metadata.confirm` clears only `needsReview` and sets `matched`. |
+| D44 | **Beat detection has one applier per case.** `worker.beatsDone` writes the map server-side **whenever the song has no real map** (chained B6 jobs and user-started jobs alike), so a result is never lost when the user leaves the song. When the song already has a real map, the server stores only `job.result`; the open session applies it (`map.replaceFromBeats`, routed by D23) and marks it with `jobs.markApplied`. A session opening a song with a finished, unapplied user detection shows "Bars found while you were away · [Use them]". The status after either path is "Beat grid found · Undo". On the web, Detect runs on an online paired computer (B5, `createBeatDetection({deviceId})`). |
+| D45 | **Focus scopes and stop scopes.** `commands.defineScope(name, {stop = false, passThrough = []})`. `stage.strip` (the song strip) and `stage.bars` (the chart's bar-list overlay and the Road map bar grid) are focus scopes binding Enter → play from the focused item and L → loop it (`focus.play`, `focus.loop`). `edit.chart.score` is a stop scope with the pass-through list in D18. The dispatcher consults focus scopes before the Enter-on-button rule (§2.6). |
+| D46 | **Eager command definitions** (§0.1). Commands reachable from the Stage are defined in Stage modules even when their work lives in Edit: `map.detect`, `map.find`, `sections.suggest`, `sections.keepAll` and `sections.review` are defined in `src/stage/commands.js` with scopes S and Em. |
+| D47 | **B7 is built as section suggestions.** The companion computes suggested section boundaries and names (`companion/sections.py`, unsupervised spectral clustering over beat-synchronous features with librosa, §6.10 CPC). They are stored on the song as `sectionSuggestion` and never written into the map until the user accepts: the strip and the Edit · Map sections lane show them as dashed blocks with `[Keep all] [Review]`. Suggestions run inside every beats job (chained or user-started) and as a `sections` job for songs that are mapped without sections. Account setting `autoSections` (default true) sits next to `autoBeats`. |
+| D48 | **Continuous scroll is an Edit · Chart paging mode**, `prefs.edit.chart.paging: 'pages' \| 'scroll'` (default `'pages'`), chosen from View ▾ → "Pages · Continuous". It is a normal, always-available option, not an experiment. |
+| D49 | **Long-press on a card opens the card menu.** The menu's first item is `Select`, which enters selection mode with that card selected (spec §2.6's "long-press then tap others" becomes long-press → Select → tap others). |
+| D50 | **Music surfaces use one press recogniser** (`src/stage/press.js`): long-press at **350 ms** (with `navigator.vibrate(8)` where available) then drag makes a loop; releasing without a drag opens the bar menu. On music surfaces it replaces `bindContextMenu` (right-click, Shift+F10 and the ContextMenu key still open the menu through the recogniser). The Menu primitive's 500 ms long-press stays for cards and rows. |
+| D51 | **`tempo` holds only the map.** `metronome.serialize()` returns `{songMap}`. Count-in and click settings live in `practice.click` (D14). `upgradePractice` reads the legacy tempo fields (`countIn`, `countInLength`, `countInUnit`, `enabled`, `accent`, `volume`, `audiblePreRoll`) once when `practice.click` is absent and a legacy field is present. Toggling C or K therefore never bumps `tempoRev`, never recomputes `mapSummary`, and on shared songs persists locally like the rest of practice. |
+| D52 | **Practice saves rarely touch `songs`.** `savePractice({id, practice, final})` always upserts `songPractice`; it patches `songs.practiceSummary`/`lastPracticedAt` only when `final` is true (stop, leave, pagehide, dispose) and the summary changed. `songs.get` no longer includes practice; the session subscribes to `songs.getPractice({id})` separately, so a practice save re-runs only that narrow query. |
+| D53 | **A session recognises its own tempo saves** by `saveId`: `saveTempo({…, saveId})` stores `songs.tempoSaveId`, and the session ignores `songs.get` updates whose `tempoSaveId` is one it sent (kept for the session's lifetime, ≤ 200 ids). Only foreign changes go through adoption. |
+| D54 | **Live Distance relayout is adaptive (R1).** The chart surface measures each relayout. While the last two relayouts took ≤ 300 ms, a Distance change relayouts at once; otherwise Distance changes from steppers or menus apply once on release (menu close or 400 ms after the last step) with the status "Resizing…". The owner checks the 300 ms gate on an iPad Air (§10.7). |
+| D55 | **The engine keeps one ordered plan** (§5.1). Every future-dated Signalsmith call passes `outputTime: when`. `revision` bumps only on discontinuities; plan changes bump `planVersion` and emit `plan {from}`, so listeners cancel only audio scheduled at or after `from`. Clicks and drum hits route through `engine.aux`, a post-master bus that `stopAt` and `pause` silence. |
+| D56 | **Drum letters are physical keys** (`KeyQ`…), matched on `e.code` like every other letter; the editor no longer matches `e.key`. The migration converts stored characters (`'q'` → `'KeyQ'`). Labels use `navigator.keyboard.getLayoutMap()` when available, else the US letter. |
+| D57 | **Every package runs in its own git worktree and branch** (§9.0, §11.1). Ownership is machine-checked against `docs/ux2/packages.json`. Integrations merge the branches. |
+| D58 | **Owner gates.** Agents never run anything that needs a live Convex deployment, a packaged Electron app, a real iPad or a human ear. Those steps are owner gates (§9.12): schema push and `backfillB1` on dev and prod, removing `songs.practice`, approving visual baselines, the Electron smoke tests, the device matrix and the listening checks. |
 
 ---
 
@@ -94,18 +113,23 @@ These resolve open points in the spec and the maps. They are final.
 Every file below has exactly one responsibility. **(new)** marks a new file; **(kept)** means unchanged except as listed in its work package; **(changed)** means it keeps its role with API changes. Anything under `src/js/` that is not listed is deleted (§8).
 
 ```
-index.html                        (changed) <div id="app">, #startup status, theme-init <script>, module entry /src/app/main.js; no view markup
+index.html                        (changed) <div id="app">, #startup status, theme-init <script>, module entry /src/app/main.js; no view markup;
+                                  head: viewport (width=device-width, initial-scale=1, viewport-fit=cover), <link rel=manifest href=/manifest.webmanifest>,
+                                  apple-mobile-web-app-capable=yes, apple-mobile-web-app-status-bar-style=black-translucent, <link rel=apple-touch-icon href=/icon-180.png>, theme-color
 public/theme-init.js              (changed) pre-paint: reads ws.prefs (falls back to ws.theme/ws.view); sets data-theme, data-place, data-stage-theme, data-library-layout, theme-color
 public/manifest.webmanifest       (new) PWA manifest: standalone, orientation any, icons, theme_color #08090a
-public/icon-192.png, icon-512.png, icon-maskable-512.png   (new) PWA icons rendered from woodshed-icon.svg
+public/icon-180.png, icon-192.png, icon-512.png, icon-maskable-512.png   (new) PWA and apple-touch icons rendered from woodshed-icon.svg
 public/licenses/atkinson-hyperlegible-next.txt, atkinson-hyperlegible-mono.txt   (new) OFL texts
 
 src/app/
-  main.js            (new) boot: route kind (app|share|download) → auth → account/config → data subscriptions → registry → router.start()
-  routes.js          (new) route table: pattern → lazy view, place, chrome, posture scope, session flag, guard, modal parent
+  main.js            (new) boot: route kind (app|share|download) → auth → admin.access → account/config → data subscriptions → every commands module → dispatcher → router.start() (§2.3.1)
+  routes.js          (new) route table: pattern → view path (resolved through import.meta.glob, placeholder fallback), place, chrome, posture scope, session flag, guard, modal parent
+  auth.js            (new) auth core ported from src/js/auth.js: initialize/client/signIn/signOut/onChange/user (§2.23); renders nothing
+  clock.js           (new) now() — the single wall-clock source (§0.1); settable in tests and by the fixture's fx-now
+  dev-handle.js      (new) window.__woodshed test handle, installed only when import.meta.env.DEV or window.__FIXTURE__ (§11.4)
   router.js          (new) History API router: match, navigate/replace/back, query mirroring, scroll/focus restoration, legacy redirects, leave hooks
   store.js           (new) signals (signal/computed/effect/batch) and the app store slices
-  prefs.js           (new) ws.prefs v1 device prefs: schema, defaults, one-way migration of the 13 ws.* keys, cross-tab sync, deviceStore()
+  prefs.js           (new) ws.prefs v1 device prefs: schema, defaults, one-way migration of the 13 ws.* keys (+ account carry-over), cross-tab sync, deviceStore()
   account.js         (new) account settings: settings.config subscription, settings.patch with optimistic merge, profile/pins/onboarding accessors
   profile.js         (new) instrument profile → stem names (Minus me), Add defaults from the profile (pure)
   data.js            (new) app-lifetime subscriptions: songs.list, jobs.listActive, devices.list, setlists.list → store.library
@@ -119,20 +143,21 @@ src/app/
   shortcuts-sheet.js (new) the ? sheet, generated from the registry, current scope chain first
   feedback.js        (new) toast queue (held while playing), Stage status-line bus, confirm()/form() dialogs, announce()
   error-copy.js      (new) ConvexError code / job errorCode → {sentence, primary, secondary, details} (spec §3.6)
-  platform.js        (new) wake lock, audio-interruption watcher, Media Session, PWA install state, pointer/platform signals
+  platform.js        (new) detect() (pure, fixture-overridable), wake lock, audio-interruption watcher, Media Session + iPad silent-audio keep-alive, PWA install state, pointer/platform signals
   desktop.js         (new) feature-detected wrapper over window.woodshedDesktop; processor status and update models
   desktop-menu.js    (new) registry → Electron menu spec sync; onCommand/onNavigate/onFlushRequest/onFullScreen wiring
   notify-ready.js    (new) job-completion watcher → toast or native notification
   topbar.js          (new) 56/60 px top bar: wordmark, search, Jobs chip slot, Add, avatar menu with update dot
   fatal.js           (new) fatal boot card; paused-account page; offline/codec banners
+  boot-common.js     (new) the boot steps main.js and shared-stage.js share: CSS, sprite, font preload, dev handle
   placeholder.js     (new, deleted in wave 4) "Not built yet" view for unbuilt routes
 
 src/api/             thin Convex wrappers; normalise errors to ApiError {code, message, data}
   client.js          (new) query/mutation/action/subscribe over the authenticated client from auth.js; public client for share
-  songs.js           (new) list/get/getMany/savePractice/saveTempo/remove/markReviewed/exportPage
+  songs.js           (new) list/get/getPractice/getMany/savePractice/saveTempo/remove/confirmRecording/dismissSectionSuggestion/exportPage
   media.js           (new) signKeys with the 6 h cache (moved from backend.js:73-100), signKey
   storage.js         (new) usage
-  jobs.js            (new) listActive/get/createSeparation/createBeatDetection/cancel/dismiss/retry
+  jobs.js            (new) listActive/get/createSeparation/createBeatDetection/createSectionDetection/cancel/dismiss/retry({jobId, preset?})/markApplied/latestDetection
   devices.js         (new) pair/list/rename/revoke
   settings.js        (new) config/patch/demo
   sharing.js         (new) status/create/revoke/view/saved/playback/save
@@ -174,22 +199,25 @@ src/ui/              primitives: each factory returns {el, set(props), destroy()
   coachmark.js       (new) CoachMark
 
 src/stage/
-  session.js         (new) one song session (song, engine, metronome, map, transport, practice, notation, peaks), shared by Stage and Edit
+  session.js         (new) one song session (song, engine, metronome, map, transport, practice, notation, peaks), shared by Stage and Edit; mapChange routing (D23)
+  detect.js          (new) beat-detection and section-suggestion flows for a session: start, watch the job, apply (D44), suggestions (D47)
   notation-session.js (new) lazy drum part (part.js), legacy timeline adoption, map guard, shared DrumAudio
   transport.js       (new) façade over engine+metronome: cue model, play/stop/again/pause, count-in policy, passes, trainer, quantized jump, play-N-times, between-passes, mix
   transport-commands.js (new) registry entries: transport, loop, speed, click, mix, navigation (scopes stage + edit)
   position.js        (new) mapped/unmapped position model: labels, regions (sections or markers), next, steps, snapping, loop default, bar refs
   practice-state.js  (new) practice v2 in memory: patch, debounced save, flush triggers, merge, prune, bar re-anchoring
   undo.js            (new) practice undo stack (50 steps, 1 s coalescing) + "Undid:" feedback
-  frame.js           (new) one rAF bus per mounted posture (60 Hz canvases, ≤ 30 Hz text)
+  frame.js           (new) one rAF bus per mounted posture (60 Hz canvases, ≤ 30 Hz text); raf/caf/now/isHidden injected
   glass.js           (new) pointer policy table (spec §4.9), pure
+  press.js           (new) press recogniser for music surfaces: tap/double/long 350 ms/long-drag/context (D50)
   layout.js          (new) rail/band decision, Distance metrics, rail width, Focus geometry (pure + data attributes)
-  stage.js           (new) Stage view: mount/unmount, layout, surfaces, sheets host, status line, loading/errors, resume chip, Esc and hold-to-leave
+  stage.js           (new) Stage view: mount/unmount, layout, surfaces, sheets host, status line, loading/errors, resume chip, Esc and hold-to-leave, surface crossfade, view transition
+  review-banner.js   (new) "Is this the right recording?" banner in the status area (D43)
   commands.js        (new) Stage registry entries: view, surfaces, Focus, Distance, markers, spots, sheets, edit, leave, setlists
   hud.js             (new) identity row, Section, Next, Position, lamps, Speed, Loop, Mix, status line, count-in plate
   controls.js        (new) one control set rendered as band dock, rail grid, mini rail or Edit slim transport
-  strip.js           (new) song strip: sections or waveform, overlays, gestures, keyboard slider, viewport bracket
-  menus.js           (new) bar, section, spot, marker, loop-band and stem menus (item builders)
+  strip.js           (new) song strip: sections or waveform, overlays (incl. markers on mapped songs, suggested sections), gestures, keyboard slider, viewport bracket
+  menus.js           (new) Stage identity ⋯ menu, bar, section, spot, marker, loop-band and stem menus (item builders)
   coach.js           (new) first-Stage coach marks
   grid.js            (new) grid ticks and snapping for Stems and Edit · Map (pure)
   wave-render.js     (new) the one waveform renderer: peak pyramid, stem rows, road-map cells, strip, map lanes, hatch
@@ -218,13 +246,14 @@ src/edit/
   map/view.js        (new) Edit · Map main area: toolbar, ruler/sections/tempo lanes, stem rows, strip; geometry
   map/lane.js        (new) lane drawing + hit testing (ruler, sections, tempo; 12 px diamonds, 24/44 px hits)
   map/inspector.js   (new) inspector (Go to, Meter, Label, Tempo, Pin, Tools, status) and "Get a map"
-  map/sections.js    (new) sections-lane edits and markers → sections
+  map/sections.js    (new) sections-lane edits, markers → sections, suggestion review (dashed blocks, D47)
   map/find-panel.js  (new) Find a chart side panel (ported from tempo-sources.js)
   map/commands.js    (new) edit.map registry entries
   chart/chart-edit.js (new) Edit · Chart frame hosting notation/editor.js through slots
   chart/toolbar.js   (new) Chart toolbar
   chart/menus.js     (new) Edit ▾ / Part ▾ / section jump menus from editor.menus()
   chart/kit-bank.js  (new) iPad portrait kit pad bank
+  chart/scroll-view.js (new) continuous-scroll paging for the score and lanes (D48)
   chart/commands.js  (new) edit.chart and edit.chart.score registry entries (incl. dynamic drum letters)
   details/details.js (new) Edit · Details page (single and bulk)
   details/fields.js  (new) field definitions, per-field serialise/compare (from song-metadata.js:6-68)
@@ -284,13 +313,14 @@ src/js/              the kernel: audio, models, notation internals (kept, or cha
   engine.js (changed) · metronome.js (changed) · song-map.js (changed) · waveform.js (changed: computePeaksRange only)
   stemcache.js (changed: codec copy) · decoded-stem-cache.js · media-fetch.js · onsets.js · timeline-navigation.js
   tempo-import.js · tempo-archive.js · guitar-pro-import.js · guitar-pro-bounds.js · map-lane.js (changed: pure helpers only)
-  artwork.js · auth.js (changed: core only) · startup.js · companion.js (changed) · export.js (changed: src/api) · download-release.js (changed: fetchRelease)
+  artwork.js · startup.js (changed: S1) · companion.js (changed) · export.js (changed: src/api) · download-release.js (changed: fetchRelease)
+  (auth.js is replaced by src/app/auth.js and deleted at I1; modal-focus.js, interactions.js and notation/notation.css are deleted by ED5, D1)
   motion.js · notation/{chart.js (changed), editor.js (changed), score-view.js (changed), part.js (changed), audio.js (changed),
                        alphatab-score.js, store.js, entry.js, import-drums.js, lanes.js (changed: tokens), html.js}
 
 shared/
-  song-map.ts        (changed) origin, ORIGINS, hasRealMap, barsOf/sectionsOf, fromTaps
-  practice.ts        (new) practice v2 types, upgradePractice, mergePractice, prunePractice, summarize, sanitizeForShare, PRACTICE_CAP
+  song-map.ts        (changed) origin, ORIGINS, hasRealMap, barsOf/sectionsOf, fromTaps, sectionsFromMarkers, applySuggestion
+  practice.ts        (new) practice v2 types, upgradePractice (incl. legacy tempo click fields), mergePractice, prunePractice, summarize, sanitizeForShare, PRACTICE_CAP
   metadata.ts        (new) validateField, LIMITS, labels (used by convex/lib/songMetadata.ts and Edit · Details)
   notation.ts, engrave.ts, content.ts, sng.ts   (kept)
 
@@ -298,18 +328,24 @@ convex/
   schema.ts (changed) · lib/errors.ts (new) · lib/validators.ts (new) · lib/auth.ts (changed: coded errors) · lib/presets.ts (changed) · lib/songMetadata.ts (changed)
   songs.ts (changed) · notation.ts (changed) · jobs.ts (changed) · worker.ts (changed) · devices.ts (changed) · storage.ts (changed)
   settings.ts (changed) · sharing.ts (changed) · shareAudio.ts (changed) · metadata.ts (changed) · metadataLookup.ts (changed)
-  admin.ts (changed) · setlists.ts (new) · migrations.ts (new) · convex.config.ts (changed: env)
+  admin.ts (changed) · setlists.ts (new) · migrations.ts (new; distinct from the empty legacy migrate.ts) · convex.config.ts (changed: env)
+  schema-compat.test.ts (new) · _generated/api.d.ts (hand-edited once by BK0 for the new modules; regenerated by the owner at the first schema push)
 
 companion/
-  server.mjs (changed) · lookup.mjs (new) · ytdlp-args.json (new) · errors.py (new) · process.py (changed) · pipeline.py (changed)
-  lookup.test.mjs (new) · test_errors.py (new) · fixtures/ytdlp/*.json (new)
+  server.mjs (changed) · lookup.mjs (new) · heartbeat.mjs (new) · ytdlp-args.json (new) · errors.py (new) · sections.py (new, B7) · process.py (changed) · pipeline.py (changed)
+  lookup.test.mjs (new) · heartbeat.test.mjs (new) · test_errors.py (new) · test_sections.py (new) · fixtures/ytdlp/*.json (new) · fixtures/sections/*.npz (new)
 
 desktop/
-  main.cjs (changed) · preload.cjs (changed) · menu.cjs (new) · window-state.cjs (new) · update-controller.cjs (changed)
-  menu.test.cjs (new) · window-state.test.cjs (new) · static-server.test.cjs (new)
+  main.cjs (changed: wiring only) · preload.cjs (changed) · menu.cjs (new) · window-state.cjs (new) · update-controller.cjs (changed)
+  ipc-handlers.cjs (new) · permissions.cjs (new) · flush.cjs (new) · static-server.cjs (new)   each takes the Electron APIs as arguments (DT1)
+  menu.test.cjs · window-state.test.cjs · static-server.test.cjs · ipc-handlers.test.cjs · permissions.test.cjs · flush.test.cjs (new)
 
 scripts/
   vendor-fonts.mjs (new) · build-icons.mjs (new) · check-css.mjs (new) · check-source.mjs (new) · smoke-desktop.mjs (changed)
+  check-ownership.mjs (new) · wt.mjs (new: worktree create/merge helper) · compare-shots.py (new: PIL + numpy pixel diff)
+
+docs/ux2/packages.json   (new) package id → owned globs, wave, deps (P0 writes it from §9; integrations amend it)
+tests/                   helpers, fixture, harnesses, probes and flows: §11
 ```
 
 ---
@@ -345,13 +381,19 @@ export const store = {
   processor: signal({phase: 'web'}),   // §2.11
   update:    signal({status: 'idle'}),
   stage:     signal(null),   // {songId, layout, surface, playing, focus} while a Stage or Edit view is mounted
+  pendingAccount: signal(null),   // account carry-over from the prefs migration until account.patch succeeds (§2.5)
 };
 ```
 The playback position never passes through signals. It flows through the frame bus (§2.14.7).
 
 ### 2.3 `src/app/router.js` and `routes.js`
 ```js
-// routes.js
+// routes.js — views are resolved by path, never imported directly (D2)
+const VIEWS = import.meta.glob(['../library/home.js', '../library/add-sheet.js', '../onboarding/welcome.js', '../stage/stage.js',
+  '../edit/edit.js', '../edit/details/details.js', '../settings/settings.js', '../settings/admin/admin.js', '../settings/admin/account.js',
+  '../library/setlist-page.js', '../download/download.js', '../share/shared-stage.js']);
+export function view(path) { return VIEWS[path] ?? (() => import('./placeholder.js')); }   // a contract path with no file yet → placeholder
+// Below, `view: () => import(X)` is shorthand for `view: view(X)`.
 export const routes = [
   {name: 'library',      path: '/',                          place: 'library',  chrome: 'topbar', view: () => import('../library/home.js')},
   {name: 'add',          path: '/add',                       place: 'library',  chrome: 'topbar', modalOver: 'library', view: () => import('../library/add-sheet.js')},
@@ -385,6 +427,7 @@ Router = {
   setQuery(patch, {debounceMs = 0} = {}),    // always replaceState; null removes a key
   href(name, params = {}, query = {}) → string,
   onLeave(fn: (from, to) => void|Promise) → off,   // flush hooks; never block navigation
+  stashIntendedRoute(), takeIntendedRoute() → string|null,   // sessionStorage['ws.intendedRoute'] (the only router storage use)
   link(el)                                   // delegate: same-origin <a href> clicks → navigate (modifier clicks pass through)
 }
 ```
@@ -394,7 +437,7 @@ Router = {
 - `modalOver: 'library'`: the parent view stays mounted underneath, and the modal view mounts into an overlay outlet. Back closes the modal.
 - `session: true`: the router calls `getSession(songId)` (§2.14.1) and passes it as `ctx.session`. Moving between `stage`, `edit` and `editFind` with the same `songId` keeps the session. Navigating to a non-session route or another song calls `disposeSession(previousId)` after the view unmounts.
 - A failed `guard` replaces the URL with `/` and shows the toast "Administration is for admins."
-- **Root attributes:** the router sets `html[data-place]` and `data-posture` on every mount, then dispatches `window` `woodshed:place` `{place, posture}`. Canvas modules re-read tokens on `woodshed:place` and on `woodshed:theme`.
+- **Root attributes:** the router sets `html[data-place]`, `data-posture` and the `color-scheme` style (`dark` on a dark Stage or a dark theme, else `light`) on every mount, then dispatches `window` `woodshed:place` `{place, posture}`. Canvas modules re-read tokens on `woodshed:place` and on `woodshed:theme`. After `mount` resolves it sets `html[data-view-ready=<route name>]` (removed at the start of the next navigation); tests wait on it (§11.4).
 
 **History rules** (spec §1.2):
 - **Push:** a place change, opening a song, entering Edit, opening `/add`.
@@ -410,6 +453,16 @@ Router = {
 - `start()` runs after `auth.initialize()`, so OAuth params are already stripped.
 - Before `signIn` on desktop, `sessionStorage['ws.intendedRoute'] = location.pathname + location.search`. After sign-in, `start()` navigates there once (with replace) and deletes the key.
 
+#### 2.3.1 Boot order (`main.js`, S1)
+1. `import '../styles/main.css'`; inject the icon sprite and the font preload; `installDevHandle()` (DEV or fixture only).
+2. Match `bootRoutes` (`/download`, `/share/:token`); a match hands over to that module's `boot(match)` and `main.js` stops (§2.18 lists the Shared Stage's own boot).
+3. `const {user, status} = await auth.initialize()` (§2.23). `AuthError{kind: 'config'|'network'}` → `renderFatal`. No user → `renderSignIn(outlet, {error})` (ON1) and stop. `status === 'suspended'` → `renderPaused` and stop.
+4. `store.session = {user, status, admin: await api.admin.access().catch(() => false), online}`, before the router starts, so the `/admin` guard works on a deep link.
+5. Subscribe `settings.config` → `store.config`/`store.account`; apply `store.pendingAccount` (§2.5) once the first config arrives.
+6. `startData()`.
+7. Import every commands module (`global-commands`, `library/commands`, `stage/transport-commands`, `stage/commands`, `edit/commands`, `edit/map/commands`, `edit/chart/commands`); `startDispatcher()`; `startPedals()`, `startMidi()`, `startDesktopMenu()`, `startNotifyReady()` (from I3); `startLibraryDrop()`.
+8. `router.start()`; push `/welcome` once when `account.onboarding.whatDoYouPlay` is unset (D39).
+
 **Leaving:** `pagehide` and `visibilitychange → hidden` call every `onLeave` hook with `to = null`. The session uses this to flush.
 
 ### 2.4 `src/app/account.js` (account settings)
@@ -423,13 +476,14 @@ export const account = {
 };
 AccountSettings = {
   preset, stemMode, bitrate, custom: {model, shifts, overlap},       // processing (existing)
-  autoBeats: boolean (true), notifyReady: boolean (true),             // B6, §3.5
+  autoBeats: boolean (true), autoSections: boolean (true), notifyReady: boolean (true),   // B6, B7 (D47), §3.5
   profile: {instruments: Instrument[], primary: Instrument|null, openWithMyPart: 'in'|'out'},   // default {[], null, 'in'}
   pins: string[],                                                     // song ids, ≤ 12
   onboarding: {whatDoYouPlay?: 'done'|'skipped', coach?: number /*bitmask of steps 1-4*/, desktopFirstRun?: true},
-  practice: {stop: 'cue'|'stay', countIn: {on: boolean, length: 1..16, unit: 'bars'|'beats'}, eachPassCount: boolean,
-             keepPitch: boolean, wake: 5|10|30|'always'},
-  // defaults: stop 'cue'; countIn {false, 1, 'bars'}; eachPassCount true; keepPitch true; wake 10
+  practice: {stop: 'cue'|'stay', countIn: {on: boolean, length: 1..16, unit: 'bars'|'beats'}, click: 'off'|'countin'|'always',
+             eachPassCount: boolean, keepPitch: boolean, wake: 5|10|30|'always'},
+  // defaults: stop 'cue'; countIn {false, 1, 'bars'}; click 'countin'; eachPassCount true; keepPitch true; wake 10
+  // countIn and click seed a song's practice.click only while that song has none (D14)
 }
 Instrument = 'drums'|'bass'|'guitar'|'keys'|'vocals'|'other'
 ```
@@ -443,19 +497,19 @@ export const PREFS_DEFAULTS = {
   library: {layout: 'grid', group: 'none', sort: null, filter: null, opened: []},   // sort null → default rule (§2.16); opened: song ids opened on this device (≤ 500, FIFO) for the New dot
   practice: {distance: 'stand', focus: false, follow: {rail: 'scroll', band: 'page'}, edgeFlash: false, announceSections: false},
   chart: {display: {layout: null}, pinchScale: null},                  // layout null = the part's own layout
-  stems: {grid: 'bar', snap: true, follow: true},                       // grid: 'off'|'bar'|'beat'|'half'|'quarter'
+  stems: {grid: 'bar', snap: true, follow: true, zoom: null},           // grid: 'off'|'bar'|'beat'|'half'|'quarter'; zoom: visible seconds (null → Fit)
   roadmap: {waveRowSec: null},                                          // null → 10 rail / 8 band
-  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', keys: {}}},
+  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: {[kitId]: KeyString} (D56)
   pedals: {enabled: false, profile: 'practice', pedals: [], custom: {}},  // pedals: [{slot, code, canHold}]
   midi: {enabled: false, bindings: []},                                   // [{device, type:'note'|'cc', number, command}]
   palette: {frecency: {}},                                               // {[itemId]: {n, at}}, ≤ 200 entries
   deviceId: null,                  // B5: the processor last chosen in Add
-  jobStats: {},                    // {[preset]: {secPerMin, n}} for "~2 min on this computer"
-  audio: {safeMode: false},        // D14
+  jobStats: {},                    // {[preset]: {secPerMin, n}} for "~2 min on this computer"; written only by notify-ready.js (DT2)
   hints: {fullscreenFocus: false},
+  pendingAccount: null,            // {practice: {stop?, keepPitch?}} carried from ws.stopBehavior/ws.preservePitch until account.patch succeeds
 };
 export function loadPrefs(storage = localStorage) → Prefs           // parse ws.prefs, deep-merge defaults; on absence run migrateLegacy
-export function migrateLegacy(storage) → Prefs                       // pure over a Storage-like object; tested
+export function migrateLegacy(storage) → {prefs: Prefs, account: Partial<AccountSettings>|null}   // pure over a Storage-like object; tested
 export const prefs = {
   value: ReadonlySignal<Prefs>,
   get(path: string) → any,                                           // 'practice.distance'
@@ -470,22 +524,23 @@ export function deviceStore(namespace: string) → {get(key), set(key, value), r
 |---|---|
 | `ws.theme` | `theme` |
 | `ws.view` `{group, layout}` | `library.layout`; `library.group`: albums → `'album'`, artists → `'artist'`, songs → `'none'` |
-| `ws.stopBehavior` `'return'\|'stay'` | **account** `practice.stop` (`'cue'\|'stay'`), patched once after boot when it differs from the default; then removed |
+| `ws.stopBehavior` `'return'\|'stay'` | **account** `practice.stop` (`'cue'\|'stay'`): returned in `account`, kept in `prefs.pendingAccount` until `account.patch` succeeds (boot step 5), then cleared |
 | `ws.grid` `{visible, snap, division}` | `stems.grid` (`!visible` → `'off'`; division 1/2/4 → `'beat'\|'half'\|'quarter'`), `stems.snap` |
 | `ws.overview` | dropped |
-| `ws.preservePitch` | **account** `practice.keepPitch`, once, like `ws.stopBehavior` |
+| `ws.preservePitch` | **account** `practice.keepPitch`, through `pendingAccount` like `ws.stopBehavior` |
 | `ws.practice.view` | dropped (the surface default rule replaces it) |
-| `ws.chart.scale` | `chart.pinchScale` |
+| `ws.chart.scale` | `chart.pinchScale`, snapped to the nearest scale step (§2.14.12), ties upward: 1.25 → 1.3, 1.4 → 1.45 |
 | `ws.chart.layout` | `chart.display.layout` |
 | `ws.notation.layout` | `edit.chart.view` |
-| `ws.notation.keys` | `edit.chart.keys` (must survive: remapped drum letters) |
+| `ws.notation.keys` | `edit.chart.keys` (must survive: remapped drum letters), each character converted to its KeyString (`'q'` → `'KeyQ'`; non-letters dropped) |
 | `ws.tapSnap` | `edit.map.tapSnap` |
 | `ws.tapOffset` | `edit.map.tapOffset`, clamped to ±0.2 s |
 
 **Rules:**
 - `prefs.js` listens to `storage` events for `ws.prefs` and re-reads, so tabs stay in sync.
-- On every `theme` or `stage` change it calls `window.woodshedAppearance.set(theme)` (kept from theme-init) and `desktop.setTheme(theme)`.
-- `theme-init.js` reads `ws.prefs.theme`, `.stage` and `.library.layout` pre-paint, and falls back to `ws.theme`/`ws.view` if `ws.prefs` is absent. It never writes.
+- On every `theme` or `stage` change it calls `window.woodshedAppearance.apply({theme, stage})` and, once, `desktop.setTheme(theme)`.
+- `theme-init.js` reads `ws.prefs.theme`, `.stage` and `.library.layout` pre-paint, and falls back to `ws.theme`/`ws.view` if `ws.prefs` is absent. **It never writes storage and never listens to `ws.theme`**: `woodshedAppearance.set` is renamed `apply`, sets only the root attributes, `color-scheme` and `theme-color`, and does not call `desktop.setTheme` (today's `theme-init.js:13,23-24,29` behaviours are removed).
+- Every reader and writer of device state goes through `prefs`: the editor's drum keys and view (ED5) and the chart's scale and layout (ST3) no longer touch `localStorage`.
 
 ### 2.6 `src/app/keys.js`, `commands.js`, `dispatch.js`
 **Key strings.**
@@ -519,6 +574,7 @@ register({
   keys: ['Enter'],                  // KeyStrings; keys[0] is shown in hints and menus
   scopes: ['stage', 'edit.chart'],  // where the keys bind (palette and menus ignore scopes and use `when`)
   when: c => !!c.session,           // enabled predicate; false hides it from the palette and disables menu items and buttons
+  disabledReason: undefined,        // (c) => string|null; a string shows the command disabled with that visible reason (palette, menus, buttons), e.g. 'Re-split from Woodshed for desktop.'
   run: (c, args) => c.transport.again(),
   checked: undefined,               // (c) => boolean for toggles (aria-pressed, menu checkbox/radio)
   repeat: false,                    // true → auto-repeat keydowns re-run (steps, nudges)
@@ -531,9 +587,12 @@ register({
 
 // commands.js
 export function register(def) / registerMany(defs) / unregister(id)
+export function defineScope(name, {stop = false, passThrough = []} = {})   // D45; passThrough holds KeyStrings
+export function registerDynamic(template, ids)   // e.g. ('mix.mute.{n}', [1..9]); lets registry CI expand dynamic ids (mix.mute.N, mix.solo.N, map.digit.N, chart.step.N, chart.piece.<kitId>)
 export function get(id) → def; export function all() → def[]
 export function provide(name, getter) → off          // context providers: 'session','transport','stage','edit','map','chart','library',…
-export function context(extra) → Ctx                 // {place, posture, route, session, transport, stage, edit, map, chart, library, store, router, feedback, platform, source, event, args}
+export function context(extra) → Ctx                 // {place, posture, route, session, transport, stage, edit, map, chart, library, focused, store, router, feedback, platform, source, event, args}
+//   focused: the item a focus-scope widget provides while it has focus: {kind: 'section'|'marker'|'bar', t0, t1, label, bar?}
 export function run(id, {source = 'pointer', args, event} = {}) → boolean   // false when unknown or `when` fails
 export function isEnabled(id) → boolean; export function isChecked(id) → boolean|undefined
 export function bindingsFor(scope) → Map<KeyString, def>
@@ -558,10 +617,15 @@ Keydown algorithm, in order. The first rule that applies ends processing.
 3. **Modal overlay open:** run only bindings registered in that overlay's `scope`, plus `Escape → onEscape()`. Everything else is left to the overlay's own elements.
 4. **Text input focused:** only `Escape` (blur, or close the overlay) and `Mod+KeyK` pass. Everything else is native.
 5. The focused element or an ancestor has `data-consume-keys` that includes the base key, and no modifiers other than Shift are down → native.
-6. **Enter on a keyboard-focused interactive element** (button, a[href], summary, `[role=button|menuitem|menuitemcheckbox|menuitemradio|option|tab|checkbox|switch]`) → native (D35). **Space on one** → native outside the `stage`/`edit` postures; inside them it continues to the registry, which calls `preventDefault()` so the button does not activate.
-7. **Escape with a non-modal overlay open** closes the topmost one.
-8. **Scope chain:** focus scopes (innermost `data-scope` first) → surface scope (`setSurfaceScope`) → posture scopes (`edit.map`/`edit.chart`/`edit.details`, then `edit`; or `stage`) → place scope (`library`, `settings` or `admin`) → `global`. For each scope, look up every `normalize(e)` candidate. The first def whose `when` passes → `preventDefault()`. If `e.repeat && !def.repeat`, do nothing more; otherwise `run(def.id, {source: 'key', event: e})`.
-9. **Browser and OS reservations (spec §7.4):** no def may bind `Mod+KeyN`, `Mod+KeyW`, `Mod+KeyT`, `Mod+Comma`, `Mod+Digit1…9`, `Mod+=`, `Mod+-` or `Mod+Digit0`. A registry test enforces it. In Electron, `library.add` (⌘N), `stage.close` (⌘W) and `nav.settings` (⌘,) arrive only through the menu.
+6. **Focus scopes** (innermost `data-scope` first, D45): look up every `normalize(e)` candidate. A def whose `when` passes → `preventDefault()` and run (subject to the repeat rule in 9). If no def matched and the scope is a **stop scope**, the key ends here unless it is in the scope's `passThrough` (it is then left native, without `preventDefault()`); a pass-through key continues at rule 7.
+7. **Enter on a keyboard-focused interactive element** (button, a[href], summary, `[role=button|menuitem|menuitemcheckbox|menuitemradio|option|tab|checkbox|switch]`) → native (D35). **Space on one** → native outside the `stage`/`edit` postures; inside them it continues to the registry, which calls `preventDefault()` so the button does not activate.
+8. **Escape with a non-modal overlay open** closes the topmost one.
+9. **Scope chain:** surface scope (`setSurfaceScope`) → posture scopes (`edit.map`/`edit.chart`/`edit.details`, then `edit`; or `stage`) → place scope (`library`, `settings` or `admin`) → `global`. For each scope, look up every `normalize(e)` candidate. The first def whose `when` passes → `preventDefault()`. If `e.repeat && !def.repeat`, do nothing more; otherwise `run(def.id, {source: 'key', event: e})`.
+10. **Browser and OS reservations (spec §7.4):** no def may bind `Mod+KeyN`, `Mod+KeyW`, `Mod+KeyT`, `Mod+Comma`, `Mod+Digit1…9`, `Mod+=`, `Mod+-` or `Mod+Digit0`. A registry test enforces it. In Electron, `library.add` (⌘N), `stage.close` (⌘W) and `nav.settings` (⌘,) arrive only through the menu.
+
+**Keyup:** when the dispatcher `preventDefault()`ed a keydown, it records `e.code` and also `preventDefault()`s the matching keyup (Firefox activates a focused button on Space keyup). Pedal keyups go to the pedal handler (rule 2).
+
+**Scopes defined at boot:** `defineScope('stage.strip')`, `defineScope('stage.bars')`, `defineScope('edit.chart.score', {stop: true, passThrough: ['Space', 'Shift+Space', 'Enter', 'Escape', 'PageUp', 'PageDown', 'Mod+KeyK', '?', 'KeyE']})`. `KeyE` passes only when no drum letter is `KeyE` (a drum binding in the scope matches first, D18).
 
 ### 2.7 `src/app/pedals.js` and `midi.js`
 ```js
@@ -640,16 +704,34 @@ export function describeError(input: ApiError | {errorCode, error, retryAt?, att
 - `resplit_wrong_device` → "Re-split this song on {device}, which has the original file."
 - `account_export_only` → "Adding songs is paused on this account." [Plan & storage].
 
+**Action targets** (every §3.6 action has one; `tests/error-copy.test.js` asserts each row's actions resolve to one of these):
+| Action label | Target |
+|---|---|
+| `Try again` | `api.jobs.retry({jobId})` |
+| `Try Fast quality` | `api.jobs.retry({jobId, preset: 'fast'})` (BK2: `retry` re-resolves `job.settings` for the preset) |
+| `Try now` (bot check pending) | `api.jobs.retry({jobId})` (clears `retryAt`) |
+| `Search for another version` | `router.navigate('/add?q=' + encodeURIComponent(job.meta?.title ?? song?.title ?? job.source.value))`, then `api.jobs.dismiss({jobId})` once the new job is submitted |
+| `Upload a file instead` | `router.navigate('/add?pick=1')`: the Add sheet focuses **Choose files…** and opens the file picker at once when `navigator.userActivation?.isActive` (Chromium, Electron), else waits for that button |
+| `Restart processor` | `desktop.restartProcessor()` |
+| `Plan & storage` | `router.navigate('/settings/plan')` |
+| `Dismiss` | `api.jobs.dismiss({jobId})` |
+
 ### 2.11 `src/app/platform.js` and `desktop.js`
 ```js
-export const platform = {isDesktopApp, isMac, isIPad, coarse: ReadonlySignal<boolean>, hoverFine: ReadonlySignal<boolean>,
+export function detect({navigator, matchMedia, location, bridge}) → {isDesktopApp, isMac, isIPad, isIOS, isWindows, features: {anchor, popover, wakeLock, midi, mediaSession, viewTransition}}
+//   pure; `fx-platform=ipad|mac|win` and `fx-nofeature=anchor,popover,wakelock,midi,mediasession,viewtransition` (query, fixture only) override it (§11.2)
+export const platform = {...detect(globals), coarse: ReadonlySignal<boolean>, hoverFine: ReadonlySignal<boolean>,
                          reducedMotion: ReadonlySignal<boolean>, standalone: boolean, online: ReadonlySignal<boolean>};
+export function haptic(ms = 8)                                      // navigator.vibrate when present; no-op otherwise
 export function createWakeLock() → {held: ReadonlySignal<boolean>, supported: boolean, update({stageOpen, playing, stoppedAt}), release()}
 //   Policy: hold while stageOpen && (playing || now - stoppedAt < account.practice.wake min, or wake === 'always').
 //   Re-acquire on visibilitychange → visible. Desktop: desktop.setActivity({keepAwake}) → powerSaveBlocker('prevent-display-sleep').
 export function watchInterruptions({engine, transport}) → off
 //   engine 'interrupted' event, or (iOS/iPadOS) visibilitychange → hidden while playing → transport.interrupt('audio')
 export function startMediaSession({transport, session}) → off      // D13: play/pause → transport.playStop; previoustrack → transport.again; nexttrack → nav.nextSection
+//   iOS/iPadOS: a silent looping <audio> keep-alive; transport 'gesture' → el.play() (inside the gesture); 'ended'/'interrupted'/stop → el.pause()
+//   also sets navigator.mediaSession.metadata {title, artist, artwork} and playbackState
+export function startGestureAudio({transport, engine}) → off        // transport 'gesture' → engine.ctx.resume() synchronously (iPad Play-when-ready, critic 1.20)
 export const install = {state: ReadonlySignal<{canPrompt, installed, steps: 'ios'|'chromium'|'none'}>, prompt()}
 
 // desktop.js: every method is a no-op when the bridge is absent
@@ -691,7 +773,7 @@ ProcessorStatus = {
 
 | Primitive | Props (beyond the common ones) | Behaviour |
 |---|---|---|
-| `Button` | `label`, `icon`, `iconEnd`, `variant: primary\|secondary\|quiet\|danger`, `size: sm\|md\|lg\|dock\|play`, `command`, `onClick(e)`, `onLongPress(e)`, `longPressMs=500`, `disabled`, `disabledReason`, `busy: boolean\|string\|{label, percent}`, `pressed`, `kbd`, `title`, `sublabel`, `type` | With `command`: label, icon and `title` default from the registry; `aria-keyshortcuts` and the tooltip key-cap come from `keys[0]`; click runs the command with `source: 'pointer'`; `disabled` and `aria-pressed` track `when`/`checked` through `onChange`. `disabledReason` renders as visible text linked with `aria-describedby`. `busy` replaces `withButtonProgress`. Dock sizes render the icon above a 13/600 label. |
+| `Button` | `label`, `icon`, `iconEnd`, `variant: primary\|secondary\|quiet\|danger`, `size: sm\|md\|lg\|dock\|play`, `command`, `onClick(e)`, `onLongPress(e)`, `longPressMs=500`, `disabled`, `disabledReason`, `busy: boolean\|string\|{label, percent}`, `pressed`, `kbd`, `title`, `sublabel`, `type` | With `command`: label, icon and `title` default from the registry; `aria-keyshortcuts` and the tooltip key-cap come from `keys[0]`; click runs the command with `source: 'pointer'`; `disabled`, `disabledReason` and `aria-pressed` track `when`/`disabledReason`/`checked` through `onChange`. `disabledReason` renders as visible text linked with `aria-describedby`. `busy` replaces `withButtonProgress`. Dock sizes render the icon above a 13/600 label. |
 | `IconButton` | `label` (required), `icon`, `variant`, `size`, `command`, `onClick`, `pressed` | `aria-label` plus a tooltip with the key-cap. |
 | `Toggle` | `label`, `pressed`, `onChange(pressed)`, `command`, `sublabel`, `icon`, `size` | `aria-pressed`; the label names the feature, never the state. |
 | `HoldButton` | `label`, `icon`, `holdMs=600`, `requireHold: () => boolean`, `onActivate`, `onTapWhileHold(e)` | When `requireHold()` is true, a press must last `holdMs`, with a ring filling; a short tap calls `onTapWhileHold` (the hint). Keyboard Enter/Space activates at once only when `requireHold()` is false. |
@@ -704,9 +786,9 @@ ProcessorStatus = {
 | `Select` | `label`, `options`, `value`, `onChange`, `hint` | Native `<select>`, styled. |
 | `Textarea` | `label`, `value`, `rows`, `maxLength`, `debounceMs`, `onInput`, `onCommit`, `status` | `onCommit` runs on debounce idle, blur and `flush()`. |
 | `ChipInput` | `label`, `values`, `maxItems=30`, `maxLength=60`, `caseInsensitive=true`, `onChange(values)` | Commit on Enter, comma or blur; Backspace on empty removes the last chip; each chip has ✕ with an aria-label. |
-| `Menu` | `items: MenuItem[]`, `anchor: Element\|{x, y}`, `placement`, `onClose`, `label`; static `Menu.open(items, opts) → handle`; `bindContextMenu(el, getItems)` (right-click, 500 ms long-press, Shift+F10, ContextMenu key) | `MenuItem = {id?, label, kbd?, command?, icon?, type: 'item'\|'checkbox'\|'radio'\|'separator'\|'submenu', checked?, items?, disabled?, reason?, danger?, run?}`. `role=menu`, roving focus, type-ahead, Esc. On coarse pointers it renders as a bottom sheet with 56 px rows. Opening a Dialog closes open menus. A `command` item takes its label, key-cap, enabled and checked state from the registry. |
+| `Menu` | `items: MenuItem[]`, `anchor: Element\|{x, y}`, `placement`, `onClose`, `label`; static `Menu.open(items, opts) → handle`; `bindContextMenu(el, getItems)` (right-click, 500 ms long-press, Shift+F10, ContextMenu key) | `MenuItem = {id?, label, kbd?, command?, icon?, type: 'item'\|'checkbox'\|'radio'\|'separator'\|'submenu', checked?, items?, disabled?, reason?, danger?, run?}`. `role=menu`, roving focus, type-ahead, Esc. On coarse pointers it renders as a bottom sheet with 56 px rows. Opening a Dialog closes open menus. A `command` item takes its label, key-cap, enabled, checked state and `disabledReason` from the registry. `bindContextMenu` is for cards, rows and chrome; music surfaces use `press.js` instead (D50). |
 | `Popover` | `anchor`, `content`, `placement: 'left'\|'right'\|'top'\|'bottom'\|'auto'`, `width`, `modal=false`, `labelledBy`, `onClose` | Popover API (`popover=manual`) with `position.js` placement; closes on outside click and Esc; grows from the anchor (160 ms). |
-| `Sheet` | `title`, `content`, `layout: 'auto'\|'bottom'\|'popover'`, `anchor`, `detents=[40,60,90]`, `initialDetent=60`, `modal=false`, `grabber=true`, `onClose` | `auto`: a bottom sheet in band layout, a popover anchored left of `anchor` in rail layout (360 px). Swipe-down dismisses past 25% of the height or at > 0.5 px/ms. Never pushes history. |
+| `Sheet` | `title`, `content`, `layout: 'auto'\|'bottom'\|'popover'`, `anchor`, `detents=[40,60,90]`, `initialDetent=60`, `modal=false`, `grabber=true`, `onClose` | `auto`: a bottom sheet in band layout, a popover anchored left of `anchor` in rail layout (360 px). Swipe-down dismisses when the exported pure `shouldDismiss({dy, h, v})` is true (`dy > 0.25 h` or `v > 0.5` px/ms). Never pushes history. |
 | `Dialog` | `title`, `body`, `actions: [{label, variant, value, autofocus}]`, `danger`, `form?: {fields, onSubmit: async values => void}`, `onClose(value)`, `width=480` | Native `<dialog>.showModal()`; returns focus; async submit keeps it open and shows the error inline. |
 | `Toast` | `message`, `tone`, `action`, `onDismiss` | View only; queueing lives in `feedback.js`. Never takes focus. |
 | `InlineStatus` | `tone: info\|ok\|warn\|error`, `text`, `action?` | `role=status`; errors use `role=alert`. |
@@ -738,36 +820,67 @@ startData() → stop   // subscriptions into store.library; the songs map update
 #### 2.14.1 `session.js`
 ```js
 export async function getSession(songId, {shared} = {}) → Session      // cached by id; Stage and Edit share it
-export async function disposeSession(songId) → void                     // flush, then engine.destroy(), metronome.destroy(), notation.destroy()
+export async function disposeSession(songId) → void                     // flush({final: true}), then engine.destroy(), metronome.destroy(), notation.destroy()
+export function activeSession() → Session|null                          // for desktop flush and the dev handle
 Session = {
   id, readOnly: boolean, shareToken: string|null,
-  song: ReadonlySignal<SongFull>,              // songs.get subscription (owner), or the shared snapshot
+  song: ReadonlySignal<SongFull>,              // songs.get subscription (owner; no practice, D52), or the shared snapshot
   engine: MultitrackEngine, metronome: Metronome, map: SongMapStore,
   transport: Transport, position: PositionModel, practice: PracticeState, undo: PracticeUndo,
-  notation: NotationSession, peaks: PeaksCache, frame: FrameBus,
+  notation: NotationSession, peaks: PeaksCache, frame: FrameBus, detect: DetectFlow,
   load: ReadonlySignal<LoadState>,
-  retry() → Promise<void>, flush() → Promise<void>,
-  on(event: 'tempo-adopted'|'loaded'|'error', fn) → off,
+  mapEditor: Signal<MapSession|null>,          // set by Edit · Map while mounted; routes map changes to the map stack (D23)
+  mapChange(label, fn: (map) => void, {status?: {text, undoLabel?}} = {}) → {entry}|null,   // D23; null when nothing changed
+  retry() → Promise<void>, flush({final} = {}) → Promise<void>,
+  on(event: 'tempo-adopted'|'map-real'|'loaded'|'error', fn) → off,
 }
 LoadState = {phase: 'song'|'signing'|'loading'|'decoding'|'preparing'|'ready'|'error',
              loadedBytes, totalBytes, decoded, tracks,
              error: null|{kind: 'storage'|'missing'|'codec'|'unknown', message, missing?: string[]}}
 ```
 Open order (spec §4.12: the song is interactive before decode):
-1. Read the song: `songs.get` (owner) or the snapshot.
+1. Read the song: `songs.get` (owner) or the snapshot; subscribe `songs.getPractice` (owner) or read `shared-practice` (shared).
 2. Build `map = SongMapStore.fromTempo(song.tempo, song.duration)` immediately.
-3. Build the practice state from `song.practice` (`upgradePractice`).
+3. Build the practice state: `upgradePractice(raw, {duration, legacyTempo: song.tempo, defaults: account.practice})` (D51, D14).
 4. Build the transport with an engine that has not loaded yet. Transport operations made before `ready` apply when the engine is ready.
-5. Start `notation.open()` when `song.hasChart`, or when the stored tempo has no `songMap` (legacy timeline adoption; `maps/notation.md` §3.3). Adoption runs before the part opens.
-6. Sign URLs and run `engine.loadStems` with progress into `load`. Then `map.setDuration(engine.duration)` and `peaks = createPeaks(engine.tracks)`.
-7. Apply the practice state to the engine: loop, rate, keep-pitch, mix, cue.
-8. `load.phase = 'ready'`.
+5. Start `notation.open()` when `song.hasChart`, or when the stored tempo has no `songMap` (legacy timeline adoption; `maps/notation.md` §3.3). Adoption runs before the part opens. Opening a part never creates an undo step and saves only when it actually changed the map (`part.js` uses the explicit reasons `'adopt'` and `'part-fit'`, §4.2).
+6. Sign URLs and run `engine.loadStems` with progress into `load`. Then `map.setDuration(engine.duration)` (silent: no edit event, no save, §4.2) and `peaks = createPeaks(engine.tracks)`.
+7. Apply the practice state to the engine and metronome: loop, rate, keep-pitch, mix, cue, `practice.click` → `metronome.configure`.
+8. `load.phase = 'ready'`; `detect.resume()` (D44: offers an unapplied finished detection).
 
-**Tempo persistence:** `api.songs.saveTempo({id, tempo: metronome.serialize(), baseRev})`, debounced 400 ms. It is suspended while `mapSession.auditioning`, and flushed by `flush()`. The response `{tempoRev, conflict, tempo}` updates `baseRev`. On `conflict`, the session adopts the returned tempo.
+**Tempo persistence:** `api.songs.saveTempo({id, tempo: metronome.serialize() /* {songMap} */, baseRev, saveId})`, debounced 400 ms, with a fresh `saveId = crypto.randomUUID()` per call, remembered in `ownSaveIds` (≤ 200). It is suspended while `mapEditor.value?.auditioning`, and flushed by `flush()`. The response `{tempoRev, conflict, tempo}` updates `baseRev`. On `conflict`, the session adopts the returned tempo (one practice-undo step, status "Kept the map from your other device · Undo").
 
-**B6 adoption:** when `song.tempoRev` rises from outside, and the local map has no unsaved edits, and the new map is real while the local one is not, the session replaces the map as one practice-undo step and calls `status('Bars found', {action: {label: 'Undo'}})`. If the local map is not dirty in any other case, the session adopts silently with no undo step.
+**External tempo changes** (D53): a `songs.get` update whose `tempoRev` differs from `baseRev` and whose `tempoSaveId` is not in `ownSaveIds` is foreign. When there are no pending local map edits:
+- if the new map is real and the local one is not (B6, or a detection that `beatsDone` applied, D44), adopt it through `mapChange('Bars found', …)` with `status('Bars found', {action: Undo})` — or "Beat grid found · Undo" when this session started the detection;
+- otherwise adopt silently with no undo step.
+With pending local edits, the local edits win and the next save resolves through `baseRev` (the server's stale-rev merge keeps a real map).
 
-**`flush()`** runs the practice save, the tempo save and `notation.flush()`. It is called by: `onLeave`, `pagehide`/`visibilitychange → hidden`, the share dialog, `desktop.onFlushRequest`, and `disposeSession`.
+**`mapChange(label, fn)`** (D23):
+- When `mapEditor.value` is set (Edit · Map mounted): `map.beginBatch(); fn(map); map.endBatch()` → one map-stack step; the map session shows any status.
+- Otherwise: `before = map.snapshot(); map.withoutUndo(() => fn(map))` (edits inside push nothing on the map stack); `after = map.snapshot()`; if unchanged return null; else `undo.pushAction({key: 'map', label, undo: () => map.restore(before), redo: () => map.restore(after)})`.
+- Either way the change saves through the tempo debounce, and `practice.reanchor(map)` runs.
+- **Not real → real** (any path): when live markers exist, emit `map-real` and show `status('Turn {n} markers into sections', {action: {label: 'Turn into sections', run}, durationMs: 8000})`. `run` applies `sectionsFromMarkers` (§4.5) to the map and tombstones the converted markers, and **amends the transition's undo entry** (`undo.amend(entry, …)`) so one Undo reverts the map change and the conversion together. Until converted or dismissed, markers stay visible as ticks on the strip and the Road map (they are no longer regions, §2.14.4); the marker menu keeps "Turn into section".
+
+**Recording check** (D43): when `song.recordingUnconfirmed` and the session is the owner's, `stage.js` mounts `review-banner.js` once per session (ST4).
+
+**Spot counters** (spec "practised 2 days ago · 14 times through"): `spot.open(id)` sets `practice.activeSpotId`. On each transport `pass` event while the loop's `[a, b)` equals that spot's `[a, b)` (± 1 ms), the session calls `practice.touchSpot(id, {passes: 1})`, which adds one pass and sets `lastAt = now()`. Any loop edit, loop clear, or opening another spot clears `activeSpotId`. Spot saving (`spot.save`) also makes the new spot active.
+
+**`flush({final})`** runs the practice save (`final` true on leave, pagehide, dispose and desktop flush), the tempo save and `notation.flush()`. It is called by: `onLeave`, `pagehide`/`visibilitychange → hidden`, the share dialog, `desktop.onFlushRequest`, and `disposeSession`.
+
+**`detect.js`** (`createDetectFlow({session})`, D44, D47):
+```js
+DetectFlow = {
+  state: ReadonlySignal<{phase: 'idle'|'starting'|'running'|'done'|'error', jobId?, percent?, line?, error?: describeError()}>,
+  canDetect: ReadonlySignal<{ok: boolean, reason?: string, deviceId?: string}>,
+  //   desktop: the local processor ready → ok; web: an online paired device (store.library.devices) → ok with deviceId;
+  //   else reason 'Needs Woodshed for desktop running on one of your computers.'; read-only or export-only → reason per D10
+  start({kind: 'beats'|'sections'} = {kind: 'beats'}) → Promise<void>,   // createBeatDetection / createSectionDetection({songId, deviceId?}); dedupe returns a running job
+  resume(),                                   // on open: api.jobs.latestDetection({songId}) → a done, unapplied, user-started job → status 'Bars found while you were away' [Use them]
+  suggestion: ReadonlySignal<{sections: [{t0, label, confidence}]}|null>,   // song.sectionSuggestion when the map is real and has no sections
+  keepAll(), dismiss(), review(),             // keepAll → mapChange('Add suggested sections', m => applySuggestion(m, s)) + songs.dismissSectionSuggestion; review → /s/:id/edit/map?review=sections
+}
+```
+While a job runs, the flow watches `jobs.get({jobId})`; `state.line` is `Finding bars · 30%`. On `done` with the song still unmapped, the server already wrote the map (D44) and the external-change path above shows the status. On `done` with a real map, the flow runs `mapChange('Detect beats', m => m.replaceFromBeats(job.result.beats))`, shows "Beat grid found · Undo" and calls `jobs.markApplied`. Errors use `describeError(job, {context: 'detect'})`.
 
 #### 2.14.2 `notation-session.js`
 ```js
@@ -786,14 +899,15 @@ createNotationSession({session}) → {
 
 #### 2.14.3 `transport.js`
 ```js
-export function createTransport({engine, metronome, map, position, practice, undo}) → Transport
+export function createTransport({engine, metronome, map, position, practice, undo, account, profile}) → Transport
 Transport = {
   snapshot: ReadonlySignal<TransportState>,   // discrete changes only
-  position() → number,                        // media seconds: engine.getPosition() when playing or counting (target during a silent count), else the cue
+  position() → number,                        // media seconds: engine.getPosition() when playing or counting (the target during a silent count);
+                                              // engine.pausedAt when paused; the cue when stopped
   // play / stop
   playStop(), play(), stop(), pause(), again(), playFrom(t),
   // cue, seeking, navigation
-  cue(t, {snap = 'none'}), seek(t), step(kind: 'bar'|'beat', dir), nudgeCue(ms), home(), end(),
+  cue(t, {snap = 'none'}), seek(t, {cue = false} = {}), step(kind: 'bar'|'beat', dir), nudgeCue(ms), home(), end(),
   jump(t, {label}), cancelJump(), goToRegion(dir),           // dir ±1 = previous/next section or marker
   // loop
   toggleLoop(), loopSection(), loopRange(a, b, {label, snap = 'bar'}), loopBars(t, n), loopIn({exact}), loopOut({exact}),
@@ -802,20 +916,21 @@ Transport = {
   // speed
   setSpeed(rate, {coalesce = true}), nudgeSpeed(pct), toggleSpeed100(), setKeepPitch(on), startTrainer(cfg?), stopTrainer(),
   // click
-  setCountIn({on, length, unit}), setClickMode('off'|'countin'|'always'), setAccent(on), setClickVolume(v), setPreRoll(on),
+  setCountIn({on, length, unit}), toggleCountIn(), setClickMode('off'|'countin'|'always'), toggleClick(), setAccent(on), setClickVolume(v), setPreRoll(on),   // D14
   // mix
   setMuted(name, on), setSoloed(name, on), setVolume(name, v, {coalesce = true}), toggleMuteAt(i), toggleSoloAt(i),
   minusMe(on?), onlyMe(on?), fullMix(), setChartAudio(level),
   // misc
   interrupt(reason), armPlayWhenReady(), on(event, fn) → off, destroy(),
 }
-// events: 'pass' {pass}, 'trainer' {stepIndex, rate, done}, 'jumped' {t}, 'ended' {reason}, 'interrupted' {reason}, 'count' {current, of, label}
+// events: 'pass' {pass}, 'trainer' {stepIndex, rate, done}, 'jumped' {t}, 'ended' {reason}, 'interrupted' {reason}, 'count' {current, of, label},
+//         'gesture' {} (emitted synchronously at the start of play/again/playFrom/armPlayWhenReady, before any await; D13, iPad resume)
 TransportState = {
-  phase: 'loading'|'stopped'|'counting'|'playing'|'paused', armed: boolean,
-  cue, rate, lastRate, keepPitch, minRate,                    // minRate 0.25, or 0.5 in safe mode
+  phase: 'loading'|'stopped'|'counting'|'playing'|'paused', armed: boolean,   // derived from engine 'state' events, never set optimistically (rule 22)
+  cue, rate, lastRate, keepPitch,                             // rate ∈ [0.25, 1.5]
   loop: {on, a, b, aBar, bBar, eachPassCount, playTimes, between, label},   // label 'Chorus' | 'Bars 13–20' | '0:31.2–0:41.0'
   pass, passTarget: number|null,
-  countIn: {on, length, unit}, click: {mode, accent, volume, preRoll},
+  countIn: {on, length, unit}, click: {mode, lastMode, accent, volume, preRoll},   // D14 (stored as practice.click)
   countdown: {current, of, label}|null,                        // count-in plate: 'Count-in · bar 13' | 'Lead-in · 0:31'
   mix: {tracks: [{name, volume, muted, soloed}], minusMe, onlyMe, mine: string[], chartAudio},
   trainer: {start, end, step, passes, stepIndex, steps, passInStep, rate, done}|null,
@@ -825,35 +940,35 @@ TransportState = {
 **Semantics (binding):**
 1. **Cue model:** `cue` is where Play starts and Stop returns. Setting a loop (any way) sets `cue = loop.a`. Clearing the loop leaves the cue where it is. `engine.editPosition` stays as the engine's storage field.
 2. **`play()`:** from `stopped`, the start is `loop.on ? loop.a : cue`. From `paused`, playback continues in place (no count-in); if the loop is on and the position is outside `[a, b)`, it continues from `a`. Count-in applies when `countIn.on` and playback is not a continue:
-   - mapped → `metronome.countInPlan()` at the start;
+   - mapped → `metronome.countInPlanAt(start)` (always computed at the start target, never from the engine position);
    - unmapped → **Lead-in 2 s** = `engine.play({countIn: {duration: 2, beats: []}, audiblePreRoll: true})`, with no clicks.
    - While the engine is not ready, Play arms "Play when ready" (`armed`) and starts on load.
    - On unmapped songs the Click and count-in clicks never sound; the Click control shows "Needs a bar grid".
+   - The count-in sounds per D14: mode `'off'` gives a silent count (plate and lamps only).
 3. **`playStop()`:** `counting` or `playing` → `stop()`; otherwise → `play()`. Space during a count-in cancels it (stop).
 4. **`stop()`:** `engine.stop({returnToEdit: account.practice.stop === 'cue'})`. With `stay`, the cue moves to the stop position (today's semantics). Then `practice.markStopped()` flushes the save, and `stage.js` writes `?bar=`/`?t=` with replace on the transition to `stopped`.
 5. **`pause()`:** playing → `engine.pause()` (the cue does not move); paused → `play()` (continue).
-6. **`again()`:** `target = loop.on ? loop.a : position.againTarget(pos) ?? cue`, where `pos = position()` and `againTarget` is the start of the current section or marker region. It plays from `target` with count-in when `countIn.on`, from any phase (counting restarts the count). Count-in off and playing → `engine.seek(target)` in place.
+6. **`again()`:** `target = loop.on ? loop.a : position.againTarget(pos) ?? cue`, where `pos = position()` and `againTarget` is the start of the current section or marker region. It plays from `target` with count-in when `countIn.on`, from any phase (counting restarts the count; playing restarts through `engine.stop()` then `play({countIn: countInPlanAt(target)})`). Count-in off and playing → `engine.seek(target, {cue: false})` in place: Again never moves the cue.
 7. **Passes:** a pass is a traversal from `a` to `b` with no seek, stop, manual speed change, loop edit or jump in between. Any of those sets `pass = 0` and `eligible = position <= a + 0.05`. On each engine `wrap`: if eligible, `pass++` and emit `pass`; then `eligible = true`.
 8. **Play N times** (`playTimes` 2|4|8): after the wrap that makes `pass === N − 1`, call `engine.stopAt(engine.nextWrapAt())`. Its `ended {reason: 'stopAt'}` → `stop()` (back to the cue, which is `a`), and `status('Played {N} times')`.
-9. **Count in every pass:** it is active when `loop.on && loop.eachPassCount && countIn.on`. Then `gapSec` = the count-in plan duration at `a` (mapped), or 2 s with an audible lead-in (unmapped). `between === 'rest'` adds one bar at `a` (mapped) or 2 s (unmapped), silent apart from clicks. The engine gets `setLoop(true, a, b, {gapSec, gap: unmapped ? 'preroll' : 'silent'})`. With safe mode on, `gapSec` is always 0.
-10. **Call & response** (`between === 'call'`): gapless. After each wrap the transport calls `engine.setTrackGains(mineMuted ? {} : muteMine, {at: engine.nextWrapAt()})`, alternating. Odd passes (1, 3, …) are "listen" passes and even passes are "play" passes. The HUD Loop line adds `· listen` or `· you play`. Stopping restores gains to 1.
+9. **Count in every pass:** it is active when `loop.on && loop.eachPassCount && countIn.on`. Then `gapSec` = the count-in plan duration at `a` (mapped), or 2 s with an audible lead-in (unmapped). `between === 'rest'` adds one bar at `a` (mapped) or 2 s (unmapped), silent apart from clicks. The engine gets `setLoop(true, a, b, {gapSec, gap: unmapped ? 'preroll' : 'silent'})`.
+10. **Call & response** (`between === 'call'`): gapless. Gains are always explicit per track: `listen = Object.fromEntries(mine.map(n => [n, 1]))`, `play = Object.fromEntries(mine.map(n => [n, 0]))`. At play start the transport calls `setTrackGains(listen)` now and `setTrackGains(play, {at: engine.nextWrapAt()})`; on each `wrap` it schedules the alternate set at the following wrap, so every change is already scheduled one pass ahead. Odd passes (1, 3, …) are "listen" passes and even passes are "play" passes. The HUD Loop line adds `· listen` or `· you play`. Stopping restores every `auto` gain to 1 (the engine does this on pause/stop).
 11. **Trainer:**
     - `cfg = {start, end, step, passes}`, defaulting to practice.trainer, else `{0.7, 1.0, 0.05, 2}`.
     - Target = the loop if on; otherwise the current section (D28: the loop is set as one undo step); otherwise the whole song.
     - Rates = `start, start+step, …` up to and including `end` (the last value is clamped). The first rate applies at once.
-    - After the wrap that makes `passInStep === passes − 1`, schedule `engine.setSpeed(nextRate, {at: engine.nextWrapAt()})` (in safe mode: an immediate `setSpeed` on the next wrap). When `passes === 1`, scheduling happens right after each step starts.
+    - After the wrap that makes `passInStep === passes − 1`, schedule `engine.setSpeed(nextRate, {at: engine.nextWrapAt()})`. When `passes === 1`, scheduling happens right after each step starts.
     - After the last step: `done = true`, `status('Trainer done — 100%')` (or the end rate), and looping continues at the end rate.
     - Manual speed changes, loop edits and jumps stop the trainer ("Trainer stopped"). Stop keeps the trainer, and Play resumes at the current step with `passInStep = 0`.
 12. **Quantized jump** `jump(t)`:
     - Stopped → `cue(t)`.
     - Playing and unmapped → `seek(t)` at once.
     - Playing and mapped:
-      - `nd = map.downbeatAfter(position())`;
-      - if the loop is on and `engine.nextWrapAt()` comes before `engine.whenAt(nd.time)`, the jump happens at the wrap;
-      - `when = engine.whenAt(nd.time)`; if `when − ctx.currentTime < engine.lookahead + 0.03`, use the following downbeat;
-      - `engine.seekAt(t, when)`; `pendingJump = {t, when, label}`.
-      - If `t` is outside an active loop, the loop is cleared in the same undo step (D29).
-      - `cancelJump()` → `engine.cancelPending()`.
+      - with the loop on, `nd = map.downbeatAfter(position(), {within: [a, b)})`; when that returns null (no downbeat before `b`), the jump happens at the wrap (`when = engine.nextWrapAt()`);
+      - otherwise `nd = map.downbeatAfter(position())`, `when = engine.whenAt(nd.time)`; if the loop is on and `engine.nextWrapAt()` comes first, the jump happens at the wrap;
+      - if `when − ctx.currentTime < engine.lookahead + 0.03`, use the following downbeat (or the following wrap);
+      - `engine.seekAt(t, when, {loop})`, where `loop` is `{enabled: false}` when `t` is outside an active loop (D29, one undo step) and omitted otherwise; `pendingJump = {t, when, label}`.
+      - `cancelJump()` → `engine.cancelPending()` (the loop state is restored with it).
 13. **Smart loop toggle** `toggleLoop()`:
     - if a loop range exists (`b > a`), toggle `on`;
     - otherwise, mapped with sections → the current section; mapped → the current 4-bar phrase (`map.phraseAt`); unmapped → `[t − 5, t + 5]`, clamped (t = position).
@@ -861,14 +976,32 @@ TransportState = {
 14. **I / O:** loop in/out at the position (playing) or the cue (stopped), snapped to the nearest bar line (mapped) unless `exact`. If the other edge becomes invalid, it is set 1 bar (mapped) or 4 s (unmapped) away. The loop turns on.
 15. **Move by length:** `moveLoop(±1)` shifts by `b − a`, clamped to `[0, duration]`, and recomputes the bar refs.
 16. **Edge nudges** (Loop card): by bar, or by beat with Alt (mapped); by 0.1 s, 50 ms with Alt, or 10 ms with Alt+Shift (unmapped). The engine's 20 ms minimum length applies.
-17. **Speed:** clamped to `[minRate, 1.5]` and rounded to 0.01. `` ` `` toggles between 1.0 and `lastRate`, the last rate ≠ 1.0. `nudgeSpeed(±5|±1)`. Changes within 1 s coalesce into one undo step.
+17. **Speed:** clamped to `[0.25, 1.5]` and rounded to 0.01. `` ` `` toggles between 1.0 and `lastRate`, the last rate ≠ 1.0. `nudgeSpeed(±5|±1)`. Changes within 1 s coalesce into one undo step.
 18. **Mix:**
     - `toggleMuteAt(i)` and `toggleSoloAt(i)` use canonical stem order: drums, bass, guitar, piano, vocals, other, then two-part focus and `no_*` (not row order).
-    - `minusMe()`: `mine = profile.myStems(account.profile, stems)`. If it is empty, open the Mix sheet and return false. Otherwise mute `mine`. When an instrument fell back to `other`, `status('This song wasn't split with a {instrument} part. Muting Other instead.', {action: Re-split with 6 stems (desktop)})`.
+    - `minusMe()`: `{names: mine, fallbacks} = profile.myStems(account.profile, stems)`. If `mine` is empty, open the Mix sheet and return false. Otherwise mute `mine`. When an instrument fell back to `other`, `status('This song wasn't split with a {instrument} part. Muting Other instead.', {action: Re-split with 6 stems (desktop)})`.
     - `onlyMe()` solos `mine`. `fullMix()` sets volume 1, clears mute and solo, and clears `minusMe`/`onlyMe` (one undo step).
     - Open with "my part Out": when `account.profile.openWithMyPart === 'out'` and the song has no saved practice, the session starts with `minusMe(true)` (not an undo step).
 19. **Undo:** every mutation goes through `practice.patch` with an `undo.push({key, label, from, to})`. Keys: `speed`, `level:<stem>` coalesce; `loop`, `mix`, `markers`, `spots`, `section`, `startOver` do not.
 20. **`interrupt(reason)`:** `engine.pause()`, `cue = position`, `status('Paused — audio was interrupted. Press Play to continue.')`. It never auto-resumes.
+21. **During a count-in** the engine never pauses itself (its old self-pause in `seek`/`setSpeed`/`setPreservePitch`/`setLoop` and `metronome._notify` is deleted). The transport applies this table:
+
+    | Operation while `counting` | Effect |
+    |---|---|
+    | Play/Stop (Space, ▶, pedal) | cancel: `stop()`; the cue is unchanged |
+    | Again (Enter) | restart the count at the (re-computed) target |
+    | Speed change, keep-pitch change | restart the count at the same target with the new rate |
+    | Loop toggle or edit | restart the count when the start target changes; otherwise continue |
+    | Mouse seek, tap cue, strip cue | cancel the count and `cue(t)` (stopped semantics) |
+    | Quantized jump (`jump`) | cancel the count, `cue(t)`, then `play()` (a fresh count at `t`) |
+    | Count-in off (C) | end the count now and start playback at the target with no count |
+    | Click mode change (K, sheet), accent, volume | apply to the remaining clicks; the count continues |
+    | Mix, chart audio, label-only map edits | no effect |
+    | Map edits other than labels (meter, tempo, pins) | restart the count at the same target |
+
+    "Restart the count" is `engine.stop({returnToEdit: false})` then `engine.play({countIn: metronome.countInPlanAt(target)})` with `pass = 0`.
+22. **Phase** is derived from the engine's `state` events (`{playing, counting, paused}`), so a count that ends, a `stopAt`, an interruption or a self-ended song always shows the right phase. Play reads `✕ Count` while `phase === 'counting'` (ST5).
+23. **Seeks never move the cue implicitly:** `seek(t)` defaults to `{cue: false}`; only stopped-state cueing (`cue(t)`), loop setting (rule 1) and `stop` in `stay` mode move it. A mouse click while playing seeks with `{cue: false}`.
 
 #### 2.14.4 `position.js`
 ```js
@@ -876,6 +1009,7 @@ createPositionModel({map, practice}) → {
   mapped: ReadonlySignal<boolean>,                               // map.isReal
   label(t) → {main: '13 · 2'|'Pickup · 3'|'1:12', sub: '0:26 / 1:04'|null},
   regions() → Region[],        // mapped: map.sections; unmapped: live markers sorted → [{id, label, t0, t1, kind: 'marker'}]
+  markerTicks() → [{id, t, label}],   // live markers in both modes; drawn as ticks on the strip and the Road map (on mapped songs until converted, §2.14.1)
   regionAt(t) → Region|null,
   next(t) → {region, text, imminent: boolean}|null,              // D16; text per §4.4
   againTarget(t) → number|null,                                  // regionAt(t)?.t0
@@ -890,35 +1024,39 @@ createPositionModel({map, practice}) → {
 
 #### 2.14.5 `practice-state.js` (client side of `shared/practice.ts`)
 ```js
-createPracticeState({songId, raw, duration, readOnly, persist: p => Promise, server: ReadonlySignal<raw>, local?: {token}}) → {
+createPracticeState({songId, raw, duration, readOnly, persist: (p, {final}) => Promise, server: ReadonlySignal<raw>, local?: {token}, clock}) → {
   value: ReadonlySignal<PracticeV2>,
   patch(partial | (draft) => void, {dirty: string[]}) → void,   // dirty = top-level scalar keys this device changed
-  addSpot(s) → id, updateSpot(id, patch), deleteSpot(id), touchSpot(id, {passes}),   // ids: crypto.randomUUID()
+  addSpot(s) → id, updateSpot(id, patch), deleteSpot(id),        // ids: crypto.randomUUID()
+  touchSpot(id, {passes = 1}),   // passes += n, lastAt = clock.now(), updatedAt bumped; not an undo step
+  activeSpotId: Signal<string|null>,   // set by spot.open / spot.save; cleared by any loop edit (session rule, §2.14.1)
   addMarker({t, label}) → id, renameMarker(id, label), deleteMarker(id),
   reanchor(map),                 // after a map change: loop and spots with aBar/bBar re-resolve a/b (unless map.auditioning)
   markPlayed(),                  // sets lastAt once per session (the first Play)
-  markStopped(),                 // flush now
-  flush() → Promise<void>, dispose(),
+  markStopped(),                 // flush now with final: true
+  flush({final} = {}) → Promise<void>, dispose(),
 }
 ```
 **Rules:**
-- **Save cadence:** 600 ms debounce; flushed by `markStopped`, unmount, `pagehide`, `visibilitychange → hidden`, share and desktop flush.
+- **Save cadence:** 600 ms debounce (`final: false`); flushed with `final: true` by `markStopped`, unmount, `pagehide`, `visibilitychange → hidden`, share and desktop flush. Only final saves update the Library summary (D52).
 - **Before each save:** `next = prunePractice(mergePractice(local, server.value, dirtyKeys), PRACTICE_CAP)`. When pruning dropped anything, `status('Some old markers were removed to make room.')`.
 - **Read-only (shared):** `persist` writes to `deviceStore('share').set(token, p)` instead of Convex.
 - **Errors:** `practice_too_large` cannot happen after pruning. Any other error retries once after 5 s, then keeps the change locally until the next save.
 
 #### 2.14.6 `undo.js`
 ```js
-createPracticeUndo({limit = 50, coalesceMs = 1000}) → {
-  push({key, label, describe: (from, to) => string, from, to, apply(value)}),
+createPracticeUndo({limit = 50, coalesceMs = 1000, clock}) → {
+  push({key, label, describe: (from, to) => string, from, to, apply(value)}) → Entry,          // value entries (practice patches)
+  pushAction({key, label, describe?: () => string, undo(), redo()}) → Entry,                 // compound entries (map snapshots, D23)
+  amend(entry, {label?, undo(), redo()}),       // wraps the entry: undo runs the new undo then the old; redo the old then the new
   undo() → entry|null, redo() → entry|null, canUndo: ReadonlySignal<boolean>, canRedo: ReadonlySignal<boolean>, clear(),
 }
 ```
-An entry with the same `key` within `coalesceMs` of the previous one merges into it (keeping the first `from`). `stage.js` shows "Undid: {describe(from, to)} [Redo]": as a toast when stopped, in the status line when playing. Example: `describe` for speed → `speed 85% → 100%`.
+A value entry with the same `key` within `coalesceMs` of the previous one merges into it (keeping the first `from`); action entries never coalesce. `stage.js` shows "Undid: {describe(from, to)} [Redo]": as a toast when stopped, in the status line when playing. Example: `describe` for speed → `speed 85% → 100%`.
 
 #### 2.14.7 `frame.js`
 ```js
-createFrameBus({session}) → {
+createFrameBus({session, raf = requestAnimationFrame, caf = cancelAnimationFrame, now = clock.now, isHidden = () => document.hidden}) → {
   subscribe(fn: (f: Frame) => void, {hz = 60} = {}) → off,
   start(), stop(),
 }
@@ -936,10 +1074,21 @@ pressPolicy({pointerType: 'mouse'|'touch'|'pen', playing: boolean, gesture: 'tap
 |---|---|---|---|
 | tap | `cue` (nearest beat when mapped) | `pill` ("▶ Play from bar 23", 3 s; tapping it → `jump`) | `seek` |
 | double | `playFrom` | `jump` (immediate) | `jump` |
-| long / context | `menu` | `menu` | `menu` |
-| drag | mouse: `loopDrag`; touch: `scroll` (long-press-then-drag → `loopDrag`) | `scroll` | `loopDrag` |
+| long (released without a drag) / context | `menu` | `menu` | `menu` |
+| long then drag (touch/pen, 350 ms, D50) | `loopDrag` | `scroll` (no loop drags on touch while playing) | — |
+| drag | mouse: `loopDrag`; touch: `scroll` | `scroll` | `loopDrag` |
 | wheel | `scroll` (Follow pauses) | `scroll` | `scroll` |
 | pinch | `zoom` | `zoom` | `none` |
+
+```js
+// press.js (D50)
+createPressRecognizer(el, {longMs = 350, doubleMs = 300, moveTol = 8, haptic = platform.haptic,
+  onTap(e), onDouble(e), onLongStart(e), onLongDrag(e, {dx, dy}), onLongEnd(e, {dragged}), onMenu(e), onDragStart(e) /* mouse */, onDrag(e), onDragEnd(e)}) → off
+//   touch/pen: a press held longMs without moving > moveTol fires haptic + onLongStart; moving afterwards → onLongDrag…onLongEnd({dragged: true});
+//   releasing without moving → onMenu. Moving before longMs → native scroll (pointer released to the browser; touch-action pan-y).
+//   mouse: button 0 drag → onDragStart/onDrag/onDragEnd immediately; button 2, Shift+F10 and ContextMenu → onMenu.
+//   e = {clientX, clientY, pointerType, t?} — the surface adds t/bar via its hit test before calling glass.pressPolicy.
+```
 
 #### 2.14.9 `layout.js`
 ```js
@@ -956,6 +1105,11 @@ A layout switch (resize or rotation) is debounced 150 ms. It relayouts once and 
 // stage.js (view)
 export async function mount(el, match, ctx) → {update(match), unmount()}
 //   query: ?spot=<id> selects the spot (loop+speed+cue); ?bar=N cues bar N (mapped); ?t=83.2 cues the time; ?set=<id> setlist context
+//   root attributes for tests: data-load-phase (LoadState.phase), data-transport-phase (TransportState.phase) (§11.4)
+//   surface switch: the old and new surface crossfade (--motion-slow), the new one first revealed at the old one's anchor() bar (shared anchor)
+//   entry from the Library: document.startViewTransition when supported (features.viewTransition and not reduced motion); the card cover and the
+//     identity cover share view-transition-name: cover-<songId> (LB1 sets it on the card being opened)
+//   Esc → app.escape; leaving by Esc is allowed when !platform.isIPad and the transport is stopped (spec §4.9)
 //   provides command context 'stage': {layout, surface, setSurface(kind), toggleFocus(), setDistance(d), openSheet(name, {anchor}),
 //     closeSheets(), statusLine, leave(), scrollBy(screens), scrollTop(), anchors: Map<'play'|'strip'|'mix'|'getBars', Element>}
 export function surfaceDefault(song, notationHasNotation) → 'chart'|'roadmap'   // Chart when a drum part has notation, else Road map
@@ -966,6 +1120,8 @@ mountHud(el, {session, stage}) → {setLayout(l), setFocus(on), destroy}
 //   identity row: ‹ (HoldButton; requireHold = playing), cover 32, h1 title, artist, key/tuning chips, Notes chip, ☼ (wake lock held), ⎍ (pedal mode), `1 ready` chip, ⋯
 //   readouts: Section (160 ms crossfade), Next, Position (+ time sub), BeatLamps, Speed (+ bpm), Loop (+ pass/trainer/call), Mix word
 //   status line (role=status), count-in plate (overlay at the top of the music)
+//   Speed readout: `--ink-3` at exactly 100%, `--ink` otherwise; dragging the speed value vertically changes it ±1% per 12 px (pointer capture; one coalesced undo step)
+//   Play while counting: icon ✕ and label 'Count' (`✕ Count`, spec §4.3); aria-label 'Cancel count-in'
 
 // controls.js
 export const CONTROL_SET = [
@@ -986,7 +1142,9 @@ mountControls(el, {session, variant: 'dock'|'rail'|'mini'|'slim'}) → {destroy}
 
 // strip.js
 mountStrip(el, {session, onScrub, viewport?: Signal<{t0, t1}>, onViewport?}) → {destroy}
-//   role=slider (aria-valuetext 'Bar 12, beat 3, Chorus' | '1:12'), inside nav[aria-label=Sections]; roving segments: ←/→ move, Enter plays, L loops
+//   role=slider (aria-valuetext 'Bar 12, beat 3, Chorus' | '1:12'), inside nav[aria-label=Sections][data-scope=stage.strip][data-consume-keys="ArrowLeft ArrowRight Home End"];
+//   roving segments: ←/→ move, Enter plays (focus.play), L loops (focus.loop); provides ctx.focused for the focused segment
+//   mapped songs: live markers drawn as ticks over the sections; suggested sections (detect.suggestion) drawn as dashed blocks with an inline [Keep all] [Review] chip
 //   gestures per spec §4.5 through transport.jump/cue/loopSection and menus.sectionMenu
 ```
 
@@ -999,10 +1157,14 @@ closeSheets()
 // One sheet at a time (opening another closes the first). Sheets never pause playback, push history or relayout the music.
 // Each sheet module: export function render(container, {session, close}) → {destroy}
 
-// menus.js (MenuItem[] builders)
+// menus.js (MenuItem[] builders; ST8a owns)
+stageMenu(session, stage) → items        // the identity-row ⋯ menu (stage.menu), every item command-bound:
+//   View ▸ (Chart · Road map · Stems, radio) · Display ▸ (Together · Hands & feet, radio; when a part exists) · Follow ▸ (Scroll · Page, radio; chart)
+//   · Focus F · Distance ▸ (Near · Stand · Kit, radio) · ── · Spots… J · Notes · Tap the beat… · Get bars… (unmapped) / Detect beats (mapped)
+//   · Suggest sections (mapped, no sections) · ── · Share… · Edit map · Edit drum chart · Edit details E · Re-split… (song.resplit) · ── · Keyboard shortcuts ?
 barMenu(session, {t, bar}) → items       // Play from here · Cue here · Loop this bar · Loop this section · Loop 4 bars from here · Save spot here… · Add marker here
 sectionMenu(session, region)             // Play from here · Loop this section · Extend loop to here · Save as spot… · Rename… · Edit sections in Map
-spotMenu, markerMenu (Rename · Delete · Turn into section, when mapped), loopBandMenu (Save as spot · Count in every pass ✓ · Move ◀ ▶ · Zoom to loop · Clear), stemMenu (Mute · Solo · Reset level · This is my instrument)
+spotMenu (Open · Rename · Update from current · Delete), markerMenu (Rename · Delete · Turn into section, when mapped), loopBandMenu (Save as spot · Count in every pass ✓ · Move ◀ ▶ · Zoom to loop · Clear), stemMenu (Mute · Solo · Reset level · This is my instrument)
 ```
 
 #### 2.14.12 Surfaces
@@ -1024,13 +1186,15 @@ SurfaceOpts = {session, stage, layout, distance,
   status(text)}
 createChartSurface(host, opts) → Surface       // dynamic import('../../js/notation/chart.js'); pinch via pinch.js → chart.previewScale/setScale
 createRoadmapSurface(host, opts) → Surface     // kind 'roadmap' when mapped, 'wave' when not; switches on position.mapped
+//   the bar grid is role=grid with data-scope=stage.bars (Enter plays the focused bar, L loops it; ctx.focused = the bar)
+//   chart-surface's accessible bar list overlay uses the same scope
 createStemsSurface(host, opts) → Surface & {viewport: Signal<{t0, t1}>}   // the strip binds its bracket to it
 ```
 **`notation/chart.js` API (the only mode; no toolbar, chips, notice, hint or mute button):**
 ```js
 createChart({host, part, engine, scale = 1.2, display = {layout: null, barsPerRow: -1}, followStyle = 'scroll', followAnchor = 0.33,
              glass = false, fonts = {barNumber: 14, marker: 20},
-             onBarActivate, onLoopEdit, onFollowChange, onStatus, onEmpty: {findChart, importFile, write}}) → {
+             onBarActivate, onLoopEdit, onFollowChange, onStatus, onRelayout, onEmpty: {findChart, importFile, write}}) → {
   host, setVisible(b), tick(time?), refresh(), destroy(),
   setScale(v, {anchor = true}), previewScale(f|null), setDisplay({layout, barsPerRow}), setFonts({barNumber, marker}),
   setFollowStyle('scroll'|'page', {anchor}), setFollow(b), setLoopRange({a, b}|null), setGlass(b),
@@ -1041,11 +1205,16 @@ createChart({host, part, engine, scale = 1.2, display = {layout: null, barsPerRo
 - **Scale steps:** `[.8, .9, 1, 1.1, 1.2, 1.3, 1.45, 1.6, 1.8, 2.0]`.
 - **Font floors:** `barNumber = ceil(14 × d / scale)` and `marker = ceil(20 × d / scale)` px, applied before each relayout (d = Distance factor).
 - **Page follow:** advances half a viewport (200 ms) when the playing system crosses the middle.
+- **Scroll follow anchor:** the playing system is held at **0.28** of the viewport height on the band and **0.33** on the rail (spec §4.4); `chart-surface` passes `followAnchor` per layout and updates it on a layout switch.
+- **Loop brackets** animate to their snapped bar lines over `--motion-fast` (120 ms, `--ease`) after a drag ends (spec motion list); with reduced motion they jump. The same rule applies to `loop-handles.js` (Road map, Stems) and the strip bracket.
+- **Relayout timing** is reported through `onRelayout({ms, bars})` so the surface can apply D54.
 - **Manual scroll** pauses Follow whether playing or stopped, with a 900 ms guard after programmatic scrolls.
-- The first render waits for `document.fonts.load('600 15px "Atkinson Hyperlegible Next"')`.
+- The first render waits for `document.fonts?.load('600 15px "Atkinson Hyperlegible Next"')` (skipped when `document.fonts` is absent, e.g. happy-dom), with a 1.5 s timeout.
+- After each engraving the chart host sets `data-rendered="<revision>"`; waveform canvases set `data-peaks-ready` once peaks exist (§11.4).
 - `.chart-scroll` gets `scrollbar-gutter: stable`.
 
 **`score-view.js` changes:**
+- `createScoreView(host, {scale, barsPerRow})`, `setScore`, `noteBoxes()` and `barBounds(index)` keep their 1.9 signatures: the geometry harness (§11.5) calls them on both the 1.9 and the 2.0 tree.
 - Theme colours are read from `getComputedStyle(host)` using the tokens `--ink`, `--ink-3` and `--ink-2`.
 - `fonts` option.
 - The loop gets brackets plus a separate handle layer with `pointer-events: auto` and 44 px × row-height hit areas.
@@ -1084,8 +1253,11 @@ mount(el, match{params: {songId, tab, find?}, query: {bar}}, ctx) → {update, u
 //   main + inspector (laptop: right 320 px; iPad portrait: 45% bottom Sheet collapsing to a 56 px header) + slim transport
 //   provides command context 'edit': {tab, setTab(t), done(), undo(), redo(), saveStatus: Signal<{state, text, action?}>}
 //   prefs.edit.lastTab is written on each tab change
+//   Edit · Map mounted → session.mapEditor.value = mapSession (D23); cleared on tab change or unmount
+//   ?review=sections opens the suggestion review in the sections lane (D47)
 // map/session.js (no DOM; ported from map-mode.js:104-499, 538-547)
-createMapSession({session, prefs}) → MapSession
+createMapSession({engine, metronome, map, prefs, hooks: {suspendSaves(on), pauseMapSync(on), status(text, opts), loop: {get(), set(range|null)}, markers: {list(), tombstone(ids)}}}) → MapSession
+//   narrow inputs (no Session dependency), so ED1 builds and tests in wave 0B; ED3 passes the hooks from the session
 MapSession = {
   cursorQ: Signal<Fraction>, digits: Signal<string>, tapping: ReadonlySignal<boolean>, previewing, calibrating, auditioning: Signal<boolean>,
   message: Signal<{text, tone: 'info'|'ok'|'error'}|null>, span: ReadonlySignal<SpanInfo>,
@@ -1094,8 +1266,9 @@ MapSession = {
   changeBeats(dir, {thisBar}), applyBar(form: {numerator, denominator, groups, pickup, label, applyTo: 'this'|'until'|'end', keep: 'beats'|'lines', tempo?, ramp?}),
   toggleRamp(), scale(factor), tail(delta), setTempoOpenSpan(bpm),
   tap(kind: 'D'|'T', event), startCalibration(), togglePreview(),
-  setLabel(barIndex, label), moveSectionBoundary(fromBar, toBar), addSectionAt(t), markersToSections(markers) → {converted, skipped},
-  beginAudition(), endAudition({commit: boolean}),        // D20: wraps a store batch, pauses tempo saves and part map-sync
+  setLabel(barIndex, label), moveSectionBoundary(fromBar, toBar), addSectionAt(t), markersToSections() → {converted, skipped},   // one map step + linked tombstones
+  reviewSuggestion(s) → {blocks: [{t0, bar, label, accepted}]}, setSuggestionBlock(i, patch), applySuggestionReview() → {added},  // D47
+  beginAudition(), endAudition({commit: boolean}),        // D20: beginBatch + suspended saves/map-sync; commit → endBatch, else abortBatch
   undo(), redo(), destroy(),
 }
 //   Every edit stamps origin through SongMapStore.edit(change, reason) (§4.2). Preview restores both the loop and the click state.
@@ -1111,24 +1284,26 @@ mount(el, match{params: {songId}} | {query: {ids}}, ctx) → {update, unmount}
 // drum-import.js
 importDrumPartFromFile(file, {session}) → Promise<{count, skipped, warnings}>   // tempo-import parse → importDrumHits → session.notation.importScore
 ```
+**Bulk Details posture** (`/edit/details?ids=`): the same posture bar with the label "Editing details · {n} songs", no tabs and no slim transport; Done/Esc → `router.back({fallback: '/'})`, which returns to the Library selection.
+
 **`notation/editor.js` contract** (frame removed, internals kept; `maps/notation.md` §12.1):
 ```js
 createNotationWorkspace({host, slots: {inspector: {kit, properties, listen}, kitBank, status}, part, song, engine, songMap,
   transport: {playStop, pause, again, playFrom(t), setLoop({a, b, aBar, bBar}), isPlaying},
   mix: {toggleRecordedDrums(), recordedDrumsOut(): boolean},
   drumAudio, viewport: {get(), set(t0, t1)}, openMap(q, {edit}), openDrumImport(), dialog: feedback.form}) → {
-  handleKey(e) → boolean,          // only while the surface has focus; never Space, Enter or idle Esc
   run(id, ...args), state() → EditorState, subscribe(fn) → off, menus() → {edit: MenuItem[], part: MenuItem[], sections: MenuItem[]},
+  setPaging('pages'|'scroll'),     // D48: 'scroll' mounts chart/scroll-view.js (virtualised systems, follow and caret reveal), 'pages' keeps 16-bar pages
   focus(), setVisible(b), tick(t), flush(), notice(text), destroy(),
 }
 ```
-Removed: the heading, toolbar, panel, footer and pagination markup; `dialog()`/`focusModal`; `alignment()` and the align-beat dialog; the `.player.notation-expanded` toggles; the `setMode('recording')` reset on hide; the Space/Enter clause in `onKey`; `isPointerControl`.
+Removed: the heading, toolbar, panel, footer and pagination markup; `dialog()`/`focusModal`; `alignment()` and the align-beat dialog; the `.player.notation-expanded` toggles; the `setMode('recording')` reset on hide; **`onKey`/`handleKey` entirely** (every key is a registry command in `edit.chart.score` calling `workspace.run`, drum letters on `e.code`, D56); `isPointerControl`; the direct `localStorage` reads and writes of `ws.notation.keys`/`ws.notation.layout` (now `prefs.edit.chart.keys`/`.view`); the imports of `modal-focus.js`, `interactions.js` and `notation.css` (ED5).
 
 ### 2.16 `src/library`
 ```js
 // home.js (view): query {q, sort, group, filter, artist, album}; mirrored to the URL (replace, 400 ms) and prefs.library
 // library-model.js (pure)
-export const FILTERS = ['chart', 'mapped', 'spots', 'review', 'processing', 'failed']
+export const FILTERS = ['chart', 'mapped', 'spots', 'review', 'processing', 'failed']   // 'review' = row.reviewMetadata (D43)
 export const SORTS = ['practised', 'added', 'title', 'artist', 'album', 'duration', 'bpm', 'key']
 export function defaultSort(songs) → 'practised'|'added'           // 'practised' once any song has lastPracticedAt
 export function matches(song, q) → boolean   // title, uploader, artistLabel, album, albumArtist, genre, tags, mapSummary.sections; case-folded substring
@@ -1140,6 +1315,9 @@ artistLabel(song), metaLine(song) → '1:04 · Chart · Mapped · 2 spots · 6 s
 // cards.js
 SongCard(song, opts) / SongRow(song, opts) → {el, update(song, opts)}
 //   opts: {job: JobVM|null, selected, selecting, onOpen, onMenu, onArtist, onAlbum, onReview, isNew}; `data-focus-key="song:<id>"`
+//   long-press (500 ms, bindContextMenu) and right-click open the card menu (D49); the opened card's cover gets view-transition-name: cover-<id>
+//   Re-splitting state (a separate job on a song that already has stems): processing chrome, but title and artist at full contrast and the card still opens and plays the old stems
+//   done → the card moves to its sorted position with a 260 ms FLIP (`--motion-slow`; none under reduced motion)
 // jobs.js
 createJobsModel() → {items: ReadonlySignal<JobVM[]>, chip: ReadonlySignal<{text, tone, icon}|null>, bySong: ReadonlySignal<Map<id, JobVM>>,
                      ready: ReadonlySignal<Song[]> /* finished during this app session and not opened yet: the Stage `1 ready` chip, toasts, notifications */}
@@ -1151,18 +1329,24 @@ openJobsPopover({anchor, focusJobId}) → {close}; mountJobsChip(slot) → {dest
 classify(input) → {kind: 'empty'|'url'|'spotify'|'search', value}
 badges(title) → Array<'Official'|'Live'|'Cover'|'Lyrics'>
 findDuplicate({url?, title?, artist?, duration?}, songs) → Song|null    // same source url, or title+artist case-folded with duration ±2 s
-addDefaults(profile, settings) → {stemMode, preset}; describeDefaults(...) → 'Split for drums · Balanced quality · 4 stems'
+describeDefaults(profile, settings) → 'Split for drums · Balanced quality · 4 stems'   // uses profile.js addDefaults (the only definition, §2.22)
 removesMyStem(profile, stemMode) → Instrument|null                      // 'Your guitar won't be a separate track with this layout.'
-// add-sheet.js (modal route /add): query {q}; files arrive through dropzone.stageFiles(files) before navigate('/add')
+// add-sheet.js (modal route /add): query {q, pick}; files arrive through dropzone.stageFiles(files) before navigate('/add')
+//   desktop: candidates from the local companion (/resolve, /search); web and iPad: always the single-result line (spec §3.2) and the job is
+//   submitted with confirmed: false (D43); a chosen B4 candidate submits confirmed: true; a pasted URL is confirmed: true
+//   one file: an editable title field (pre-filled from the filename) overrides the song title; coarse pointers get a [Paste] button next to
+//   the omnibox (navigator.clipboard.readText inside the tap); ?pick=1 → §2.10 action targets
 // upload.js
 startUpload(file, {settings, deviceId}) → UploadHandle
 UploadHandle = {id, progress: ReadonlySignal<{loaded, total}>, state: ReadonlySignal<'uploading'|'queued'|'error'|'canceled'>, cancel(), promise}
 //   XHR to companion /upload (src/js/companion.js uploadXHR), then jobs.createSeparation only if not canceled (S1 fix)
 // dropzone.js: startLibraryDrop({router}) → off; stageFiles(files) / takeStagedFiles() → File[]
 // selection.js: createSelection({max = 100}) → {ids: Signal<Set>, active: Signal<boolean>, toggle(id), range(id), selectAll(ids), clear(), mountBar(el)}
-// card-menu.js: cardMenuItems(song, ctx) → MenuItem[]   (spec §2.5)
+// card-menu.js: cardMenuItems(song, ctx) → MenuItem[]   (spec §2.5; first item 'Select', D49)
 // resplit-dialog.js: openResplit(song) → Promise<void>
-// review-chip.js: ReviewChip(song) → {el, update}       // metadata.confirm / → /s/:id/edit/details#match
+// review-chip.js: ReviewChip(song) → {el, update}       // shown when row.reviewMetadata; metadata.confirm / → /s/:id/edit/details#match
+// home.js no-results: "No songs match "q"." [Clear search] [Add "q" as a new song →] — shown on desktop, and on web when an online
+//   paired device exists (B5); it navigates to /add?q=<q>
 // setlists.js: mountSetlistsRow(el) → {destroy}          (LB1: cards open /set/:id; read-only)
 // card-menu.js also exports addToSetlistItems(songIds) → MenuItem   (LB3: 'Add to setlist ▸' with a new-list field)
 // setlist-page.js (view /set/:id): reorder, remove, rename, play from the top (→ /s/<first>?set=<id>)
@@ -1185,11 +1369,19 @@ export default {id, title, desktopOnly?: boolean, render(el, ctx) → {destroy}}
 ```js
 openShareDialog(song, {beforeShare: () => session.flush()}) → Promise<void>
 shareUrl(token) → `${import.meta.env.VITE_SHARE_ORIGIN || location.origin}/share/${token}`   // desktop builds must set VITE_SHARE_ORIGIN
-// shared-stage.js: export async function boot(match) → void
-//   publicClient().subscribe('sharing:view', {token}) → a session with {shared: {token, snapshot, resolveUrls: shareAudio.playback, cacheNamespace}}
-//   mounts stage.js read-only: identity 'Shared by {name}' + [Add to my library] (signed in) | [Sign in to keep a copy] (?save=1 flow kept)
-//   Edit hidden; practice via shared-practice.js; one-time status "Changes stay on this device until you add the song to your library."
-//   after shareAudio.save → api.songs.savePractice(newId, upgradePractice(local)) → navigate('/s/<newId>')
+// shared-stage.js: export async function boot(match) → void   — its own boot list, in order (SH1 acceptance covers each item):
+//   1. main.css, the icon sprite and font preload (shared with main.js through src/app/boot-common.js, owned by S1)
+//   2. html[data-place=stage][data-posture=stage], color-scheme, theme-color (theme-init already pre-painted them)
+//   3. const {user} = await auth.initialize({optional: true})  → user|null decides [Add to my library] vs [Sign in to keep a copy]; never throws on signed-out
+//   4. store.session = {user, status, admin: false, online}; store.prefs from prefs.js; store.stage maintained by stage.js (so toasts hold while playing)
+//   5. import the global, stage-transport and stage commands modules; defineScope stage.strip/stage.bars; startDispatcher()
+//   6. palette (song provider + commands only; no song-title or navigation providers), the ? sheet, feedback (toasts, status line, dialogs)
+//   7. startPedals(), startMidi(); wake lock, watchInterruptions, startMediaSession, startGestureAudio (all via stage.js as in the app)
+//   8. a minimal router over the single route /share/:token (query mirroring for ?save=1, ?bar, ?t; no other routes); leaving goes through location.assign
+//   9. publicClient().subscribe('sharing:view', {token}) → getSession(id, {shared: {token, snapshot, resolveUrls: shareAudio.playback, cacheNamespace}})
+//  10. mount stage.js read-only: identity 'Shared by {ownerName}' + the action; Edit, Share, map, detect and re-split commands disabled by `when: c => !c.session.readOnly`
+//   Practice via shared-practice.js; one-time status "Changes stay on this device until you add the song to your library."
+//   After shareAudio.save → api.songs.savePractice({id: newId, practice: upgradePractice(local), final: true}) → location.assign('/s/<newId>')
 // demo.js
 demoToken() → Promise<string|null>   // settings:demo; cached for the page
 openDemo(router)                      // location.assign(`/share/${token}`); the Shared Stage applies Minus me from the profile when openWithMyPart === 'out' or the profile is set
@@ -1253,11 +1445,16 @@ export type PracticeV2 = {
   tracks: {name: string; volume: number; muted: boolean; soloed: boolean}[];   // ≤ 8
   minusMe: boolean; onlyMe?: boolean;
   chartAudio?: 'off'|'quiet'|'loud';     // D27; absent → 'off'
+  click?: {countIn: {on: boolean; length: number /* 1–16 */; unit: 'bars'|'beats'};   // D14, D51; absent → account defaults
+           mode: 'off'|'countin'|'always'; lastMode?: 'off'|'countin'; accent: boolean; volume: number /* 0..1 */; preRoll: boolean};
   trainer: {start: number; end: number; step: number; passes: number} | null;
   spots: Spot[]; markers: Marker[];
 };
 export function emptyPractice(): PracticeV2       // cue 0, rate 1, loop {on:false, a:0, b:0, eachPassCount:true, playTimes:0, between:'none'}, tracks [], minusMe false, trainer null, spots [], markers []
-export function upgradePractice(raw: unknown, {duration}: {duration?: number} = {}): PracticeV2
+export function upgradePractice(raw: unknown, {duration, legacyTempo, defaults}: {duration?: number; legacyTempo?: unknown; defaults?: AccountPracticeDefaults} = {}): PracticeV2
+//   click: kept when present; else, when legacyTempo has any of countIn/countInLength/countInUnit/enabled/accent/volume/audiblePreRoll,
+//     click = {countIn: {on: countIn, length: countInLength ?? 1, unit: countInUnit ?? 'bars'}, mode: enabled ? 'always' : 'countin',
+//              accent ?? true, volume ?? 0.7, preRoll: audiblePreRoll ?? false}; else absent (account defaults apply, D14)
 //   v2 → sanitised copy (clamps, caps, drops unknown keys).
 //   v1 {loop:{enabled,a,b}, rate, grid, tracks} → {v:2, loop:{on:enabled, a, b, eachPassCount:true, playTimes:0, between:'none'}, rate, tracks}
 //     plus emptyPractice defaults; `grid` is dropped (the device pref took ws.grid; a per-song grid is not kept).
@@ -1283,9 +1480,24 @@ The size budget is ≈ 24 × 170 B (spots) + 64 × 75 B (markers) + 8 × 60 B (t
 export const INSTRUMENTS = ['drums', 'bass', 'guitar', 'keys', 'vocals', 'other'];
 export const STEM_FOR = {drums: ['drums'], bass: ['bass'], vocals: ['vocals'], guitar: ['guitar', 'other'], keys: ['piano', 'other'], other: ['other']};
 export function myStems(profile, stemNames) → {names: string[], fallbacks: Instrument[] /* matched 'other' */, missing: Instrument[]}   // D37
-export function addDefaults(profile) → {stemMode: 'full'|'six', preset: 'balanced'}   // guitar or keys → 'six'; never a two-part mode
+export function addDefaults(profile, settings) → {stemMode, preset}   // the only definition (add-model imports it): settings.stemMode/preset when the user saved
+//   "Use these for future songs"; otherwise guitar or keys in the profile → 'six', else 'full'; preset 'balanced'; never a two-part mode
 export function describeMapping(profile) → string[]   // 'Guitar → guitar stem on 6-stem songs, otherwise Other'
 ```
+
+### 2.23 `src/app/auth.js` (auth core, AU1)
+```js
+export async function initialize({optional = false} = {}) → {user: User|null, status: 'active'|'export_only'|'suspended'}
+//   strips OAuth params; restores the session; reads account status (users.status). Signed out → {user: null} (both modes).
+//   throws AuthError {kind: 'config'|'network'|'oauth', message, code?} — 'oauth' carries the mapped sign-in error (expired, denied, …)
+export function client() → ConvexClient            // the authenticated client used by src/api/client.js
+export async function signIn(provider = 'google') → void    // stashes ws.intendedRoute through router.stashIntendedRoute() first (desktop)
+export async function signOut() → void              // flushes the active session first
+export function onChange(fn: ({user, status}) => void) → off
+export function user() → User|null
+User = {id, name, email, image}
+```
+It renders nothing (no `#signin` lookups, no `mountUserButton`, no `showFatal`); `main.js` decides what to render (§2.3.1), `startup.js` (S1) owns the `#startup` status element.
 
 ---
 
@@ -1293,11 +1505,11 @@ export function describeMapping(profile) → string[]   // 'Guitar → guitar st
 
 **Columns:**
 - **Keys** are KeyStrings (§2.6); `⌫` means `Backspace` and `Delete` are both bound.
-- **Scopes:** S = `stage`, Ss = `stage.stems` (surface mode), E = `edit` (every Edit tab), Em = `edit.map`, Ec = `edit.chart`, Ecs = `edit.chart.score` (focus), L = `library`, G = `global`. "—" means palette and menu only.
+- **Scopes:** S = `stage`, Ss = `stage.stems` (surface mode), Sf = `stage.strip` and `stage.bars` (focus, D45), E = `edit` (every Edit tab), Em = `edit.map`, Ec = `edit.chart`, Ecs = `edit.chart.score` (focus, stop scope), L = `library`, G = `global`. "—" means palette and menu only.
 - **P** marks `pedal: true`.
 - **Control/menu** lists the on-screen controls and Electron menu items bound to the command.
 
-**Shadowing:** a key may be bound in more than one scope of a reachable chain only when the pair is listed in `tests/registry-shadows.js`. The allowed pairs are: Ss over S (`=`, `-`, `KeyF`); Ecs over Ec/E (the drum letters, digits, `.`, `=`, `-`, `Escape`); E over G (`Escape`); S over G (none today). The registry test fails on any other overlap.
+**Shadowing:** a key may be bound in more than one scope of a reachable chain only when the pair is listed in `tests/registry-shadows.js`. The allowed pairs are: Sf over S (`Enter`, `KeyL`); Ss over S (`=`, `-`, `KeyF`); Ecs over Ec/E (the drum letters, digits, `.`, `=`, `-`, `Escape`, `Enter` is **not** shadowed: it passes through); E over G (`Escape`); S over G (none today). Keys that a stop scope blocks (D45) are not shadowing. The registry test fails on any other overlap, and expands dynamic ids (`registerDynamic`) before checking.
 
 Every dock, rail and slim-transport control appears here. The registry CI test (§10.1) asserts that every `CONTROL_SET` command, every Menu item `command`, and every `Button({command})` in the source exists here.
 
@@ -1310,6 +1522,8 @@ Every dock, rail and slim-transport control appears here. The registry CI test (
 | `transport.stop` | Stop | Transport | — | — | ✓ | Media key Stop (global) |
 | `transport.loopToggle` | Loop | Loop | `KeyL` | S | ✓ | Dock/rail Loop; Transport menu; ⌃⌥L (global) |
 | `transport.loopSection` | Loop this section | Loop | `Shift+KeyL` | S | ✓ | Strip double-tap; section menu |
+| `focus.play` | Play from here | Transport | `Enter` | Sf | — | Focused strip segment, bar-list row or Road map bar |
+| `focus.loop` | Loop this | Loop | `KeyL` | Sf | — | Focused strip segment (section or marker region) or bar (that bar) |
 | `loop.in` | Loop in at playhead | Loop | `KeyI` | S, Em | — | Loop card |
 | `loop.inExact` | Loop in (unsnapped) | Loop | `Shift+KeyI` | S, Em | — | |
 | `loop.out` | Loop out at playhead | Loop | `KeyO` | S, Em | — | Loop card |
@@ -1343,7 +1557,8 @@ Every dock, rail and slim-transport control appears here. The registry CI test (
 | `speed.sheet` | Speed & trainer… | Speed | — | S, E | — | Tap the speed value; slim speed chip |
 | `trainer.toggle` | Start / stop trainer | Speed | — | S | ✓ | Speed sheet; palette `trainer 70 100` (args) |
 | `click.countIn` | Count-in | Click | `KeyC` | S, E | ✓ | Dock/rail/slim Count-in; Transport menu |
-| `click.toggle` | Click | Click | `KeyK` | S, E | ✓ | Rail/slim Click; Transport menu |
+| `click.toggle` | Click (continuous) | Click | `KeyK` | S, E | ✓ | Rail/slim Click; Transport menu (D14: `always` ↔ last mode) |
+| `click.mode` | Click: Off / During count-in / Always | Click | — | S, E | — | Click sheet segmented (args `{mode}`) |
 | `click.sheet` | Click & count-in… | Click | — | S, E | — | Long-press Count-in or Click |
 | `mix.minusMe` | Minus me | Mix | `KeyM` | S, Em | ✓ | Dock/rail Mix main zone; slim Mix chip; Transport menu |
 | `mix.onlyMe` | Only me | Mix | `Shift+KeyM` | S, Em | ✓ | Mix sheet |
@@ -1356,10 +1571,17 @@ Every dock, rail and slim-transport control appears here. The registry CI test (
 ### 3.2 Stage (`src/stage/commands.js`; scope S unless noted)
 | id | Title | Group | Keys | Scopes | P | Control / menu |
 |---|---|---|---|---|---|---|
-| `marker.add` | Add marker (section when mapped) at playhead | Practice | `KeyS` | S | ✓ | Bar menu "Add marker here" |
+| `marker.add` | Add marker (section when mapped) at playhead | Practice | `KeyS` | S | ✓ | Bar menu "Add marker here" / "Add section here" (§4.5) |
 | `spot.save` | Save spot | Practice | `KeyB` | S | ✓ | Loop card; bar/section/loop-band menus |
 | `spot.list` | Spots | Practice | `KeyJ` | S | — | Identity ⋯ → Spots |
-| `spot.open` | Open spot {name} | Practice | — | S | — | Spots list; palette; `?spot=` (args `{id}`) |
+| `spot.open` | Open spot {name} | Practice | — | S | — | Spots list; palette; `?spot=` (args `{id}`); sets the active spot (§2.14.1) |
+| `stage.menu` | More… | View | — | S | — | Identity ⋯ (`menus.stageMenu`) |
+| `song.resplit` | Re-split… | Library | — | S, L | — | ⋯ menu; card menu; palette `re-split` (desktop: opens the Re-split dialog; web: `disabledReason` "Re-split from Woodshed for desktop.") |
+| `map.detect` | Detect beats | Map | — | S, Em | — | ⋯ menu; Get bars popover; Edit · Map Get a map / Tools (D44; `disabledReason` from `detect.canDetect`) |
+| `map.find` | Find a chart… | Map | — | S, Em | — | Get bars; inspector; chart empty state (→ `/s/:id/edit/map/find`) |
+| `sections.suggest` | Suggest sections | Map | — | S, Em | — | ⋯ menu and Tools, when mapped without sections (D47) |
+| `sections.keepAll` | Keep suggested sections | Map | — | S, Em | — | Suggestion chip [Keep all] |
+| `sections.review` | Review suggested sections | Map | — | S, Em | — | Suggestion chip [Review] (→ `/s/:id/edit/map?review=sections`) |
 | `view.cycle` | Next view | View | `KeyV` | S | — | |
 | `view.chart` | Chart | View | — | S | — | ⋯ → View; View menu (radio) |
 | `view.roadmap` | Road map | View | — | S | — | ⋯ → View; View menu (radio) |
@@ -1436,8 +1658,6 @@ Every dock, rail and slim-transport control appears here. The registry CI test (
 | `map.zoomSelection` | Zoom to selection | Map | `KeyZ` | Em | — | Toolbar Z |
 | `map.tapAlong` | Tap along | Map | — | Em | — | Inspector [Tap along] |
 | `map.calibrate` | Calibrate tap timing… | Map | — | Em | — | Inspector |
-| `map.detect` | Detect beats | Map | — | Em, S | — | Inspector; Get a map; Get bars popover |
-| `map.find` | Find a chart… | Map | — | Em, S | — | Inspector; Get bars; chart empty state (→ `/edit/map/find`) |
 | `map.markersToSections` | Turn markers into sections | Map | — | Em | — | Banner |
 | `chart.undo` / `chart.redo` | Undo / Redo notation | Chart | `Mod+KeyZ` / `Mod+Shift+KeyZ`, `Mod+KeyY` | Ec | — | Toolbar ↶ ↷ |
 | `chart.pagePrev` / `chart.pageNext` | Previous / next 16 bars | Chart | `[`, `PageUp` / `]`, `PageDown` | Ec | — | Toolbar ‹ › |
@@ -1458,6 +1678,7 @@ Every dock, rail and slim-transport control appears here. The registry CI test (
 | `chart.delete` | Delete note | Chart | `⌫` | Ecs | — | Properties Delete |
 | `chart.copy` / `chart.paste` / `chart.repeat` / `chart.selectBar` | Copy / Paste / Repeat bars / Select bar | Chart | `Mod+KeyC` / `Mod+KeyV` / `Mod+KeyD` / `Mod+KeyA` | Ecs | — | Edit ▾ |
 | `chart.clear` | Clear selection | Chart | `Escape` (only when there is a gesture or selection) | Ecs | — | |
+| `chart.paging` | Pages / Continuous | Chart | — | Ec | — | View ▾ (args `{paging}`, D48) |
 
 Edit · Chart menu-only commands, each shown with its shortcut: `chart.moveDialog`, `chart.tupletDialog`, `chart.review`, `chart.barMeter` (→ Edit · Map at the bar), `chart.align` (→ Edit · Map), `chart.export`, `chart.print`, `chart.openPart`, `chart.importDrums`, `chart.drumKeys`, `chart.noteList`, `chart.allLanes`, `chart.shortcuts`, `chart.view` (args `{view}`), `chart.partLayout` (args `{layout}`), `chart.listen` (args `{mode}`), `chart.playCursor`, `chart.fit`, `chart.follow`, `chart.retrySave`, `chart.resolve`.
 
@@ -1466,7 +1687,7 @@ Edit · Chart menu-only commands, each shown with its shortcut: `chart.moveDialo
 |---|---|---|---|---|---|---|
 | `app.palette` | Command palette | App | `Mod+KeyK` | G | — | Search field ⌘K hint |
 | `app.shortcuts` | Keyboard shortcuts | App | `?` | G | — | Avatar menu; Help menu |
-| `app.escape` | Close / back | App | `Escape` | G | — | Stage: exit Focus → playing: status "Stop playback first (Space)" → stopped (desktop app only): `stage.leave`. Library: clear search → exit selection. Overlays close before this (dispatcher rule 7); Edit uses `edit.done`. Esc never navigates while the transport runs. |
+| `app.escape` | Close / back | App | `Escape` | G | — | Stage: exit Focus → playing: status "Stop playback first (Space)" → stopped and `!platform.isIPad` (laptop and desktop browsers and the desktop app; on iPad use ‹): `stage.leave`. Library: clear search → exit selection. Overlays close before this (dispatcher rule 7); Edit uses `edit.done`. Esc never navigates while the transport runs. |
 | `nav.library` | Library | App | — | G | — | Wordmark; palette |
 | `nav.settings` | Settings… | App | — (⌘, via the Electron menu only) | G | — | Avatar menu; app menu |
 | `nav.settings.<section>` | Settings: {section} | App | — | G | — | Palette |
@@ -1528,23 +1749,30 @@ The server computes summaries **only** through these functions and `shared/pract
 - a legacy `map` translation (`fromSections`) → `origin = 'edited'`;
 - the placeholder (`defaultSongMap`) → no origin.
 
-The upgraded map is written on the next tempo save. The `legacy` field, its constructor option and every branch that reads it are deleted (`song-map.js`, `metronome.js:33-35,62`, `tempo-sources.js:148,171`). `metronome.serialize()` returns `{accent, volume, countIn, countInLength, countInUnit, audiblePreRoll, enabled, songMap}` only.
+The upgraded map is written on the next tempo save. The `legacy` field, its constructor option and every branch that reads it are deleted, each by the owner of the file: `song-map.js` (F5), `metronome.js:33-35,62` (F4a), and `tempo-sources.js:148,171` (never ported by ED4; the file is deleted at I3). `player.js:882,885` reads `.legacy` until I1 deletes it; it gets `undefined`, which only changes the old app's runtime, which nothing captures after FX0 (§10.2). `metronome.serialize()` returns `{songMap}` only (D51).
 
 ### 4.2 `SongMapStore` changes (`src/js/song-map.js`)
 ```js
 constructor(data, duration)                 // no legacy option
 static fromTempo(tempo, duration)
-setDuration(seconds)                        // re-normalises (keeping notation bars) and clears the caches; the session calls it after decode
+get revision() → number                     // bumps on every data change (incl. restore); the metronome's count-in cache keys on it
+setDuration(seconds)                        // re-normalises in memory (keeping notation bars) and clears the caches; SILENT: no edit event, no
+                                            // undo step, no save (the next real save writes it); the session calls it after decode
 get isReal() → boolean                      // !!this.data.origin || this._hasPart   (set via setHasPart(bool) by the notation session)
 setHasPart(bool)
-edit(change, reason, {origin} = {})         // origin defaults from REASON_ORIGIN[reason]
-replace(next, reason)                       // 'tempo-source' → origin 'imported'
-replaceFromBeats(beats)                     // origin 'detected'
-replaceFromTimeline(timeline)               // origin 'imported'
-adopt(data)                                 // keeps a valid origin; stamps 'imported' when none (drum-part adoption)
-beginBatch(), endBatch(), undo(), redo()    // unchanged semantics; origin is part of the data, so undo restores it
+snapshot() → SongMapData                    // a deep copy, origin included
+restore(data)                               // set data with no undo entry; keeps data.origin; emits edit {reason: 'restore'} (D23)
+withoutUndo(fn)                             // edits inside fn push nothing on the map stack (D23 practice-stack routing)
+edit(change, reason, {origin, linked} = {}) // origin defaults from REASON_ORIGIN[reason]; linked {undo(), redo()} runs with this step's undo/redo
+replace(next, reason)                       // 'tempo-source' → origin 'imported'; 'tapBeat' → 'tapped'
+replaceFromBeats(beats, reason = 'detect')  // origin 'detected'
+replaceFromTimeline(timeline, reason = 'timeline')   // origin 'imported'; part.js passes 'part-fit' when a stored part does not fit the map
+adopt(data)                                 // keeps a valid origin; stamps 'imported' when none (drum-part adoption; reason 'adopt')
+beginBatch(), endBatch(), abortBatch(), undo(), redo()
+//   abortBatch(): restores the data captured at beginBatch silently (one 'restore' edit event), pushes nothing; used by Keep my map (D20)
+//   _step no longer closes an open batch implicitly; an edit during a batch joins it
 ```
-- `REASON_ORIGIN`: `pin, nudge, renumber, meter, unpin, ramp, tempo, scale, bar, drag, label, sections` → `edited`; `tap, tapBeat` → `tapped`; `detect` → `detected`; `tempo-source, timeline, adopt` → `imported`.
+- `REASON_ORIGIN` (exhaustive): `pin, nudge, renumber, meter, unpin, ramp, tempo, scale, bar, drag, label, sections, edit` → `edited`; `tap, tapBeat` → `tapped`; `detect` → `detected`; `tempo-source, timeline, part-fit, adopt` → `imported`; `restore, tempo-source-cancel` → keep the data's own origin. The default reason `'replace'` is deleted: every `edit`/`replace` call passes a reason. **Test:** `tests/song-map-reasons.test.js` statically scans `src/**/*.js` for `.edit(`, `.replace(`, `.replaceFromBeats(` and `.replaceFromTimeline(` calls with string-literal reasons and asserts each is in `REASON_ORIGIN`; integrations re-run it.
 - `edit` stamps the origin **only** when the change differs from the current data, ignoring `origin`; a no-op never creates an undo step.
 - A label-only edit (`reason` `label` or `sections`) does **not** cancel an active count-in (fixes `maps/mapedit.md` §12.7). `Metronome` subscribes with `cancelCountIn = reason !== 'label' && reason !== 'sections'`.
 
@@ -1589,8 +1817,9 @@ BarBeat = {index, display: number|null, pickup: boolean, before: boolean /* t < 
 ```js
 beatGrouping(index) → {groups: number[], label: string /* '2+2+3' | '' when all 1 */, counted: number, units: number, lampMode: 'units'|'groups'}
 //   lampMode 'groups' when units > 12 (D15)
-downbeatAfter(t, {after = 1e-3} = {}) → {index, time}|null
-//   the first bar start with time > t + after, excluding a pickup's start (not a downbeat); null when none before duration
+downbeatAfter(t, {after = 1e-3, within} = {}) → {index, time}|null
+//   the first bar start with time > t + after, excluding a pickup's start (not a downbeat); null when none before duration,
+//   or, with within = [a, b), when none lies in [t + after, b)
 barToTime(index, {group = 0, frac = 0} = {}) → number
 //   timeAt(q0 + groupStartQ(group) + frac × groupLengthQ(group)); index is clamped to [0, bars.length]; index === bars.length → end of the last bar
 timeToBar(t) → {index, q}                    // fractional position within the bar in quarters
@@ -1618,10 +1847,15 @@ snapTime(t, unit: 'bar'|'beat'|'unit', {mode = 'nearest'} = {}) → number   // 
 | Mix | `DRUMS OUT` (instrument names), `BASS SOLO`, `MIX` when changed without a single word, hidden for the full mix | same |
 | Count-in plate | `Count-in · bar {display}` | `Lead-in · {m:ss}` |
 
-### 4.5 Markers on unmapped songs
-- `S` adds `{id, t: position, label: 'Marker {n}', updatedAt}`, where n = the live marker count + 1. The status line says "Marker {n} added — Rename".
-- Markers are regions for the strip, Next, `[`/`]` and Again (`position.regions()`).
-- **Turning markers into sections (Edit · Map banner):** one map edit with reason `sections`, then one practice patch that tombstones the converted markers. Each marker snaps to `snapTime(t, 'bar')`; when two markers land on the same bar, the first wins and the result reports `skipped`. The banner's Undo reverts both: the map edit through `map.undo()` and the practice patch through the practice undo stack, as one action.
+### 4.5 Markers and `S`
+- **Unmapped:** `S` adds `{id, t: position, label: 'Marker {n}', updatedAt}`, where n = the live marker count + 1. The status line says "Marker {n} added — Rename". It is a practice-undo step (`markers`).
+- **Mapped:** `S` labels the bar containing the playhead (`barIndexAt(position())`) with **"Section {n}"**, n = `sections.length + 1` (with no sections yet, n = 1 and the leading "Start" section appears, §4.3). It is a `label` map edit through `session.mapChange('Add section', …)` (D23: the practice stack in the Stage; `map.addSection` in Edit · Map uses the map stack). The status line says "Section {n} added — Rename" ([Rename] opens the inline rename on the strip). When that bar already starts a section, nothing changes and the status says "Bar {display} already starts {name}".
+- Markers are regions for the strip, Next, `[`/`]` and Again on unmapped songs (`position.regions()`), and ticks on mapped ones (`markerTicks()`).
+- **`sectionsFromMarkers(data, markers, duration) → {change, converted: id[], skipped: id[]}`** (`shared/song-map.ts`, pure): each marker snaps to the nearest bar start; when two markers land on the same bar, the first wins and the other is `skipped`; a marker on bar 0 relabels bar 0.
+- **Turning markers into sections:**
+  - *Edit · Map banner* (`mapSession.markersToSections()`): one map edit with reason `sections` whose `linked` undo/redo un-tombstones/re-tombstones the converted markers, so the map stack's Undo reverts both as one action.
+  - *Stage* (the not-real → real status, §2.14.1, or the marker menu's "Turn into section"): `session.mapChange` plus the tombstone patch inside one compound practice-undo entry.
+- **`applySuggestion(data, suggestion, duration) → {change, added}`** (`shared/song-map.ts`, pure, D47): labels the bar nearest each suggested `t0`; a block whose bar already has a label is skipped.
 
 ### 4.6 `fromTaps` (Tap the beat, D22)
 ```ts
@@ -1630,75 +1864,95 @@ export function fromTaps(taps: number[] /* seconds, ≥ 4 */, duration: number, 
 //   first downbeat = φ (the first tap); pins at the first and last fitted taps (k = 0 and k = K) only; tailQpm = 60 / P
 //   measures: numerator/4 bars from φ; bar 0 starts at φ (no pickup); normalize(duration); origin 'tapped'
 ```
-The Tap sheet shows "≈ {60 / P rounded} bpm · {n} taps" live. The result reads "{bpm} bpm · 4/4 · first downbeat {m:ss.ss}" with [Use it] [Try again] [Open map editor]. [Use it] runs `map.replace(fromTaps(...), 'tapBeat')`, which is undoable.
+The Tap sheet shows "≈ {60 / P rounded} bpm · {n} taps" live. The result reads "{bpm} bpm · 4/4 · first downbeat {m:ss.ss}" with [Use it] [Try again] [Open map editor]. [Use it] runs `session.mapChange('Tap the beat', m => m.replace(fromTaps(...), 'tapBeat'))`: one practice-undo step (D23), which also triggers the markers offer (§2.14.1).
 
 ---
 
 ## 5. Engine and metronome additions (spec §9.5, E1)
 
-No rollout flags (owner decision). Every addition ships on. The single kill switch is `prefs.audio.safeMode` (D14). The transport reads it; the engine only exposes `minRate`.
+No rollout flags and no kill switch (owner decision). Every addition ships on. Two packages build it in sequence because they share `engine.js`: **F4a** (wave 0A: plan model, ticker and events, `nextWrapAt`/`whenAt`, scheduled speed, track gains, `seekAt`/`cancelPending`, `stopAt`, the aux bus, interruption, `MIN_RATE`) and **F4b** (wave 0B: segmented loops on both paths, `gapsBetween`/`beatsBetween`, metronome gap clicks, `configure`, `countInPlanAt`, `onBeat`, `clickAt`, `serialize`).
+
+### 5.0 The plan model (D55)
+- **One ordered plan.** `engine.plan` is the ordered list of segments from the current one onwards: `{kind: 'play'|'pass'|'gap', when, offset, rate, until?, loop, processing, seekOffset?}`. Every change is expressed as "replace the plan from time T": entries with `when ≥ T` are removed, the new entries are appended, and the engine **re-posts every entry with `when ≥ T` in order** to both paths:
+  - native: stop not-yet-started sources with `when ≥ T`, move the current source's `stop` to `T`, start one source per new entry;
+  - Signalsmith: `stretch.schedule({...change, outputTime: entry.when})` for each entry, in order. **Every future-dated `schedule` call passes `outputTime: when`.** Without it, `SignalsmithStretch.mjs:88-92` cuts the time map at the worklet's `currentTime` and erases every queued later change (a pending gap boundary, a scheduled rate, a pending seek).
+- **`revision` vs `planVersion`.** `revision` bumps only on a **discontinuity**: `play`, `pause`, `stop`, an immediate `seek`, an immediate rate or pitch-mode change, and a loop edit that moves the current position. It notifies `subscribeTransport` listeners, which drop everything they scheduled (today's behaviour, `engine.js:215-216`). Every other plan change (a scheduled rate, an appended pass or gap, `seekAt`, `cancelPending`, a loop edit that does not move the position) bumps `planVersion` and emits `plan {from: T, version}`. The metronome and `DrumAudio` (`audio.js:76`) then cancel only the clicks and hits they scheduled at or after `T`, and reschedule from `T`.
+- **The aux bus.** `engine.aux` is a GainNode → `ctx.destination`, created with the engine. The metronome's `out` and `DrumAudio`'s output connect to `engine.aux` instead of `ctx.destination` (`metronome.js:16`, `notation/audio.js`). `stopAt(when)` sets `aux.gain` to 0 at `when` together with `master`; `pause()`/`stop()` set it to 0 at once; `play()` restores 1. `beatsBetween` also stops at `stopAtWhen`, so "Play N times" never ends with a stray click.
+- **Scheduling ahead.** A segmented loop always holds the current pass, the next gap and the next pass in the plan: when pass N starts (its `wrap`/`gap` event), pass N + 1 and its gap are appended at once. Hidden-tab timer throttling (≥ 1 s) therefore never starves the audio, because the next boundary is always already posted.
+- **`_tick()`** is a documented method (tests call it to force a tick); the ticker interval calls it.
 
 ### 5.1 New and changed members (`src/js/engine.js`)
 | Member | Exact semantics |
 |---|---|
-| `on(type, fn) → off` | Event types: `'wrap'` `{when, a, b, pass: segmentPassIndex}`; `'gap'` `{when, until, target}`; `'ended'` `{reason: 'end'\|'stopAt'}`; `'interrupted'` `{state}`; `'transport'` (the same moments as `subscribeTransport`, which stays for `notation/audio.js`). Listeners run from the ticker, outside audio callbacks. |
-| ticker | A 25 ms `setInterval` that runs while `playing` (started in `play`, cleared in `pause` and `destroy`). Each tick: (1) promote scheduled changes whose time has passed (`rate`, gains); (2) emit `wrap` and `gap` for boundaries with `when ≤ ctx.currentTime`, each exactly once, carrying the exact audio time; (3) schedule the next pass of a segmented loop when its start is ≤ 0.3 s away; (4) honour `stopAt`; (5) end detection: the old `tickEnd` moves here, and the public `tickEnd()` is deleted. |
-| `nextWrapAt() → number\|null` | The audio time of the next arrival at `loop.b` in the current or pending segment. Gapless: `seg.when + (b − seg.offset)/seg.rate` for the first pass, then every `(b − a)/seg.rate`. Segmented: the current pass segment's `until`. `null` when the loop is off or not playing. |
-| `whenAt(t) → number\|null` | The first future audio time at which the position reaches media time `t`, taking loop wraps into account. `null` when `t` is never reached (outside the loop range, or past the end). |
-| `setSpeed(rate, {at} = {})` | The rate is clamped to `[minRate, 1.5]` (`minRate` defaults to 0.25 (E1); the transport sets 0.5 in safe mode). With no `at`, or `at ≤ now + lookahead`: today's behaviour. With a future `at`: append a scheduled segment `{when: at, offset: positionAt(at), rate, …, scheduled: true}` on both paths, through `_schedule(undefined, at, {rate})` (`_schedule` gains an optional `rate` override) without changing `this.rate`, and record `pendingRate = {rate, at}`. The ticker sets `this.rate = rate` once `currentTime ≥ at`. **Any other `_schedule` caller** (seek, loop edit, pitch change, immediate speed change) first drops scheduled segments and `pendingRate`, so pending changes never leak. A position projected exactly at a wrap boundary (within 1e-6 s of `b`) maps to `a`. |
-| `setTrackGains(gains, {at} = {})` | `gains: {[trackName]: 0..1}`. Each track gets a new `auto` GainNode between `track.gain` and `master`, at 1 by default. `auto.gain.setValueAtTime(g, at ?? now)`. The user mix (`_applyGains`) is never touched. `pause()` and `stop()` reset every `auto` to 1. |
-| `setLoop(enabled, a, b, {gapSec = 0, gap = 'silent'} = {})` | `gapSec = 0`: today's path, unchanged (gapless native `source.loop`, Signalsmith `loopStart`/`loopEnd`). **`gapSec > 0` (segmented):** native sources play one pass each (`loop = false`, `start(when, offset)`, `stop(until)`), and Signalsmith gets `loopStart = loopEnd = 0` with one `schedule({output: passWhen, input: a, rate})` per pass. The segment list holds a `pass` segment `{kind: 'pass', when, offset, until = when + (b − offset)/rate}`, then a gap `{kind: 'gap', when: until, until: until + gapSec/rate, target: a}`, then the next pass at `offset = a`. **`gap: 'silent'`:** `pitchGate` and master go to 0 for the gap, and the position reads `a` during it. **`gap: 'preroll'`:** the gap plays media `[a − gapSec, a)` (clamped at 0, silence before 0) as part of the next pass's native source (one source from `a − gapSec` to `b`), and the position reads `a − gapSec + (t − gap.when) × rate`. `wrap` fires at each pass's `until`; `gap` fires at each gap start. Changing `gapSec` while playing rebuilds from the current position. |
-| `gapsBetween(t0, t1) → [{when, until, target}]` | Gap segments overlapping the window, used by the metronome for every-pass count-in clicks. |
-| `beatsBetween` | Skips `gap` segments, so song clicks never fall inside a gap. |
-| `seekAt(target, when)` | Quantized jump: `_schedule(target, max(when, now + lookahead))` as a pending segment carrying `seekOffset = target`. The audible segment continues until `when`. |
-| `cancelPending()` | Removes every segment with `when > now` (stopping their not-yet-started native sources), then re-projects the current segment with `_schedule(undefined, now + lookahead)`. A pending seek is **not** carried over (unlike `_schedule`'s default). |
-| `stopAt(when)` | Sets master gain to 0 at `when` and records `stopAtWhen`. When `currentTime ≥ when`, the ticker calls `pause()`, sets `pausedAt = positionAt(when − 1e-4)`, sets `paused = false` and emits `ended {reason: 'stopAt'}`. Any `_schedule` or `pause` clears it. |
+| `on(type, fn) → off` | Event types: `'wrap'` `{when, a, b, pass: segmentPassIndex}`; `'gap'` `{when, until, target}`; `'ended'` `{reason: 'end'\|'stopAt'}`; `'interrupted'` `{state}`; `'state'` `{playing, counting, paused}` on every change of any of the three; `'plan'` `{from, version}`; `'transport'` (the same moments as `subscribeTransport`, which stays for `notation/audio.js`). Listeners run from the ticker, outside audio callbacks. |
+| ticker | A 25 ms `setInterval` calling `_tick()` while `playing` (started in `play`, cleared in `pause` and `destroy`). Each tick: (1) promote plan entries whose time has passed (`this.rate`, gains); (2) emit `wrap` and `gap` for boundaries with `when ≤ ctx.currentTime`, each exactly once, carrying the exact audio time, and append the next pass (§5.0); (3) honour `stopAt`; (4) end detection (the old `tickEnd` body); (5) emit `state` when `countingIn` turns false. Public `tickEnd()` stays as a deprecated alias of `_tick()` until I1, because `player.js:1061` calls it; I1 deletes it. |
+| `nextWrapAt() → number\|null` | The audio time of the next arrival at `loop.b` in the plan. Gapless: `seg.when + (b − seg.offset)/seg.rate` for the first pass, then every `(b − a)/seg.rate`. Segmented: the current pass entry's `until`. `null` when the loop is off or not playing. |
+| `whenAt(t) → number\|null` | The first future audio time at which the position reaches media time `t`, taking loop wraps and scheduled rate changes into account. `null` when `t` is never reached (outside the loop range, or past the end). |
+| `setSpeed(rate, {at} = {})` | The rate is clamped to `[MIN_RATE, 1.5]` (`MIN_RATE = 0.25`, E1). With no `at`, or `at ≤ now + lookahead`: today's behaviour (a discontinuity: `revision`++). With a future `at`: replace the plan from `at` with a segment `{when: at, offset: positionAt(at), rate, …}` (`planVersion`++), without changing `this.rate`; the ticker promotes `this.rate` once `currentTime ≥ at`. An immediate seek, loop edit, pitch change or immediate speed change drops a pending scheduled rate (the user's change wins; the trainer stops on manual changes anyway). A position projected exactly at a wrap boundary (within 1e-6 s of `b`) maps to `a`. |
+| `setTrackGains(gains, {at} = {})` | `gains: {[trackName]: 0..1}`; only the named tracks change, so callers pass explicit values (`{guitar: 1}` restores; `{}` does nothing). Each track has an `auto` GainNode between `track.gain` and `master`, at 1 by default. `auto.gain.setValueAtTime(g, at ?? now)`. The user mix (`_applyGains`) is never touched. Not a plan change (no `revision` or `planVersion` bump). `pause()` and `stop()` reset every `auto` to 1. |
+| `setLoop(enabled, a, b, {gapSec = 0, gap = 'silent'} = {})` | `gapSec = 0`: today's path, unchanged (gapless native `source.loop`, Signalsmith `loopStart`/`loopEnd`). **`gapSec > 0` (segmented):** native sources play one pass each (`loop = false`, `start(when, offset)`, `stop(until)`); Signalsmith gets `loopStart = loopEnd = 0` and one `schedule({output: passWhen, outputTime: passWhen, input: a, rate})` per pass. The plan holds `{kind: 'pass', when, offset, until = when + (b − offset)/rate}`, then `{kind: 'gap', when: until, until: until + gapSec/rate, target: a}`, then the next pass at `offset = a` (§5.0). **`gap: 'silent'`:** `pitchGate` and master go to 0 for the gap, and the position reads `a` during it. **`gap: 'preroll'`:** the gap plays media `[a − gapSec, a)` (clamped at 0, silence before 0) as part of the next pass's source (one source from `a − gapSec` to `b`), and the position reads `a − gapSec + (t − gap.when) × rate`. `wrap` fires at each pass's `until`; `gap` fires at each gap start. Changing `gapSec` while playing rebuilds the plan from the current position. |
+| `gapsBetween(t0, t1) → [{when, until, target}]` | Gap entries overlapping the window, used by the metronome for every-pass count-in clicks. |
+| `beatsBetween` | Skips `gap` entries (no song clicks inside a gap) and stops at `stopAtWhen`. |
+| `seek(t, {cue = true} = {})` | Today's seek; `cue: false` leaves `editPosition` (the cue) untouched (today `engine.js:282` always writes it). Never pauses during a count-in. |
+| `seekAt(target, when, {loop} = {})` | Quantized jump: replace the plan from `w = max(when, now + lookahead)` with a segment at `offset = target` carrying `seekOffset = target` and, when given, the new loop state `loop` (`{enabled, a, b}`), so the loop change happens on the pending segment (D29). The audible segment continues until `w`. `planVersion`++. |
+| `cancelPending()` | Replaces the plan from `now + lookahead` with the current segment projected forward (the pre-`seekAt` loop state restored). A pending seek is **not** carried over. `planVersion`++. |
+| `stopAt(when)` | Sets `master` and `aux` gain to 0 at `when` and records `stopAtWhen`. When `currentTime ≥ when`, the ticker calls `pause()`, sets `pausedAt = positionAt(when − 1e-4)`, sets `paused = false`, and emits `ended {reason: 'stopAt'}` and `state`. A discontinuity clears it. |
+| count-in | `play({countIn, audiblePreRoll})` unchanged. The engine no longer pauses itself when `seek`, `setSpeed`, `setPreservePitch` or `setLoop` is called while `countingIn`; the transport never calls them then (§2.14.3 rule 21) and the engine asserts it in dev. |
 | interruption | `ctx.onstatechange`: while `playing`, a state of `'interrupted'` or `'suspended'` → `pause()`, then emit `interrupted {state}`. It never resumes by itself. |
 | `setMuted(name, on)`, `setSoloed(name, on)` | Idempotent setters (restore, undo, Minus me). `toggleMute`/`toggleSolo` stay, as thin wrappers. |
-| `minRate` | A public field, 0.25. |
-| deleted | `toggle()`, public `tickEnd()`. |
+| `MIN_RATE` | Exported constant 0.25. |
+| deleted | `toggle()`; the public `tickEnd()` alias at I1. |
 
 ### 5.2 Metronome changes (`src/js/metronome.js`)
-- **Construction:** `new Metronome(engine, songMap)` with the session's store, always injected. The internal default-store construction (metronome.js:35) is deleted.
-- **Gap clicks:** `tick()` schedules count-in clicks inside every gap returned by `engine.gapsBetween(windowStart, windowEnd)`. It uses `countInPlanAt(gap.target)` (cached per `{a, countInLength, countInUnit, map revision}`) and places each beat at `gap.until − (plan.duration − beat.offset) / rate`. A `rest` gap longer than the plan clicks every counted beat of the rest bar at the loop-start tempo (accented downbeat) when Click ≠ Off.
-- **Click modes:** `'off'` → `enabled = false, countIn = false`; `'countin'` → `enabled = false, countIn = true`; `'always'` → `enabled = true`. The transport maps Click and Count-in onto these.
-- **Unmapped:** the transport never asks `countInPlan` when `!map.isReal` (Lead-in 2 s instead). `countInPlan` is unchanged.
-- **Visual click:** `onBeat(fn) → off` emits `{when, downbeat, unit}` for every scheduled click. The HUD lamps flash with it, and the optional edge flash on downbeats (60 ms in, 180 ms out; with reduced motion, on/off only).
-- **Serialisation:** `serialize()` no longer writes `source`, `map` or `detected`.
-- **Deleted:** `beatsForView`, `metronome.source` (read in `entry.js:21`; that branch goes too).
+- **Construction:** `new Metronome(engine, songMap)` with the session's store. Its output connects to `engine.aux` (§5.0). The no-store default construction (metronome.js:35) stays until I1 (the old `player.js` uses it) and I1 deletes it.
+- **`configure({countIn, countInLength, countInUnit, mode, accent, volume, audiblePreRoll})`** replaces the scattered setters and `fromTempo` click fields. `mode` maps to the internal flags: `'always'` → `enabled = true`; otherwise `enabled = false`; `countInAudible = mode !== 'off'` (D14 truth table). The transport calls it from `practice.click`.
+- **Running:** `tick()` keeps scheduling whenever `engine.playing && (enabled || countIn)`, not only while `enabled || engine.countingIn` (`metronome.js:119`), so every-pass gap clicks are scheduled after the first count ends.
+- **`countInPlanAt(t)`** computes the plan for a start target `t` (`countInPlan()` read `engine.getPosition()`, `metronome.js:140`, which is wrong for Again and for targets other than the position). Cached per `{t, countInLength, countInUnit, map.revision}`. `countInPlan()` is deleted.
+- **Gap clicks:** `tick()` schedules count-in clicks inside every gap from `engine.gapsBetween(windowStart, windowEnd)` using `countInPlanAt(gap.target)`, placing each beat at `gap.until − (plan.duration − beat.offset) / rate`. A `rest` gap longer than the plan clicks every counted beat of the rest bar at the loop-start tempo (accented downbeat) unless mode is `'off'`.
+- **Plan events:** on `plan {from}` the metronome cancels only clicks scheduled at or after `from` (§5.0); on `transport` (a discontinuity) it cancels all, as today. Map edits no longer pause the engine (`_notify`'s pause, `metronome.js:88`, is deleted); the transport decides (rule 21).
+- **Unmapped:** the transport never asks `countInPlanAt` when `!map.isReal` (Lead-in 2 s instead).
+- **Visual click:** `onBeat(fn) → off` emits `{when, downbeat, unit}` for every scheduled click, and also for silent counts (mode `'off'`), so the lamps and plate always count. The HUD lamps flash with it, plus the optional edge flash on downbeats (60 ms in, 180 ms out; with reduced motion, on/off only).
+- **`clickAt(when, accent)`** is public (calibration); `_click(…, tracked = false)` stays as an alias until I1.
+- **Serialisation:** `serialize()` returns `{songMap}` (D51).
+- **Deleted:** `beatsForView`, `metronome.source` (read in `entry.js:21`; that branch goes too), and the `legacy` branches (F4a).
 
 ### 5.3 Defaults
 - Count in every loop pass: **on**, when count-in is on and looping (account `practice.eachPassCount`, default true).
+- Click mode: `'countin'` (account `practice.click`). Count-in: off, 1 bar.
 - Between passes: None. Play N times: Off. Speed range: 25–150%.
-- Safe mode: off. When on: `minRate = 0.5`, `gapSec` forced to 0, trainer steps applied on the wrap event (up to ≈25 ms late).
 
-### 5.4 Test plan (fake clock; extends `tests/playback-engine.test.js`, plus `tests/stage-transport.test.js`)
-Every case runs on **both paths**: native (`rate = 1`, or keep-pitch off) and Signalsmith (`preservePitch && rate ≠ 1`, asserting `stretch.schedule` calls).
+### 5.4 Test plan (fake clock §11.3; extends `tests/playback-engine.test.js`, plus `tests/stage-transport.test.js`)
+Every case runs on **both paths**: native (`rate = 1`, or keep-pitch off) and Signalsmith (`preservePitch && rate ≠ 1`, asserting `stretch.schedule` calls **including `outputTime`** for every future-dated call).
 1. `wrap` fires once per pass at `when + (b − offset)/rate` and then every `(b − a)/rate`; the lead-in before `a` fires its first wrap at the first arrival at `b`.
 2. `nextWrapAt` and `whenAt` across a rate change, a pending seek and a loop disable.
-3. `setSpeed(r, {at: nextWrapAt()})`: the rate changes exactly at the wrap; a seek or loop edit in between cancels it (no leaked segment); `this.rate` is promoted only after `at`.
-4. Segmented loop, silent gap: pass segments and stops line up sample-exactly; the position reads `a` during the gap; `beatsBetween` returns no clicks inside gaps; `gapsBetween` reports each gap; count-in clicks land so the last beat ends at the pass start (metronome test).
+3. `setSpeed(r, {at: nextWrapAt()})`: the rate changes exactly at the wrap; a seek or loop edit in between cancels it (no leaked segment); `this.rate` is promoted only after `at`; `revision` unchanged and `planVersion` bumped.
+4. Segmented loop, silent gap: pass entries and stops line up sample-exactly; the next pass and gap are posted when the current pass starts; the position reads `a` during the gap; `beatsBetween` returns no clicks inside gaps; `gapsBetween` reports each gap; count-in clicks land so the last beat ends at the pass start (metronome test); a gap shorter than 0.3 s keeps its boundary (the Signalsmith time map still holds it after the next pass is posted).
 5. Segmented loop, preroll gap: the source starts at `a − gapSec`, and before 0 the gap is silence.
 6. `gapSec = 0` is byte-for-byte today's behaviour: the existing tests stay green unchanged.
-7. `seekAt`: the audible segment continues until `when`; `cancelPending` restores continuity, and the pending seek is not applied.
-8. `stopAt` at a wrap: `ended {reason: 'stopAt'}`, `pausedAt ≈ b`, no audio after `when` (master automation asserted).
-9. `setTrackGains({drums: 0}, {at})`: automation on `auto` only; reset on pause.
-10. `ctx.onstatechange('interrupted')` while playing → paused, event emitted, position kept.
-11. E1: `setSpeed(0.25)` is accepted on both paths; safe mode → clamped to 0.5.
-12. **Transport (fake engine and clock):**
+7. `seekAt`: the audible segment continues until `when`; `seekAt(t, when, {loop: {enabled: false}})` clears the loop on the pending segment and is still quantized; `cancelPending` restores continuity and the loop, and the pending seek is not applied.
+8. `stopAt` at a wrap: `ended {reason: 'stopAt'}`, `pausedAt ≈ b`, no audio after `when` (master **and aux** automation asserted; no click scheduled at or after `when`).
+9. `setTrackGains({drums: 0}, {at})`: automation on `auto` only; reset on pause; no `revision`/`planVersion` bump.
+10. `ctx.onstatechange('interrupted')` while playing → paused, `interrupted` and `state` emitted, position kept.
+11. E1: `setSpeed(0.25)` is accepted on both paths; 0.2 clamps to 0.25.
+12. Plan events: a scheduled rate change cancels only metronome clicks and `DrumAudio` hits at or after `at`; a discontinuity cancels all.
+13. Metronome: `configure` truth table (D14, every row); gap clicks with mode `countin` after the first count; `countInPlanAt(target)` differs from the position's plan; silent count emits `onBeat` but schedules no oscillator.
+14. **Transport** (on `createTestSession`, §11.3):
     - Space from the loop start; stop returns to the cue; stay mode;
-    - Again from each phase, with and without count-in;
+    - Again from each phase, with and without count-in; Again never moves the cue;
+    - `position()` in each phase (paused → `pausedAt`);
+    - every row of the count-in table (rule 21), with `phase` read from engine events;
     - count-in every pass (gap computed from the plan);
     - unmapped Lead-in 2 s with no clicks;
     - pass counting and resets (seek, stop, speed, loop edit, jump);
-    - play N times stops at `b` and returns to the cue;
+    - play N times stops at `b`, returns to the cue, and plays no click after `b`;
     - the trainer advances on schedule, completes, and stops on a manual speed change;
-    - a quantized jump at the next downbeat, at a wrap that comes earlier, and cancel;
-    - a jump outside the loop clears it (one undo step);
-    - call & response alternates gains;
+    - a quantized jump at the next downbeat, at a wrap that comes earlier, with no downbeat inside `[a, b)`, and cancel;
+    - a jump outside the loop clears it (one undo step) and stays quantized;
+    - call & response alternates explicit gains, the first mute lands on pass 2 exactly;
     - the smart loop toggle (section → phrase → ±5 s);
-    - I/O snapping; move by length; Minus me mapping and fallbacks.
-13. **Manual (release checklist, not gating):** listening checks on a real laptop and iPad for clicks at pass boundaries, drift over 10 minutes of segmented looping, comb filtering at trainer steps, and quality at 25–49% on the Signalsmith path.
+    - I/O snapping; move by length; Minus me mapping and fallbacks;
+    - the active spot gains one pass per wrap and loses its active state on a loop edit.
+15. **Manual (owner, release checklist):** listening checks on a real laptop and iPad for clicks at pass boundaries, drift over 10 minutes of segmented looping, comb filtering at trainer steps, and quality at 25–49% on the Signalsmith path.
 
 ---
 ## 6. Backend (Convex, companion, Electron main)
@@ -1751,7 +2005,13 @@ songs: defineTable({
   mapSummary: v.optional(mapSummaryValidator),
   tempoRev: v.optional(v.number()),
   metadataSuggestion: v.optional(metadataCandidateValidator),
-  needsReview: v.optional(v.boolean()),                // B4: unconfirmed search source; G6 untitled upload
+  needsReview: v.optional(v.boolean()),                // G6 untitled upload (metadata only, D43)
+  recordingUnconfirmed: v.optional(v.boolean()),       // B4/§3.5: a search the user did not confirm (D43)
+  tempoSaveId: v.optional(v.string()),                 // D53
+  sectionSuggestion: v.optional(v.object({             // D47
+    sections: v.array(v.object({t0: v.number(), label: v.string(), confidence: v.number()})),   // ≤ 64
+    jobId: v.id('jobs'), createdAt: v.number(),
+  })),
   resolvedUrl: v.optional(v.string()), provider: v.optional(v.string()),
   originDeviceId: v.optional(v.id('devices')),
 }) /* indexes unchanged */,
@@ -1775,36 +2035,50 @@ devicePresence: defineTable({
 }).index('by_deviceId', ['deviceId']).index('by_userId', ['userId']),
 
 jobs: defineTable({
-  ...existing, errorCode: v.optional(v.string()), retryAt: v.optional(v.number()), startedAt: v.optional(v.number()),
+  ...existing,                                         // kind gains 'sections' (B7)
+  errorCode: v.optional(v.string()), retryAt: v.optional(v.number()), startedAt: v.optional(v.number()),
   chainedFrom: v.optional(v.id('jobs')),
+  confirmed: v.optional(v.boolean()),                  // D43: the user chose this recording (B4 candidate or a pasted URL)
+  appliedAt: v.optional(v.number()),                   // D44: a detection result the client applied
 }),
 ```
 `userSettings.settings` stays `v.any()`. Its shape is enforced by `settings.patch` validators (§6.5).
 
+**BK0 also:**
+- creates stub modules `convex/setlists.ts` and `convex/migrations.ts` (each `export {}` plus a comment naming its owner, BK6 and BK1), and hand-edits `convex/_generated/api.d.ts` **once**, in codegen's format (the `import type * as setlists from "../setlists.js";` line and the `setlists: typeof setlists;` entry, likewise `migrations`), so `api.setlists.*`/`internal.migrations.*` typecheck in every later package without a deployment. No other package edits `_generated/`; the owner's first `npx convex dev --once` regenerates it (owner gate G1).
+- adds `convex/schema-compat.test.ts`: inserts every pre-2.0 row shape (a v1 `songs.practice`, a legacy `tempo` with `source/map/detected` and click fields, 1.9 `jobs` rows of each kind and stage, `devices` without `displayName`, `userSettings` with `format`, `songs` without any new field) through convex-test and asserts each validates against the new schema and reads back through `songs.get`, `songs.list` and `jobs.listActive`.
+
 ### 6.3 `convex/songs.ts` and `notation.ts` (BK1: B1, B2, plus the rest of songs)
 | Function | Kind | Args | Behaviour |
 |---|---|---|---|
-| `list` | query | `{}` | `by_user_added` desc `.take(1000)` → `toListRow(song)`: id, title, artist, album, albumArtist, uploader, duration, addedAt, stemMode, stems (name, key, bytes, mime), coverKey, coverUrl, artwork, source, quality, year, genre, trackNumber, discNumber, musicalKey, tuning, tags, metadataStatus, `needsReview` (stored flag, or `source.type === 'upload' && !artist && title === basename(filename)`), `suggestion` (title, artist, album, releaseId from `metadataSuggestion`), hasChart, mapSummary, lastPracticedAt, practiceSummary. **No** notes, tempo, practice, metadataLocks or recording/release ids. |
-| `get` | query | `{id}` | `toClient(song)` (full) + `practice` from `songPractice.by_songId` (falling back to `songs.practice`) + `tempoRev`. Owner only, else null. |
+| `list` | query | `{}` | Keeps today's `{songs}` envelope (callers and `sync`/`notation`/`admin`/`billing` tests depend on it). `by_user_added` desc `.take(1000)` → `toListRow(song)`: id, title, artist, album, albumArtist, uploader, duration, addedAt, stemMode, stems (name, key, bytes, mime), coverKey, coverUrl, artwork, source, quality, year, genre, trackNumber, discNumber, musicalKey, tuning, tags, metadataStatus, `reviewMetadata` (`needsReview \|\| metadataStatus === 'uncertain' \|\| (source.type === 'upload' && !artist && title === basename(filename))`, D43), `recordingUnconfirmed`, `suggestion` (title, artist, album, releaseId from `metadataSuggestion`), hasChart, mapSummary, lastPracticedAt, practiceSummary, `hasSectionSuggestion`. **No** notes, tempo, practice, metadataLocks or recording/release ids. |
+| `get` | query | `{id}` | `toClient(song)` (full, **without practice**, D52) + `tempoRev`, `tempoSaveId`, `recordingUnconfirmed`, `sectionSuggestion`. Owner only, else null. |
+| `getPractice` | query | `{id}` | `songPractice.by_songId` → `practice`, falling back to `songs.practice` (until V1). Owner only, else null. |
 | `getMany` | query | `{ids: v.array(v.id('songs'))}` (1–100) | The owner's songs as `toClient` (bulk Details, G9); missing or foreign ids are omitted. |
-| `savePractice` | mutation | `{id, practice: v.any()}` | `requireOwned`. Rejects with `practice_too_large` when `JSON.stringify(practice).length > PRACTICE_CAP` (32,768, **B2**). Upserts `songPractice` (`sameContent` no-op). Computes `summary = summarize(upgradePractice(practice), sectionsOf(song.tempo))`, and patches `songs` with `{practiceSummary, lastPracticedAt: practice.lastAt}` **only when either changed**, so most saves never touch the `songs` row (R3). |
-| `saveTempo` | mutation | `{id, tempo: v.any(), baseRev: v.optional(v.number())}` | `requireOwned`. If `baseRev !== (song.tempoRev ?? 0)` and `hasRealMap(song.tempo) && !hasRealMap(tempo)`: keep the stored `songMap`, merge only the click settings, write, and return `{tempoRev, conflict: true, tempo: merged}`. Otherwise write. Either way bump `tempoRev`, recompute `mapSummary` (real, bpm at bar 1, meter of bar 1, section names ≤ 64), and return `{tempoRev, conflict: false}`. No-op (no bump) when `sameContent`. |
+| `savePractice` | mutation | `{id, practice: v.any(), final: v.optional(v.boolean())}` | `requireOwned`. Rejects with `practice_too_large` when `JSON.stringify(practice).length > PRACTICE_CAP` (32,768, **B2**). Upserts `songPractice` (`sameContent` no-op). Only when `final`: computes `summary = summarize(upgradePractice(practice), sectionsOf(song.tempo))` and patches `songs` with `{practiceSummary, lastPracticedAt: practice.lastAt}` when either changed (D52, R3). |
+| `saveTempo` | mutation | `{id, tempo: v.any(), baseRev: v.optional(v.number()), saveId: v.optional(v.string())}` | `requireOwned`. Writes `{songMap}` plus any stored non-map fields left by 1.9 (they are read once by `upgradePractice` and then ignored). If `baseRev !== (song.tempoRev ?? 0)` and `hasRealMap(song.tempo) && !hasRealMap(tempo)`: keep the stored tempo, and return `{tempoRev, conflict: true, tempo: stored}`. Otherwise write. Either way bump `tempoRev`, store `tempoSaveId: saveId`, recompute `mapSummary` (real, bpm at bar 1, meter of bar 1, section names ≤ 64), clear `sectionSuggestion` when the new map has sections, and return `{tempoRev, conflict: false}`. No-op (no bump) when `sameContent`. |
 | `remove` | mutation | `{id}` | Unchanged entry. `deleteSongData` also deletes the `songPractice` row, strips the id from the user's setlists (`by_userId_and_updatedAt`, ≤ 100 rows) and from `userSettings.settings.pins`. Billing cleanup inherits this. |
-| `markReviewed` | mutation | `{id}` | Clears `needsReview` (Stage "Is this the right recording? [Yes]"). |
-| `exportPage` | query | unchanged args | Full `toClient` + practice joined from `songPractice` (export ZIP). |
+| `confirmRecording` | mutation | `{id}` | Clears `recordingUnconfirmed` (Stage banner [Yes], D43). Replaces `markReviewed`. |
+| `dismissSectionSuggestion` | mutation | `{id}` | Clears `sectionSuggestion` (Keep all after the map edit, or ✕). |
+| `exportPage` | query | unchanged args | Full `toClient` + practice joined from `songPractice` (export ZIP; `convex/export.test.ts:14,24` updated by BK1 to insert practice into `songPractice`). |
 | `rename` | — | — | **Deleted.** |
-| `migrations.backfillB1` | internalMutation | `{cursor: v.union(v.string(), v.null())}` | Paginates `songs` 50 at a time. For each song: move `practice` → `songPractice` (pruned to the cap with `prunePractice`), compute `practiceSummary`, `lastPracticedAt`, `mapSummary`, and `hasChart` (`notationParts.by_songId` → `hitCount > 0`). Then reschedule itself with `runAfter(0)` until done. Started from the dashboard or `npx convex run migrations:backfillB1 '{"cursor":null}'`. |
+| `migrations.backfillB1` | internalMutation | `{cursor: v.union(v.string(), v.null())}` | Paginates `songs` 50 at a time. For each song: move `practice` → `songPractice` (upgraded with `legacyTempo: song.tempo` so the click settings move too, D51; pruned to the cap with `prunePractice`), compute `practiceSummary`, `lastPracticedAt`, `mapSummary`, and `hasChart` (`notationParts.by_songId` → `hitCount > 0`). Then reschedule itself with `runAfter(0)` until done. Run by the owner from the dashboard or `npx convex run migrations:backfillB1 '{"cursor":null}'` (owner gate G2). |
 
-`notation.ts`: `save` sets `songs.hasChart = hitCount > 0 || anyReviewed` when it changes. `deletePart` callers clear it.
+`notation.ts`: `save` accepts export-only accounts (D10: `requireUserId` plus owner check instead of `requireWritable`) and sets `songs.hasChart = hitCount > 0 || anyReviewed` when it changes. `deletePart` callers clear it.
+
+**BK1 also owns** the existing Convex tests that read song rows or `list().songs`: `convex/export.test.ts`, `convex/sync.test.ts`, `convex/notation.test.ts`, `convex/admin.test.ts` and `convex/billing.test.ts` (only the assertions the slim row or `songPractice` changes).
 
 ### 6.4 `convex/jobs.ts` (BK2)
 | Function | Change |
 |---|---|
-| `listActive` | Reads `by_user_status` once each for `queued`, `running` and `error` (`.take(50)` each) instead of newest-50-then-filter. Each row is today's fields plus `deviceId, createdAt, startedAt, updatedAt, attempts, errorCode, retryAt, chainedFrom, source {type, value, filename}, settingsSummary {preset, stemMode, model}`. Rows are sorted by `createdAt`. |
-| `createSeparation` | Args gain `meta: v.optional(v.object({title: v.optional(v.string()), channel: v.optional(v.string()), duration: v.optional(v.number()), thumbnail: v.optional(v.string()), provider: v.optional(v.string())}))`. Strings are ≤ 300; `thumbnail` must be `https:` and ≤ 2000. It is stored as `job.meta` (B4). `settings.stemMode === 'six'` is kept in `job.settings` (normalised at claim). An upload source requires `deviceId` = the caller's chosen device, which is stored for `originDeviceId`. A re-split of an upload-sourced song with `deviceId !== song.originDeviceId` (when that is set) → `fail('resplit_wrong_device', …, {deviceName})` (D38). Returns `{jobId}`. |
-| `createBeatDetection` | Dedupe: if a queued or running beats job exists for the song (`by_song`), return it instead of inserting. |
-| `retry` | Resets `stage: 'queued', percent: 0, errorCode: undefined, retryAt: undefined, message: 'Resuming local files…'`. Keeps the same-device rule (`retry_wrong_device`). |
-| `cancel`, `dismiss`, `get` | Coded errors only (`job_live`, `job_not_failed`). |
+| `listActive` | Reads `by_user_status` once each for `queued`, `running` and `error` (`.take(50)` each) instead of newest-50-then-filter. Each row is today's fields plus `deviceId, createdAt, startedAt, updatedAt, attempts, errorCode, retryAt, chainedFrom, confirmed, source {type, value, filename}, settingsSummary {preset, stemMode, model}, meta`. Rows are sorted by `createdAt`. |
+| `createSeparation` | Args gain `meta: v.optional(v.object({title: v.optional(v.string()), channel: v.optional(v.string()), duration: v.optional(v.number()), thumbnail: v.optional(v.string()), provider: v.optional(v.string())}))` and `confirmed: v.optional(v.boolean())`. Strings are ≤ 300; `thumbnail` must be `https:` and ≤ 2000. Stored as `job.meta` and `job.confirmed` (B4, D43). `settings.stemMode === 'six'` is kept in `job.settings` (normalised at claim). An upload source requires `deviceId` = the caller's chosen device, which is stored for `originDeviceId`. A web job requires `deviceId` of an owned, non-revoked device (B5). A re-split of an upload-sourced song with `deviceId !== song.originDeviceId` (when that is set) → `fail('resplit_wrong_device', …, {deviceName})` (D38). Returns `{jobId}`. |
+| `createBeatDetection` | Args gain `deviceId: v.optional(v.id('devices'))` (B5: the web passes an online paired device; desktop omits it and the local device is used). Dedupe: if a queued or running beats job exists for the song (`by_song`), return it instead of inserting. `settings.sections = withDefaults(userSettings).autoSections` decides whether the companion also suggests sections. |
+| `createSectionDetection` | **New.** `{songId, deviceId?}` → a `kind: 'sections'` job (D47), deduped like beats. Requires a real map. |
+| `retry` | `{jobId, preset: v.optional(v.string())}`. Resets `stage: 'queued', percent: 0, errorCode: undefined, retryAt: undefined, message: 'Resuming local files…'`. With `preset`, re-resolves `job.settings` through `resolveQuality(preset, job.settings.stemMode)` first (`Try Fast quality`). Keeps the same-device rule (`retry_wrong_device`). |
+| `markApplied` | **New.** `{jobId}` (owner): sets `appliedAt` on a done beats job (D44). |
+| `latestDetection` | **New** query. `{songId}` (owner) → the newest done, user-started (`!chainedFrom`) beats job for the song with `result` and no `appliedAt`, else null (`by_song` desc `.take(5)`). The Stage offer's [Use them] and [Not now] both call `markApplied`, so it is offered once. |
+| `cancel`, `dismiss`, `get` | Coded errors only (`job_live`, `job_not_failed`). `get` returns `result` for done beats/sections jobs. |
 
 ### 6.5 `convex/settings.ts` and `lib/presets.ts` (BK4)
 ```ts
@@ -1816,6 +2090,7 @@ export const profileValidator = v.object({
 export const practiceDefaultsValidator = v.object({
   stop: v.union(v.literal('cue'), v.literal('stay')),
   countIn: v.object({on: v.boolean(), length: v.number() /* 1–16 */, unit: v.union(v.literal('bars'), v.literal('beats'))}),
+  click: v.union(v.literal('off'), v.literal('countin'), v.literal('always')),
   eachPassCount: v.boolean(), keepPitch: v.boolean(),
   wake: v.union(v.literal(5), v.literal(10), v.literal(30), v.literal('always')),
 });
@@ -1827,11 +2102,12 @@ patch = mutation({args: {patch: v.object({
   onboarding: v.optional(v.object({whatDoYouPlay: v.optional(v.union(v.literal('done'), v.literal('skipped'))),
                                    coach: v.optional(v.number()), desktopFirstRun: v.optional(v.boolean())})),
   practice: v.optional(practiceDefaultsValidator.partial()),
+  autoSections: v.optional(v.boolean()),
 })}, handler: /* requireUserId (D10: export-only allowed); deep-merge onto withDefaults(row.settings); validate enums/caps; replace row */});
 demo = query({args: {}, handler: () => /^[a-f0-9]{64}$/.test(env.DEMO_SHARE_TOKEN ?? '') ? {token: env.DEMO_SHARE_TOKEN} : null});   // B8
 ```
 - `settings.save` is deleted (D42).
-- `config` returns `withDefaults(settings)`, now including `autoBeats: true, notifyReady: true, profile {[], null, 'in'}, pins [], onboarding {}, practice {stop: 'cue', countIn: {on: false, length: 1, unit: 'bars'}, eachPassCount: true, keepPitch: true, wake: 10}`. `withDefaults` deep-merges `custom`, `profile`, `onboarding` and `practice`.
+- `config` returns `withDefaults(settings)`, now including `autoBeats: true, autoSections: true, notifyReady: true, profile {[], null, 'in'}, pins [], onboarding {}, practice {stop: 'cue', countIn: {on: false, length: 1, unit: 'bars'}, click: 'countin', eachPassCount: true, keepPitch: true, wake: 10}`. `withDefaults` deep-merges `custom`, `profile`, `onboarding` and `practice`.
 - `convex.config.ts` declares `DEMO_SHARE_TOKEN: v.optional(v.string())`.
 - **`presets.ts`:**
   - add `STEM_MODES.six = {id: 'six', label: 'Full band + guitar & piano · 6', twoStems: null}`;
@@ -1843,14 +2119,15 @@ demo = query({args: {}, handler: () => /^[a-f0-9]{64}$/.test(env.DEMO_SHARE_TOKE
 ### 6.6 `convex/worker.ts`, `devices.ts`, `storage.ts`, `admin.ts` (BK3: B4, B5, B6)
 | Function | Kind | Change |
 |---|---|---|
-| `worker.next` | query (device) | Returns the device's first `running` job; else, among queued `.take(20)` by `by_device_status`, the first `kind === 'beats'`; else the first queued job (B6 prioritisation). |
+| `worker.next` | query (device) | Returns the device's first `running` job; else, among queued `.take(20)` by `by_device_status`, the first `kind === 'beats'`, then the first `kind === 'sections'`; else the first queued job (B6 prioritisation). |
 | `worker.claim` | mutation | Sets `startedAt` on the first claim and increments `attempts`. Returns `chainedFrom`, and `settings` with `stemMode: 'six'` normalised to `'full'`, so Python never sees `six`. |
 | `worker.progress` | mutation | Args gain `errorCode: v.optional(v.string())` and `meta: v.optional(jobMetaValidator)`. On `stage: 'error'` with `errorCode === 'bot_check'` and `attempts < 3`: `status: 'error'`, `retryAt = now + 5 min × 2^(attempts − 1)`, and `scheduler.runAt(retryAt, internal.worker.autoRetry, {jobId, attempts})`. |
 | `worker.autoRetry` | internalMutation | `{jobId, attempts}`: re-queues (the same resets as `jobs.retry`) only if the job is still `error` with the same `attempts`. |
-| `worker.finish` | internalMutation | Result validator gains `resolvedUrl: v.optional(v.string())` and `provider: v.optional(v.string())`. New songs store `resolvedUrl`, `provider` and `originDeviceId: job.deviceId`, plus `needsReview: true` when `job.source.type === 'search'` without `job.meta.title` (unconfirmed). Imports compute `practiceSummary`/`mapSummary` and write `songPractice` from `importMeta`. **B6 chain:** when `kind === 'separate'`, `withDefaults(job.settings).autoBeats`, the device is valid and `!hasRealMap(song.tempo, {hasPart: song.hasChart})`, insert `{kind: 'beats', userId, deviceId, songId, label: 'Finding bars — <title>', chainedFrom: job._id, status: 'queued', stage: 'queued', percent: 0, createdAt, updatedAt}`. |
-| `worker.beatsDone` | mutation | Sets `stage: 'done'` and keeps `result`. When the song still has no real map: `tempo = {...settings-only(song.tempo), songMap: {...fromBeats(beats, duration), origin: 'detected'}}`; bump `tempoRev`; recompute `mapSummary`. |
+| `worker.finish` | internalMutation | Result validator gains `resolvedUrl: v.optional(v.string())` and `provider: v.optional(v.string())`. New songs store `resolvedUrl`, `provider` and `originDeviceId: job.deviceId`, plus `recordingUnconfirmed: true` when `job.source.type === 'search' && job.confirmed !== true` (D43; `job.meta.title` no longer matters). Imports compute `practiceSummary`/`mapSummary` and write `songPractice` from `importMeta`. **B6 chain:** when `kind === 'separate'`, the device is valid, `!hasRealMap(song.tempo, {hasPart: song.hasChart})`, and the **user's stored settings** say so (`withDefaults((await ctx.db.query('userSettings').withIndex('by_user', q => q.eq('userId', job.userId)).unique())?.settings).autoBeats`; `job.settings` holds only what the Add sheet sent), insert `{kind: 'beats', userId, deviceId, songId, label: 'Finding bars — <title>', chainedFrom: job._id, settings: {sections: autoSections}, status: 'queued', stage: 'queued', percent: 0, createdAt, updatedAt}`. |
+| `worker.beatsDone` | mutation | `{…, beats, sections?}`. Sets `stage: 'done'` and keeps `result = {beats, sections}`. **When the song still has no real map** (chained or user-started alike, D44): `tempo = {...nonMapFields(song.tempo), songMap: {...fromBeats(beats, duration), origin: 'detected'}}`, bump `tempoRev`, clear `tempoSaveId`, recompute `mapSummary`. Whenever `sections?.length` and the (new or existing) map has no sections: store `sectionSuggestion = {sections, jobId, createdAt}`. With a real map, the tempo is not touched (the client applies the beats, D44). |
+| `worker.sectionsDone` | mutation | **New.** `{token, jobId, sections}` (device): `stage: 'done'`, `result = {sections}`, and `sectionSuggestion` when the map still has no sections. |
 | `worker.heartbeat` | mutation (device token) | `{token, state: 'idle'\|'busy'\|'offline', currentJobId?, appVersion?, platform?, accelerator?}` → upsert `devicePresence` by `deviceId` with `lastSeenAt: Date.now()`. |
-| `worker.cancelForUpdate` | — | **Deleted** (D12). |
+| `worker.cancelForUpdate` | — | **Deleted in CPB** (wave 1a), together with its callers in `companion/server.mjs:56,244` (D12). |
 | `devices.list` | query | Caller's non-revoked devices (`by_user`, ≤ 20) joined with presence: `[{deviceId, name: displayName ?? name, platform, appVersion, lastSeenAt: number\|null, state, currentJobId, queued /* by_device_status queued .take(21) length */}]`, ordered by `lastSeenAt` desc. The client computes online as `state !== 'offline' && now − lastSeenAt < 150 000` and re-evaluates every 30 s. |
 | `devices.rename` | mutation | `{deviceId, name}` (1–80 after trim) → `displayName`. |
 | `devices.revoke` | mutation | Owner: `revoked: true, revokedBy: 'user'`. |
@@ -1864,7 +2141,8 @@ demo = query({args: {}, handler: () => /^[a-f0-9]{64}$/.test(env.DEMO_SHARE_TOKE
 - `finishImport`:
   - writes the copied practice into `songPractice`;
   - sets `practiceSummary`/`mapSummary`, `hasChart` (when `notationPartId` exists) and `tempoRev: 0` on the new song.
-- `sharing.view` returns `ownerName` (the owner's `users.name` first word) for "Shared by Kyle K." It never returns an email.
+- `sharing.view` returns `ownerName`: the owner's `users.name` as first word plus the last word's initial and a full stop ("Kyle Kincer" → "Kyle K."; a one-word name stays as is; no name → "a Woodshed user"). It never returns an email.
+- `finishImport` strips `practice` (and every other field not in the `songs` schema after V1) from the snapshot before spreading it into the new song (`sharing.ts:160`), writing practice only to `songPractice`.
 - Update `convex/sharing.test.ts:29,45,69` for the v2 snapshot.
 
 ### 6.8 `convex/setlists.ts` (BK6: B3)
