@@ -114,7 +114,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   const lineAt = (q) => lines().find((l) => compare(l.q, q) === 0);
   const pinAt = (q) => songMap.data.pins.find((p) => compare(p.position, q) === 0);
   function describe(q) {
-    const index = songMap.barIndexAt(number(q)), line = lineAt(q);
+    const index = songMap.barIndexAtQ(number(q)), line = lineAt(q);
     return line && !line.downbeat ? `bar ${index + 1} beat ${line.beat}` : `bar ${index + 1}`;
   }
   /** A song that has never been mapped still has only the default pin at bar 1. */
@@ -146,7 +146,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   function render() {
     if (!active) return;
     // Before the first real pin, bar 1's default pin is only a placeholder.
-    const fresh = unmapped(), q = number(cursorQ), index = songMap.barIndexAt(q), m = songMap.measure(index), span = songMap.spanAt(q), p = fresh ? null : pinAt(cursorQ), line = lineAt(cursorQ);
+    const fresh = unmapped(), q = number(cursorQ), index = songMap.barIndexAtQ(q), m = songMap.measure(index), span = songMap.spanAt(q), p = fresh ? null : pinAt(cursorQ), line = lineAt(cursorQ);
     const unit = songMap.pulseLabel(index);
     cells.bar.innerHTML = digits ? `<span class="mi-goto">Go to ${esc(digits)}<i></i></span>` : `${index + 1}`;
     cells['bar-sub'].textContent = digits ? 'Enter to jump' : line && !line.downbeat ? `beat ${line.beat}` : 'downbeat';
@@ -282,7 +282,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
     return `Bar ${index + 1} is ${meter} ${scope} · ${kept}${dropped ? ` · removed ${dropped} pin${dropped === 1 ? '' : 's'} that no longer fit` : ''}`;
   }
   function changeBeats(delta, onlyThisBar) {
-    const index = songMap.barIndexAt(number(cursorQ)), m = songMap.measure(index), next = m.numerator + delta;
+    const index = songMap.barIndexAtQ(number(cursorQ)), m = songMap.measure(index), next = m.numerator + delta;
     if (next < 1 || next > 16) { say('A bar has between 1 and 16 beats.', 'error'); return; }
     const end = (d) => onlyThisBar ? index : meterRun(d, index), keep = keepBeatsByDefault(index, end(songMap.data)) ? 'beats' : 'lines';
     const dropped = attempt(() => meterEdit(index, end, keep, (bar) => setMeter(bar, next, bar.denominator)));
@@ -310,7 +310,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   function openTempo(delta) {
     const q = number(cursorQ), span = songMap.spanAt(q);
     if (!span.open || (span.open === 'head' && songMap.data.pins.length > 1)) { say('Tempo here comes from the pins around it. Move or renumber a pin to change it.'); return; }
-    const pulse = pulseOf(songMap.measure(songMap.barIndexAt(q))), bpm = clamp(songMap.bpmAt(q) + delta, MIN_QPM, MAX_QPM);
+    const pulse = pulseOf(songMap.measure(songMap.barIndexAtQ(q))), bpm = clamp(songMap.bpmAt(q) + delta, MIN_QPM, MAX_QPM);
     if (attempt(() => songMap.edit((d) => { d.tailQpm = clamp(bpm * pulse, MIN_QPM, MAX_QPM); }, 'tempo')) === FAILED) return;
     say(`Tempo after the last pin: ${bpmText(songMap.bpmAt(q))} BPM`, 'ok');
     redraw(); render();
@@ -340,7 +340,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   function openEditor() {
     if (readOnly) return;
     toggleMenu(false); closeKeys();
-    const q = number(cursorQ), index = songMap.barIndexAt(q), m = songMap.measure(index), span = songMap.spanAt(q);
+    const q = number(cursorQ), index = songMap.barIndexAtQ(q), m = songMap.measure(index), span = songMap.spanAt(q);
     const open = span.open === 'tail' || (span.open === 'head' && songMap.data.pins.length === 1);
     const partial = number(m.length) < number(fullLength(m)) - 1e-9;
     cells['edit-bar'].textContent = `Bar ${index + 1}`;
@@ -364,7 +364,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   });
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const q = number(cursorQ), index = songMap.barIndexAt(q), n = parseInt(form.n.value, 10), d = parseInt(form.d.value, 10);
+    const q = number(cursorQ), index = songMap.barIndexAtQ(q), n = parseInt(form.n.value, 10), d = parseInt(form.d.value, 10);
     const grouping = form.grouping.value.trim() ? form.grouping.value.split('+').map((x) => parseInt(x.trim(), 10)) : null;
     if (!(n >= 1 && n <= 16)) { say('A bar has between 1 and 16 beats.', 'error'); return; }
     if (grouping && (grouping.some((g) => !(g >= 1)) || grouping.reduce((a, b) => a + b, 0) !== n)) { say(`Groups must add up to ${n}, like ${n === 7 ? '2+2+3' : n === 5 ? '3+2' : `${n - 1}+1`}.`, 'error'); return; }
@@ -397,7 +397,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
 
   // ---- preview loop ---------------------------------------------------------
   function previewBounds() {
-    const index = songMap.barIndexAt(number(cursorQ)), first = Math.max(0, index - 1), last = Math.min(songMap.data.measures.length - 1, index + 1);
+    const index = songMap.barIndexAtQ(number(cursorQ)), first = Math.max(0, index - 1), last = Math.min(songMap.data.measures.length - 1, index + 1);
     const a = clamp(timeOf(songMap.barStart(first)), 0, duration());
     const end = songMap.barStart(last), b = clamp(timeOf(number(end) + number(songMap.measure(last).length)), 0, duration());
     return {a, b};
@@ -706,7 +706,7 @@ export function createMapMode({root, engine, songMap, metronome, readOnly = fals
   /** Selected bar and pinned lines, drawn into the waveform grid. */
   function gridDecor() {
     if (!active) return null;
-    const index = songMap.barIndexAt(number(cursorQ)), start = songMap.barStart(index);
+    const index = songMap.barIndexAtQ(number(cursorQ)), start = songMap.barStart(index);
     return {pinned: new Set(songMap.compiled.pins.map((p) => Math.round(p.time * 1e4))), band: [timeOf(start), timeOf(number(start) + number(songMap.measure(index).length))]};
   }
 

@@ -843,7 +843,7 @@ export async function openPlayer(song, {readOnly=false, resolveUrls=null, cacheN
   // Source audition must restore a canceled preview before the final save.
 
   function nowText(pos) {
-    const q = songMap.positionAt(pos), index = Math.max(0, songMap.barIndexAt(q)), m = songMap.measure(index);
+    const q = songMap.positionAt(pos), index = Math.max(0, songMap.barIndexAtQ(q)), m = songMap.measure(index);
     const bpm = Math.round(songMap.bpmAt(q) * 100) / 100;
     return `${songMap.pulseLabel(index)} = ${bpm} · ${m.numerator}/${m.denominator}`;
   }

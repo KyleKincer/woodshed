@@ -57,7 +57,7 @@ export function drawLane(canvas, {songMap, view, timeToX, duration, cursorQ, hov
   const top = RULER + 12, bottom = h - 8;
   const y = (q) => bottom - (Math.min(Math.max(q, range.lo), range.hi) - range.lo) / (range.hi - range.lo) * (bottom - top);
   const starts = songMap.starts, measures = songMap.data.measures;
-  const cursor = number(cursorQ), bar = songMap.barIndexAt(cursor);
+  const cursor = number(cursorQ), bar = songMap.barIndexAtQ(cursor);
 
   // Selected bar, across the whole lane.
   const barA = x(songMap.timeAt(starts[bar])), barB = x(songMap.timeAt(number(starts[bar]) + number(measures[bar].length)));
@@ -130,7 +130,7 @@ export function drawLane(canvas, {songMap, view, timeToX, duration, cursorQ, hov
   for (const {s, path} of points) {
     const a = path[0][0], b = path[path.length - 1][0];
     if (b - a < 58) continue;
-    const index = songMap.barIndexAt(songMap.positionAt((Math.max(s.t0, view.start) + Math.min(s.t1, view.end)) / 2)), pulse = pulseOf(measures[index]);
+    const index = songMap.barIndexAtQ(songMap.positionAt((Math.max(s.t0, view.start) + Math.min(s.t1, view.end)) / 2)), pulse = pulseOf(measures[index]);
     const unit = pulse === 1 ? '' : songMap.pulseLabel(index), q0 = s.q0 / pulse, q1 = s.q1 / pulse;
     const text = unit + (s.kind === 'ramp' ? `${trim(q0)}→${trim(q1)}` : trim(q0)) + (s.kind === 'tail' ? ' →' : '');
     const ly = Math.max(RULER + 11, Math.min(...path.map((p) => p[1])) - 6);
