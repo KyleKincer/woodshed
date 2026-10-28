@@ -128,6 +128,44 @@ describe('settings.patch', () => {
     expect(second.settings).toEqual(first.settings);
   });
 
+  test('a patch that changes nothing does not write, whatever the stored key order', async () => {
+    const { t, alice, row } = await setup();
+    await alice.mutation(api.settings.patch, { patch: { notifyReady: false, practice: { stop: 'stay' } } });
+    // The database hands back a document's fields in its own (sorted) order, never the
+    // order `mergeSettings` built them in; the skip check must not depend on it.
+    const id = (await row())!._id;
+    const reverseKeys = (value: any): any =>
+      Array.isArray(value) ? value.map(reverseKeys)
+        : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).reverse().map(k => [k, reverseKeys(value[k])]))
+          : value;
+    await t.run(async ctx => {
+      const doc = (await ctx.db.get('userSettings', id))!;
+      await ctx.db.replace('userSettings', id, { userId: doc.userId, settings: reverseKeys(doc.settings) });
+    });
+    // Count document writes at the syscall layer the Convex runtime uses.
+    const real = (globalThis as any).Convex;
+    let writes = 0;
+    const counted = (fn: (op: string, args: string) => any) => (op: string, args: string) => {
+      if (/^1\.0\/(insert|replace|shallowMerge)$/.test(op)) writes += 1;
+      return fn(op, args);
+    };
+    (globalThis as any).Convex = {
+      get syscall() { return counted(real.syscall); },
+      get asyncSyscall() { return counted(real.asyncSyscall); },
+      get jsSyscall() { return real.jsSyscall; },
+    };
+    try {
+      await alice.mutation(api.settings.patch, { patch: { notifyReady: false, practice: { stop: 'stay' } } });
+      await alice.mutation(api.settings.patch, { patch: { onboarding: {} } });
+      expect(writes).toBe(0);
+      await alice.mutation(api.settings.patch, { patch: { notifyReady: true } });
+      expect(writes).toBe(1);
+    } finally {
+      (globalThis as any).Convex = real;
+    }
+    expect((await row())!.settings.notifyReady).toBe(true);
+  });
+
   test('enums are validated with coded errors naming the field', async () => {
     const { alice, row } = await setup();
     const bad: [Record<string, unknown>, string][] = [
@@ -143,7 +181,6 @@ describe('settings.patch', () => {
       [{ practice: { countIn: { on: true, length: 2.5, unit: 'bars' } } }, 'practice.countIn.length'],
       [{ onboarding: { coach: 16 } }, 'onboarding.coach'],
       [{ onboarding: { coach: -1 } }, 'onboarding.coach'],
-      [{ profile: { instruments: ['drums'], primary: 'bass', openWithMyPart: 'in' } }, 'profile.primary'],
     ];
     for (const [patch, field] of bad) {
       await expect(alice.mutation(api.settings.patch, { patch: patch as never }), JSON.stringify(patch)).rejects.toMatchObject(coded('invalid', { field }));
@@ -176,8 +213,22 @@ describe('settings.patch', () => {
     const all = [...INSTRUMENTS];
     await alice.mutation(api.settings.patch, { patch: { profile: { instruments: all, primary: null, openWithMyPart: 'in' } } });
     expect((await settingsOf()).profile.instruments).toEqual(all);
-    await expect(alice.mutation(api.settings.patch, { patch: { profile: { instruments: [...all, 'drums'], primary: null, openWithMyPart: 'in' } } }))
-      .rejects.toMatchObject(coded('invalid', { field: 'profile.instruments' }));
+    // Duplicates are removed before the cap applies: 7 entries, 6 distinct, is accepted.
+    await alice.mutation(api.settings.patch, { patch: { profile: { instruments: [...all, 'drums'], primary: null, openWithMyPart: 'in' } } });
+    expect((await settingsOf()).profile.instruments).toEqual(all);
+    await alice.mutation(api.settings.patch, { patch: { profile: { instruments: ['drums', 'drums', 'bass', 'bass', 'keys', 'vocals', 'other'], primary: 'drums', openWithMyPart: 'in' } } });
+    expect((await settingsOf()).profile).toEqual({ instruments: ['drums', 'bass', 'keys', 'vocals', 'other'], primary: 'drums', openWithMyPart: 'in' });
+  });
+
+  test('a primary the profile does not list is normalised, not refused', async () => {
+    const { alice, settingsOf } = await setup();
+    // The primary chip was deselected but primary was sent unchanged: the first instrument left takes over.
+    await alice.mutation(api.settings.patch, { patch: { profile: { instruments: ['bass', 'keys'], primary: 'drums', openWithMyPart: 'out' } } });
+    expect((await settingsOf()).profile).toEqual({ instruments: ['bass', 'keys'], primary: 'bass', openWithMyPart: 'out' });
+    await alice.mutation(api.settings.patch, { patch: { profile: { instruments: [], primary: 'bass', openWithMyPart: 'in' } } });
+    expect((await settingsOf()).profile).toEqual({ instruments: [], primary: null, openWithMyPart: 'in' });
+    await alice.mutation(api.settings.patch, { patch: { profile: { instruments: ['bass', 'keys'], primary: 'keys', openWithMyPart: 'in' } } });
+    expect((await settingsOf()).profile.primary).toBe('keys');
   });
 
   test('pins: at most 12, deduplicated, owned; deleted songs drop out', async () => {

@@ -34,6 +34,17 @@ const sameJson = (a, b) => json(a) === json(b);
 const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 const isPlain = value => !!value && typeof value === 'object' && !Array.isArray(value);
 
+/** `result`'s values at the keys (and nested keys) `change` names, in `change`'s shape. */
+function confirmedPart(result, change) {
+  const out = {};
+  for (const [key, value] of Object.entries(change)) {
+    if (value === undefined) continue;
+    if (!Object.prototype.hasOwnProperty.call(result, key)) out[key] = value;
+    else out[key] = isPlain(value) && isPlain(result[key]) ? confirmedPart(result[key], value) : clone(result[key]);
+  }
+  return out;
+}
+
 /**
  * The part of a prefs carry-over (`{practice: {stop?, keepPitch?}}`, prefs.js migrateLegacy)
  * that settings.patch accepts, or null when nothing valid is left.
@@ -72,23 +83,34 @@ export function createAccount({store = appStore, api = settingsApi, toast = feed
   };
 
   // A confirmed patch whose result the subscription has not delivered yet (the fixture, or a
-  // slow socket) stays until the next server value, so the UI never flickers back.
-  store.account.subscribe(() => {
-    if (overlays.peek().some(e => e.settled)) overlays.value = overlays.peek().filter(e => !e.settled);
+  // slow socket) stays until the next server value, so the UI never flickers back. Values that
+  // arrive while a patch is in flight are kept on it: one of them may already carry its commit.
+  store.account.subscribe(settings => {
+    const list = overlays.peek();
+    for (const e of list) if (!e.settled) e.seen.push(settings);
+    if (list.some(e => e.settled)) overlays.value = list.filter(e => !e.settled);
   });
 
   async function patch(partial) {
     if (!isPlain(partial)) throw new TypeError('account.patch expects an object');
-    const entry = {patch: clone(partial), settled: false};
+    const entry = {patch: clone(partial), settled: false, seen: []};
     overlays.value = [...overlays.peek(), entry];
+    let result;
     try {
-      await api.patch(partial);
+      result = await api.patch(partial);
     } catch (err) {
       remove(entry);
       throw toApiError(err);
     }
     entry.settled = true;
-    if (reflects(store.account.peek(), entry.patch)) remove(entry);
+    // settings.patch resolves to the merged settings it stored. Its values for the keys this
+    // patch named replace the patch's own (the server drops deleted songs from pins, dedupes
+    // instruments, normalises the primary), so the overlay never holds what the server refused.
+    if (isPlain(result)) entry.patch = confirmedPart(withDefaults(result), entry.patch);
+    const seen = entry.seen;
+    entry.seen = [];
+    if ([store.account.peek(), ...seen].some(settings => reflects(settings, entry.patch))) remove(entry);
+    else overlays.value = [...overlays.peek()];
   }
 
   async function togglePin(songId) {

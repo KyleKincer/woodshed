@@ -244,6 +244,43 @@ describe('togglePin and markOnboarding', () => {
     await expect(acc.togglePin('')).rejects.toThrow(TypeError);
   });
 
+  test('a deleted song the server drops from pins leaves no ghost pin, with or without a push', async () => {
+    withPins(['a']);
+    // Server stores nothing new (the row already says ['a']), so the subscription stays silent.
+    const quiet = acc.togglePin('gone');
+    expect(acc.pins.value).toEqual(['a', 'gone']);
+    await api.resolve(withDefaults({pins: ['a']})); await quiet;
+    expect(acc.pins.value).toEqual(['a']);
+    expect(acc.value.value.pins).toEqual(['a']);
+    // Convex delivers the (normalised) query value before the mutation resolves.
+    const pushed = acc.togglePin('gone-too');
+    withPins(['a']);
+    await api.resolve(withDefaults({pins: ['a']})); await pushed;
+    expect(acc.pins.value).toEqual(['a']);
+    // The next pin builds on the server's list, not the ghost.
+    const next = acc.togglePin('b');
+    expect(api.calls.at(-1)).toEqual({pins: ['a', 'b']});
+    await api.resolve(withDefaults({pins: ['a', 'b']})); await next;
+  });
+
+  test('a confirmed patch takes the server’s normalised values, and a newer push still shows through', async () => {
+    const done = acc.patch({profile: {instruments: ['bass', 'bass'], primary: 'drums', openWithMyPart: 'in'}});
+    await api.resolve(withDefaults({profile: {instruments: ['bass'], primary: 'bass', openWithMyPart: 'in'}})); await done;
+    // Not delivered yet: the overlay holds what the server stored, not what was sent.
+    expect(acc.profile.value).toEqual({instruments: ['bass'], primary: 'bass', openWithMyPart: 'in'});
+    api.push({settings: {...withDefaults(null), profile: {instruments: ['keys'], primary: 'keys', openWithMyPart: 'out'}}, ...CATALOGUE});
+    expect(acc.profile.value).toEqual({instruments: ['keys'], primary: 'keys', openWithMyPart: 'out'});
+  });
+
+  test('a commit delivered mid-flight then overtaken by another device does not mask the newer value', async () => {
+    withPins([]);
+    const done = acc.togglePin('a');
+    withPins(['a']);          // this patch's commit
+    withPins(['a', 'z']);     // another device, before the mutation resolves
+    await api.resolve(withDefaults({pins: ['a']})); await done;
+    expect(acc.pins.value).toEqual(['a', 'z']);
+  });
+
   test('markOnboarding patches one onboarding key', async () => {
     expect(ONBOARDING_KEYS).toEqual(['whatDoYouPlay', 'coach', 'desktopFirstRun']);
     const done = acc.markOnboarding('coach', 5);

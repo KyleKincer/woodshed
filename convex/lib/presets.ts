@@ -203,6 +203,27 @@ export function mergeSettings<T extends Record<string, any>>(base: T, patch: Rec
   return out as T;
 }
 
+/** JSON with object keys sorted at every depth, so equal settings give equal strings whatever their key order. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (isPlain(value)) {
+    return `{${Object.keys(value)
+      .filter(k => value[k] !== undefined)
+      .sort()
+      .map(k => `${JSON.stringify(k)}:${stableJson(value[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/**
+ * Structural equality of two settings values, independent of key order (the
+ * database returns a document's fields in its own order, not insertion order).
+ */
+export function sameSettings(a: unknown, b: unknown): boolean {
+  return stableJson(a) === stableJson(b);
+}
+
 export type PatchError = { code: 'invalid' | 'pins_full'; field: string; message: string };
 export type PatchCheck = { ok: true; patch: Record<string, any> } | ({ ok: false } & PatchError);
 
@@ -213,7 +234,9 @@ const onlyKeys = (value: Record<string, any>, keys: string[]) => Object.keys(val
 
 /**
  * Validates a `settings.patch` argument and normalises it: the profile's
- * instruments and the pins are deduplicated, in order. Covers every key, type,
+ * instruments and the pins are deduplicated, in order (before their caps apply),
+ * and a profile `primary` that is not one of its instruments becomes the first
+ * instrument, or null. Covers every key, type,
  * enum and cap, so the fixture (which has no Convex validators) gives the same
  * answers as the server. Song ownership of pins needs the database and is
  * checked by the caller.
@@ -251,13 +274,17 @@ export function checkPatch(input: unknown): PatchCheck {
       case 'profile': {
         if (!isPlain(value) || !onlyKeys(value, ['instruments', 'primary', 'openWithMyPart'])) return bad(key, 'The instrument profile is incomplete.');
         const list = value.instruments;
-        if (!Array.isArray(list) || list.length > MAX_INSTRUMENTS) return bad('profile.instruments', `Choose up to ${MAX_INSTRUMENTS} instruments.`);
+        if (!Array.isArray(list)) return bad('profile.instruments', `Choose up to ${MAX_INSTRUMENTS} instruments.`);
         if (list.some(i => !oneOf(INSTRUMENTS, i))) return bad('profile.instruments', 'Unknown instrument.');
+        // Deduplicate first, then cap (the same order as pins).
         const instruments = [...new Set(list)];
+        if (instruments.length > MAX_INSTRUMENTS) return bad('profile.instruments', `Choose up to ${MAX_INSTRUMENTS} instruments.`);
         if (!(value.primary === null || oneOf(INSTRUMENTS, value.primary))) return bad('profile.primary', 'Unknown instrument.');
-        if (value.primary !== null && !instruments.includes(value.primary)) return bad('profile.primary', 'Your main instrument must be one you play.');
         if (!oneOf(OPEN_WITH_MY_PART, value.openWithMyPart)) return bad('profile.openWithMyPart', 'Choose whether songs open with your part in or out.');
-        patch[key] = { instruments, primary: value.primary, openWithMyPart: value.openWithMyPart };
+        // A primary the profile no longer lists (its chip was deselected) moves to the
+        // first instrument left, or null; it is normalised, never refused.
+        const primary = value.primary !== null && instruments.includes(value.primary) ? value.primary : (instruments[0] ?? null);
+        patch[key] = { instruments, primary, openWithMyPart: value.openWithMyPart };
         continue;
       }
       case 'pins': {

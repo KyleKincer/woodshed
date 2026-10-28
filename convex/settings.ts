@@ -10,6 +10,7 @@ import {
   STEM_MODES,
   checkPatch,
   mergeSettings,
+  sameSettings,
   withDefaults,
 } from './lib/presets';
 
@@ -126,7 +127,8 @@ export const patch = mutation({
       .unique();
     const next = mergeSettings(withDefaults(row?.settings), change);
     if (!row) await ctx.db.insert('userSettings', { userId, settings: next });
-    else if (JSON.stringify(row.settings) !== JSON.stringify(next)) await ctx.db.replace('userSettings', row._id, { userId, settings: next });
+    // Key order is not compared: the database returns fields in its own order.
+    else if (!sameSettings(row.settings, next)) await ctx.db.replace('userSettings', row._id, { userId, settings: next });
     return next;
   },
 });
