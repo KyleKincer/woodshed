@@ -9,6 +9,7 @@ import {Banner} from '../src/ui/banner.js';
 import {CoachMark} from '../src/ui/coachmark.js';
 import {Dialog, validateField} from '../src/ui/dialog.js';
 import {Menu} from '../src/ui/menu.js';
+import * as popoverModule from '../src/ui/popover.js';
 import {Popover, followLayerHost, layerHost} from '../src/ui/popover.js';
 import {Sheet, resolveLayout, shouldDismiss, stageLayoutOf} from '../src/ui/sheet.js';
 import {InlineStatus} from '../src/ui/status.js';
@@ -603,6 +604,61 @@ describe('InlineStatus and Banner', () => {
     expect(b.el.querySelector('.ui-banner-actions').firstChild).toBe(node);
     expect(b.el.querySelector('.ui-banner-title').hidden).toBe(true);
     expect(b.el.getAttribute('role')).toBe('alert');
+  });
+});
+
+// I0B-12: the overlays draw their icons with U1's icon() (src/ui/icon.js); U2's own glyph() copy is gone.
+describe('icons come from icon()', () => {
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  /** The sprite icon in `slot`: its name and size, after checking it is exactly what icon() renders. */
+  const iconIn = slot => {
+    const svgs = slot.querySelectorAll(':scope > svg');
+    expect(svgs).toHaveLength(1);
+    const svg = svgs[0];
+    expect(svg.namespaceURI).toBe(SVG_NS);
+    expect(svg.getAttribute('class')).toBe('ui-icon');
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
+    expect(svg.getAttribute('focusable')).toBe('false');
+    expect(svg.getAttribute('width')).toBe(svg.getAttribute('height'));
+    const use = svg.querySelector('use');
+    expect(use.namespaceURI).toBe(SVG_NS);
+    expect(use.getAttribute('href')).toBe(`#i-${svg.dataset.icon}`);   // data-icon is set by icon() alone
+    return {name: svg.dataset.icon, size: Number(svg.getAttribute('width'))};
+  };
+
+  test('popover.js no longer exports glyph()', () => {
+    expect('glyph' in popoverModule).toBe(false);
+  });
+
+  test('Sheet ✕', () => {
+    const sheet = keep(Sheet({title: 'Speed', content: 'x'}));
+    expect(iconIn(sheet.el.querySelector('.ui-sheet-close'))).toEqual({name: 'x', size: 20});
+  });
+
+  test('Toast: the tone icon follows the tone; ✕', () => {
+    const t = Toast({message: 'Saved', tone: 'info'});
+    expect(iconIn(t.el.querySelector('.ui-toast-icon'))).toEqual({name: 'info', size: 20});
+    expect(iconIn(t.el.querySelector('.ui-toast-close'))).toEqual({name: 'x', size: 20});
+    for (const [tone, name] of [['ok', 'check'], ['warn', 'alert-triangle'], ['error', 'alert-circle']]) {
+      t.set({tone});
+      expect(iconIn(t.el.querySelector('.ui-toast-icon'))).toEqual({name, size: 20});
+    }
+    t.destroy();
+  });
+
+  test('InlineStatus: a 16 px tone icon that follows the tone', () => {
+    const s = InlineStatus({tone: 'ok', text: 'Saved'});
+    expect(iconIn(s.el.querySelector('.ui-status-icon'))).toEqual({name: 'check', size: 16});
+    s.set({tone: 'error'});
+    expect(iconIn(s.el.querySelector('.ui-status-icon'))).toEqual({name: 'alert-circle', size: 16});
+  });
+
+  test('Banner: the tone icon follows the tone; ✕', () => {
+    const b = Banner({tone: 'warn', title: 'Offline', text: 'x', dismissible: true});
+    expect(iconIn(b.el.querySelector('.ui-banner-icon'))).toEqual({name: 'alert-triangle', size: 20});
+    expect(iconIn(b.el.querySelector('.ui-banner-close'))).toEqual({name: 'x', size: 20});
+    b.set({tone: 'info'});
+    expect(iconIn(b.el.querySelector('.ui-banner-icon'))).toEqual({name: 'info', size: 20});
   });
 });
 

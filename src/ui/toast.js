@@ -14,7 +14,8 @@
 // dialog closes. A region merely shown with showLayer while a dialog is open would be drawn on top but inert.
 
 import {h} from './h.js';
-import {applyCommon, glyph, setContent, withDefaults} from './popover.js';
+import {icon} from './icon.js';
+import {applyCommon, setContent, withDefaults} from './popover.js';
 import '../styles/primitives/toast.css';
 
 export const TONES = Object.freeze(['info', 'ok', 'warn', 'error']);
@@ -23,11 +24,11 @@ const ICON = {info: 'info', ok: 'check', warn: 'alert-triangle', error: 'alert-c
 /** A toast view. See the header. */
 export function Toast(props = {}) {
   let p = withDefaults({tone: 'info', dismissLabel: 'Dismiss'}, props);
-  const icon = h('span', {class: 'ui-toast-icon', 'aria-hidden': 'true'});
+  const toneIcon = h('span', {class: 'ui-toast-icon', 'aria-hidden': 'true'});
   const message = h('div', {class: 'ui-toast-message'});
   const actionButton = h('button', {type: 'button', class: 'ui-toast-action'});
-  const closeButton = h('button', {type: 'button', class: 'ui-toast-close'}, glyph('x'));
-  const el = h('div', {class: 'ui-toast', 'aria-atomic': 'true'}, icon, message, actionButton, closeButton);
+  const closeButton = h('button', {type: 'button', class: 'ui-toast-close'}, icon('x'));
+  const el = h('div', {class: 'ui-toast', 'aria-atomic': 'true'}, toneIcon, message, actionButton, closeButton);
 
   actionButton.addEventListener('click', () => {
     p.action?.run?.();
@@ -40,7 +41,7 @@ export function Toast(props = {}) {
     applyCommon(el, next, prev);
     el.dataset.tone = next.tone;
     el.setAttribute('role', next.tone === 'error' ? 'alert' : 'status');
-    if (next.tone !== prev.tone) icon.replaceChildren(glyph(ICON[next.tone]));
+    if (next.tone !== prev.tone) toneIcon.replaceChildren(icon(ICON[next.tone]));
     if (next.message !== prev.message) setContent(message, next.message);
     actionButton.hidden = !next.action;
     actionButton.textContent = next.action?.label ?? '';

@@ -8,7 +8,8 @@
 //   tone      'info' | 'ok' | 'warn' | 'error'; errors are role=alert, the rest role=status
 
 import {h} from './h.js';
-import {applyCommon, glyph, setContent, withDefaults} from './popover.js';
+import {icon} from './icon.js';
+import {applyCommon, setContent, withDefaults} from './popover.js';
 import '../styles/primitives/banner.css';
 
 export const TONES = Object.freeze(['info', 'ok', 'warn', 'error']);
@@ -19,13 +20,13 @@ let bannerSeq = 0;
 export function Banner(props = {}) {
   let p = withDefaults({tone: 'info', actions: [], dismissible: false, dismissLabel: 'Dismiss'}, props);
   const seq = ++bannerSeq;
-  const icon = h('span', {class: 'ui-banner-icon', 'aria-hidden': 'true'});
+  const toneIcon = h('span', {class: 'ui-banner-icon', 'aria-hidden': 'true'});
   const title = h('strong', {class: 'ui-banner-title', id: `ui-banner-${seq}-title`});
   const text = h('span', {class: 'ui-banner-text'});
   const content = h('div', {class: 'ui-banner-content'}, title, text);
   const actions = h('div', {class: 'ui-banner-actions'});
-  const closeButton = h('button', {type: 'button', class: 'ui-banner-close'}, glyph('x'));
-  const el = h('div', {class: 'ui-banner'}, icon, content, actions, closeButton);
+  const closeButton = h('button', {type: 'button', class: 'ui-banner-close'}, icon('x'));
+  const el = h('div', {class: 'ui-banner'}, toneIcon, content, actions, closeButton);
   closeButton.addEventListener('click', () => p.onDismiss?.());
 
   const renderActions = list => {
@@ -45,7 +46,7 @@ export function Banner(props = {}) {
     applyCommon(el, next, prev);
     el.dataset.tone = next.tone;
     el.setAttribute('role', next.tone === 'error' ? 'alert' : 'status');
-    if (next.tone !== prev.tone) icon.replaceChildren(glyph(ICON[next.tone]));
+    if (next.tone !== prev.tone) toneIcon.replaceChildren(icon(ICON[next.tone]));
     title.textContent = next.title ?? '';
     title.hidden = !next.title;
     if (next.text !== prev.text) setContent(text, next.text);

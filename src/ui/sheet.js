@@ -21,9 +21,10 @@
 import {now} from '../app/clock.js';
 import {pushOverlay} from '../app/dispatch.js';
 import {h} from './h.js';
+import {icon} from './icon.js';
 import {anchorTo} from './position.js';
 import {
-  applyCommon, closeLayersInside, focusInto, glyph, withDefaults, hideLayer, onOutside, pushModalHost, restoreFocus, setContent, showLayer, trackLayer, trapTab, layerHost,
+  applyCommon, closeLayersInside, focusInto, withDefaults, hideLayer, onOutside, pushModalHost, restoreFocus, setContent, showLayer, trackLayer, trapTab, layerHost,
 } from './popover.js';
 import '../styles/primitives/sheet.css';
 
@@ -67,7 +68,7 @@ export function Sheet(props = {}) {
 
   const grabber = h('span', {class: 'ui-sheet-grabber', 'aria-hidden': 'true'});
   const title = h('h2', {class: 'ui-sheet-title', id: titleId});
-  const closeButton = h('button', {type: 'button', class: 'ui-sheet-close'}, glyph('x'));
+  const closeButton = h('button', {type: 'button', class: 'ui-sheet-close'}, icon('x'));
   const head = h('header', {class: 'ui-sheet-head'}, grabber, title, closeButton);
   const body = h('div', {class: 'ui-sheet-body'});
   const el = h(p.modal ? 'dialog' : 'section', {class: 'ui-sheet', tabIndex: -1}, head, body);
