@@ -3,6 +3,17 @@ import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import {GUARD_TOAST, INTENDED_ROUTE_KEY, createRouter, stashIntendedRoute, takeIntendedRoute} from '../src/app/router.js';
 import {signal} from '../src/app/store.js';
 
+// The router falls back to src/stage/session.js when ctx.getSession is absent; the real
+// module needs a signed-in client, so the fallback is exercised against this stand-in.
+const sessionModule = vi.hoisted(() => ({
+  getSession: null,
+  disposeSession: null,
+}));
+vi.mock('../src/stage/session.js', () => ({
+  getSession: (...args) => sessionModule.getSession(...args),
+  disposeSession: (...args) => sessionModule.disposeSession(...args),
+}));
+
 const root = document.documentElement;
 let log, router, outlet, sessions, store, feedback, assign;
 
@@ -325,12 +336,21 @@ describe('sessions', () => {
     expect(log).toEqual(['unmount stage', 'disposeSession s1', 'getSession s2', 'mount stage (s2)']);
   });
 
-  test('without ctx.getSession (before session.js exists) the session is null', async () => {
+  test('without ctx.getSession the router opens and disposes sessions through src/stage/session.js', async () => {
+    const opened = {id: 's1', from: 'session.js'};
+    sessionModule.getSession = vi.fn(async id => { log.push(`module getSession ${id}`); return opened; });
+    sessionModule.disposeSession = vi.fn(async id => { log.push(`module disposeSession ${id}`); });
     router = createRouter({routes: makeRoutes(), outlet, ctx: {store}});
     await router.start();
     await router.navigate('/s/s1');
-    expect(views.stage.instances[0].ctx.session ?? null).toBeNull();
+    expect(sessionModule.getSession).toHaveBeenCalledWith('s1');
+    expect(views.stage.instances[0].ctx.session).toBe(opened);
+    expect(views.stage.instances[0].ctx).not.toHaveProperty('getSession');
     expect(root.dataset.viewReady).toBe('stage');
+    log = [];
+    await router.navigate('/');
+    expect(sessionModule.disposeSession).toHaveBeenCalledWith('s1');
+    expect(log).toEqual(['unmount stage', 'module disposeSession s1', 'mount library']);
   });
 });
 
