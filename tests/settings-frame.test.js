@@ -164,11 +164,52 @@ describe('laptop: 200 px nav + content (split)', () => {
     expect(host.querySelectorAll('.fake-section')).toHaveLength(1);
   });
 
-  test('an unknown or unbuilt section is replaced by /settings', async () => {
-    const {router} = await open('processing');
+  test('an unknown section (not in SECTIONS) is replaced by /settings', async () => {
+    const {router} = await open('nope');
     expect(router.navigate).toHaveBeenCalledWith('/settings', {replace: true});
-    const again = await open('nope');
-    expect(again.router.navigate).toHaveBeenCalledWith('/settings', {replace: true});
+    expect(router.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  // I2a-15: /billing?checkout=success → /settings/plan?checkout=success before SE2 builds Plan.
+  test.each([[1440, 'split', 'h2'], [820, 'stack', 'h1']])(
+    'at %s px a listed section with no module yet keeps its URL and shows "Not built yet" in the pane (D2)', async (width, layout, tag) => {
+      const {modules, log} = fakeModules();
+      const plan = {name: 'settingsPage', path: '/settings/plan', params: {section: 'plan'}, query: {checkout: 'success'}, state: null};
+      const router = fakeRouter();
+      viewport(width);
+      const view = await mount(host, plan, {router, sectionModules: modules, platform: {isDesktopApp: false}, desktop: {available: false}});
+      await flush();
+      expect(router.navigate).not.toHaveBeenCalled();   // the URL and ?checkout=success stay
+      expect(host.querySelector('.settings').dataset).toMatchObject({layout, view: 'detail'});
+      expect(host.querySelector(`.settings-content ${tag}`).textContent).toBe('Plan & storage');
+      const pane = host.querySelector('.settings-section-body [data-placeholder=plan]');
+      expect(pane.textContent).toContain(COPY.notBuilt);
+      expect(pane.textContent).toContain(COPY.notBuiltBody);
+      expect(host.querySelector('.settings-section-body [role=alert]')).toBeNull();
+      expect(document.title).toBe('Plan & storage — Settings — Woodshed');
+      expect(log).toEqual([]);
+      if (layout === 'split') {
+        expect(linkNames()).not.toContain('Plan & storage');   // only built sections are listed
+        expect(links().some(a => a.hasAttribute('aria-current'))).toBe(false);
+        // Moving to a built section from the placeholder renders it, and back again.
+        await view.update(matchOf('account'));
+        expect(host.querySelector('.fake-section').textContent).toBe('account body');
+        expect(host.querySelector('[data-placeholder]')).toBeNull();
+        await view.update(plan);
+        expect(log).toEqual(['load:account', 'render:account', 'destroy:account']);
+        expect(host.querySelector('[data-placeholder=plan]')).not.toBeNull();
+      }
+      view.unmount();
+      expect(document.title).toBe('Woodshed');
+    });
+
+  test('every SECTIONS id without a module (Processing, Plan & storage) stays on its URL', async () => {
+    for (const id of ['processing', 'plan']) {
+      const {router, view} = await open(id);
+      expect(router.navigate).not.toHaveBeenCalled();
+      expect(host.querySelector(`[data-placeholder=${id}]`).textContent).toContain(COPY.notBuilt);
+      view.unmount();
+    }
   });
 
   test('a section that fails to load shows an alert with Try again, which loads it', async () => {

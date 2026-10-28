@@ -45,6 +45,9 @@ export const COPY = Object.freeze({
   loading: 'Loading…',
   loadFailed: 'This section couldn’t open.',
   loadRetry: 'Try again',
+  /** A section whose module arrives in a later wave (D2). */
+  notBuilt: 'Not built yet',
+  notBuiltBody: 'This section arrives in a later build.',
 
   // Every control saves on change (spec §6.2).
   saved: 'Saved',
