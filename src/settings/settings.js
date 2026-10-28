@@ -12,7 +12,10 @@
 // sections of `settingsPage`):
 //   /settings               split: replaced by the first section · stack: the list
 //   /settings/:section      split: nav + that section · stack: the detail page with "‹ Settings"
-//   an unknown section      replaced by /settings
+//   a section not built yet (in SECTIONS, no module until a later wave): keeps its URL and query
+//                           (/settings/plan?checkout=success) and shows "Not built yet" in the
+//                           detail pane (D2; ticket I2a-15). It is not listed in the nav.
+//   an unknown section      (not in SECTIONS, or desktop-only on the web) replaced by /settings
 // History and Back (spec §1.2): on a laptop a section change replaces the URL, so Back leaves
 // Settings for the Library; on iPad portrait the list pushes the detail page, so Back returns to the
 // list. The detail page's "‹ Settings" goes back when the list opened it, else replaces the URL with
@@ -68,6 +71,14 @@ export const sectionPath = id => `./sections/${id}.js`;
 /** The sections that exist (their module is present) and apply here, in spec order. */
 export function availableSections({modules = SECTION_MODULES, desktopApp = false} = {}) {
   return SECTIONS.filter(s => typeof modules[sectionPath(s.id)] === 'function' && (!s.desktopOnly || desktopApp));
+}
+
+/**
+ * The sections a /settings/:section URL may name here: every SECTIONS entry, built or not (an unbuilt
+ * one shows "Not built yet", D2), except a desktop-only one on the web.
+ */
+export function routableSections({desktopApp = false} = {}) {
+  return SECTIONS.filter(s => !s.desktopOnly || desktopApp);
 }
 
 /** History state the list puts on the detail page it opens, so "‹ Settings" can go back to it. */
@@ -197,6 +208,7 @@ export async function mount(el, match, ctx = {}) {
   const modules = ctx.sectionModules ?? SECTION_MODULES;
   const desktopApp = !!(env.platform?.isDesktopApp || env.desktop?.available);
   const sections = availableSections({modules, desktopApp});
+  const routable = routableSections({desktopApp});
   const previousTitle = doc.title;
 
   const scroller = h('div', {class: 'settings-scroller', attrs: {'data-scroller': true}});
@@ -284,12 +296,20 @@ export async function mount(el, match, ctx = {}) {
   async function openSection(id) {
     destroySection();
     const token = loadSeq;
-    const meta = sections.find(s => s.id === id);
+    const meta = routable.find(s => s.id === id);
     frame.heading.textContent = meta.title;
     for (const [key, a] of frame.links) {
       if (key === id) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     }
     doc.title = COPY.sectionDocumentTitle(meta.title);
+    if (typeof modules[sectionPath(id)] !== 'function') {
+      // A section of a later wave (D2): the URL and its query stay, the pane says so.
+      frame.body.replaceChildren(h('div', {class: 'settings-later', attrs: {'data-placeholder': id}},
+        h('p', {class: 'settings-later-kicker'}, COPY.notBuilt),
+        h('p', {class: 'settings-later-body'}, COPY.notBuiltBody)));
+      section = {id, handle: null};
+      return;
+    }
     frame.body.replaceChildren(h('p', {class: 'settings-loading', role: 'status'}, COPY.loading));
     // One broken section (a failed import, no default export, or a render that throws) shows the
     // load-error alert with Try again; it never rejects mount/update, so the nav stays usable.
@@ -324,7 +344,7 @@ export async function mount(el, match, ctx = {}) {
     lastMatch = m;
     const requested = m?.params?.section ?? null;
     const layout = measure();
-    if (requested && !sections.some(s => s.id === requested)) {
+    if (requested && !routable.some(s => s.id === requested)) {
       navigate('/settings', {replace: true});
       return;
     }

@@ -126,6 +126,16 @@
     color: var(--ink-3);
     font-size: var(--fs-14);
   }
+  /* A section of a later build (D2): /settings/plan before SE2. */
+  .settings-later {
+    display: grid;
+    gap: var(--s2);
+    color: var(--ink-2);
+  }
+  .settings-later-kicker {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
   .settings-load-error {
     display: grid;
     justify-items: start;
