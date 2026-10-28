@@ -17,6 +17,7 @@
  */
 
 export const PRACTICE_CAP = 32_768;           // JSON.stringify length; B2 (server and client use this constant)
+/** MAX_SPOTS / MAX_MARKERS are the add limits the UI enforces. Reads never drop live items for them (a merge of two devices may exceed them). */
 export const MAX_SPOTS = 24, MAX_MARKERS = 64, TOMBSTONE_DAYS = 30;
 export const MIN_RATE = 0.25, MAX_RATE = 1.5;
 export const MAX_TRACKS = 8;
@@ -30,6 +31,10 @@ const MAX_TRACK_NAME = 64;
 const MIN_LOOP = 0.02;          // the engine refuses shorter loops (engine.setLoop)
 const SECTION_EPS = 0.01;       // s: a loop "equals" a section within 10 ms
 const BAR_EPS = 1e-3;           // s: a loop end on a bar line belongs to the bar before it
+/** Safety bound per list (live and tombstones each) for hostile input. A blob within PRACTICE_CAP holds far fewer, so stored data never hits it. */
+const MAX_LIST = 1000;
+const V2_KEYS = ['lastAt', 'cue', 'surface', 'anchorBar', 'anchorTime', 'rate', 'lastRate', 'keepPitch', 'loop', 'tracks',
+                 'minusMe', 'onlyMe', 'chartAudio', 'click', 'trainer'] as const;
 
 export type BarRef = {id: string; beat: number; frac?: number};   // measure id, 0-based group index, fraction 0..1 within the group
 export type Spot = {id: string; name: string /* ≤ 60 */; a: number; b: number; aBar?: BarRef; bBar?: BarRef; rate: number;
@@ -126,10 +131,10 @@ export function emptyPractice(): PracticeV2 {
   };
 }
 
-function loopOf(raw: unknown, eachPassDefault: boolean, v1: boolean): Loop {
+function loopOf(raw: unknown, eachPassDefault: boolean, v1: boolean, duration?: number): Loop {
   const loop: Loop = {on: false, a: 0, b: 0, eachPassCount: eachPassDefault, playTimes: 0, between: 'none'};
   if (!isObj(raw)) return loop;
-  let a = time(raw.a) ?? 0, b = time(raw.b) ?? 0;
+  let a = time(raw.a, duration) ?? 0, b = time(raw.b, duration) ?? 0;
   if (b < a) [a, b] = [b, a];
   loop.a = a; loop.b = b;
   loop.on = (v1 ? raw.enabled === true : raw.on === true) && b - a >= MIN_LOOP;
@@ -211,8 +216,13 @@ function newer<T extends {updatedAt: number; deleted?: true}>(a: T, b: T): T {
   return b.deleted && !a.deleted ? b : a;
 }
 
-/** Dedupes by id (newest wins) and caps live items and tombstones separately, keeping the newest of each. */
-function capList<T extends {id: string; updatedAt: number; deleted?: true}>(items: T[], max: number): T[] {
+/**
+ * Dedupes by id (newest wins). Live items and tombstones are each bounded only by the
+ * `MAX_LIST` safety bound (newest kept): dropping a live item would lose data, and
+ * dropping a recent tombstone would let a stale device resurrect the deleted item.
+ * Tombstones expire by age in `prunePractice`.
+ */
+function capList<T extends {id: string; updatedAt: number; deleted?: true}>(items: T[], max = MAX_LIST): T[] {
   const byId = new Map<string, T>();
   for (const item of items) {
     const prev = byId.get(item.id);
@@ -229,11 +239,11 @@ function capList<T extends {id: string; updatedAt: number; deleted?: true}>(item
   return unique.filter(item => keep.has(item));
 }
 
-function spotOf(raw: unknown): Spot | undefined {
+function spotOf(raw: unknown, duration?: number): Spot | undefined {
   if (!isObj(raw)) return undefined;
   const sid = id(raw.id);
   if (!sid) return undefined;
-  let a = time(raw.a), b = time(raw.b);
+  let a = time(raw.a, duration), b = time(raw.b, duration);
   const deleted = raw.deleted === true;
   if (a === undefined || b === undefined) {
     if (!deleted) return undefined;
@@ -256,23 +266,23 @@ function spotOf(raw: unknown): Spot | undefined {
   return spot;
 }
 
-function markerOf(raw: unknown): Marker | undefined {
+function markerOf(raw: unknown, duration?: number): Marker | undefined {
   if (!isObj(raw)) return undefined;
-  const mid = id(raw.id), t = time(raw.t);
+  const mid = id(raw.id), t = time(raw.t, duration);
   if (!mid || t === undefined) return undefined;
   const marker: Marker = {id: mid, t, label: text(raw.label, MAX_NAME) || 'Marker', updatedAt: stamp(raw.updatedAt)};
   if (raw.deleted === true) marker.deleted = true;
   return marker;
 }
 
-function listOf<T extends {id: string; updatedAt: number; deleted?: true}>(raw: unknown, read: (value: unknown) => T | undefined, max: number): T[] {
+function listOf<T extends {id: string; updatedAt: number; deleted?: true}>(raw: unknown, read: (value: unknown, duration?: number) => T | undefined, duration?: number): T[] {
   if (!Array.isArray(raw)) return [];
   const items: T[] = [];
   for (const value of raw) {
-    const item = read(value);
+    const item = read(value, duration);
     if (item) items.push(item);
   }
-  return capList(items, max);
+  return capList(items);
 }
 
 function upgradeV2(raw: Obj, duration: number | undefined, eachPassDefault: boolean): PracticeV2 {
@@ -291,7 +301,7 @@ function upgradeV2(raw: Obj, duration: number | undefined, eachPassDefault: bool
   if (lastRate !== undefined) p.lastRate = lastRate;
   const keepPitch = bool(raw.keepPitch);
   if (keepPitch !== undefined) p.keepPitch = keepPitch;
-  p.loop = loopOf(raw.loop, eachPassDefault, false);
+  p.loop = loopOf(raw.loop, eachPassDefault, false, duration);
   p.tracks = tracksOf(raw.tracks);
   p.minusMe = raw.minusMe === true;
   if (raw.onlyMe === true) p.onlyMe = true;
@@ -300,23 +310,26 @@ function upgradeV2(raw: Obj, duration: number | undefined, eachPassDefault: bool
   const click = clickOf(raw.click);
   if (click) p.click = click;
   p.trainer = trainerOf(raw.trainer);
-  p.spots = listOf(raw.spots, spotOf, MAX_SPOTS);
-  p.markers = listOf(raw.markers, markerOf, MAX_MARKERS);
+  p.spots = listOf(raw.spots, spotOf, duration);
+  p.markers = listOf(raw.markers, markerOf, duration);
   return p;
 }
 
 /** 1.9 blobs: `{loop: {enabled, a, b}, rate, grid, tracks}`. `grid` is dropped (the device pref took `ws.grid`). */
-function upgradeV1(raw: Obj, eachPassDefault: boolean): PracticeV2 {
+function upgradeV1(raw: Obj, duration: number | undefined, eachPassDefault: boolean): PracticeV2 {
   const p = emptyPractice();
   p.rate = rateOf(raw.rate) ?? 1;
-  p.loop = loopOf(raw.loop, eachPassDefault, true);
+  p.loop = loopOf(raw.loop, eachPassDefault, true, duration);
   p.tracks = tracksOf(raw.tracks);
   return p;
 }
 
 /**
  * Reads any stored practice value and returns a sanitised v2 blob.
- * - v2 → a sanitised copy (clamps, caps, drops unknown keys).
+ * - v2 → a sanitised copy (clamps, caps, drops unknown keys). With a `duration`, every time
+ *   (cue, anchor, loop, spots, markers) is clamped to it; a loop that collapses turns off and
+ *   a live spot that collapses is dropped. Live spots and markers are never capped by count
+ *   (`MAX_SPOTS`/`MAX_MARKERS` are add limits), and recent tombstones are kept.
  * - v1 (no `v`, or `v: 1`) → v2 with `emptyPractice` defaults; `grid` is dropped.
  * - anything else → `emptyPractice()`.
  * `click` is kept when present; otherwise it comes from the legacy click fields
@@ -330,7 +343,7 @@ export function upgradePractice(raw: unknown, {duration, legacyTempo, defaults}:
     const eachPassDefault = isObj(defaults) && typeof defaults.eachPassCount === 'boolean' ? defaults.eachPassCount : true;
     let p: PracticeV2;
     if (isObj(raw) && raw.v === 2) p = upgradeV2(raw, span, eachPassDefault);
-    else if (isObj(raw) && (raw.v === undefined || raw.v === 1)) p = upgradeV1(raw, eachPassDefault);
+    else if (isObj(raw) && (raw.v === undefined || raw.v === 1)) p = upgradeV1(raw, span, eachPassDefault);
     else {
       p = emptyPractice();
       p.loop.eachPassCount = eachPassDefault;
@@ -357,26 +370,32 @@ function mergeList<T extends {id: string; updatedAt: number; deleted?: true}>(lo
 
 /**
  * Merges this device's practice with the server's before a save.
+ * - `server` may be any stored value (a 1.9 v1 blob until the backfill ran): it is read
+ *   through `upgradePractice` first, so the result is always a clean v2 blob. A v1 loop takes
+ *   local's `eachPassCount` (local was upgraded with the account default).
  * - `spots` and `markers`: union by id; per id the larger `updatedAt` wins; ties → the tombstone wins.
- * - Every other top-level key: the local value when the key is in `dirty`, else the server value.
+ * - Every other v2 top-level key: the local value when the key is in `dirty`, else the server value.
+ *   `click` is the exception: when the server has none, local's is kept (click presence only moves
+ *   one way, D51; local may have built it from the legacy tempo fields). Unknown keys are dropped.
  * - `lastAt`: the larger of the two.
  */
-export function mergePractice(local: PracticeV2, server: PracticeV2 | null, dirty: Set<string>): PracticeV2 {
-  if (!server) return copy(local);
-  const out: Record<string, unknown> = {};
-  const keys = new Set([...Object.keys(server), ...Object.keys(local)]);
-  for (const key of keys) {
-    if (key === 'v' || key === 'spots' || key === 'markers' || key === 'lastAt') continue;
-    const source = dirty.has(key) ? local : server;
+export function mergePractice(local: PracticeV2, server: unknown, dirty: Set<string>): PracticeV2 {
+  if (server === null || server === undefined) return copy(local);
+  const eachPassCount = typeof local?.loop?.eachPassCount === 'boolean' ? local.loop.eachPassCount : undefined;
+  const upgraded = upgradePractice(server, {defaults: eachPassCount === undefined ? undefined : {eachPassCount}});
+  const out: Record<string, unknown> = {v: 2};
+  for (const key of V2_KEYS) {
+    if (key === 'lastAt') continue;
+    let source = dirty.has(key) ? local : upgraded;
+    if (key === 'click' && upgraded.click === undefined) source = local;
     const value = (source as Record<string, unknown>)[key];
     if (value !== undefined) out[key] = copy(value);
   }
   const merged = out as PracticeV2;
-  merged.v = 2;
-  const lastAt = Math.max(num(local.lastAt) ?? -1, num(server.lastAt) ?? -1);
+  const lastAt = Math.max(num(local.lastAt) ?? -1, num(upgraded.lastAt) ?? -1);
   if (lastAt >= 0) merged.lastAt = lastAt;
-  merged.spots = mergeList(local.spots ?? [], server.spots ?? []);
-  merged.markers = mergeList(local.markers ?? [], server.markers ?? []);
+  merged.spots = mergeList(local.spots ?? [], upgraded.spots);
+  merged.markers = mergeList(local.markers ?? [], upgraded.markers);
   return merged;
 }
 
@@ -453,9 +472,11 @@ function barIndexAt(bars: SummaryBar[], t: number): number {
   return found;
 }
 
+/** Undefined (→ 'm:ss–m:ss') when the loop reaches outside the listed bars. */
 function barsLabel(bars: SummaryBar[], a: number, b: number): string | undefined {
-  const valid = bars.filter(bar => num(bar.t0) !== undefined && num(bar.t1) !== undefined);
+  const valid = bars.filter(bar => isObj(bar) && num(bar.t0) !== undefined && num(bar.t1) !== undefined);
   if (!valid.length) return undefined;
+  if (a < valid[0].t0 - BAR_EPS || b > valid[valid.length - 1].t1 + BAR_EPS) return undefined;
   const first = valid[barIndexAt(valid, a + BAR_EPS)];
   const last = valid[barIndexAt(valid, Math.max(a + BAR_EPS, b - BAR_EPS))];
   const x = first.display, y = last.display;
@@ -464,23 +485,24 @@ function barsLabel(bars: SummaryBar[], a: number, b: number): string | undefined
   return x === y ? `Bar ${x} loop` : `Bars ${x}–${y} loop`;
 }
 
-function loopLabelOf(p: PracticeV2, map: SummaryMap | null): string {
+function loopLabelOf(p: PracticeV2, map: SummaryMap | SummarySection[] | null): string {
   const {a, b} = p.loop;
-  const sections = map && Array.isArray(map.sections) ? map.sections : [];
-  const section = sections.find(s => Math.abs(s.t0 - a) <= SECTION_EPS && Math.abs(s.t1 - b) <= SECTION_EPS);
+  const sections = Array.isArray(map) ? map : map && Array.isArray(map.sections) ? map.sections : [];
+  const section = sections.find(s => isObj(s) && Math.abs(s.t0 - a) <= SECTION_EPS && Math.abs(s.t1 - b) <= SECTION_EPS);
   const name = section && (section.name || section.label);
   if (name) return `${name} loop`;
-  const bars = map && Array.isArray(map.bars) ? barsLabel(map.bars, a, b) : undefined;
+  const bars = map && !Array.isArray(map) && Array.isArray(map.bars) ? barsLabel(map.bars, a, b) : undefined;
   return bars ?? `${formatClock(a)}–${formatClock(b)} loop`;
 }
 
 /**
  * The Library's practice summary (D5).
  * `loopLabel` (only while the loop is on): '{section} loop' when the loop equals
- * a section, else 'Bars x–y loop' when `map.bars` is given, else 'm:ss–m:ss loop'.
+ * a section, else 'Bars x–y loop' when `map.bars` is given and covers the loop, else 'm:ss–m:ss loop'.
+ * `map` may also be the section list itself (`sectionsOf(...)`, as §6.3 calls it).
  * `spots` are the 3 most recently practised live spots (`lastAt` desc, then `updatedAt` desc).
  */
-export function summarize(p: PracticeV2, map: SummaryMap | null): PracticeSummary {
+export function summarize(p: PracticeV2, map: SummaryMap | SummarySection[] | null): PracticeSummary {
   const live = (p.spots ?? []).filter(s => !s.deleted);
   const summary: PracticeSummary = {
     rate: p.rate, minusMe: p.minusMe === true, spotCount: live.length,

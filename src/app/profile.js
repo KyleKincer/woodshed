@@ -19,7 +19,8 @@ export const STEM_FOR = Object.freeze({
 });
 
 const LABEL = {drums: 'Drums', bass: 'Bass', guitar: 'Guitar', keys: 'Keys', vocals: 'Vocals', other: 'Other'};
-const STEM_MODES = ['full', 'six', 'drums', 'vocals', 'bass'];
+/** The only stem modes that can be an Add default; two-part splits never are. */
+const DEFAULT_STEM_MODES = ['full', 'six'];
 const DEFAULT_PRESET = 'balanced';
 
 /** The profile's instruments: known names only, deduplicated, in the order the user chose them. */
@@ -60,15 +61,19 @@ export function myStems(profile, stemNames) {
 }
 
 /**
- * The Add sheet's default split. The settings' stem mode wins once the user saved one with
- * "Use these for future songs" (any mode other than the stock `full`); otherwise guitar or keys
- * in the profile → `six`, else `full`. The default is never a two-part mode. Preset: the
- * settings' preset, else `balanced`.
+ * The Add sheet's default split (§2.22, spec §3.2). Never a two-part mode: a stored
+ * `drums`/`vocals`/`bass` (which 1.9 Settings → Processing could write) is ignored.
+ * The stored stem mode wins only when the user saved it with "Use these for future songs":
+ * `settings.addDefaultsSaved === true`, or a stored `six` (1.9 could not store `six`, so it
+ * can only come from a 2.0 save). A legacy `full` without the marker is not a choice, so the
+ * profile rule applies: guitar or keys → `six`, else `full`. Preset: the settings' preset,
+ * else `balanced`.
  */
 export function addDefaults(profile, settings) {
   const saved = settings && typeof settings === 'object' ? settings : {};
   const preset = typeof saved.preset === 'string' && saved.preset ? saved.preset : DEFAULT_PRESET;
-  if (STEM_MODES.includes(saved.stemMode) && saved.stemMode !== 'full') return {stemMode: saved.stemMode, preset};
+  const chosen = saved.addDefaultsSaved === true || saved.stemMode === 'six';
+  if (chosen && DEFAULT_STEM_MODES.includes(saved.stemMode)) return {stemMode: saved.stemMode, preset};
   const instruments = instrumentsOf(profile);
   const stemMode = instruments.includes('guitar') || instruments.includes('keys') ? 'six' : 'full';
   return {stemMode, preset};

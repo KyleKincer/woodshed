@@ -101,10 +101,23 @@ describe('addDefaults', () => {
     }
   });
 
-  test('saved stem modes ("Use these for future songs") win over the profile', () => {
+  test('a saved full/six ("Use these for future songs") wins over the profile', () => {
     expect(addDefaults(profile('drums'), {...stock, stemMode: 'six'})).toEqual({stemMode: 'six', preset: 'balanced'});
-    expect(addDefaults(profile('guitar'), {...stock, stemMode: 'drums'})).toEqual({stemMode: 'drums', preset: 'balanced'});
-    expect(addDefaults(profile(), {...stock, stemMode: 'vocals', preset: 'studio'})).toEqual({stemMode: 'vocals', preset: 'studio'});
+    expect(addDefaults(profile('guitar'), {...stock, stemMode: 'full', addDefaultsSaved: true})).toEqual({stemMode: 'full', preset: 'balanced'});
+    expect(addDefaults(profile('drums'), {stemMode: 'six', preset: 'studio', addDefaultsSaved: true})).toEqual({stemMode: 'six', preset: 'studio'});
+  });
+
+  test('a stored two-part mode (1.9 Settings → Processing) is never the default', () => {
+    for (const stemMode of ['drums', 'vocals', 'bass']) {
+      expect(addDefaults(profile('guitar'), {...stock, stemMode})).toEqual({stemMode: 'six', preset: 'balanced'});
+      expect(addDefaults(profile('drums'), {...stock, stemMode, addDefaultsSaved: true})).toEqual({stemMode: 'full', preset: 'balanced'});
+      expect(addDefaults(profile(), {stemMode, preset: 'studio'})).toEqual({stemMode: 'full', preset: 'studio'});
+    }
+  });
+
+  test('a legacy full without the saved marker is not a choice: the profile rule applies', () => {
+    expect(addDefaults(profile('keys'), {stemMode: 'full', preset: 'balanced'})).toEqual({stemMode: 'six', preset: 'balanced'});
+    expect(addDefaults(profile('guitar'), {stemMode: 'full', addDefaultsSaved: 'yes'})).toEqual({stemMode: 'six', preset: 'balanced'});
   });
 
   test('the saved preset is kept; an unknown stem mode falls back to the profile rule', () => {

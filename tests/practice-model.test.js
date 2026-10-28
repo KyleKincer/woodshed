@@ -205,17 +205,41 @@ describe('upgradePractice: v2 sanitising', () => {
     expect(long.note).toHaveLength(280);
   });
 
-  test('spots and markers are capped per kind, keeping the newest', () => {
+  test('reads never drop live spots or markers by count, and keep recent tombstones', () => {
     const spots = Array.from({length: 30}, (_, i) => spot(`s${i}`, {updatedAt: i}))
       .concat(Array.from({length: 30}, (_, i) => spot(`d${i}`, {updatedAt: i, deleted: true})));
     const markers = Array.from({length: 70}, (_, i) => marker(`m${i}`, {updatedAt: 100 - i}));
     const out = upgradePractice({v: 2, spots, markers});
-    expect(out.spots.filter(s => !s.deleted)).toHaveLength(MAX_SPOTS);
-    expect(out.spots.filter(s => s.deleted)).toHaveLength(MAX_SPOTS);
+    expect(out.spots.filter(s => !s.deleted)).toHaveLength(30);
+    expect(out.spots.filter(s => s.deleted)).toHaveLength(30);
+    expect(out.markers.map(m => m.id)).toEqual(markers.map(m => m.id)); // input order kept
+    expect(MAX_SPOTS).toBeLessThan(30);
+    expect(MAX_MARKERS).toBeLessThan(70);
+  });
+
+  test('hostile lists are bounded by a safety cap far above anything a capped blob holds', () => {
+    const spots = Array.from({length: 1500}, (_, i) => spot(`s${i}`, {updatedAt: i}));
+    const out = upgradePractice({v: 2, spots});
+    expect(out.spots).toHaveLength(1000);
+    expect(out.spots.some(s => s.id === 's1499')).toBe(true);
     expect(out.spots.some(s => s.id === 's0')).toBe(false);
-    expect(out.spots.some(s => s.id === 's29')).toBe(true);
-    expect(out.markers).toHaveLength(MAX_MARKERS);
-    expect(out.markers.map(m => m.id)).toEqual(markers.slice(0, 64).map(m => m.id)); // input order kept
+    // the smallest possible stored tombstone still leaves a capped blob under the safety bound
+    const tiny = {id: 'a', t: 0, label: 'M', updatedAt: 0, deleted: true};
+    expect(Math.floor(PRACTICE_CAP / JSON.stringify(tiny).length)).toBeLessThan(1000);
+  });
+
+  test('with a duration, loop, spot and marker times are clamped; collapsed loops turn off, collapsed spots go', () => {
+    const out = upgradePractice({
+      v: 2, cue: 500, loop: {on: true, a: 150, b: 500},
+      spots: [spot('in', {a: 190, b: 260}), spot('past', {a: 300, b: 400}), spot('gone', {a: 300, b: 400, deleted: true})],
+      markers: [marker('m', {t: 900})],
+    }, {duration: 200});
+    expect(out.cue).toBe(200);
+    expect(out.loop).toMatchObject({on: true, a: 150, b: 200});
+    expect(out.spots).toEqual([spot('in', {a: 190, b: 200}), spot('gone', {a: 200, b: 200, deleted: true})]);
+    expect(out.markers).toEqual([marker('m', {t: 200})]);
+    expect(upgradePractice({v: 2, loop: {on: true, a: 400, b: 500}}, {duration: 200}).loop).toMatchObject({on: false, a: 200, b: 200});
+    expect(upgradePractice({loop: {enabled: true, a: 400, b: 500}}, {duration: 200}).loop).toMatchObject({on: false, a: 200, b: 200});
   });
 
   test('bar refs need an id and a beat', () => {
@@ -325,6 +349,50 @@ describe('mergePractice', () => {
     expect(JSON.stringify([local, server])).toBe(before);
     expect(merged.v).toBe(2);
   });
+  test('a raw 1.9 server value is upgraded first: the enabled loop and a local click survive', () => {
+    const rawServer = {loop: {enabled: true, a: 10, b: 20}, rate: 0.8, grid: {snap: true}, tracks: [{name: 'drums', volume: 0.5, muted: false, soloed: false}]};
+    const legacyTempo = {countIn: true, countInLength: 2};
+    const local = upgradePractice(rawServer, {legacyTempo, defaults: {eachPassCount: false}});
+    local.cue = 12;
+    const merged = mergePractice(local, rawServer, new Set(['cue']));
+    expect(merged).not.toHaveProperty('grid');
+    expect(merged.loop).toEqual({on: true, a: 10, b: 20, eachPassCount: false, playTimes: 0, between: 'none'});
+    expect(merged.cue).toBe(12);
+    expect(merged.rate).toBe(0.8);
+    expect(merged.click).toEqual(local.click);
+    expect(merged.click.countIn).toEqual({on: true, length: 2, unit: 'bars'});
+    expect(upgradePractice(merged)).toEqual(merged);
+    expect(upgradePractice(merged).loop.on).toBe(true);
+  });
+
+  test('a server click wins when not dirty; unknown local keys are dropped', () => {
+    const serverClick = {countIn: {on: false, length: 1, unit: 'bars'}, mode: 'always', accent: true, volume: 0.5, preRoll: false};
+    const localClick = {...serverClick, mode: 'off'};
+    const local = {...v2({click: localClick}), junk: 1};
+    expect(mergePractice(local, v2({click: serverClick}), new Set()).click).toEqual(serverClick);
+    expect(mergePractice(local, v2({click: serverClick}), new Set(['click'])).click).toEqual(localClick);
+    expect(mergePractice(local, v2(), new Set(['junk']))).not.toHaveProperty('junk');
+    expect(mergePractice(v2(), 'garbage', new Set())).toEqual(v2());
+  });
+
+  test('25+ recent tombstones survive a read and still beat an older live copy (no resurrection)', () => {
+    const dead = Array.from({length: 30}, (_, i) => spot(`t${i}`, {updatedAt: NOW - i * 1000, deleted: true}));
+    const server = upgradePractice({v: 2, spots: dead});
+    expect(server.spots).toHaveLength(30);
+    const stale = v2({spots: Array.from({length: 24}, (_, i) => spot(`t${i}`, {updatedAt: NOW - DAY}))});
+    const merged = mergePractice(stale, server, new Set());
+    expect(merged.spots.filter(s => !s.deleted)).toEqual([]);
+    expect(prunePractice(merged, PRACTICE_CAP, NOW).value.spots.filter(s => !s.deleted)).toEqual([]);
+  });
+
+  test('a union over MAX_SPOTS keeps every live spot through prune and the next read', () => {
+    const L = v2({spots: Array.from({length: 20}, (_, i) => spot(`l${i}`, {updatedAt: i}))});
+    const S = v2({spots: Array.from({length: 20}, (_, i) => spot(`s${i}`, {updatedAt: i}))});
+    const saved = prunePractice(mergePractice(L, S, new Set()), PRACTICE_CAP, NOW).value;
+    expect(saved.spots).toHaveLength(40);
+    expect(upgradePractice(saved).spots).toHaveLength(40);
+    expect(upgradePractice(saved)).toEqual(saved);
+  });
 });
 
 describe('prunePractice', () => {
@@ -431,6 +499,12 @@ describe('summarize', () => {
     ['from the pickup', loop(0, 9), {sections: [], bars: pickupBars}, 'Pickup–bar 4 loop'],
     ['the pickup alone', loop(0, 1), {sections: [], bars: pickupBars}, 'Pickup loop'],
     ['times when there are no bars', loop(31.2, 41), {sections}, '0:31–0:41 loop'],
+    ['before the first bar → times', loop(0, 14), {sections: [], bars: pickupBars.slice(1)}, '0:00–0:14 loop'],
+    ['past the last bar → times', loop(90, 100), {sections: [], bars: pickupBars}, '1:30–1:40 loop'],
+    ['ending on the last bar line still names bars', loop(79, 81), {sections: [], bars: pickupBars}, 'Bar 40 loop'],
+    ['the section list itself (sectionsOf form)', loop(24, 40), sections, 'Chorus loop'],
+    ['a section list with a display name', loop(56, 72), sections, 'Chorus 2 loop'],
+    ['a section list that does not match → times', loop(25, 41), sections, '0:25–0:41 loop'],
     ['times on an unmapped song', loop(65, 125.9), null, '1:05–2:05 loop'],
   ])('loop label: %s', (_, l, map, label) => {
     expect(summarize(v2({loop: l}), map).loopLabel).toBe(label);
