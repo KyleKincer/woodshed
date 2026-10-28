@@ -5,26 +5,32 @@
 //   render(container, {session, close, layout?, registry?}) → {el, destroy()}
 //     session   the song session (transport, map, position, practice, frame)
 //     close     closes the sheet (sheets/host.js)
+//     registry  the command registry (default the app registry): presets run `speed.set {rate}`,
+//               −1 / +1 `speed.downFine` / `speed.upFine`, Start / Stop `trainer.toggle` (§3.1); each
+//               control's disabled state and reason come from `registry.state(id, context({args}))`
 //     layout    'band' | 'rail' (default: read from the sheet's presentation: a bottom sheet is
 //               the band's, a popover the rail's). On the band a preset tap applies the speed and
 //               closes the sheet (D59); ±1, Keep pitch and the trainer never close it.
 //
-// Every change goes through the transport, so it is one practice-undo step, saved with the song
-// and applied to the engine (the speed range is 25–150%, D30). The trainer steppers edit a draft
-// that Start trainer uses (`transport.startTrainer(cfg)`, rule 11); while the trainer runs, the
-// draft waits for the next start. "Trains on" names the loop when it is on, else the current
+// Every change goes through the transport (through those commands, or `setKeepPitch`), so it is
+// one practice-undo step, saved with the song and applied to the engine (the speed range is
+// 25–150%, D30). The trainer steppers edit a draft that Start trainer uses (`trainer.toggle` with
+// the draft as args, rule 11); while the trainer runs, the draft waits for the next start. The
+// draft always holds what the steppers show: a stored or palette trainer off the steppers' grid
+// (72%, 20 passes) is snapped to it (`snapDraft`), so the plan line and the next start match. "Trains on" names the loop when it is on, else the current
 // section, else the whole song (D28).
 //
 // Pure helpers (exported for tests): trainsOnText(session, snapshot), bpmText(session, rate, t),
-// draftOf(session, snapshot).
+// draftOf(session, snapshot), snapDraft(draft).
 
 import '../../styles/views/stage/sheets-speed.css';
 import {h} from '../../ui/h.js';
 import {Button} from '../../ui/button.js';
 import {Toggle} from '../../ui/toggle.js';
-import {Stepper} from '../../ui/stepper.js';
-import {MIN_RATE, MAX_RATE} from '../../../shared/practice.ts';
+import {Stepper, snapValue} from '../../ui/stepper.js';
+import {registry as appRegistry} from '../../app/commands.js';
 import {TRAINER_DEFAULT, trainerRates} from '../transport.js';
+import '../transport-commands.js';   // registers speed.set, speed.downFine / upFine and trainer.toggle
 import {formatTenths} from '../position.js';
 import {COPY, PRESETS, TRAINER_RANGE} from './sheets-a.copy.js';
 
@@ -45,13 +51,16 @@ export function sheetLayout(container, layout) {
   return host?.getAttribute('data-presentation') === 'popover' ? 'rail' : 'band';
 }
 
-/** '84 bpm' for the tempo at `t` × rate on a mapped song, else '' (no bar grid, no bpm). */
+/**
+ * '84 bpm' for the felt tempo at the playhead `t` × rate on a mapped song, else '' (no bar grid, no
+ * bpm). The same reading as the HUD's speed sub-line (hud.js): `map.bpmAt(map.positionAt(t))`, so a
+ * tempo ramp reads the same in both.
+ */
 export function bpmText(session, rate, t) {
   const map = session?.map;
-  if (!map?.isReal || !map.bars?.length) return '';
-  const bar = map.bars[map.barIndexAt(Number.isFinite(t) ? t : 0)];
-  const bpm = bar?.bpm ?? bar?.qpm;
-  return Number.isFinite(bpm) ? S.bpm(Math.round(bpm * (Number.isFinite(rate) ? rate : 1))) : '';
+  if (!map?.isReal || !map.bars?.length || typeof map.bpmAt !== 'function' || typeof map.positionAt !== 'function') return '';
+  const bpm = map.bpmAt(map.positionAt(Math.max(0, Number.isFinite(t) ? t : 0)));
+  return Number.isFinite(bpm) && bpm > 0 ? S.bpm(Math.round(bpm * (Number.isFinite(rate) ? rate : 1))) : '';
 }
 
 /** 'bars 13–20' / 'bar 13' / 'pickup–bar 4' for [a, b) on the map. */
@@ -86,8 +95,24 @@ export function trainsOnText(session, snapshot) {
   return S.wholeSong;
 }
 
-/** The trainer configuration the steppers start from, in percent: the running one, else the song's, else the default. */
+const FIELD_RANGE = Object.freeze({start: TRAINER_RANGE.rate, end: TRAINER_RANGE.rate, step: TRAINER_RANGE.step, passes: TRAINER_RANGE.passes});
+
+/** A draft (percent) on the steppers' grid: each field clamped and snapped exactly as its Stepper shows it. */
+export function snapDraft(draft) {
+  const out = {};
+  for (const [key, range] of Object.entries(FIELD_RANGE)) out[key] = snapValue(draft[key], range);
+  return out;
+}
+
+/**
+ * The trainer configuration the steppers start from, in percent and on the steppers' grid: the
+ * running one, else the song's, else the default.
+ */
 export function draftOf(session, snapshot) {
+  return snapDraft(rawDraftOf(session, snapshot));
+}
+
+function rawDraftOf(session, snapshot) {
   const cfg = snapshot?.trainer ?? read(session?.practice?.value)?.trainer ?? TRAINER_DEFAULT;
   const num = (v, d) => (Number.isFinite(v) ? v : d);
   return {
@@ -102,13 +127,17 @@ const cfgOf = (draft) => ({start: draft.start / 100, end: draft.end / 100, step:
 const sameDraft = (a, b) => a.start === b.start && a.end === b.end && a.step === b.step && a.passes === b.passes;
 
 /** The Speed sheet (see the header). */
-export function render(container, {session, close, layout = null} = {}) {
+export function render(container, {session, close, layout = null, registry = appRegistry} = {}) {
   if (!session?.transport) throw new TypeError('speed sheet: a session with a transport is required');
   const transport = session.transport;
   const id = `sheet-speed-${++seq}`;
   const offs = [];
   const parts = [];
   const snap = () => read(transport.snapshot) ?? {};
+  /** A command's state for these args (§3.1; the I1b handoff's per-option rule). */
+  const stateOf = (cmd, args) => registry.state(cmd, registry.context(args === undefined ? {} : {args}));
+  const run = (cmd, args) => registry.run(cmd, {source: 'pointer', ...(args === undefined ? {} : {args})});
+  const presetArgs = (n) => ({rate: n / 100});
 
   // ---- the value ---------------------------------------------------------------------------------------------
   const value = h('span', {class: 'sheet-speed-value tabular', id: `${id}-value`});
@@ -120,7 +149,7 @@ export function render(container, {session, close, layout = null} = {}) {
     const b = Button({label: S.preset(n), size: 'lg', variant: 'secondary', className: 'sheet-speed-preset', pressed: false,
       dataset: {preset: String(n)},
       onClick: () => {
-        transport.setSpeed(n / 100, {coalesce: false});
+        if (!run('speed.set', presetArgs(n))) return;
         if (sheetLayout(container, layout) === 'band') close?.();
       }});
     parts.push(b);
@@ -129,8 +158,8 @@ export function render(container, {session, close, layout = null} = {}) {
   const presets = h('div', {class: 'sheet-speed-presets', role: 'group', attrs: {'aria-label': S.presets}}, presetButtons.map((x) => x.b.el));
 
   // ---- fine −1 / +1 ------------------------------------------------------------------------------------------
-  const slower = Button({label: S.slower, size: 'lg', className: 'sheet-speed-fine-button', onClick: () => transport.nudgeSpeed(-1)});
-  const faster = Button({label: S.faster, size: 'lg', className: 'sheet-speed-fine-button', onClick: () => transport.nudgeSpeed(1)});
+  const slower = Button({label: S.slower, command: 'speed.downFine', registry, size: 'lg', className: 'sheet-speed-fine-button'});
+  const faster = Button({label: S.faster, command: 'speed.upFine', registry, size: 'lg', className: 'sheet-speed-fine-button'});
   parts.push(slower, faster);
   const fine = h('div', {class: 'sheet-speed-fine', role: 'group', attrs: {'aria-label': S.fine}}, slower.el, faster.el);
 
@@ -166,8 +195,8 @@ export function render(container, {session, close, layout = null} = {}) {
   const pending = h('p', {class: 'sheet-speed-hint'}, S.pendingChanges);
   const trainerButton = Button({label: S.startTrainer, size: 'lg', variant: 'primary', className: 'sheet-speed-trainer-button',
     onClick: () => {
-      if (snap().trainer) transport.stopTrainer();
-      else transport.startTrainer(cfgOf(draft));
+      // trainer.toggle: with a configuration it starts one; without, it stops the running trainer.
+      run('trainer.toggle', snap().trainer ? undefined : cfgOf(draft));
       update();
     }});
   parts.push(trainerButton);
@@ -201,9 +230,14 @@ export function render(container, {session, close, layout = null} = {}) {
     value.textContent = S.percent(shown);
     value.dataset.at100 = String(shown === 100);
     updateBpm();
-    for (const {n, b} of presetButtons) b.set({pressed: n === shown});
-    slower.set({disabled: rate <= MIN_RATE + EPS, disabledReason: rate <= MIN_RATE + EPS ? S.slowest : null});
-    faster.set({disabled: rate >= MAX_RATE - EPS, disabledReason: rate >= MAX_RATE - EPS ? S.fastest : null});
+    for (const {n, b} of presetButtons) {
+      const st = stateOf('speed.set', presetArgs(n));
+      b.set({pressed: n === shown, disabled: !st?.enabled, disabledReason: st?.enabled ? null : st?.reason ?? null});
+    }
+    for (const [button, cmd] of [[slower, 'speed.downFine'], [faster, 'speed.upFine']]) {
+      const st = stateOf(cmd);
+      button.set({disabled: !st?.enabled, disabledReason: st?.reason ?? null});
+    }
     keepPitch.set({pressed: !!s.keepPitch});
 
     const running = s.trainer ?? null;
@@ -218,13 +252,17 @@ export function render(container, {session, close, layout = null} = {}) {
       progress.hidden = true;
       progress.textContent = '';
     }
-    const runningDraft = running ? draftOf(session, s) : null;
+    // Against the running configuration as stored (off-grid values included): the note says when the next start differs.
+    const runningDraft = running ? rawDraftOf(session, s) : null;
     pending.hidden = !running || sameDraft(runningDraft, draft);
-    trainerButton.set({label: running ? S.stopTrainer : S.startTrainer, variant: running ? 'secondary' : 'primary'});
+    const trainerState = stateOf('trainer.toggle', running ? undefined : cfgOf(draft));
+    trainerButton.set({label: running ? S.stopTrainer : S.startTrainer, variant: running ? 'secondary' : 'primary',
+      disabled: !trainerState?.enabled, disabledReason: trainerState?.reason ?? null});
     trainer.dataset.running = String(!!running);
   }
 
   offs.push(transport.snapshot.subscribe(() => update()));
+  if (typeof registry.onChange === 'function') offs.push(registry.onChange(() => update()));
   if (session.position?.revision?.subscribe) offs.push(session.position.revision.subscribe(() => update()));
   if (typeof session.frame?.subscribe === 'function') {
     offs.push(session.frame.subscribe((f) => {

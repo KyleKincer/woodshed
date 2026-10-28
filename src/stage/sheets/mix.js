@@ -12,7 +12,11 @@
 //
 //   render(container, {session, close, layout?, registry?, account?, desktop?}) → {el, destroy()}
 //     layout     'band' | 'rail' (default: from the sheet's presentation; a popover is the rail's)
-//     registry   for the Re-split button (song.resplit); default the app registry
+//     registry   the command registry (default the app registry): Minus me, Only me and Full mix
+//                are `mix.minusMe` / `mix.onlyMe` / `mix.full` (their key-caps are the commands'
+//                keys), Chart playback runs `mix.chartAudio {level}` with each option checked and
+//                disabled by `registry.state(id, context({args}))` (§3.1, the I1b handoff), and
+//                Re-split is `song.resplit`
 //     account    {value | profile, patch(partial)}; default src/app/account.js. The picker writes
 //                `account.patch({profile})`; the transport follows the profile on its own
 //     desktop    {available}; default src/app/desktop.js
@@ -21,7 +25,8 @@
 // level drags coalesce per stem). When Minus me / Only me find no stem for the player (the
 // transport's 'mix-sheet' event opens this sheet, which is already open), the toggles are
 // unavailable and the picker opens so the player can say what they play. A read-only (shared)
-// song keeps the mix controls but shows neither the picker nor Re-split.
+// song keeps the mix controls but shows neither the picker nor Re-split, and its no-stem note
+// keeps only the plain fact (no "choose" prompt, no "Re-split …" sentence).
 //
 // Pure helpers (exported for tests): padState(track), mixNotes(profile, stems).
 
@@ -38,7 +43,7 @@ import {StemPad} from '../../ui/stem-pad.js';
 import {InlineStatus} from '../../ui/status.js';
 import {InstrumentPicker, normaliseProfile} from '../../onboarding/instruments.js';
 import {INSTRUMENT_LABELS} from '../../onboarding/onboarding.copy.js';
-import {stemLabel} from '../transport-commands.js';
+import {stemLabel} from '../transport-commands.js';   // also registers the mix.* commands
 import {COPY} from './sheets-a.copy.js';
 
 const M = COPY.mix;
@@ -103,6 +108,9 @@ export function render(container, {session, close, layout = null, registry = app
   const offs = [];
   const parts = [];
   const snap = () => read(transport.snapshot) ?? {};
+  /** A command's state for these args (§3.1; the I1b handoff's per-option rule). */
+  const stateOf = (cmd, args) => registry.state(cmd, registry.context(args === undefined ? {} : {args}));
+  const run = (cmd, args) => registry.run(cmd, {source: 'pointer', ...(args === undefined ? {} : {args})});
   const mixOf = () => snap().mix ?? {tracks: [], minusMe: false, onlyMe: false, mine: [], chartAudio: 'off'};
   const writable = !session.readOnly;
   const onDesktop = () => !!desktop?.available;
@@ -112,12 +120,12 @@ export function render(container, {session, close, layout = null, registry = app
 
   // ---- top row -----------------------------------------------------------------------------------------------
   const noteId = `${id}-note`;
-  const minusMe = Toggle({label: M.minusMe(''), size: 'lg', className: 'sheet-mix-minus-me', kbd: 'KeyM',
-    onChange: (pressed) => { transport.minusMe(pressed); update(); }});
-  const onlyMe = Toggle({label: M.onlyMe, size: 'lg', className: 'sheet-mix-only-me', kbd: 'Shift+KeyM',
-    onChange: (pressed) => { transport.onlyMe(pressed); update(); }});
-  const fullMix = Button({label: M.fullMix, size: 'lg', className: 'sheet-mix-full', kbd: 'Digit0',
-    onClick: () => { transport.fullMix(); update(); }});
+  const minusMe = Toggle({label: M.minusMe(''), command: 'mix.minusMe', registry, icon: '', kbd: true, size: 'lg',
+    className: 'sheet-mix-minus-me', pressed: !!stateOf('mix.minusMe')?.checked, onChange: () => update()});
+  const onlyMe = Toggle({label: M.onlyMe, command: 'mix.onlyMe', registry, icon: '', kbd: true, size: 'lg',
+    className: 'sheet-mix-only-me', pressed: !!stateOf('mix.onlyMe')?.checked, onChange: () => update()});
+  const fullMix = Button({label: M.fullMix, command: 'mix.full', registry, icon: '', kbd: true, size: 'lg', className: 'sheet-mix-full',
+    onClick: () => update()});
   const iPlay = Button({label: M.iPlay(''), size: 'lg', className: 'sheet-mix-i-play', iconEnd: 'chevron-down',
     attrs: {'aria-expanded': 'false', 'aria-controls': `${id}-picker`},
     onClick: () => { pickerOpen = !pickerOpen; update(); }});
@@ -186,9 +194,16 @@ export function render(container, {session, close, layout = null, registry = app
   }
 
   // ---- chart playback ----------------------------------------------------------------------------------------
-  const chart = Segmented({label: M.chartAudio, size: 'md', className: 'sheet-mix-chart', value: mixOf().chartAudio ?? 'off',
-    options: CHART_LEVELS.map((level) => ({value: level, label: M.chartLevels[level]})),
-    onChange: (level) => { transport.setChartAudio(level); update(); }});
+  const chartOptions = () => CHART_LEVELS.map((level) => {
+    const st = stateOf('mix.chartAudio', {level});
+    return {value: level, label: M.chartLevels[level], disabled: !st?.enabled, reason: st?.enabled ? null : st?.reason ?? null, checked: !!st?.checked};
+  });
+  const chartValue = (options) => options.find((o) => o.checked)?.value ?? 'off';
+  const bare = (options) => options.map(({checked: _, ...o}) => o);
+  const firstChart = chartOptions();
+  const chart = Segmented({label: M.chartAudio, size: 'md', className: 'sheet-mix-chart', value: chartValue(firstChart),
+    options: bare(firstChart),
+    onChange: (level) => { run('mix.chartAudio', {level}); update(); }});
   parts.push(chart);
   const chartLabelId = `${id}-chart`;
   const chartRow = h('section', {class: 'sheet-mix-chart-row', attrs: {'aria-labelledby': chartLabelId}},
@@ -209,9 +224,12 @@ export function render(container, {session, close, layout = null, registry = app
 
     // Top row.
     const mineWords = M.join(mine.map(stemLabel));
-    minusMe.set({label: M.minusMe(mineWords), pressed: !!mix.minusMe, disabled: !hasPart,
+    const minusState = stateOf('mix.minusMe'), onlyState = stateOf('mix.onlyMe');
+    minusMe.set({label: M.minusMe(mineWords), pressed: !!minusState?.checked, disabled: !hasPart || !minusState?.enabled,
+      disabledReason: minusState?.reason ?? null, attrs: {'aria-describedby': !hasPart && notes ? noteId : null}});
+    onlyMe.set({pressed: !!onlyState?.checked, disabled: !hasPart || !onlyState?.enabled, disabledReason: onlyState?.reason ?? null,
       attrs: {'aria-describedby': !hasPart && notes ? noteId : null}});
-    onlyMe.set({pressed: !!mix.onlyMe, disabled: !hasPart, attrs: {'aria-describedby': !hasPart && notes ? noteId : null}});
+    fullMix.set({});
     fullMix.el.dataset.full = String(tracks.every((t) => !t.muted && !t.soloed && t.volume === 1));
     const instruments = M.list(profile.instruments.map((i) => INSTRUMENT_LABELS[i] ?? i));
     iPlay.set({label: M.iPlay(instruments), attrs: {'aria-expanded': String(pickerOpen), 'aria-controls': `${id}-picker`}});
@@ -219,21 +237,22 @@ export function render(container, {session, close, layout = null, registry = app
     if (!saving) picker.set({value: profile});
     pickerRegion.hidden = !writable || !pickerOpen;
 
-    // The no-stem note.
+    // The no-stem note. A read-only song can be neither re-split nor told what you play, so it
+    // keeps only the plain fact.
     let text = '';
     let showResplit = false;
-    if (notes?.kind === 'choose') text = M.choose;
+    if (notes?.kind === 'choose') text = writable ? M.choose : M.chooseShared;
     else if (notes?.kind === 'missing') {
-      text = `${M.noMatch(notes.instruments)} ${onDesktop() ? M.noMatchDesktop : M.noMatchWeb}`;
-      showResplit = onDesktop();
+      text = !writable ? M.noMatch(notes.instruments) : `${M.noMatch(notes.instruments)} ${onDesktop() ? M.noMatchDesktop : M.noMatchWeb}`;
+      showResplit = writable && onDesktop();
     } else if (notes?.kind === 'fallback') {
-      text = onDesktop() ? M.fallback(notes.instruments) : `${M.fallback(notes.instruments)} ${M.fallbackWeb}`;
-      showResplit = onDesktop();
+      text = !writable || onDesktop() ? M.fallback(notes.instruments) : `${M.fallback(notes.instruments)} ${M.fallbackWeb}`;
+      showResplit = writable && onDesktop();
     }
     noteText.textContent = text;
     note.hidden = !text;
     note.dataset.kind = notes?.kind ?? '';
-    resplit.el.hidden = !showResplit || !writable;
+    resplit.el.hidden = !showResplit;
 
     // Pads.
     tapTo.set({value: mode});
@@ -248,7 +267,8 @@ export function render(container, {session, close, layout = null, registry = app
 
     // Chart playback.
     chartRow.hidden = !session.notation?.part;
-    chart.set({value: CHART_LEVELS.includes(mix.chartAudio) ? mix.chartAudio : 'off'});
+    const levels = chartOptions();
+    chart.set({options: bare(levels), value: chartValue(levels)});
   }
 
   // With no instrument chosen (or none on this song), the picker opens at once.
@@ -260,6 +280,7 @@ export function render(container, {session, close, layout = null, registry = app
   }
 
   offs.push(transport.snapshot.subscribe(() => update()));
+  if (typeof registry.onChange === 'function') offs.push(registry.onChange(() => update()));
   const accountSource = account?.profile?.subscribe ? account.profile : account?.value?.subscribe ? account.value : null;
   if (accountSource) offs.push(accountSource.subscribe(() => update()));
   if (session.notation?.hasNotation?.subscribe) offs.push(session.notation.hasNotation.subscribe(() => update()));

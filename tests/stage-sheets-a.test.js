@@ -14,17 +14,25 @@ vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/f
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: () => false}));
 
 import {createRegistry} from '../src/app/commands.js';
+import {COPY as TC, defineTransportCommands} from '../src/stage/transport-commands.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {signal} from '../src/app/store.js';
 import {emptyScore} from '../shared/notation.ts';
-import {render as renderSpeed, trainsOnText, bpmText, draftOf, sheetLayout} from '../src/stage/sheets/speed.js';
+import {render as renderSpeed, trainsOnText, bpmText, draftOf, snapDraft, sheetLayout} from '../src/stage/sheets/speed.js';
 import {render as renderClick, countInChoice, atCueText} from '../src/stage/sheets/click.js';
 import {render as renderMix, mixNotes, padState} from '../src/stage/sheets/mix.js';
-import {COPY, CONTROLS, PRESETS, COUNT_IN_CHOICES} from '../src/stage/sheets/sheets-a.copy.js';
+import {COPY, CONTROLS, PRESETS, COUNT_IN_CHOICES, TRAINER_RANGE} from '../src/stage/sheets/sheets-a.copy.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession} from './helpers/test-session.js';
 import {installPopoverShim, keydown, restoreDomShims} from './helpers/dom.js';
 import {sevenEight} from './fixtures/maps.js';
+import {speedText} from '../src/stage/hud.js';
+
+/** A stored tempo of `count` bars in `num`/`den` (ids m0…), one pin at 0:00 plus `pins`, tail `qpm`. */
+const tempoOf = ({count = 8, num = 4, den = 4, grouping, qpm = 120, pins = []} = {}) => ({songMap: {version: 1, origin: 'edited', tailQpm: qpm,
+  pins: [{position: {n: 0, d: 1}, time: 0}, ...pins],
+  measures: Array.from({length: count}, (_, i) => ({id: `m${i}`, numerator: num, denominator: den, length: {n: 4 * num, d: den}, label: '',
+    ...(grouping ? {grouping} : {})}))}});
 
 const S = COPY.speed, C = COPY.click, M = COPY.mix;
 
@@ -62,7 +70,11 @@ const disabled = (el) => el.getAttribute('aria-disabled') === 'true';
 const loop = (fields = {}) => ({on: false, a: 0, b: 0, eachPassCount: true, playTimes: 0, between: 'none', ...fields});
 const practice = (fields = {}) => ({v: 2, cue: 0, rate: 1, tracks: [], minusMe: false, trainer: null, spots: [], markers: [], ...fields, loop: loop(fields.loop)});
 
-/** Stand-ins for the Stage commands the sheets bind (commands.js is ST4's): each run is recorded. */
+/**
+ * Stand-ins for the Stage commands the sheets bind (commands.js is ST4's). The transport commands
+ * are the real ones (transport-commands.js) on the test registry, with the session and transport
+ * provided as the Stage does; every successful registry run is recorded.
+ */
 const STANDINS = [['edit.map', 'Edit map', 'Edit'], ['stage.tapBeat', 'Tap the beat…', 'Practice'], ['stage.getBars', 'Get bars…', 'Practice'],
   ['song.resplit', 'Re-split…', 'Library']];
 
@@ -108,8 +120,17 @@ async function bed(kind, {presentation = 'bottom', profile = {instruments: ['dru
   desktop = false, prefsValues = {}, sheet: sheetOptions = {}, ...options} = {}) {
   const ts = await createTestSession({clock, account: {profile}, ...options});
   const registry = createRegistry();
-  const ran = [];
-  const offDefs = registry.registerMany(STANDINS.map(([id, title, group]) => ({id, title, group, run: (c) => { ran.push(id); }})));
+  const ran = [], runs = [];
+  const offDefs = registry.registerMany(STANDINS.map(([id, title, group]) => ({id, title, group, run: () => {}})));
+  const offTransport = defineTransportCommands({registry, sheets: {}});
+  const offSession = registry.provide('session', () => ts.session);
+  const offProvided = registry.provide('transport', () => ts.session.transport);
+  const realRun = registry.run;
+  registry.run = (id, opts) => {
+    const ok = realRun(id, opts);
+    if (ok) { ran.push(id); runs.push({id, args: opts?.args}); }
+    return ok;
+  };
   const host = document.createElement('section');
   host.className = 'ui-sheet';
   host.dataset.presentation = presentation;
@@ -122,9 +143,9 @@ async function bed(kind, {presentation = 'bottom', profile = {instruments: ['dru
   const account = fakeAccount(ts, profile);
   const render = {speed: renderSpeed, click: renderClick, mix: renderMix}[kind];
   const handle = render(body, {session: ts.session, close: () => closes.push(kind), registry, prefs, account, desktop: {available: desktop}, ...sheetOptions});
-  current.push(async () => { handle.destroy(); offDefs(); await ts.dispose(); });
+  current.push(async () => { handle.destroy(); offDefs(); offTransport(); offSession?.(); offProvided?.(); await ts.dispose(); });
   vi.advanceTimersByTime(60);   // the registry's state recompute reaches command buttons
-  return {ts, handle, body, ran, closes, prefStore, account, s: () => ts.snapshot, v: () => ts.value,
+  return {ts, handle, body, ran, runs, registry, closes, prefStore, account, s: () => ts.snapshot, v: () => ts.value,
     q: (sel) => body.querySelector(sel), text: () => body.textContent.replace(/\s+/g, ' ')};
 }
 
@@ -162,7 +183,7 @@ describe('spec §4.7 control tables', () => {
     if (ctx.after) { await ctx.after(b); await b.ts.settle(); }
     const el = must(b.body, row.role, row.name);
     expect(el).toBeTruthy();
-    if (row.command) {
+    if (row.command && !(row.role === 'radio' && checked(el))) {
       await click(el);
       expect(b.ran).toContain(row.command);
     }
@@ -189,6 +210,20 @@ describe('Speed sheet', () => {
     expect(b.q('.sheet-speed-value').textContent).toBe('100%');
     expect(b.q('.sheet-speed-value').dataset.at100).toBe('true');
     expect(b.q('.sheet-speed-bpm').textContent).toBe('120 bpm');
+  });
+
+  test('the bpm is the tempo at the playhead, the same reading as the HUD, on a tempo ramp', async () => {
+    // A ramp from quarter 8 (4 s) to quarter 24 (10 s): the bar-start tempo and the playhead tempo differ.
+    const tempo = tempoOf({count: 12, pins: [{position: {n: 8, d: 1}, time: 4, ramp: true}, {position: {n: 24, d: 1}, time: 10}]});
+    const b = await bed('speed', {tempo, duration: 40});
+    const map = b.ts.map;
+    for (const t of [1, 4.5, 6, 9, 12]) {
+      const hud = speedText({rate: 0.8}, {map, t}).sub;
+      expect(bpmText(b.ts.session, 0.8, t), `t=${t}`).toBe(hud);
+      expect(bpmText(b.ts.session, 1, t)).toBe(`${Math.round(map.bpmAt(map.positionAt(t)))} bpm`);
+    }
+    const inside = map.bars[map.barIndexAt(4.5)];
+    expect(Math.round(map.bpmAt(map.positionAt(4.5)))).not.toBe(Math.round(inside.bpm));   // the case the bar start got wrong
   });
 
   test('an unmapped song shows no bpm', async () => {
@@ -240,7 +275,7 @@ describe('Speed sheet', () => {
     await click(slower);
     expect(b.s().rate).toBe(0.25);
     expect(disabled(slower)).toBe(true);
-    expect(slower.textContent).toContain(S.slowest);
+    expect(slower.textContent).toContain(TC.slowest);
     await click(slower);
     expect(b.s().rate).toBe(0.25);
     await click(must(b.body, 'button', S.faster));
@@ -252,7 +287,7 @@ describe('Speed sheet', () => {
     await click(faster);
     expect(b.s().rate).toBe(1.5);
     expect(disabled(faster)).toBe(true);
-    expect(faster.textContent).toContain(S.fastest);
+    expect(faster.textContent).toContain(TC.fastest);
   });
 
   test('Keep pitch is stored with the song and is one undo step; it starts from the device default', async () => {
@@ -353,6 +388,50 @@ describe('Speed sheet', () => {
     expect(must(b.body, 'spinbutton', S.start).getAttribute('aria-valuenow')).toBe('50');
     expect(must(b.body, 'spinbutton', S.passes).getAttribute('aria-valuenow')).toBe('4');
     expect(b.q('.sheet-speed-progress').textContent).toBe('Step 1 of 4 · 50%');
+  });
+
+  test('an off-grid saved trainer (72%, 20 passes) is snapped: steppers, plan line and Start agree', async () => {
+    const b = await bed('speed', {practice: practice({cue: 32, loop: {on: true, a: 32, b: 48}, trainer: {start: 0.72, end: 1, step: 0.05, passes: 20}})});
+    const start = must(b.body, 'spinbutton', S.start), passes = must(b.body, 'spinbutton', S.passes);
+    expect(start.getAttribute('aria-valuenow')).toBe('70');
+    expect(passes.getAttribute('aria-valuenow')).toBe('20');   // 1–32, as practice.ts keeps it
+    expect(draftOf(b.ts.session, b.s())).toEqual({start: 70, end: 100, step: 5, passes: 20});
+    expect(b.q('.sheet-speed-plan').textContent).toBe('70% → 100% in 7 steps, 20 passes each');
+    await click(must(b.body, 'button', S.startTrainer));
+    expect(b.s().trainer).toMatchObject({start: 0.7, end: 1, step: 0.05, passes: 20});
+    expect(b.runs.at(-1)).toEqual({id: 'trainer.toggle', args: {start: 0.7, end: 1, step: 0.05, passes: 20}});
+    expect(snapDraft({start: 151, end: 24, step: 40, passes: 99})).toEqual({start: TRAINER_RANGE.rate.max, end: TRAINER_RANGE.rate.min,
+      step: TRAINER_RANGE.step.max, passes: TRAINER_RANGE.passes.max});
+  });
+
+  test('a palette trainer off the grid (62 → 90, +3%): the sheet shows the snapped draft and says the next start differs', async () => {
+    const b = await bed('speed', {practice: practice({cue: 32, loop: {on: true, a: 32, b: 48}})});
+    b.ts.transport.startTrainer({start: 0.62, end: 0.9, step: 0.03});
+    await b.ts.settle();
+    const start = must(b.body, 'spinbutton', S.start);
+    expect(start.getAttribute('aria-valuenow')).toBe('60');
+    expect(b.q('.sheet-speed-plan').textContent).toMatch(/^60% → 90%/);
+    const pending = [...b.body.querySelectorAll('.sheet-speed-hint')].find((el) => el.textContent === S.pendingChanges);
+    expect(pending.hidden).toBe(false);
+    await click(must(b.body, 'button', S.stopTrainer));
+    await click(must(b.body, 'button', S.startTrainer));
+    expect(b.s().trainer).toMatchObject({start: 0.6, end: 0.9, step: 0.03});
+    expect(start.getAttribute('aria-valuenow')).toBe('60');
+    expect(pending.hidden).toBe(true);
+  });
+
+  test('presets, ±1 and Start / Stop run their §3.1 commands with args', async () => {
+    const b = await bed('speed', {presentation: 'popover', practice: practice({cue: 32, loop: {on: true, a: 32, b: 48}})});
+    await click(must(b.body, 'button', '85%'));
+    await click(must(b.body, 'button', S.faster));
+    await click(must(b.body, 'button', S.slower));
+    await click(must(b.body, 'button', S.startTrainer));
+    await click(must(b.body, 'button', S.stopTrainer));
+    expect(b.runs).toEqual([
+      {id: 'speed.set', args: {rate: 0.85}}, {id: 'speed.upFine', args: undefined}, {id: 'speed.downFine', args: undefined},
+      {id: 'trainer.toggle', args: {start: 0.7, end: 1, step: 0.05, passes: 2}}, {id: 'trainer.toggle', args: undefined},
+    ]);
+    expect(must(b.body, 'button', S.faster).getAttribute('aria-keyshortcuts')).toBeTruthy();
   });
 
   test('a manual speed change stops the trainer (rule 11) and the sheet follows', async () => {
@@ -505,9 +584,18 @@ describe('Click sheet', () => {
   test('"At the cue" is read-only and follows the cue and the map', async () => {
     const b = await bed('click');
     expect(b.q('.sheet-click-at-cue').textContent).toBe('At the cue: ♩ = 120 · 4/4 · from the map');
-    const seven = await bed('click', {tempo: structuredClone(sevenEight.tempo), duration: sevenEight.duration});
-    expect(seven.q('.sheet-click-at-cue').textContent).toBe('At the cue: ♩ = 120 · 7/8 (2+2+3) · from the map'.replace('♩ = 120', `♩ = ${Math.round(seven.ts.map.bars[0].bpm)}`));
     expect(atCueText(null, 0)).toBe('');
+  });
+
+  test('"At the cue" pairs the felt tempo with its own note value: ♪ in 7/8 (2+2+3), ♩. in 6/8', async () => {
+    // ♩ = 120 in 7/8 grouped 2+2+3 is felt in eighths (♪ = 240); a plain ♩ beside 240 would be wrong.
+    const seven = await bed('click', {tempo: structuredClone(sevenEight.tempo), duration: sevenEight.duration});
+    expect(seven.ts.map.bars[0].qpm).toBe(120);
+    expect(seven.q('.sheet-click-at-cue').textContent).toBe('At the cue: ♪ = 240 · 7/8 (2+2+3) · from the map');
+    // 6/8 at ♩ = 120 is felt in dotted quarters: ♩. = 80.
+    const six = await bed('click', {tempo: tempoOf({num: 6, den: 8}), duration: 30});
+    expect(six.q('.sheet-click-at-cue').textContent).toMatch(/^At the cue: ♩\. = 80 · 6\/8/);
+    expect(six.q('.sheet-click-at-cue').textContent).not.toContain('♩ = ');
   });
 
   test('the footer "Tempo & bars wrong? Edit map →" runs edit.map and closes the sheet', async () => {
@@ -556,6 +644,26 @@ describe('Click sheet', () => {
     expect(byRole(plain.body, 'button', C.tapBeat)).toBeNull();
     expect(byRole(plain.body, 'button', C.getBars)).toBeNull();
     expect(plain.text()).toContain(C.needsGrid);
+    // No copy that points to the hidden Tap the beat / Get bars.
+    const shown = [...plain.body.querySelectorAll('p')].filter(visible).map((el) => el.textContent);
+    expect(shown).not.toContain(C.needsGridHint);
+  });
+
+  test('the Click choices run click.mode {mode}; checked and disabled come from the registry', async () => {
+    const b = await bed('click');
+    const group = must(b.body, 'radiogroup', C.click);
+    expect(checked(must(group, 'radio', C.modes.countin))).toBe(true);
+    await click(must(group, 'radio', C.modes.always));
+    expect(b.runs.at(-1)).toEqual({id: 'click.mode', args: {mode: 'always'}});
+    expect(b.s().click.mode).toBe('always');
+    expect(checked(must(group, 'radio', C.modes.always))).toBe(true);
+    for (const m of ['off', 'countin', 'always']) {
+      const st = b.registry.state('click.mode', b.registry.context({args: {mode: m}}));
+      expect(checked(must(group, 'radio', C.modes[m]))).toBe(!!st.checked);
+    }
+    // Count in every loop pass is loop.eachPass.
+    await click(must(b.body, 'button', C.everyPass));
+    expect(b.runs.at(-1)).toEqual({id: 'loop.eachPass', args: undefined});
   });
 });
 
@@ -738,8 +846,39 @@ describe('Mix sheet', () => {
     const b = await bed('mix', {shared: {token: 'share-3'}, desktop: true, profile: {instruments: ['guitar'], primary: 'guitar', openWithMyPart: 'in'}});
     expect(byRole(b.body, 'button', 'I play: Guitar')).toBeNull();
     expect(byRole(b.body, 'button', M.resplit)).toBeNull();
+    expect(b.q('.sheet-mix-note-text').textContent).toBe(M.fallback('guitar'));
     await click(must(b.body, 'button', 'Mute Bass'));
     expect(b.s().mix.tracks.find((t) => t.name === 'bass').muted).toBe(true);
+  });
+
+  test('a shared song\'s no-stem note keeps the plain fact: no Re-split sentence, no "choose" prompt', async () => {
+    const missing = await bed('mix', {shared: {token: 'share-4'}, desktop: true, stems: ['drums', 'no_drums'],
+      profile: {instruments: ['bass'], primary: 'bass', openWithMyPart: 'in'}});
+    expect(missing.q('.sheet-mix-note-text').textContent).toBe(M.noMatch('bass'));
+    expect(missing.text()).not.toContain(M.noMatchDesktop);
+    expect(byRole(missing.body, 'button', M.resplit)).toBeNull();
+    const web = await bed('mix', {shared: {token: 'share-5'}, profile: {instruments: ['guitar'], primary: 'guitar', openWithMyPart: 'in'}});
+    expect(web.q('.sheet-mix-note-text').textContent).toBe(M.fallback('guitar'));
+    expect(web.text()).not.toContain(M.fallbackWeb);
+    const none = await bed('mix', {shared: {token: 'share-6'}, profile: {instruments: [], primary: null, openWithMyPart: 'in'}});
+    expect(none.q('.sheet-mix-note-text').textContent).toBe(M.chooseShared);
+    expect(none.text()).not.toContain(M.choose);
+    expect(byRole(none.body, 'group', M.iPlayPicker)).toBeNull();
+  });
+
+  test('Minus me, Only me, Full mix and Chart playback run their §3.1 commands; key-caps come from the commands', async () => {
+    const b = await bed('mix', {score: emptyScore(128, 120)});
+    await b.ts.notation.ready;
+    await b.ts.settle();
+    const minus = must(b.body, 'button', M.minusMe('Drums'));
+    expect(minus.getAttribute('aria-keyshortcuts')).toBe('M');
+    await click(minus);
+    await click(must(b.body, 'button', M.onlyMe));
+    await click(must(b.body, 'button', M.fullMix));
+    await click(must(must(b.body, 'radiogroup', M.chartAudio), 'radio', 'Loud'));
+    expect(b.runs.map((r) => r.id)).toEqual(['mix.minusMe', 'mix.onlyMe', 'mix.full', 'mix.chartAudio']);
+    expect(b.runs.at(-1).args).toEqual({level: 'loud'});
+    expect(checked(must(must(b.body, 'radiogroup', M.chartAudio), 'radio', 'Loud'))).toBe(true);
   });
 
   test('destroy removes every pad', async () => {

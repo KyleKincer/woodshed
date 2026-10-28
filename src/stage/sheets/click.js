@@ -5,16 +5,18 @@
 // read-only "At the cue" line and the Edit map footer.
 //
 //   render(container, {session, close, registry?, prefs?}) → {el, destroy()}
-//     registry   the command registry for the command-bound buttons (Edit map, Tap the beat,
-//                Get bars); default the app registry
+//     registry   the command registry (default the app registry): Edit map, Tap the beat and Get
+//                bars run their commands; Count in every loop pass is `loop.eachPass` and the Click
+//                choices run `click.mode {mode}`, each option checked and disabled by
+//                `registry.state('click.mode', context({args: {mode}}))` (§3.1, the I1b handoff)
 //     prefs      device prefs (`practice.edgeFlash`, §2.5); default src/app/prefs.js
 //
 // Unmapped songs (no bar grid): the count-in is the 2 s Lead-in (audio pre-roll, no clicks) and
 // Click reads "Needs a bar grid" with [Tap the beat] [Get bars]; nothing else applies, so the
 // click-only controls are not shown. Every change goes through the transport (one practice-undo
 // step stored in `practice.click`, D51); the count-in choices map to `setCountIn`, the Click
-// choices to `setClickMode` (D14's truth table decides what sounds). A read-only (shared) song
-// keeps every practice control but shows no map-editing action.
+// choices to `click.mode` (D14's truth table decides what sounds). A read-only (shared) song
+// keeps every practice control but shows no map-editing action, nor copy that points to one.
 //
 // Pure helpers (exported for tests): countInChoice(countIn, {custom}), atCueText(map, cue).
 
@@ -27,6 +29,7 @@ import {Toggle} from '../../ui/toggle.js';
 import {Segmented} from '../../ui/segmented.js';
 import {Stepper} from '../../ui/stepper.js';
 import {Slider} from '../../ui/slider.js';
+import '../transport-commands.js';   // registers loop.eachPass and click.mode
 import {COPY, COUNT_IN_CHOICES, COUNT_IN_RANGE} from './sheets-a.copy.js';
 
 const C = COPY.click;
@@ -44,15 +47,22 @@ export function countInChoice(countIn, {custom = false} = {}) {
   return hit ? hit.value : 'custom';
 }
 
-/** 'At the cue: ♩ = 96 · 4/4 · from the map' for a real map, else '' (spec §4.7). */
+/**
+ * 'At the cue: ♩ = 96 · 4/4 · from the map' for a real map, else '' (spec §4.7). The tempo is the
+ * felt pulse at the cue (the HUD's bpm, `map.bpmAt`) after that pulse's own note value
+ * (`map.pulseLabel`): ♩ in 4/4, ♩. in 6/8, ♪ in 7/8 grouped 2+2+3, so number and glyph agree.
+ */
 export function atCueText(map, cue) {
   if (!map?.isReal || !map.bars?.length) return '';
-  const index = map.barIndexAt(Number.isFinite(cue) ? cue : 0);
+  const t = Math.max(0, Number.isFinite(cue) ? cue : 0);
+  const index = map.barIndexAt(t);
   const bar = map.bars[index];
   if (!bar) return '';
-  const bpm = Math.round(bar.bpm ?? bar.qpm);
+  const felt = typeof map.bpmAt === 'function' && typeof map.positionAt === 'function' ? map.bpmAt(map.positionAt(t)) : bar.bpm;
+  const bpm = Math.round(Number.isFinite(felt) && felt > 0 ? felt : bar.bpm ?? bar.qpm);
+  const glyph = typeof map.pulseLabel === 'function' ? map.pulseLabel(index) || '♩' : '♩';
   const grouping = typeof map.beatGrouping === 'function' ? map.beatGrouping(index)?.label ?? '' : '';
-  return C.atCue(bpm, C.meter(bar.numerator, bar.denominator, grouping), C.fromMap);
+  return C.atCue(glyph, bpm, C.meter(bar.numerator, bar.denominator, grouping), C.fromMap);
 }
 
 /** The Click sheet (see the header). */
@@ -63,6 +73,9 @@ export function render(container, {session, close, registry = appRegistry, prefs
   const offs = [];
   const parts = [];
   const snap = () => read(transport.snapshot) ?? {};
+  /** A command's state for these args (§3.1; the I1b handoff's per-option rule). */
+  const stateOf = (cmd, args) => registry.state(cmd, registry.context(args === undefined ? {} : {args}));
+  const run = (cmd, args) => registry.run(cmd, {source: 'pointer', ...(args === undefined ? {} : {args})});
   const mapped = () => !!session.map?.isReal;
   const writable = !session.readOnly;
   let customOpen = false;
@@ -106,9 +119,9 @@ export function render(container, {session, close, registry = appRegistry, prefs
 
   // ---- every pass --------------------------------------------------------------------------------------------
   const everyPassHint = hint(C.everyPassHint, 'every-pass');
-  const everyPass = Toggle({label: C.everyPass, size: 'lg', className: 'sheet-click-toggle', pressed: !!snap().loop?.eachPassCount,
-    attrs: {'aria-describedby': everyPassHint.id},
-    onChange: (pressed) => { transport.setLoopOptions({eachPassCount: pressed}); update(); }});
+  const everyPass = Toggle({label: C.everyPass, command: 'loop.eachPass', registry, icon: '', size: 'lg', className: 'sheet-click-toggle',
+    pressed: !!stateOf('loop.eachPass')?.checked, attrs: {'aria-describedby': everyPassHint.id},
+    onChange: () => update()});
   parts.push(everyPass);
   const everyPassRow = h('div', {class: 'sheet-click-row'}, everyPass.el, everyPassHint);
   const silent = h('p', {class: 'sheet-click-note'}, C.silentCount);
@@ -116,10 +129,15 @@ export function render(container, {session, close, registry = appRegistry, prefs
   const countSection = section('count-in', C.countIn, countIn.el, custom, leadInRow, silent, everyPassRow);
 
   // ---- click (mapped) ----------------------------------------------------------------------------------------
+  const modeOptions = () => MODES.map((m) => {
+    const st = stateOf('click.mode', {mode: m});
+    return {value: m, label: C.modes[m], disabled: !st?.enabled, reason: st?.enabled ? null : st?.reason ?? null, checked: !!st?.checked};
+  });
+  const modeValue = (options) => options.find((o) => o.checked)?.value ?? snap().click?.mode ?? 'countin';
+  const firstModes = modeOptions();
   const mode = Segmented({label: C.click, size: 'lg', className: 'sheet-click-mode',
-    options: MODES.map((m) => ({value: m, label: C.modes[m]})),
-    value: snap().click?.mode ?? 'countin',
-    onChange: (m) => { transport.setClickMode(m); update(); }});
+    options: firstModes.map(({checked: _, ...o}) => o), value: modeValue(firstModes),
+    onChange: (m) => { run('click.mode', {mode: m}); update(); }});
   const accent = Toggle({label: C.accent, size: 'lg', className: 'sheet-click-toggle', pressed: !!snap().click?.accent,
     onChange: (pressed) => { transport.setAccent(pressed); update(); }});
   const volume = Slider({label: C.volume, value: snap().click?.volume ?? 0.7, min: 0, max: 1, step: 0.01, format: C.volumeValue,
@@ -139,9 +157,12 @@ export function render(container, {session, close, registry = appRegistry, prefs
   parts.push(tapBeat, getBars);
   const gridActions = h('div', {class: 'sheet-click-grid-actions'}, tapBeat.el, getBars.el);
   gridActions.hidden = !writable;
+  // On a shared song the grid can't be made here: the hint that points to Tap the beat / Get bars goes too.
+  const needsGridHint = h('p', {class: 'sheet-click-hint'}, C.needsGridHint);
+  needsGridHint.hidden = !writable;
   const needsGrid = h('div', {class: 'sheet-click-needs-grid'},
     h('p', {class: 'sheet-click-needs-grid-title'}, C.needsGrid),
-    h('p', {class: 'sheet-click-hint'}, C.needsGridHint),
+    needsGridHint,
     gridActions);
 
   const clickSection = section('click', C.click, clickControls, needsGrid);
@@ -183,12 +204,14 @@ export function render(container, {session, close, registry = appRegistry, prefs
     leadInRow.hidden = real;
     leadIn.set({pressed: !!ci.on});
     silent.hidden = !real || !ci.on || click.mode !== 'off';
-    everyPass.set({pressed: !!s.loop?.eachPassCount});
+    const eachPass = stateOf('loop.eachPass');
+    everyPass.set({pressed: !!eachPass?.checked, disabled: !eachPass?.enabled, disabledReason: eachPass?.reason ?? null});
 
     // Click.
     clickControls.hidden = !real;
     needsGrid.hidden = real;
-    mode.set({value: click.mode});
+    const options = modeOptions();
+    mode.set({options: options.map(({checked: _, ...o}) => o), value: modeValue(options)});
     accent.set({pressed: !!click.accent});
     if (!volume.dragging) volume.set({value: click.volume});
     preRoll.set({pressed: !!click.preRoll});
@@ -204,6 +227,7 @@ export function render(container, {session, close, registry = appRegistry, prefs
   }
 
   offs.push(transport.snapshot.subscribe(() => update()));
+  if (typeof registry.onChange === 'function') offs.push(registry.onChange(() => update()));
   if (session.position?.revision?.subscribe) offs.push(session.position.revision.subscribe(() => update()));
   if (session.position?.mapped?.subscribe) offs.push(session.position.mapped.subscribe(() => update()));
   if (prefs?.value?.subscribe) offs.push(prefs.value.subscribe(() => edgeFlash.set({pressed: !!prefs.get(EDGE_FLASH)})));
