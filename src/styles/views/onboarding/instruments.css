@@ -1,0 +1,49 @@
+/* The InstrumentPicker (src/onboarding/instruments.js; spec §6.6.2, §6.2 Instruments): 56 px
+ * multi-select chips with the "Primary" badge, the plain-words stem mapping (Settings) and the
+ * "When you open a song:" choice. */
+@layer views {
+  .onboarding-instruments {
+    display: grid;
+    gap: var(--s5);
+    min-width: 0;
+  }
+  /* Two even rows of three: the chips line up whatever the badge does to one of them. */
+  .onboarding-instruments-chips {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s3);
+    max-width: 560px;
+  }
+  .onboarding-instruments-chips .ui-chip {
+    min-height: 56px;
+    font-size: var(--fs-16);
+  }
+  .onboarding-instruments-chips .ui-chip-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 54px;
+    justify-content: center;
+    padding: 0 var(--s4);
+  }
+  .onboarding-instruments-mapping {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .onboarding-instruments-open {
+    display: grid;
+    gap: var(--s2);
+    justify-items: start;
+  }
+  .onboarding-instruments-open-label {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .onboarding-instruments-open-choice { max-width: 100%; }
+  .onboarding-instruments-open-choice .ui-segmented-options { flex-wrap: wrap; }
+}

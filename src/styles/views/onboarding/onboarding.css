@@ -1,0 +1,10 @@
+/* Shared by the first-run screens (src/onboarding/signin.js and welcome.js): the wordmark that
+ * stands in for the top bar on these full-bleed pages. */
+@layer views {
+  .onboarding-wordmark {
+    color: var(--ink);
+    font-size: var(--fs-20);
+    font-weight: var(--fw-heavy);
+    line-height: 1.2;
+  }
+}

@@ -1,0 +1,40 @@
+/* /welcome, "What do you play?" (src/onboarding/welcome.js; spec §6.6.2): a full-bleed place
+ * whose page is its own scroller (D26), a 560 px column centred in the window. */
+@layer views {
+  .onboarding-welcome-scroller {
+    box-sizing: border-box;
+    display: grid;
+    align-items: center;
+    justify-items: center;
+    min-height: 100%;
+    padding: max(var(--s7), var(--safe-top)) max(var(--gutter), var(--safe-right)) max(var(--s7), var(--safe-bottom)) max(var(--gutter), var(--safe-left));
+  }
+  .onboarding-welcome {
+    display: grid;
+    gap: var(--s5);
+    width: 100%;
+    max-width: 560px;
+  }
+  .onboarding-welcome > .onboarding-wordmark { margin-bottom: var(--s2); }
+  .onboarding-welcome-title {
+    font-size: var(--fs-32);
+    font-weight: var(--fw-bold);
+    line-height: 1.2;
+  }
+  /* The heading takes focus on arrival (for screen readers); it is not a control, so no ring. */
+  .onboarding-welcome-title:focus { outline: none; }
+  .onboarding-welcome-body {
+    max-width: 52ch;
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.45;
+  }
+  .onboarding-welcome-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--s3);
+    margin-top: var(--s2);
+  }
+  .onboarding-welcome-continue { min-width: 160px; }
+}

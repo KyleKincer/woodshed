@@ -1,0 +1,62 @@
+/* The sign-in card (src/onboarding/signin.js; spec §6.6.1): a centred 400 px card in the bare
+ * full-bleed frame, the wordmark, the title, three lines with 20 px icons, the 48 px button and
+ * the fine print. The page is its own scroller (D26). */
+@layer views {
+  .onboarding-centre {
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    padding: max(var(--s6), var(--safe-top)) max(var(--s4), var(--safe-right)) max(var(--s6), var(--safe-bottom)) max(var(--s4), var(--safe-left));
+  }
+
+  .onboarding-signin {
+    box-sizing: border-box;
+    display: grid;
+    gap: var(--s4);
+    width: 100%;
+    max-width: 400px;
+    padding: var(--s6);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+  }
+  .onboarding-signin-title {
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+    line-height: 1.25;
+    text-wrap: balance;
+  }
+  .onboarding-signin-lines {
+    display: grid;
+    gap: var(--s3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .onboarding-signin-line {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s3);
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.35;
+  }
+  .onboarding-signin-line > .ui-icon {
+    flex: none;
+    margin-top: 1px;
+    color: var(--accent);
+  }
+  .onboarding-signin-button {
+    width: 100%;
+    margin-top: var(--s2);
+  }
+  .onboarding-signin-fine {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.45;
+  }
+}
