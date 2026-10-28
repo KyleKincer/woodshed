@@ -4,15 +4,15 @@ import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import {keydown, pointer, restoreDomShims, setMedia} from './helpers/dom.js';
 import {setPlatform} from '../src/app/keys.js';
 import {createRegistry} from '../src/app/commands.js';
-import {startDispatcher} from '../src/app/dispatch.js';
+import {openOverlays, pushOverlay, startDispatcher} from '../src/app/dispatch.js';
 import {Kbd, kbdLabel, TOUCH_ONLY_QUERY} from '../src/ui/kbd.js';
-import {placeTooltip, tooltip, TOOLTIP_DELAY_MS} from '../src/ui/tooltip.js';
+import {placeTooltip, tooltip, TOOLTIP_DELAY_MS, TOOLTIP_LEAVE_GRACE_MS} from '../src/ui/tooltip.js';
 import {ProgressRail, ProgressRing, StageStepper, stageStates, STATIC_RAIL_VALUE} from '../src/ui/progress.js';
 import {Tabs} from '../src/ui/tabs.js';
 import {EmptyState} from '../src/ui/empty.js';
 import {Skeleton} from '../src/ui/skeleton.js';
 import {Readout} from '../src/ui/readout.js';
-import {BeatLamps, groupOfUnit, lampLayout} from '../src/ui/beat-lamps.js';
+import {BeatLamps, chunkGroups, groupOfUnit, lampLayout} from '../src/ui/beat-lamps.js';
 
 beforeEach(() => {
   document.body.replaceChildren();
@@ -85,6 +85,21 @@ describe('Kbd', () => {
     expect(Kbd({keys: 'Mod+Shift+KeyZ'}).el.textContent).toBe('Ctrl+Shift+Z');
     expect(Kbd({keys: '['}).el.textContent).toBe('[');
     expect(Kbd({keys: 'Digit1'}).el.textContent).toBe('1');
+  });
+
+  test('set() picks up a keys.js platform change made after the cap was drawn', () => {
+    setPlatform('win');
+    const k = mount(Kbd({keys: 'Mod+KeyK'}));
+    expect(k.el.textContent).toBe('Ctrl+K');
+    setPlatform('mac');
+    const text = k.el.firstChild;
+    k.set({});
+    expect(k.el.textContent).toBe('⌘K');
+    k.set({});
+    expect(k.el.firstChild).not.toBe(text);
+    const again = k.el.firstChild;
+    k.set({force: false});
+    expect(k.el.firstChild).toBe(again);   // unchanged labels are not re-rendered
   });
 
   test('a platform prop overrides keys.js, and set() relabels', () => {
@@ -170,6 +185,7 @@ describe('tooltip', () => {
     expect(tip.querySelector('kbd.ui-kbd').textContent).toBe('=');
     expect(b.getAttribute('aria-describedby')).toBe(tip.id);
     pointer(b, 'pointerleave', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_LEAVE_GRACE_MS);
     expect(shown()).toBeNull();
     expect(b.hasAttribute('aria-describedby')).toBe(false);
     off();
@@ -253,7 +269,108 @@ describe('tooltip', () => {
     vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
     expect(b.getAttribute('aria-describedby')).toBe(`reason ${shown().id}`);
     pointer(b, 'pointerleave');
+    vi.advanceTimersByTime(TOOLTIP_LEAVE_GRACE_MS);
     expect(b.getAttribute('aria-describedby')).toBe('reason');
+  });
+
+  test('Escape hides a hover tooltip wherever focus is (a non-modal overlay); an overlay behind it stays', () => {
+    vi.useFakeTimers();
+    const stop = startDispatcher({registry: createRegistry(), platform: 'win'});
+    const sheetClosed = vi.fn();
+    const popSheet = pushOverlay({modal: false, onEscape: sheetClosed});
+    const b = button({'aria-label': 'Loop'});
+    const off = tooltip(b, {text: 'Loop (L)'});
+    pointer(b, 'pointerenter', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(shown()).not.toBeNull();
+    expect(openOverlays()).toHaveLength(2);
+    expect(document.activeElement).toBe(document.body);
+    keydown('Escape', {target: document.body});
+    expect(shown()).toBeNull();
+    expect(sheetClosed).not.toHaveBeenCalled();
+    expect(openOverlays()).toHaveLength(1);
+    keydown('Escape', {target: document.body});
+    expect(sheetClosed).toHaveBeenCalledTimes(1);
+    // Hidden any other way, it leaves the stack too.
+    pointer(b, 'pointerenter', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(openOverlays()).toHaveLength(2);
+    pointer(b, 'pointerdown', {pointerType: 'mouse'});
+    expect(openOverlays()).toHaveLength(1);
+    popSheet();
+    stop();
+    off();
+  });
+
+  test('removing the anchor while the tooltip is up hides it and clears the warm state', async () => {
+    vi.useFakeTimers();
+    const b = button({'aria-label': 'Search'});
+    const other = button({'aria-label': 'Other'});
+    tooltip(b, {text: 'Search songs', kbd: 'Mod+KeyK'});
+    tooltip(other, {text: 'Something else'});
+    pointer(b, 'pointerenter', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(shown()).not.toBeNull();
+    b.remove();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(shown()).toBeNull();
+    vi.advanceTimersByTime(1000);
+    pointer(other, 'pointerenter', {pointerType: 'mouse'});
+    expect(shown()).toBeNull();   // not "warm": the stale tooltip no longer counts as visible
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(shown().textContent).toBe('Something else');
+  });
+
+  test('Enter or Space on the focused anchor hides it (keyboard activation, like pointerdown)', () => {
+    vi.useFakeTimers();
+    const b = button({'aria-label': 'Loop'});
+    tooltip(b, {text: 'Loop this section', kbd: 'KeyL'});
+    b.focus();
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(shown()).not.toBeNull();
+    keydown('Enter', {target: b});
+    expect(shown()).toBeNull();
+    b.blur();
+    b.focus();
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    expect(shown()).not.toBeNull();
+    keydown('Space', {target: b});
+    expect(shown()).toBeNull();
+  });
+
+  test('hoverable: moving from the anchor onto the tooltip keeps it; leaving the tooltip hides it', () => {
+    vi.useFakeTimers();
+    const b = button({'aria-label': 'Zoom in'});
+    tooltip(b, {text: 'Zoom the chart in'});
+    pointer(b, 'pointerenter', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_DELAY_MS);
+    const tip = shown();
+    pointer(b, 'pointerleave', {pointerType: 'mouse'});
+    pointer(tip, 'pointerenter', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_LEAVE_GRACE_MS * 3);
+    expect(shown()).toBe(tip);
+    pointer(tip, 'pointerleave', {pointerType: 'mouse'});
+    vi.advanceTimersByTime(TOOLTIP_LEAVE_GRACE_MS);
+    expect(shown()).toBeNull();
+  });
+
+  test('scroll and resize hide it and remove their listeners', () => {
+    vi.useFakeTimers();
+    const b = button({'aria-label': 'Loop'});
+    tooltip(b, {text: 'Loop this section'});
+    const spy = vi.spyOn(globalThis, 'removeEventListener');
+    for (const type of ['scroll', 'resize']) {
+      pointer(b, 'pointerenter', {pointerType: 'mouse'});
+      vi.advanceTimersByTime(TOOLTIP_DELAY_MS * 2);
+      expect(shown()).not.toBeNull();
+      globalThis.dispatchEvent(new window.Event(type));
+      expect(shown()).toBeNull();
+      expect(spy.mock.calls.some(([t]) => t === type)).toBe(true);
+      pointer(b, 'pointerleave', {pointerType: 'mouse'});
+      vi.advanceTimersByTime(1000);
+    }
+    spy.mockRestore();
   });
 
   test('placeTooltip goes above, flips below near the top and clamps to the viewport', () => {
@@ -533,6 +650,36 @@ describe('Tabs', () => {
       stop();
     }
   });
+
+  test('non-string ids work for click and arrow keys', () => {
+    const onChange = vi.fn();
+    const t = mount(Tabs({tabs: [{id: 1, label: 'A'}, {id: 2, label: 'B'}, {id: 3, label: 'C'}], value: 1, onChange}));
+    const tabs = [...t.el.querySelectorAll('[role=tab]')];
+    tabs[1].dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 1}));
+    expect(onChange).toHaveBeenCalledWith(2, {source: 'pointer'});
+    tabs[1].focus();
+    keydown('ArrowRight', {target: tabs[1]});
+    expect(document.activeElement).toBe(tabs[2]);
+    keydown('Enter', {target: tabs[2]});
+    tabs[2].click();
+    expect(onChange).toHaveBeenLastCalledWith(3, expect.anything());
+  });
+
+  test('a tab that loses its href becomes a button; one that gains it becomes a link', () => {
+    const t = mount(Tabs({tabs: [{id: 'a', label: 'A', href: '/a'}, {id: 'b', label: 'B'}], value: 'a'}));
+    let [a, b] = t.el.querySelectorAll('[role=tab]');
+    expect(a.tagName).toBe('A');
+    expect(a.getAttribute('href')).toBe('/a');
+    t.set({tabs: [{id: 'a', label: 'A'}, {id: 'b', label: 'B', href: '/b'}]});
+    [a, b] = t.el.querySelectorAll('[role=tab]');
+    expect(a.tagName).toBe('BUTTON');
+    expect(a.hasAttribute('href')).toBe(false);
+    expect(a.getAttribute('aria-selected')).toBe('true');
+    expect(a.id).toBe(t.tabId('a'));
+    expect(b.tagName).toBe('A');
+    expect(b.getAttribute('href')).toBe('/b');
+    expect(t.el.querySelectorAll('[role=tab]')).toHaveLength(2);
+  });
 });
 
 // ------------------------------------------------------------------------------------------------ EmptyState
@@ -714,6 +861,25 @@ describe('BeatLamps (D15)', () => {
     expect(odd.dots.map(d => d.unit)).toEqual([0, 4, 8, 12]);
   });
 
+  test('15/16 and 16/16 with the default all-ones grouping still show at most 12 dots (chunked)', () => {
+    const fifteen = lampLayout(15, null);
+    expect(fifteen.mode).toBe('groups');
+    expect(fifteen.groups).toEqual([3, 3, 3, 3, 3]);
+    expect(fifteen.dots).toHaveLength(5);
+    const sixteen = lampLayout(16, Array(16).fill(1));
+    expect(sixteen.groups).toEqual([4, 4, 4, 4]);
+    expect(sixteen.dots.map(d => d.unit)).toEqual([0, 4, 8, 12]);
+    expect(lampLayout(13, null).groups).toEqual([4, 4, 5]);
+    expect(lampLayout(14, null).groups).toEqual([4, 4, 4, 2]);
+    // Chunks follow counted-beat boundaries.
+    expect(chunkGroups([2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 15)).toEqual([3, 3, 3, 3, 3]);
+    for (let n = 13; n <= 48; n++) expect(lampLayout(n, null).dots.length).toBeLessThanOrEqual(12);
+    const l = mount(BeatLamps({units: 16, groups: null}));
+    expect(l.dots).toBe(4);
+    l.frame(9);
+    expect(states(l)).toBe('past past now next');
+  });
+
   test('12 units is still one dot per unit; bad groups fall back to one per unit', () => {
     expect(lampLayout(12, [3, 3, 3, 3]).mode).toBe('units');
     expect(lampLayout(12, [3, 3, 3, 3]).dots).toHaveLength(12);
@@ -765,6 +931,28 @@ describe('BeatLamps (D15)', () => {
     expect(dots[2].dataset.flash).toBe('1');
     l.frame(null);
     expect(dots.some(d => d.dataset.flash)).toBe(false);
+  });
+
+  test('a one-group bar re-flashes its downbeat when the playhead wraps to the next bar', () => {
+    const l = mount(BeatLamps({units: 3, groups: [3]}));
+    const dot = l.el.querySelector('.ui-beat-lamp');
+    l.frame(0);
+    expect(dot.dataset.flash).toBe('1');
+    l.frame(1);
+    l.frame(2);
+    expect(dot.dataset.flash).toBe('1');
+    l.frame(0);
+    expect(dot.dataset.flash).toBe('2');
+    l.frame(0);
+    expect(dot.dataset.flash).toBe('2');   // repeated ticks on the same unit are not onsets
+    // A one-unit bar (1/4) relies on groupStart = true at each onset.
+    const one = mount(BeatLamps({units: 1, groups: [1]}));
+    const d1 = one.el.querySelector('.ui-beat-lamp');
+    one.frame(0);
+    one.frame(0);
+    expect(d1.dataset.flash).toBe('1');
+    one.frame(0, true);
+    expect(d1.dataset.flash).toBe('2');
   });
 
   test('frame with an unchanged unit makes no DOM writes; a step writes only the dots that change', async () => {

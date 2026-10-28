@@ -10,12 +10,20 @@
 //     unitIndex   the 0-based meter unit at the playhead (BarBeat.unitIndex), or null/-1 for none
 //     groupStart  optional: true when this tick is a counted beat's onset (re-triggers the flash
 //                 even when the lit dot does not move, e.g. a count-in), or the unit index where the
-//                 current counted beat starts (both are derived from `groups` when omitted)
+//                 current counted beat starts (both are derived from `groups` when omitted). Derived
+//                 onsets: the lit dot entering a new group, or returning to a group's first unit (a
+//                 bar wrap in a one-group bar such as 3/8 counted as 3). A one-unit bar (1/4) lights
+//                 the same unit every tick, so its caller passes `true` on each onset.
 //   lamps.destroy() · lamps.el · lamps.mode ('units' | 'groups') · lamps.dots (the dot count)
 //
 // D15: one dot per meter unit, grouped by `groups` with a gap between groups. A group's first dot
 // (a counted beat, which clicks) is larger; the downbeat dot is the largest. A bar with more than
-// 12 units shows one dot per counted beat instead (15/16 as 3+3+3+3+3 → five dots). Dots before the
+// 12 units shows one dot per counted beat instead (15/16 as 3+3+3+3+3 → five dots). When that is
+// still more than 12 dots (beatGroups' default all-ones for 13/16, 15/16 or 16/16), consecutive
+// counted beats are chunked for display into runs of 4 units (3 when the bar divides by 3 but not
+// by 4: 15/16 → 3+3+3+3+3, 16/16 → 4+4+4+4, 13/16 → 4+4+5), so the rail never holds more than
+// 12 dots. Chunks follow counted-beat boundaries; the lit dot is the chunk holding the playhead
+// and its onset flashes at the chunk start. Dots before the
 // lit one are "past" (filled), the lit one is "now" (--now), later ones are "next" (outlined): the
 // wireframe's `● ●  ● ◉  ○ ○ ○`. A counted beat's onset flashes (60 ms on, 180 ms decay); reduced
 // motion keeps the per-beat state change without the fade. Decorative: aria-hidden (nothing is
@@ -48,16 +56,18 @@ function applyCommon(el, next, prev) {
  * Pure D15 layout for a bar: {mode, units, groups, dots, starts}.
  *   dots    [{kind: 'downbeat'|'beat'|'unit', group, unit}] in order (unit: the first meter unit it stands for)
  *   starts  the first unit of each group
- * In 'units' mode every unit has a dot; in 'groups' mode (units > 12) every counted beat has one.
+ * In 'units' mode every unit has a dot; in 'groups' mode (units > 12) every counted beat has one,
+ * or every display chunk of counted beats when there would be more than 12 (see chunkGroups).
  */
 export function lampLayout(units, groups) {
   const n = Math.max(0, Math.floor(Number(units) || 0));
   let g = Array.isArray(groups) ? groups.map(x => Math.floor(Number(x))) : [];
   if (!g.length || g.some(x => !(x >= 1)) || g.reduce((a, b) => a + b, 0) !== n) g = Array.from({length: n}, () => 1);
+  const mode = n > MAX_UNIT_DOTS ? 'groups' : 'units';
+  if (mode === 'groups' && g.length > MAX_UNIT_DOTS) g = chunkGroups(g, n);
   const starts = [];
   let at = 0;
   for (const size of g) { starts.push(at); at += size; }
-  const mode = n > MAX_UNIT_DOTS ? 'groups' : 'units';
   const dots = [];
   if (mode === 'groups') {
     g.forEach((_, gi) => dots.push({kind: gi === 0 ? 'downbeat' : 'beat', group: gi, unit: starts[gi]}));
@@ -67,6 +77,26 @@ export function lampLayout(units, groups) {
     });
   }
   return {mode, units: n, groups: g, dots, starts};
+}
+
+/**
+ * Pure: merges consecutive counted beats into display chunks of about `size` units (D15 groups
+ * mode with more than 12 counted beats). A short tail (under half a chunk) joins the chunk before it.
+ */
+export function chunkGroups(groups, units) {
+  let size = units % 4 !== 0 && units % 3 === 0 ? 3 : 4;
+  size = Math.max(size, Math.ceil(units / MAX_UNIT_DOTS));
+  const out = [];
+  let run = 0;
+  for (const x of groups) {
+    run += x;
+    if (run >= size) { out.push(run); run = 0; }
+  }
+  if (run) {
+    if (out.length && run < size / 2) out[out.length - 1] += run;
+    else out.push(run);
+  }
+  return out;
 }
 
 /** Pure: the group (counted beat) holding a meter unit, or -1. */
@@ -91,6 +121,7 @@ export function BeatLamps(initial = {}) {
   let states = [];        // per dot: 'past' | 'now' | 'next'
   let litDot = -1;
   let litGroup = -1;
+  let litUnit = -1;
   let flashDot = -1;
   let flashPhase = 0;
 
@@ -119,6 +150,7 @@ export function BeatLamps(initial = {}) {
     states = dotEls.map(() => 'next');
     litDot = -1;
     litGroup = -1;
+    litUnit = -1;
     flashDot = -1;
     el.dataset.mode = layout.mode;
     el.dataset.units = String(layout.units);
@@ -167,7 +199,8 @@ export function BeatLamps(initial = {}) {
       if (gi >= 0) group = gi;
     }
     const target = dotFor(u, group);
-    const onset = groupStart === true || (group >= 0 && group !== litGroup);
+    const wrapped = group >= 0 && u === layout.starts[group] && u !== litUnit;
+    const onset = groupStart === true || (group >= 0 && (group !== litGroup || wrapped));
     if (target !== litDot) {
       if (target < 0) {
         for (let i = 0; i < dotEls.length; i++) writeState(i, 'next');
@@ -186,6 +219,7 @@ export function BeatLamps(initial = {}) {
       flashDot = -1;
     }
     litGroup = target < 0 ? -1 : group;
+    litUnit = target < 0 ? -1 : u;
   }
 
   function destroy() {

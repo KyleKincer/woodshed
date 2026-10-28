@@ -43,6 +43,9 @@ function nodesOf(content) {
   return list.filter(c => c != null && c !== false && c !== '').map(c => (isNode(c) ? c : document.createTextNode(String(c))));
 }
 
+// TEMPORARY (handoff to I1/U1): a plain {label, onClick, href, variant} spec renders a native
+// control styled by .ui-empty-action. Once U1's Button lands this maps to Button({label, variant,
+// onClick, href}) and .ui-empty-action goes, so the app keeps a single button style.
 function actionNode(action) {
   if (isNode(action)) return action;
   if (action && isNode(action.el)) return action.el;

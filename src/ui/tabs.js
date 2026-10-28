@@ -56,6 +56,7 @@ export function Tabs(initial = {}) {
   const base = `ui-tabs-${++seq}`;
   let props = EMPTY;
   const nodes = new Map();   // id → element
+  const ids = new WeakMap(); // element → id (the caller's value, which may be a number)
 
   const tabId = id => `${props.id || base}-tab-${safeId(id)}`;
   const tabsOf = () => (Array.isArray(props.tabs) ? props.tabs : []);
@@ -75,12 +76,14 @@ export function Tabs(initial = {}) {
     if (!tab.href) node.type = 'button';
     node.className = 'ui-tab';
     node.setAttribute('role', 'tab');
-    node.dataset.tab = tab.id;
+    node.dataset.tab = String(tab.id);
+    ids.set(node, tab.id);
     const text = document.createElement('span');
     text.className = 'ui-tab-label';
     node.append(text);
     node.addEventListener('click', e => {
-      const t = tabsOf().find(x => x.id === node.dataset.tab);
+      const id = ids.get(node);
+      const t = tabsOf().find(x => x.id === id);
       if (!t || t.disabled) { e.preventDefault(); return; }
       // A modified click on a link opens it elsewhere; leave that to the browser.
       if (t.href && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button > 0)) return;
@@ -98,7 +101,7 @@ export function Tabs(initial = {}) {
     const label = node.firstChild;
     if (label.textContent !== String(tab.label)) label.textContent = String(tab.label);
     node.id = tabId(tab.id);
-    if (tab.href) node.setAttribute('href', tab.href);
+    if (tab.href) node.setAttribute('href', tab.href); else node.removeAttribute('href');
     if (tab.controls) node.setAttribute('aria-controls', tab.controls); else node.removeAttribute('aria-controls');
     if (tab.disabled) node.setAttribute('aria-disabled', 'true'); else node.removeAttribute('aria-disabled');
   }
@@ -106,7 +109,8 @@ export function Tabs(initial = {}) {
   function sync() {
     const tabs = tabsOf();
     for (const id of [...nodes.keys()]) if (!tabs.some(t => t.id === id)) nodes.delete(id);
-    reconcileList(el, tabs, {key: t => t.id, create});
+    // A tab that gains or loses its href changes element (a ↔ button), so the kind is in the key.
+    reconcileList(el, tabs, {key: t => `${t.href ? 'a' : 'b'}:${String(t.id)}`, create});
     // Exactly one tab is in the tab order: the selected one, else the first enabled one.
     const selected = tabs.find(t => t.id === props.value && !t.disabled);
     const rover = selected ?? enabled()[0];
@@ -135,8 +139,9 @@ export function Tabs(initial = {}) {
     if (!TAB_KEYS.includes(e.key)) return;
     const list = enabled();
     if (!list.length) return;
-    const current = e.target.closest?.('[role=tab]')?.dataset.tab;
-    let i = list.findIndex(t => t.id === current);
+    const from = e.target.closest?.('[role=tab]');
+    const current = from ? ids.get(from) : undefined;
+    let i = from && ids.has(from) ? list.findIndex(t => t.id === current) : -1;
     if (i < 0) i = Math.max(0, list.findIndex(t => t.id === props.value));
     let next;
     switch (e.key) {

@@ -9,8 +9,10 @@
 //     common    className, id, attrs, dataset, testid
 //   k.set(partial) · k.destroy() · k.el (a <kbd class="ui-kbd">)
 //
-// Labels come from keys.label(), so they follow keys.setPlatform() and the cached
-// keyboard layout map (D56). On `(hover: none) and (pointer: coarse)` the cap is
+// Labels come from keys.label() (keys.setPlatform() and the cached keyboard layout map, D56),
+// computed on create and on every set(): a cap re-renders when its label text changed, so a
+// set() after keys.loadLayoutMap() resolves or after setPlatform() picks the new label up.
+// keys.js has no change signal yet, so an untouched cap keeps the label it was drawn with. On `(hover: none) and (pointer: coarse)` the cap is
 // `hidden` unless `force`, tracking the media query live. Touch users always get
 // the same command from a visible control, never only from a key-cap.
 
@@ -62,9 +64,14 @@ export function Kbd(initial = {}) {
     el.hidden = !!mql?.matches && !props.force;
   }
 
+  let drawn = null;   // the label signature last rendered
+
   function render() {
     const list = toList(props.keys);
     const labels = list.map(k => kbdLabel(k, {platform: props.platform}));
+    const signature = `${list.join('\n')}\t${labels.join('\n')}`;
+    if (signature === drawn) return;
+    drawn = signature;
     if (list.length) el.dataset.keys = list.join(' '); else delete el.dataset.keys;
     if (labels.length <= 1) {
       el.replaceChildren(document.createTextNode(labels[0] ?? ''));
@@ -95,7 +102,7 @@ export function Kbd(initial = {}) {
     const prev = props;
     props = {...prev, ...partial};
     applyCommon(el, props, prev);
-    if (prev === EMPTY || toList(props.keys).join('\n') !== toList(prev.keys).join('\n') || props.platform !== prev.platform) render();
+    render();
     if (props.hint) el.dataset.hint = ''; else delete el.dataset.hint;
     if (props.force) el.dataset.force = ''; else delete el.dataset.force;
     syncHidden();

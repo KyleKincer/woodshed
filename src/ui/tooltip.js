@@ -8,8 +8,12 @@
 //
 // Shows on hover (mouse and pen, never touch) and on keyboard focus, after 400 ms.
 // While another tooltip is up (or was within the last 300 ms) the next one shows at
-// once. Hides on leave, blur, pointerdown, Escape, scroll and resize. One tooltip is
-// visible at a time. The tooltip is role=tooltip and, while visible, describes `el`
+// once. Hides on leave, blur, pointerdown, Enter/Space activation, Escape, scroll, resize, and
+// when its anchor leaves the DOM. While visible it is a non-modal overlay on the dispatcher's
+// stack (pushOverlay), so Escape closes it wherever focus is (WCAG 1.4.13) and only it: a sheet
+// or dialog behind it takes the next Escape. It is hoverable
+// (WCAG 1.4.13): the pointer may move from the anchor onto the tooltip without it closing
+// (a TOOLTIP_LEAVE_GRACE_MS grace), and leaving both hides it. One tooltip is visible at a time. The tooltip is role=tooltip and, while visible, describes `el`
 // through aria-describedby (unless its text only repeats el's accessible name).
 // It is never the only carrier of information: icon-only controls also have an
 // aria-label and aria-keyshortcuts, and touch users never see tooltips.
@@ -18,9 +22,11 @@
 
 import '../styles/primitives/tooltip.css';
 import {Kbd} from './kbd.js';
+import {pushOverlay} from '../app/dispatch.js';
 
 export const TOOLTIP_DELAY_MS = 400;
 export const TOOLTIP_WARM_MS = 300;
+export const TOOLTIP_LEAVE_GRACE_MS = 120;
 const GAP = 8;      // px between the anchor and the tooltip
 const MARGIN = 8;   // px kept from the viewport edges
 
@@ -72,6 +78,9 @@ export function tooltip(el, options = {}) {
   let textNode = null;
   const id = `ui-tooltip-${++seq}`;
   let described = false;
+  let leaveTimer = null;
+  let watcher = null;     // MutationObserver hiding the tooltip when `el` leaves the DOM
+  let popOverlay = null;  // removes this tooltip from the dispatcher's overlay stack
   const ctl = {hide};
 
   function content() {
@@ -133,6 +142,10 @@ export function tooltip(el, options = {}) {
       textNode = document.createElement('span');
       textNode.className = 'ui-tooltip-text';
       node.append(textNode);
+      // Hoverable: the pointer may rest on the tooltip; leaving it (not back to the anchor) hides.
+      node.addEventListener('pointerenter', cancelLeave);
+      node.addEventListener('pointerleave', e => { if (!el.contains(e.relatedTarget)) hideSoon(); });
+      node.addEventListener('pointerdown', () => hide());
     }
     if (!fill()) { hide(); return; }
     const host = supportsPopover(node) ? document.body : (el.closest('dialog') ?? document.body);
@@ -146,11 +159,31 @@ export function tooltip(el, options = {}) {
     visible = ctl;
     globalThis.addEventListener?.('scroll', hide, {capture: true, passive: true});
     globalThis.addEventListener?.('resize', hide, {passive: true});
+    popOverlay ??= pushOverlay({el: node, modal: false, onEscape: hide});
+    if (!watcher && typeof MutationObserver === 'function') {
+      watcher = new MutationObserver(() => { if (!el.isConnected) hide(); });
+      watcher.observe(document.documentElement ?? document, {childList: true, subtree: true});
+    }
+  }
+
+  function cancelLeave() {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
+
+  function hideSoon() {
+    cancelLeave();
+    leaveTimer = setTimeout(hide, TOOLTIP_LEAVE_GRACE_MS);
   }
 
   function hide() {
     clearTimeout(timer);
     timer = null;
+    cancelLeave();
+    watcher?.disconnect();
+    watcher = null;
+    popOverlay?.();
+    popOverlay = null;
     if (!node) return;
     globalThis.removeEventListener?.('scroll', hide, {capture: true});
     globalThis.removeEventListener?.('resize', hide);
@@ -165,6 +198,7 @@ export function tooltip(el, options = {}) {
   }
 
   function schedule() {
+    cancelLeave();
     if (node?.isConnected) return;
     clearTimeout(timer);
     if (visible || warm) { show(); return; }
@@ -177,12 +211,20 @@ export function tooltip(el, options = {}) {
     // Keyboard focus inside keeps it up; a hover-only tooltip goes.
     const active = document.activeElement;
     if (active && el.contains(active) && keyboardFocused(active)) return;
-    hide();
+    // Visible: give the pointer a moment to reach the tooltip; still pending: cancel it.
+    if (node?.isConnected && !node.contains(e.relatedTarget)) hideSoon();
+    else if (!node?.isConnected) hide();
   };
   const onFocus = () => { if (keyboardFocused(el)) schedule(); };
   const onBlur = e => { if (!el.contains(e.relatedTarget)) hide(); };
   const onDown = () => hide();
-  const onKey = e => { if (e.key === 'Escape' && node?.isConnected) hide(); };
+  // Keyboard activation hides it, as pointerdown does (the action may re-render the anchor).
+  // Escape on the anchor itself also hides it when no dispatcher is running (tests, harnesses);
+  // with one, the overlay entry has already closed it.
+  const onKey = e => {
+    if (e.key === 'Escape' && node?.isConnected) hide();
+    else if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) hide();
+  };
 
   el.addEventListener('pointerenter', onEnter);
   el.addEventListener('pointerleave', onLeave);

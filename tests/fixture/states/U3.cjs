@@ -123,8 +123,21 @@ module.exports = [
       t.expect(facts.placement === 'top' && facts.above && facts.inside, `placed above the anchor inside the viewport: ${JSON.stringify(facts)}`);
       t.expect(facts.describedby && facts.count === 1, 'one tooltip, describing its anchor');
       await t.capture('hover');
+      // Hoverable (WCAG 1.4.13): the pointer can rest on the tooltip.
+      const box = await tip.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {steps: 4});
+      await page.waitForTimeout(300);
+      t.expect(await tip.count() === 1, 'the pointer can move onto the tooltip without it closing');
       await page.mouse.move(2, 2);
       await tip.waitFor({state: 'detached', timeout: 2000});
+      // Dismissible: Escape closes a hover tooltip while focus is elsewhere.
+      await page.evaluate(() => document.activeElement?.blur());
+      await zoom.hover();
+      await tip.waitFor({state: 'visible', timeout: 3000});
+      await page.keyboard.press('Escape');
+      await tip.waitFor({state: 'detached', timeout: 1000});
+      t.expect(await page.evaluate(() => document.activeElement === document.body), 'Escape after hover with focus on the page closes it');
+      await page.mouse.move(2, 2);
       // Keyboard: focus the next button with Tab from the first, then Escape.
       await page.getByRole('button', {name: 'Zoom in'}).focus();
       await page.keyboard.press('Tab');
@@ -132,6 +145,14 @@ module.exports = [
       t.expect(await page.getByRole('tooltip').textContent() === 'Loop this sectionL', 'keyboard focus shows the Loop tooltip');
       await page.keyboard.press('Escape');
       await page.getByRole('tooltip').waitFor({state: 'detached', timeout: 2000});
+      // An anchor removed while its tooltip is up takes the tooltip with it.
+      await page.mouse.move(2, 2);
+      await page.locator('[data-testid=tip-search]').hover();
+      await page.getByRole('tooltip').waitFor({state: 'visible', timeout: 3000});
+      await page.evaluate(() => document.querySelector('[data-testid=tip-search]').remove());
+      await page.mouse.move(600, 600);
+      await page.getByRole('tooltip').waitFor({state: 'detached', timeout: 1000});
+      t.expect(await page.getByRole('tooltip').count() === 0, 'removing the anchor hides its tooltip');
     },
     opts: {devices: ['laptop'], capture: false},
   },

@@ -11,6 +11,8 @@ import {EmptyState} from '/src/ui/empty.js';
 import {Skeleton} from '/src/ui/skeleton.js';
 import {Readout} from '/src/ui/readout.js';
 import {BeatLamps} from '/src/ui/beat-lamps.js';
+import {createRegistry} from '/src/app/commands.js';
+import {startDispatcher} from '/src/app/dispatch.js';
 
 // Page layout only (the primitives bring their own CSS); tokens only.
 const PAGE_CSS = `
@@ -166,12 +168,15 @@ export default async function mount(el, {query, h}) {
   const style = h('style', {}, PAGE_CSS);
   document.head.append(style);
   const made = {kbds: [], offs: [], rails: {}, rings: [], stepper: null, tabs: [], lamps: {}, readouts: {}};
+  // The app's keyboard dispatcher (an empty registry): Escape reaches tooltips through its overlay stack.
+  const stopDispatcher = startDispatcher({registry: createRegistry()});
   if ((query.get('part') ?? 'desk') === 'stage') stage(el, h, made);
   else desk(el, h, made);
   return {
     ...made,
     unmount() {
       for (const off of made.offs) off();
+      stopDispatcher();
       style.remove();
       el.replaceChildren();
     },
