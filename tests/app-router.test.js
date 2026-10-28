@@ -352,6 +352,79 @@ describe('sessions', () => {
     expect(sessionModule.disposeSession).toHaveBeenCalledWith('s1');
     expect(log).toEqual(['unmount stage', 'module disposeSession s1', 'mount library']);
   });
+
+  describe('a session that cannot open (I2a-10)', () => {
+    const notFound = () => Object.assign(new Error('Song not found'), {name: 'ApiError', code: 'not_found'});
+
+    test('the view still mounts with ctx.session = null and ctx.sessionError; no error is logged', async () => {
+      const err = notFound();
+      const errorSpy = vi.spyOn(console, 'error');
+      at('/s/gone');
+      make({getSession: async id => { log.push(`getSession ${id}`); throw err; }});
+      await router.start();
+      expect(log).toEqual(['getSession gone', 'mount stage']);
+      const {ctx} = views.stage.instances[0];
+      expect(ctx.session).toBeNull();
+      expect(ctx.sessionError).toBe(err);
+      expect(ctx).not.toHaveProperty('getSession');
+      expect(outlet.textContent).toBe('stage');
+      expect(root.dataset.viewReady).toBe('stage');
+      expect(root.dataset.place).toBe('stage');
+      expect(root.hasAttribute('data-view-error')).toBe(false);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    test('a rejection that is not an Error still reports sessionError', async () => {
+      at('/s/gone');
+      make({getSession: () => Promise.reject(undefined)});
+      await router.start();
+      const {ctx} = views.stage.instances[0];
+      expect(ctx.session).toBeNull();
+      expect(ctx).toHaveProperty('sessionError', undefined);
+      expect(root.dataset.viewReady).toBe('stage');
+    });
+
+    test('nothing is disposed on leaving, and the next visit asks again', async () => {
+      let fail = true;
+      make({getSession: async id => {
+        log.push(`getSession ${id}`);
+        if (fail) throw notFound();
+        return {id};
+      }});
+      await router.start();
+      await router.navigate('/s/gone');
+      log = [];
+      await router.navigate('/');
+      expect(log).toEqual(['unmount stage', 'mount library']);   // no disposeSession for a session that never opened
+      fail = false;
+      log = [];
+      await router.navigate('/s/gone');
+      expect(log).toEqual(['unmount library', 'getSession gone', 'mount stage (gone)']);
+      expect(views.stage.instances[1].ctx).not.toHaveProperty('sessionError');
+    });
+
+    test('a successful session does not carry sessionError', async () => {
+      make();
+      await router.start();
+      await router.navigate('/s/s1');
+      expect(views.stage.instances[0].ctx).not.toHaveProperty('sessionError');
+    });
+
+    test('through src/stage/session.js as well', async () => {
+      const err = notFound();
+      sessionModule.getSession = vi.fn(async () => { throw err; });
+      sessionModule.disposeSession = vi.fn(async () => {});
+      const errorSpy = vi.spyOn(console, 'error');
+      router = createRouter({routes: makeRoutes(), outlet, ctx: {store}});
+      at('/s/gone');
+      await router.start();
+      expect(views.stage.instances[0].ctx.sessionError).toBe(err);
+      expect(root.hasAttribute('data-view-error')).toBe(false);
+      await router.navigate('/');
+      expect(sessionModule.disposeSession).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('modal routes', () => {

@@ -12,7 +12,10 @@
 //   mounts the modal view into an overlay outlet; Back closes it.
 // - `session: true` routes get ctx.session from getSession(songId) (ctx.getSession,
 //   else src/stage/session.js); leaving the song or session routes disposes it
-//   after the old view unmounts.
+//   after the old view unmounts. If getSession rejects (a deleted song), the view
+//   still mounts, with ctx.session = null and ctx.sessionError = the error, and
+//   nothing is logged; the failure is not kept, so the next mount asks again and
+//   there is nothing to dispose.
 // - A failed `guard(store.session)` replaces the URL with `/` and toasts.
 // - Root attributes on every mount: html[data-place], [data-posture],
 //   style.colorScheme and theme-color, then window `woodshed:place`; after the
@@ -224,15 +227,24 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
       session = null;
       try { await sessionApi().dispose(id); } catch (err) { console.error('[router] disposeSession failed', err); }
     }
-    if (nextSongId && !session) session = {songId: nextSongId, value: await sessionApi().get(nextSongId)};
-    return nextSongId ? session.value : undefined;
+    if (!nextSongId) return undefined;
+    if (!session) {
+      let value;
+      try { value = await sessionApi().get(nextSongId); }
+      catch (error) { return {value: null, failed: true, error}; }   // the view shows the failure (Stage: "Song not found")
+      session = {songId: nextSongId, value};
+    }
+    return {value: session.value, failed: false};
   }
 
-  function viewCtx(sessionValue) {
+  function viewCtx(opened) {
     const out = {...ctx, router};
     delete out.getSession;
     delete out.disposeSession;
-    if (sessionValue !== undefined) out.session = sessionValue;
+    if (opened) {
+      out.session = opened.value;
+      if (opened.failed) out.sessionError = opened.error;
+    }
     return out;
   }
 
@@ -244,11 +256,11 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
     return overlay;
   }
 
-  async function mountInto(el, m, mod, sessionValue) {
+  async function mountInto(el, m, mod, opened) {
     setRootAttributes(m);
     let instance;
     try {
-      instance = await mod.mount(el, m, viewCtx(sessionValue));
+      instance = await mod.mount(el, m, viewCtx(opened));
     } catch (err) {
       el.replaceChildren();   // never leave a half-built view for the next one to mount beside
       throw err;
@@ -267,8 +279,8 @@ export function createRouter({routes, redirects = [], outlet, ctx = {}, modalOut
       return;
     }
     if (base) { const old = base; base = null; await unmountLayer(old, outlet); }
-    const sessionValue = await settleSession(songOf(m));
-    base = await mountInto(outlet, m, mod, sessionValue);
+    const opened = await settleSession(songOf(m));
+    base = await mountInto(outlet, m, mod, opened);
   }
 
   async function showModal(m) {
