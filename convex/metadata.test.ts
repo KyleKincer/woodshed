@@ -14,6 +14,7 @@ import {
   type Recording,
 } from './lib/musicBrainz';
 import { hashToken } from './devices';
+import { r2 } from './r2';
 const modules = import.meta.glob('./**/*.ts');
 const quality = {
   model: 'htdemucs',
@@ -899,4 +900,40 @@ test('MusicBrainz failures reach the user as lookup_unavailable', async () => {
     message: 'MusicBrainz is temporarily unavailable. Please try again shortly.',
   });
   expect(await codeOfCall(() => alice.action(api.metadataLookup.detail, { id, recordingId: REC }))).toBe('lookup_unavailable');
+});
+
+test('artwork upload completion is coded: a mismatch or missing object is invalid, a lapsed reservation is artwork_expired', async () => {
+  const { alice, add } = await setup();
+  const id = await add();
+  vi.useRealTimers(); // the action's runQuery/runMutation round trips need real timers here
+  const checksum = 'a'.repeat(43) + '=';
+  const reserve = () => alice.mutation(internal.metadata.reserveArtwork, { id, bytes: 100, mime: 'image/png', checksum });
+  const send = vi.fn();
+  const client = vi.spyOn(r2, 'client', 'get').mockReturnValue({ send } as any);
+  try {
+    // The uploaded object differs from the chosen image.
+    let row = await reserve();
+    send.mockResolvedValueOnce({ ContentLength: 99, ContentType: 'image/png', ChecksumSHA256: checksum });
+    expect(await errorOf(() => alice.action(api.artworkUpload.complete, { objectId: row.objectId }))).toMatchObject({
+      code: 'invalid',
+      field: 'artwork',
+      message: 'Artwork upload did not match the selected image.',
+    });
+    // Nothing arrived at the key.
+    send.mockRejectedValueOnce(Object.assign(new Error('NotFound'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } }));
+    expect(await errorOf(() => alice.action(api.artworkUpload.complete, { objectId: row.objectId }))).toMatchObject({
+      code: 'invalid',
+      field: 'artwork',
+    });
+    // A matching object verifies and returns its key.
+    send.mockResolvedValueOnce({ ContentLength: 100, ContentType: 'image/png', ChecksumSHA256: checksum });
+    expect(await alice.action(api.artworkUpload.complete, { objectId: row.objectId })).toBe(row.key);
+    // A lapsed reservation is expired, before the object is checked.
+    row = await reserve();
+    vi.useFakeTimers({ now: Date.now() + 3600001, toFake: ['Date'] });
+    expect(await codeOfCall(() => alice.action(api.artworkUpload.complete, { objectId: row.objectId }))).toBe('artwork_expired');
+    expect(send).toHaveBeenCalledTimes(3);
+  } finally {
+    client.mockRestore();
+  }
 });
