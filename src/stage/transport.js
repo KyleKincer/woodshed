@@ -1117,7 +1117,12 @@ export function createTransport({engine, metronome, map, position, practice, und
     });
   }
 
-  function setSpeed(rate, {coalesce = true} = {}) {
+  /**
+   * Set the rate (rule 17). `coalesce` merges steps within `coalesceMs` (undo.js); `gesture` is a
+   * token from `undo.beginGesture('speed')` (I2a-1): every step carrying it is one undo step
+   * whatever its timing (the HUD speed drag opens it on pointerdown and ends it on pointerup).
+   */
+  function setSpeed(rate, {coalesce = true, gesture} = {}) {
     if (!Number.isFinite(rate)) return false;
     const next = roundRate(rate), p = pv();
     if (next === p.rate) return false;
@@ -1127,7 +1132,8 @@ export function createTransport({engine, metronome, map, position, practice, und
     hold(() => {
       if (trainer) stopTrainer({reason: 'manual'});
       applySpeedValue(to);
-      pushUndo({key: 'speed', label: 'speed', describe: (f, t) => `speed ${percent(f.rate)}% → ${percent(t.rate)}%`, from, to, apply: applySpeedValue, coalesce});
+      pushUndo({key: 'speed', label: 'speed', describe: (f, t) => `speed ${percent(f.rate)}% → ${percent(t.rate)}%`, from, to, apply: applySpeedValue, coalesce,
+        ...(gesture ? {gesture} : {})});
       dirty = true;
     });
     return true;
