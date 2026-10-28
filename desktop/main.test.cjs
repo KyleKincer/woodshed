@@ -260,3 +260,73 @@ test('closing the window flushes the renderer before quitting; before-quit stops
   assert.deepEqual(child.messages.at(-1), { type: 'shutdown' });
   assert.ok(log.some(entry => entry[0] === 'server-close'));
 });
+
+// ---------- --smoke-test appearance step against the real theme-init.js (I0A-4) ----------
+
+const vm = require('node:vm');
+
+function smokeSource() {
+  const start = source.indexOf('async function runSmokeTest()');
+  assert.ok(start >= 0, 'runSmokeTest exists');
+  const end = source.indexOf('\n}\n', start);
+  return source.slice(start, end);
+}
+
+function smokeAppearanceScript() {
+  const match = smokeSource().match(/const appearance = await window\.webContents\.executeJavaScript\(`([\s\S]*?)`\);/);
+  assert.ok(match, 'the smoke appearance script is found');
+  assert.ok(!match[1].includes('${'), 'the appearance script interpolates nothing');
+  return match[1];
+}
+
+/** A minimal page that runs public/theme-init.js the way <head> does. */
+function themePage({ systemDark = false } = {}) {
+  const root = { dataset: {}, style: {} };
+  const meta = { content: '', setAttribute(name, value) { if (name === 'content') this.content = value; } };
+  const storage = new Map();
+  const writes = [];
+  const context = {
+    document: {
+      documentElement: root,
+      body: {},
+      querySelector: selector => (selector === 'meta[name="theme-color"]' ? meta : null),
+      addEventListener: () => {},
+    },
+    localStorage: {
+      getItem: key => (storage.has(key) ? storage.get(key) : null),
+      setItem: (key, value) => { writes.push(key); storage.set(key, String(value)); },
+      removeItem: key => { writes.push(key); storage.delete(key); },
+    },
+    location: { pathname: '/' },
+    matchMedia: () => ({ matches: systemDark, addEventListener: () => {} }),
+    dispatchEvent: () => true,
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
+    // The body inherits color-scheme from the root.
+    getComputedStyle: () => ({ colorScheme: root.style.colorScheme }),
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'theme-init.js'), 'utf8'), context);
+  const themes = [];
+  context.window.woodshedDesktop = { setTheme: async theme => { themes.push(theme); } };
+  return { context, root, themes, writes };
+}
+
+test('the smoke appearance step never calls woodshedAppearance.set (theme-init.js has no set)', () => {
+  assert.doesNotMatch(smokeSource(), /woodshedAppearance\.set\s*\(/);
+  const script = smokeAppearanceScript();
+  assert.match(script, /woodshedAppearance\.apply\(\{theme\}\)/);
+  assert.match(script, /woodshedAppearance\.apply\(\{theme:'system'\}\)/);
+});
+
+test('the smoke appearance step passes against the real theme-init.js and persists nothing', async () => {
+  for (const systemDark of [false, true]) {
+    const page = themePage({ systemDark });
+    assert.equal(typeof page.context.window.woodshedAppearance.set, 'undefined');
+    const result = await vm.runInContext(smokeAppearanceScript(), page.context);
+    assert.deepEqual(page.themes, ['dark', 'light', 'system']);
+    assert.equal(result, systemDark ? 'dark' : 'light');
+    assert.equal(page.context.window.woodshedAppearance.preference, 'system');
+    assert.deepEqual(page.writes, [], 'the smoke never writes storage');
+  }
+});
