@@ -164,6 +164,31 @@ describe('createSeparation', () => {
     expect((await alice.query(api.jobs.listActive, {}))[0]).toMatchObject({ deviceId: pc, source });
   });
 
+  test('a new upload’s title is stored as a protected override (ticket I2a-5)', async () => {
+    const { t, alice, mac, pc } = await setup();
+    const source = { type: 'upload' as const, value: 'up-9c1d', filename: 'take 3.wav' };
+    const { jobId } = await alice.mutation(api.jobs.createSeparation, {
+      deviceId: pc, source, settings: {}, label: 'take 3.wav', meta: { title: '  Blue in Green (live) ' },
+    });
+    expect((await readJob(t, jobId))?.meta).toEqual({ title: 'Blue in Green (live)', titleOverride: true });
+    expect((await alice.query(api.jobs.listActive, {})).find(r => r.jobId === jobId)?.meta).toEqual({ title: 'Blue in Green (live)', titleOverride: true });
+    // An upload without a title (or a blank one) has nothing to protect.
+    const untitled = await alice.mutation(api.jobs.createSeparation, { deviceId: pc, source, settings: {}, label: 'take 3.wav', meta: { title: '   ' } });
+    expect((await readJob(t, untitled.jobId))?.meta).toBeUndefined();
+    const durationOnly = await alice.mutation(api.jobs.createSeparation, { deviceId: pc, source, settings: {}, label: 'take 3.wav', meta: { duration: 12 } });
+    expect((await readJob(t, durationOnly.jobId))?.meta).toEqual({ duration: 12 });
+    // A search result's title is the processor's guess (B4), not the user's.
+    const searched = await alice.mutation(api.jobs.createSeparation, { deviceId: mac, source: search(), settings: {}, label: 'x', meta: { title: 'Weird Fishes' } });
+    expect((await readJob(t, searched.jobId))?.meta).toEqual({ title: 'Weird Fishes' });
+    // A re-split keeps its song's title.
+    const uploaded = await t.run(ctx => ctx.db.insert('songs', song('alice', 'jam', { source, originDeviceId: pc })));
+    const resplit = await alice.mutation(api.jobs.createSeparation, { deviceId: pc, settings: {}, label: 'jam (re-split)', replaceSongId: uploaded, meta: { title: 'jam' } });
+    expect((await readJob(t, resplit.jobId))?.meta).toEqual({ title: 'jam' });
+    // Only the server sets the flag: a client cannot send it.
+    const forged = { title: 'x', titleOverride: true } as unknown as { title: string };
+    await expect(alice.mutation(api.jobs.createSeparation, { deviceId: mac, source: search(), settings: {}, label: 'x', meta: forged })).rejects.toThrow();
+  });
+
   test('a job needs an owned, paired computer (B5)', async () => {
     const { t, alice, bob, mac, pc } = await setup();
     const create = (deviceId: Id<'devices'>, caller = alice) => caller.mutation(api.jobs.createSeparation, { deviceId, source: search(), settings: {}, label: 'x' });
