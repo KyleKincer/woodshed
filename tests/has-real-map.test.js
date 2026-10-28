@@ -113,6 +113,40 @@ describe('the one-way upgrade', () => {
   });
 });
 
+describe('rule 4 agrees with the upgrade', () => {
+  const agree = (tempo, duration) => {
+    const real = hasRealMap(tempo), store = SongMapStore.fromTempo(structuredClone(tempo), duration);
+    expect(store.isReal).toBe(real);
+    expect(mapSummaryOf(tempo, duration).real).toBe(real);
+    return {real, store, summary: mapSummaryOf(tempo, duration)};
+  };
+  test('legacy beats and sections past the duration still translate (and stay real)', () => {
+    const late = agree({source: 'detected', detected: [{time: 50, downbeat: true}, {time: 50.5}, {time: 51}, {time: 51.5}]}, 40);
+    expect(late.real).toBe(true);
+    expect(late.store.data.origin).toBe('detected');
+    const map = agree({map: [{t: 100, bpm: 97, beatsPerBar: 3, unit: 4}]}, 40);
+    expect(map.real).toBe(true);
+    expect(map.store.data.origin).toBe('edited');
+  });
+  test('the server with no duration summarises a legacy map from its own timing', () => {
+    const {summary} = agree(tempoOf(legacyTempoMap), 0);
+    expect(summary).toMatchObject({real: true, bpm: 97, meter: '3/4'});
+  });
+  test('legacy fields the upgrade cannot read are not real anywhere', () => {
+    for (const tempo of [
+      {source: 'detected', detected: [{time: NaN}, {time: 'x'}]},
+      {source: 'detected', detected: [{time: 2}, {time: 2.0001}]},
+      {map: [{t: -1, bpm: 97}, {t: 'x'}]},
+    ]) expect(agree(tempo, 40).real).toBe(false);
+  });
+  test('an unusable detected list falls through to the legacy map', () => {
+    const {real, store} = agree({source: 'detected', detected: [{time: NaN}, {time: -3}], map: [{t: 0.5, bpm: 97, beatsPerBar: 3, unit: 4}]}, 30);
+    expect(real).toBe(true);
+    expect(store.data.origin).toBe('edited');
+    expect(store.bars[0].numerator).toBe(3);
+  });
+});
+
 describe('in a session', () => {
   test('undo back to a no-origin map is not real', () => {
     const store = mapStore(unmapped);

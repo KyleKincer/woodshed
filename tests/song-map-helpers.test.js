@@ -109,6 +109,12 @@ describe('sections', () => {
     expect(labelled({0: 'Chorus', 4: 'Verse', 8: 'Chorus', 12: 'Chorus'}).sections.map((s) => s.name)).toEqual(['Chorus', 'Verse', 'Chorus 2', 'Chorus 3']);
     expect(labelled({0: 'Chorus 2', 4: 'Chorus', 8: 'Chorus'}).sections.map((s) => s.name)).toEqual(['Chorus 2', 'Chorus', 'Chorus 3']);
   });
+  test('a written "Start" keeps its name; the synthetic leading section takes the next free number', () => {
+    expect(labelled({2: 'Chorus', 4: 'Chorus', 6: 'Chorus 2', 8: 'Start'}).sections.map((s) => [s.name, s.label]))
+      .toEqual([['Start 2', ''], ['Chorus', 'Chorus'], ['Chorus 3', 'Chorus'], ['Chorus 2', 'Chorus 2'], ['Start', 'Start']]);
+    expect(labelled({2: 'Start', 4: 'Start 2'}).sections.map((s) => s.name)).toEqual(['Start 3', 'Start', 'Start 2']);
+    expect(labelled({0: 'Start', 4: 'Start'}).sections.map((s) => s.name)).toEqual(['Start', 'Start 2']);
+  });
   test("measure 0's auto 'Pickup' label is ignored; no labels means no sections", () => {
     expect(labelled({0: 'Pickup'}, {pickupLength: 2}).sections).toEqual([]);
     expect(labelled({0: 'Pickup', 3: 'Verse'}, {pickupLength: 2}).sections.map((s) => [s.name, s.startBar])).toEqual([['Start', 0], ['Verse', 3]]);
@@ -253,6 +259,24 @@ describe('snapTime', () => {
     expect(map.snapTime(2.3, 'beat', {mode: 'ceil'})).toBeCloseTo(2.75);
     expect(map.snapTime(3.5, 'beat', {mode: 'floor'})).toBeCloseTo(3.5);
     expect(map.snapTime(3.5, 'unit', {mode: 'ceil'})).toBeCloseTo(3.5);
+  });
+  test('before the first downbeat the grid is extrapolated: floor ≤ t and ceil ≥ t', () => {
+    const early = mapStore(pickup);              // pickup from 0.5 s, beats every 0.5 s, bar 1 at 1.5 s
+    expect(early.snapTime(0.2, 'bar', {mode: 'floor'})).toBeCloseTo(-0.5);
+    expect(early.snapTime(0.2, 'bar', {mode: 'ceil'})).toBeCloseTo(0.5);
+    expect(early.snapTime(0.2, 'beat', {mode: 'floor'})).toBeCloseTo(0);
+    expect(early.snapTime(0.2, 'beat', {mode: 'ceil'})).toBeCloseTo(0.5);
+    expect(early.snapTime(0.2, 'beat')).toBeCloseTo(0);
+    expect(early.snapTime(0.4, 'unit')).toBeCloseTo(0.5);
+    for (const unit of ['bar', 'beat', 'unit']) for (const t of [0, 0.1, 0.3, 0.49]) {
+      expect(early.snapTime(t, unit, {mode: 'floor'})).toBeLessThanOrEqual(t + 1e-9);
+      expect(early.snapTime(t, unit, {mode: 'ceil'})).toBeGreaterThanOrEqual(t - 1e-9);
+    }
+  });
+  test('past the end there is nothing to ceil to, so t stays; floor and nearest give the end', () => {
+    expect(map.snapTime(15, 'bar', {mode: 'ceil'})).toBe(15);
+    expect(map.snapTime(15, 'bar', {mode: 'floor'})).toBe(14);
+    expect(map.snapTime(15, 'beat')).toBe(14);
   });
   test('the end of the song is a snap point; an unknown unit throws', () => {
     expect(map.snapTime(13.95, 'bar')).toBe(14);

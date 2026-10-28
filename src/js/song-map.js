@@ -4,7 +4,7 @@
 import {fraction, number, beatGroups, MAX_MEASURES} from '../../shared/notation.ts';
 import {sameContent} from '../../shared/content.ts';
 import {compile, timeAt, positionAt, velocityAt, beatsOf, linesOf, measureStarts, barIndexAt as barIndexAtQ, pulseOf, normalize, MIN_QPM, MAX_QPM,
-  validateSongMap, cleanSongMap, defaultSongMap, fromBeats, fromTimeline, toTimeline, songMapFromTempo, barsOf, sectionsFromBars} from '../../shared/song-map.ts';
+  validateSongMap, cleanSongMap, defaultSongMap, fromBeats, fromTimeline, toTimeline, songMapFromTempo, barsOf, sectionsFromBars, isMadeLegacyMap} from '../../shared/song-map.ts';
 
 const clone = (value) => structuredClone(value);
 const UNDO_LIMIT = 200;
@@ -127,15 +127,21 @@ export class SongMapStore {
     this._guard(draft);
     // Reasons that keep the data's own origin (restore, cancel) also change it; the others never stamp a no-op.
     if (stamp ? sameMap(draft, this.data) : sameContent(draft, this.data)) return result;
-    // Inside withoutUndo the caller records the step on the practice stack (D23).
-    if (!this._quiet) {
-      if (this.batch) { this.batch.changed = true; if (linked) this.batch.linked.push(linked); }
-      else this._push(this.undoStack, entry(this.data, linked ? [linked] : []));
-    }
-    this.redoStack = [];
-    this._set(draft);
-    this._emit(reason);
+    this._commit(draft, reason, linked);
     return result;
+  }
+
+  /**
+   * Record a real change: an open batch collects it (even inside `withoutUndo`,
+   * so `abortBatch` can still undo it); otherwise one map-stack step, except
+   * inside `withoutUndo`, where the caller records it on the practice stack (D23).
+   */
+  _commit(next, reason, linked) {
+    if (this.batch) { this.batch.changed = true; if (linked) this.batch.linked.push(linked); }
+    else if (!this._quiet) this._push(this.undoStack, entry(this.data, linked ? [linked] : []));
+    this.redoStack = [];
+    this._set(next);
+    this._emit(reason);
   }
 
   /** Edits inside `fn` push nothing on the map stack. */
@@ -153,6 +159,7 @@ export class SongMapStore {
     validateSongMap(next);
     if (sameContent(next, this.data)) return false;
     this._guard(next);
+    if (this.batch) this.batch.changed = true;
     this._set(next);
     this._emit('restore');
     return true;
@@ -210,18 +217,19 @@ export class SongMapStore {
   replaceFromTimeline(timeline, reason = 'timeline') { return this.replace(fromTimeline(timeline, this.duration), reason); }
   /**
    * Use a stored map only if it is valid; otherwise leave the current map
-   * alone. Keeps a valid origin and stamps `imported` when there is none.
-   * Adoption clears undo, pushes no step, and emits `'adopt'` only when the map changed.
+   * alone (returns false). Keeps a valid origin; data without one is upgraded
+   * like `load`: a map someone made (rule 3) is stamped `imported`, the
+   * untouched placeholder stays without an origin (not real).
+   * A change is an ordinary step emitting `'adopt'`: an open batch collects
+   * it, `withoutUndo` pushes nothing (open-time drum-part adoption and silent
+   * foreign adoption wrap it there), otherwise it is one map-stack step.
    */
   adopt(data) {
     const clean = cleanSongMap(data);
     if (!clean) return false;
-    if (!clean.origin) clean.origin = REASON_ORIGIN.adopt;
+    if (!clean.origin && isMadeLegacyMap(clean)) clean.origin = REASON_ORIGIN.adopt;
     const next = normalize(clean, this.duration, (id) => this._kept(id));
-    this.undoStack = []; this.redoStack = []; this.batch = null;
-    if (sameContent(next, this.data)) return true;
-    this._set(next);
-    this._emit('adopt');
+    if (!sameContent(next, this.data)) this._commit(next, 'adopt');
     return true;
   }
 
@@ -431,21 +439,37 @@ export class SongMapStore {
     return this.barToTime(index, {group: Math.min(Math.max(0, ref.beat | 0), last), frac: ref.frac ?? 0});
   }
 
-  /** Snap a time to the nearest (or floor/ceil) bar start, counted beat or meter unit. */
+  /** Quarter offsets (from a bar start) of a bar's snap points for `unit`. */
+  _snapOffsets(bar, unit, length = bar.q1 - bar.q0) {
+    if (unit === 'bar') return [0];
+    if (unit === 'beat') return this._onsets(bar).map((o) => o.q);
+    if (unit === 'unit') { const out = [], step = 4 / bar.denominator; for (let q = 0; q < length - 1e-7; q += step) out.push(q); return out; }
+    throw new TypeError(`Unknown snap unit: ${unit}`);
+  }
+
+  /**
+   * Snap a time to the nearest (or floor/ceil) bar start, counted beat or meter
+   * unit. Before bar 0 the grid is extrapolated like `barBeatAt`, so floor ≤ t
+   * and ceil ≥ t; past the last bar's end there is nothing to ceil to, so t stays.
+   */
   snapTime(t, unit, {mode = 'nearest'} = {}) {
     const bars = this.bars, i = this.barIndexAt(t), points = [];
     for (let k = Math.max(0, i - 1); k <= Math.min(bars.length - 1, i + 1); k++) {
       const bar = bars[k];
-      if (unit === 'bar') points.push(bar.t0);
-      else if (unit === 'beat') for (const o of this._onsets(bar)) points.push(this.timeAt(bar.q0 + o.q));
-      else if (unit === 'unit') { const step = 4 / bar.denominator; for (let q = 0; q < bar.q1 - bar.q0 - 1e-7; q += step) points.push(this.timeAt(bar.q0 + q)); }
-      else throw new TypeError(`Unknown snap unit: ${unit}`);
+      for (const q of this._snapOffsets(bar, unit)) points.push(this.timeAt(bar.q0 + q));
     }
     if (i + 1 >= bars.length) points.push(bars[bars.length - 1].t1);
+    if (t < bars[0].t0 - EPS) {
+      const ref = this._beforeRef(), length = ref.units * 4 / ref.denominator, end = bars[0].q0, offsets = this._snapOffsets(ref, unit, length);
+      // The bar before t's, t's own and the next: enough for both neighbours.
+      for (let start = ref.q0 + (Math.floor((this.positionAt(t) - ref.q0) / length) - 1) * length, n = 0; n < 3 && start < end - 1e-9; start += length, n++)
+        for (const q of offsets) if (start + q < end - 1e-9) points.push(this.timeAt(start + q));
+    }
     const floor = points.filter((p) => p <= t + 1e-6), ceil = points.filter((p) => p >= t - 1e-6);
-    const down = floor.length ? Math.max(...floor) : Math.min(...points), up = ceil.length ? Math.min(...ceil) : Math.max(...points);
+    const down = floor.length ? Math.max(...floor) : t, up = ceil.length ? Math.min(...ceil) : t;
     if (mode === 'floor') return down;
     if (mode === 'ceil') return up;
+    if (!floor.length || !ceil.length) return floor.length ? down : up;
     return t - down <= up - t ? down : up;
   }
 }

@@ -40,7 +40,7 @@ test('drum-part timelines with crowded anchors adopt; invalid maps never replace
 import {describe, vi} from 'vitest';
 import {REASON_ORIGIN, LABEL_REASONS} from '../src/js/song-map.js';
 import {fromTaps, cleanSongMap} from '../shared/song-map.ts';
-import {mapStore, unmapped, sectioned, pickup} from './fixtures/maps.js';
+import {mapStore, unmapped, sectioned, pickup, sevenEight} from './fixtures/maps.js';
 
 const labelBar = (i, label) => (d) => { d.measures[i].label = label; };
 
@@ -276,17 +276,67 @@ describe('batches', () => {
 });
 
 describe('adopt and load', () => {
-  test('adopt keeps a valid origin, stamps imported otherwise, pushes no step and emits only on a change', () => {
+  test('adopt keeps a valid origin, upgrades data without one like load, and emits only on a change', () => {
     const store = mapStore(unmapped), listener = vi.fn();
     store.subscribe(listener);
-    expect(store.adopt(mapStore(unmapped).serialize())).toBe(true);
+    // The untouched placeholder stays unmapped: adopting it never makes the song real.
+    const placeholder = defaultSongMap(30);       // fresh ids, so it differs from the loaded placeholder
+    expect(store.adopt(placeholder)).toBe(true);
+    expect(store.data.origin).toBeUndefined();
+    expect(store.isReal).toBe(false);
+    // A 1.6–1.9 map someone made (rule 3) is stamped imported.
+    const { origin: _, ...made } = mapStore(pickup).serialize();
+    expect(store.adopt(made)).toBe(true);
     expect(store.data.origin).toBe('imported');
-    expect(store.undoStack).toHaveLength(0);
-    expect(listener.mock.calls.map((c) => c[0])).toEqual(['adopt']);
-    expect(store.adopt({...mapStore(unmapped).serialize(), origin: 'imported'})).toBe(true);
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(store.adopt({...mapStore(pickup).serialize(), origin: 'tapped'})).toBe(true);
+    expect(listener.mock.calls.map((c) => c[0])).toEqual(['adopt', 'adopt']);
+    expect(store.adopt(store.serialize())).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(store.adopt({...mapStore(sevenEight).serialize(), origin: 'tapped'})).toBe(true);
     expect(store.data.origin).toBe('tapped');
+    expect(store.adopt({version: 1, measures: [], pins: []})).toBe(false);
+    expect(store.data.origin).toBe('tapped');
+  });
+  test('a stand-alone adopt is one undo step that restores the previous map, keeping earlier history', () => {
+    const store = mapStore(sectioned);
+    store.edit(labelBar(3, 'Fill'), 'label');
+    expect(store.adopt(mapStore(pickup).serialize())).toBe(true);
+    expect(store.undoStack).toHaveLength(2);
+    expect(store.undo()).toBe(true);
+    expect(store.data.measures[3].label).toBe('Fill');
+    expect(store.data.measures).toHaveLength(64);
+    expect(store.undo()).toBe(true);
+    expect(store.data.measures[3].label).toBe('');
+  });
+  test('adopt inside beginBatch/endBatch (mapChange with Edit · Map mounted) is exactly one map-stack step', () => {
+    const store = mapStore(sectioned);
+    store.edit(labelBar(3, 'Fill'), 'label');
+    const before = store.snapshot();
+    store.beginBatch();
+    expect(store.adopt(mapStore(pickup).serialize())).toBe(true);
+    expect(store.batch).not.toBeNull();
+    expect(store.endBatch()).toBe(true);
+    expect(store.undoStack).toHaveLength(2);
+    store.undo();
+    expect(store.data).toEqual(before);
+  });
+  test('adopt inside withoutUndo pushes nothing (open-time and practice-stack adoption)', () => {
+    const store = mapStore(sectioned);
+    store.edit(labelBar(3, 'Fill'), 'label');
+    store.withoutUndo(() => store.adopt(mapStore(pickup).serialize()));
+    expect(store.undoStack).toHaveLength(1);
+    expect(store.data.origin).toBe('edited');
+    expect(store.data.measures[0].id).toBe('p0');
+  });
+  test('a foreign adopt during an audition joins the batch, so Keep my map still restores everything', () => {
+    const store = mapStore(sectioned);
+    store.edit(labelBar(3, 'Fill'), 'label');
+    const history = [...store.undoStack], original = store.snapshot();
+    store.beginBatch();
+    store.edit((d) => { d.tailQpm = 100; }, 'tempo-source');
+    store.adopt(mapStore(pickup).serialize());
+    expect(store.abortBatch()).toBe(true);
+    expect(store.data).toEqual(original);
+    expect(store.undoStack).toEqual(history);
   });
   test('load reads the stored origin and has no legacy field', () => {
     const store = mapStore(pickup);
@@ -306,4 +356,38 @@ test('undo after setDuration re-normalises the restored step to the decoded leng
   store.redo();
   expect(store.bars).toHaveLength(10);
   expect(store.sections.map((s) => s.name)).toEqual(['Start', 'Verse']);
+});
+
+describe('batches see every change (D20)', () => {
+  test('withoutUndo edits inside an open batch still mark it: abortBatch restores them, endBatch records them', () => {
+    const store = mapStore(sectioned);
+    store.beginBatch();
+    store.withoutUndo(() => store.edit(labelBar(2, 'X'), 'label'));
+    expect(store.abortBatch()).toBe(true);
+    expect(store.data.measures[2].label).toBe('');
+    expect(store.undoStack).toHaveLength(0);
+    store.beginBatch();
+    store.withoutUndo(() => store.edit(labelBar(2, 'X'), 'label'));
+    expect(store.endBatch()).toBe(true);
+    expect(store.undoStack).toHaveLength(1);
+    store.undo();
+    expect(store.data.measures[2].label).toBe('');
+  });
+  test('restore inside an open batch marks it, so abortBatch undoes it', () => {
+    const store = mapStore(sectioned), original = store.snapshot();
+    store.beginBatch();
+    expect(store.restore(mapStore(pickup).snapshot())).toBe(true);
+    expect(store.abortBatch()).toBe(true);
+    expect(store.data).toEqual(original);
+  });
+});
+
+describe('barIndexAt is time-based (§4.3); barIndexAtQ keeps the quarter-note lookup', () => {
+  test('at 120 qpm a time and a quarter position name different bars', () => {
+    const store = mapStore(sectioned);           // 2 s and 4 quarters per bar
+    expect(store.barIndexAt(10)).toBe(5);        // 10 s → bar index 5
+    expect(store.barIndexAtQ(10)).toBe(2);       // 10 quarters → bar index 2
+    expect(store.barIndexAtQ(store.positionAt(10))).toBe(store.barIndexAt(10));
+    expect(store.timeToBar(10).index).toBe(5);
+  });
 });

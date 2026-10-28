@@ -72,15 +72,33 @@ export function stripComments(source) {
   return out;
 }
 
-/** Every map-edit call in a source text with a string-literal reason: [{method, reason, line}]. */
-export function scanReasons(text) {
-  const found = [], source = stripComments(text);
+function* mapCalls(text) {
+  const source = stripComments(text);
   for (const match of source.matchAll(CALL)) {
     const method = match[1], {args} = readArguments(source, match.index + match[0].length);
     if (method === 'replace' && stringReplace(args)) continue;
-    const reason = args.length > 1 ? literal(args[1]) : null;
-    if (reason !== null) found.push({method, reason, line: source.slice(0, match.index).split('\n').length});
+    yield {method, args, line: source.slice(0, match.index).split('\n').length};
   }
+}
+
+/** Every map-edit call in a source text with a string-literal reason: [{method, reason, line}]. */
+export function scanReasons(text) {
+  const found = [];
+  for (const {method, args, line} of mapCalls(text)) {
+    const reason = args.length > 1 ? literal(args[1]) : null;
+    if (reason !== null) found.push({method, reason, line});
+  }
+  return found;
+}
+
+/**
+ * `.edit(` calls that pass no reason at all (§4.2: every call names one). The
+ * store still defaults to 'edit' only for the unowned legacy
+ * tests/notation-songmap.test.js; src/ must never rely on it.
+ */
+export function scanMissingReasons(text) {
+  const found = [];
+  for (const {method, args, line} of mapCalls(text)) if (method === 'edit' && args.length < 2) found.push({method, line});
   return found;
 }
 
@@ -115,6 +133,10 @@ describe('the scanner', () => {
       {method: 'edit', reason: 'drag', line: 11},
     ]);
   });
+  test('an edit with no reason is reported', () => {
+    expect(scanMissingReasons(["map.edit(change);", "map.edit(change, reason);", "map.edit((d) => { d.x = f(a, b); });", "s.replace(/x/, 'y');"].join('\n')))
+      .toEqual([{method: 'edit', line: 1}, {method: 'edit', line: 3}]);
+  });
   test('an unknown reason is reported', () => {
     const found = scanReasons("map.edit((d) => {}, 'shuffle');").filter((c) => !(c.reason in REASON_ORIGIN));
     expect(found).toEqual([{method: 'edit', reason: 'shuffle', line: 1}]);
@@ -140,5 +162,10 @@ describe('REASON_ORIGIN', () => {
     }
     expect(unknown).toEqual([]);
     expect(scanned).toBeGreaterThan(0);
+  });
+  test('no map edit in src/**/*.js relies on the default reason', () => {
+    const missing = sourceFiles(path.join(ROOT, 'src')).flatMap((file) =>
+      scanMissingReasons(readFileSync(file, 'utf8')).map((call) => `${path.relative(ROOT, file)}:${call.line} .${call.method}(…) has no reason`));
+    expect(missing).toEqual([]);
   });
 });

@@ -411,7 +411,43 @@ export function hasRealMap(tempo:unknown, {hasPart = false}:{hasPart?:boolean} =
   if (stored?.origin) return true;
   if (hasPart) return true;
   if (stored) return isMadeLegacyMap(stored);
-  return legacyDetected(t) || legacySections(t);
+  // Rule 4 is decided by the upgrade itself, so the Library and a loaded store never disagree.
+  return legacyDetected(t) || legacySections(t) ? !!legacyTranslation(t, 0.001) : false;
+}
+
+/** Legacy times reach past `seconds` when the duration is unknown (0 on the server) or short: translate over a span that covers them. */
+function legacySpan(t:TempoRecord, seconds:number) {
+  const times = [...(Array.isArray(t.detected) ? t.detected : []), ...(Array.isArray(t.map) ? t.map : [])]
+    .map(x => Number((x as {time?:unknown; t?:unknown})?.time ?? (x as {t?:unknown})?.t)).filter(Number.isFinite);
+  return Math.max(seconds, ...times.map(x => x + 1));
+}
+
+/** A legacy `detected` list or `map` translated (detected first, then the map), or null when neither is usable. */
+function legacyTranslation(t:TempoRecord|null, seconds:number):SongMapData|null {
+  if (!t) return null;
+  const spans = [seconds, legacySpan(t, seconds)];
+  if (legacyDetected(t)) {
+    const beats = (t.detected as {time?:unknown; downbeat?:unknown}[]).map(b => ({time: Number(b?.time), downbeat: !!b?.downbeat}));
+    for (const span of spans) {
+      try {
+        const data = fromBeats(beats, span);
+        validateSongMap(data);
+        if (data.pins.length >= 2) return {...data, origin: 'detected'};
+      } catch { /* try the next span, then the legacy map */ }
+    }
+  }
+  if (legacySections(t)) {
+    const sections = t.map as {t:number; bpm:number; beatsPerBar:number; unit:number}[];
+    for (const span of spans) {
+      if (!sections.some(s => Number.isFinite(s?.t) && s.t >= 0 && s.t < Math.max(span, 1e-3))) continue;
+      try {
+        const data = fromSections(sections, span);
+        validateSongMap(data);
+        return {...data, origin: 'edited'};
+      } catch { /* an unreadable legacy map falls back to the placeholder */ }
+    }
+  }
+  return null;
 }
 
 /**
@@ -422,22 +458,7 @@ export function hasRealMap(tempo:unknown, {hasPart = false}:{hasPart?:boolean} =
 export function songMapFromTempo(tempo:unknown, duration:number):SongMapData {
   const t = asTempo(tempo), seconds = Math.max(0.001, duration || 0), stored = cleanSongMap(t?.songMap);
   if (stored) { if (!stored.origin && isMadeLegacyMap(stored)) stored.origin = 'edited'; return stored; }
-  try {
-    if (legacyDetected(t)) {
-      const beats = (t!.detected as {time?:unknown; downbeat?:unknown}[]).map(b => ({time: Number(b?.time), downbeat: !!b?.downbeat}));
-      const data = fromBeats(beats, seconds);
-      validateSongMap(data);
-      if (data.pins.length >= 2) return {...data, origin: 'detected'};
-    } else if (legacySections(t)) {
-      const sections = t!.map as {t:number; bpm:number; beatsPerBar:number; unit:number}[];
-      if (sections.some(s => Number.isFinite(s?.t) && s.t >= 0 && s.t < Math.max(seconds, 1e-3))) {
-        const data = fromSections(sections, seconds);
-        validateSongMap(data);
-        return {...data, origin: 'edited'};
-      }
-    }
-  } catch { /* an unreadable legacy map falls back to the placeholder */ }
-  return defaultSongMap(seconds);
+  return legacyTranslation(t, seconds) ?? defaultSongMap(seconds);
 }
 
 // ---- bars and sections (architecture §4.3) --------------------------------
@@ -473,16 +494,28 @@ export function barsOf(data:SongMapData, duration:number, c:Compiled = compile(d
 /** The section label a bar starts, or '' (measure 0's auto `'Pickup'` label is ignored). */
 export const sectionLabelOf = (bar:{index:number; label:string}) => isAutoLabel(bar.label, bar.index) ? '' : bar.label.trim();
 
-/** Display names: a repeated label is numbered ('Chorus', 'Chorus 2'), never colliding with a label in use. */
+/**
+ * Display names: a repeated label is numbered ('Chorus', 'Chorus 2'), never
+ * colliding with a label in use. Written labels are named first; the
+ * synthetic leading section ('' here) is "Start", or the next free "Start N"
+ * when the user wrote a "Start" of their own.
+ */
 function numberNames(labels:string[]) {
-  const reserved = new Set(labels), used = new Set<string>(), seen = new Map<string, number>();
-  return labels.map(label => {
+  const reserved = new Set(labels.filter(Boolean)), used = new Set<string>(), seen = new Map<string, number>();
+  const free = (label:string, from:number) => { let n = from; while (reserved.has(`${label} ${n}`) || used.has(`${label} ${n}`)) n++; return `${label} ${n}`; };
+  const names = labels.map(label => {
+    if (!label) return '';
     const count = (seen.get(label) ?? 0) + 1;
     seen.set(label, count);
-    let name = label;
-    if (count > 1) { let n = count; while (reserved.has(`${label} ${n}`) || used.has(`${label} ${n}`)) n++; name = `${label} ${n}`; }
+    const name = count > 1 ? free(label, count) : label;
     used.add(name);
     return name;
+  });
+  return names.map((name, i) => {
+    if (labels[i]) return name;
+    const start = reserved.has(START_SECTION) || used.has(START_SECTION) ? free(START_SECTION, 2) : START_SECTION;
+    used.add(start);
+    return start;
   });
 }
 
@@ -491,7 +524,7 @@ export function sectionsFromBars(bars:MapBar[]):MapSection[] {
   const heads = bars.filter(b => sectionLabelOf(b) !== '').map(bar => ({bar, label: sectionLabelOf(bar)}));
   if (!heads.length) return [];
   if (heads[0].bar.index !== bars[0].index) heads.unshift({bar: bars[0], label: ''});
-  const names = numberNames(heads.map(h => h.label || START_SECTION)), last = final(bars)!;
+  const names = numberNames(heads.map(h => h.label)), last = final(bars)!;
   return heads.map((h, i) => {
     const next = heads[i + 1], endBar = next ? next.bar.index - 1 : last.index;
     return {index: i, label: h.label, name: names[i], startBar: h.bar.index, endBar, t0: h.bar.t0, t1: next ? next.bar.t0 : last.t1, bars: endBar - h.bar.index + 1};
