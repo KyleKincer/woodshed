@@ -1,4 +1,6 @@
-import { v, ConvexError, type Infer } from 'convex/values';
+import { v, type Infer } from 'convex/values';
+import { MBID, validatePatch } from '../../shared/metadata';
+import { fail } from './errors';
 
 export const artworkValidator = v.union(
   v.object({ kind: v.literal('removed') }),
@@ -22,8 +24,8 @@ export const metadataFields = {
 };
 export const metadataPatch = v.object(metadataFields);
 export type MetadataPatch = Infer<typeof metadataPatch>;
-export const mbid =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A MusicBrainz identifier (the shared `MBID`). */
+export const mbid = MBID;
 export const fingerprintValidator = v.object({
   value: v.string(),
   duration: v.number(),
@@ -43,44 +45,17 @@ export const candidateValidator = v.object({
   score: v.number(),
 });
 export type Candidate = Infer<typeof candidateValidator>;
+/**
+ * Cleans and validates a metadata patch with the shared rules
+ * (`shared/metadata.ts#validatePatch`): text trimmed, tags trimmed and
+ * deduplicated case-insensitively, artwork checked. Keys left undefined are
+ * dropped. The first invalid field fails with `invalid`, carrying `field` and
+ * its labelled copy ("Album artist is too long (500 characters max).").
+ */
 export function cleanMetadata(input: MetadataPatch): MetadataPatch {
-  const result = { ...input };
-  for (const key of Object.keys(result) as (keyof MetadataPatch)[]) {
-    const value = result[key];
-    if (typeof value !== 'string') continue;
-    const cleaned = value.trim();
-    if (cleaned.length > (key === 'notes' ? 10000 : 500))
-      throw new ConvexError(`${key} is too long.`);
-    if (key === 'title' && !cleaned)
-      throw new ConvexError('Enter a song title.');
-    if (key === 'year' && cleaned && !/^\d{4}$/.test(cleaned))
-      throw new ConvexError('Use a four-digit release year.');
-    if (
-      ['trackNumber', 'discNumber'].includes(key) &&
-      cleaned &&
-      !/^[1-9]\d{0,3}$/.test(cleaned)
-    )
-      throw new ConvexError(
-        'Track and disc numbers must be positive whole numbers.',
-      );
-    (result as Record<string, unknown>)[key] = cleaned;
-  }
-  if (result.tags) {
-    if (
-      result.tags.length > 30 ||
-      result.tags.some((t) => t.trim().length > 60)
-    )
-      throw new ConvexError('Use up to 30 tags, each at most 60 characters.');
-    result.tags = [
-      ...new Set(result.tags.map((t) => t.trim()).filter(Boolean)),
-    ];
-  }
-  if (
-    result.artwork?.kind === 'release' &&
-    !mbid.test(result.artwork.releaseId)
-  )
-    throw new ConvexError('Invalid cover selection.');
-  return result;
+  const result = validatePatch(input as Record<string, unknown>);
+  if ('error' in result) fail('invalid', result.error, { field: result.field });
+  return result.value as MetadataPatch;
 }
 export function unprotected(
   patch: MetadataPatch,

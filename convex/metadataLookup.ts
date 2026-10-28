@@ -1,5 +1,7 @@
 "use node";
-import { v, ConvexError } from "convex/values";
+import { v } from "convex/values";
+import { fail } from "./lib/errors";
+import { LIMITS } from "../shared/metadata";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
@@ -22,11 +24,12 @@ import {
 } from "./lib/musicBrainz";
 
 import { catalogRequest } from "./lib/catalogRequest";
+
+const LOOKUP_UNAVAILABLE =
+  "Online metadata lookup is currently unavailable. You can still edit every field.";
+const lookupEnabled = () => process.env.MUSICBRAINZ_ENABLED === "true";
 async function request(ctx: ActionCtx, path: string): Promise<any> {
-  if (process.env.MUSICBRAINZ_ENABLED !== "true")
-    throw new ConvexError(
-      "Online metadata lookup is currently unavailable. You can still edit every field.",
-    );
+  if (!lookupEnabled()) fail("lookup_unavailable", LOOKUP_UNAVAILABLE);
   const key = `mb:${path}`;
   const hit = await ctx.runQuery(internal.metadata.cached, { key });
   if (hit) return hit;
@@ -133,7 +136,7 @@ async function details(
       m.tracks?.some((t) => t.recording?.id === r.id),
     )
   )
-    throw new ConvexError("This recording is not on the selected release.");
+    fail("invalid", "This recording is not on the selected release.");
   return candidate(r, full);
 }
 export const find = action({
@@ -148,11 +151,13 @@ export const find = action({
     const song: Doc<"songs"> = await ctx.runQuery(internal.metadata.context, {
       id: a.id,
     });
-    if (a.title.length > 500 || a.artist.length > 500)
-      throw new ConvexError("Search text is too long.");
+    if (a.title.length > LIMITS.search || a.artist.length > LIMITS.search)
+      fail("invalid", "Search text is too long.", {
+        field: a.title.length > LIMITS.search ? "title" : "artist",
+      });
     if (a.recordingId) {
       if (!mbid.test(a.recordingId))
-        throw new ConvexError("Invalid recording.");
+        fail("invalid", "Invalid recording.");
       const r = await request(
         ctx,
         `recording/${a.recordingId}?fmt=json&inc=artist-credits`,
@@ -189,7 +194,7 @@ export const detail = action({
   handler: async (ctx, a): Promise<Candidate> => {
     await ctx.runQuery(internal.metadata.context, { id: a.id });
     if (!mbid.test(a.recordingId) || (a.releaseId && !mbid.test(a.releaseId)))
-      throw new ConvexError("Invalid match.");
+      fail("invalid", "Invalid match.");
     const r = await request(
       ctx,
       `recording/${a.recordingId}?fmt=json&inc=artist-credits`,
@@ -216,10 +221,15 @@ export const enrich = internalAction({
       const recording =
         strongRecording(song, found) ?? (await fingerprintMatch(ctx, song));
       if (!recording) {
+        // G5: keep the best guess for "Is this right?" (the search already carried its releases).
+        const best = found[0];
         await ctx.runMutation(internal.metadata.applyAutomatic, {
           id,
           before,
           changes: {},
+          ...(best
+            ? { suggestion: candidate(best, selectRelease(song.album, best.releases ?? [])) }
+            : {}),
           status: "uncertain",
         });
         return null;
@@ -255,7 +265,7 @@ export const enrich = internalAction({
         status: "matched",
       });
     } catch {
-      if (attempt < 2 && process.env.MUSICBRAINZ_ENABLED === "true")
+      if (attempt < 2 && lookupEnabled())
         await ctx.scheduler.runAfter(
           60000 * (attempt + 1),
           internal.metadataLookup.enrich,
@@ -269,6 +279,24 @@ export const enrich = internalAction({
           status: "unavailable",
         });
     }
+    return null;
+  },
+});
+
+/**
+ * "Couldn't reach MusicBrainz · [Try again]" and "Find a match" (G17): runs
+ * the automatic lookup again for one of the caller's songs. The song shows
+ * `pending` at once; `enrich` runs after a slot from the shared MusicBrainz
+ * limiter (`lookup_busy` when the queue is too long). `lookup_unavailable`
+ * when online lookup is switched off.
+ */
+export const retry = action({
+  args: { id: v.id("songs") },
+  returns: v.null(),
+  handler: async (ctx, { id }): Promise<null> => {
+    await ctx.runQuery(internal.metadata.context, { id });
+    if (!lookupEnabled()) fail("lookup_unavailable", LOOKUP_UNAVAILABLE);
+    await ctx.runMutation(internal.metadata.queueLookup, { id });
     return null;
   },
 });
