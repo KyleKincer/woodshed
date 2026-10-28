@@ -35,7 +35,8 @@ let restoreAudio = null;
  * builds it: the transport first, on an engine that has not loaded; then the
  * stems load, the map takes the decoded duration and `transport.ready()` runs.
  */
-async function bed({fixture = sectioned, raw = {}, stems = SIX, account = ACCOUNT, load = true, rate = 1, resplit = null} = {}) {
+async function bed({fixture = sectioned, raw = {}, stems = SIX, account = ACCOUNT, load = true, rate = 1, resplit = null,
+  wrapUndo = (u) => u} = {}) {
   vi.useFakeTimers(FAKE_TIMERS);
   restoreAudio = installFakeAudio();
   const clock = createClock();
@@ -48,7 +49,7 @@ async function bed({fixture = sectioned, raw = {}, stems = SIX, account = ACCOUN
     persist: async (p, {final}) => { saves.push({p, final}); }, defaults: account.practice,
   });
   const position = createPositionModel({map, practice});
-  const undo = createPracticeUndo();
+  const undo = wrapUndo(createPracticeUndo());
   const statuses = [];
   const transport = createTransport({engine, metronome, map, position, practice, undo, account, resplit, stems,
     status: (text, options = {}) => statuses.push({text, ...options})});
@@ -1148,6 +1149,62 @@ describe('speed (rule 17)', () => {
     expect(tb.snap.rate).toBe(1);
     expect(tb.engine.rate).toBe(1);
   });
+
+  test('a gesture token is passed through to undo.push: steps more than 1 s apart stay one undo step (I2a-1/I2a-2)', async () => {
+    // The I2a-1 contract on a minimal model: pushes carrying an open token merge into one step
+    // whatever their timing, and the first one never merges into an earlier step.
+    const pushes = [];
+    const wrapUndo = (u) => ({
+      ...u,
+      get size() { return u.size; },
+      beginGesture(key) {
+        const token = {key, entry: null, open: true, end() { token.open = false; }};
+        return token;
+      },
+      push(entry) {
+        pushes.push(entry);
+        const {gesture, ...rest} = entry;
+        if (gesture?.open && gesture.entry) { gesture.entry.to = rest.to; return gesture.entry; }
+        const made = u.push(gesture ? {...rest, coalesce: false} : rest);
+        if (gesture?.open) gesture.entry = made;
+        return made;
+      },
+    });
+    const tb = await bed({wrapUndo});
+    tb.transport.setSpeed(0.95);              // a +/- tap just before the drag: its own step
+    const gesture = tb.undo.beginGesture('speed');
+    tb.transport.setSpeed(0.9, {coalesce: true, gesture});
+    tb.advance(1.5);
+    tb.transport.setSpeed(0.85, {coalesce: true, gesture});
+    tb.advance(2);
+    tb.transport.setSpeed(0.8, {coalesce: true, gesture});
+    gesture.end();
+    expect(pushes.slice(1).map((p) => p.gesture)).toEqual([gesture, gesture, gesture]);
+    expect(pushes[0]).not.toHaveProperty('gesture');
+    expect(tb.undo.size.undo).toBe(2);
+    const entry = tb.undo.undo();
+    expect(entry.describe()).toBe('speed 95% → 80%');
+    expect(tb.snap.rate).toBe(0.95);
+    expect(tb.engine.rate).toBe(0.95);
+    tb.undo.undo();
+    expect(tb.snap.rate).toBe(1);
+  });
+
+  test.runIf(typeof createPracticeUndo().beginGesture === 'function')(
+    'on the real undo stack, one gesture token over a slow drag is one undo step (I2a-2)', async () => {
+      const tb = await bed();
+      const gesture = tb.undo.beginGesture('speed');
+      tb.transport.setSpeed(0.9, {coalesce: true, gesture});
+      tb.advance(1.5);
+      tb.transport.setSpeed(0.85, {coalesce: true, gesture});
+      tb.advance(1.5);
+      tb.transport.setSpeed(0.8, {coalesce: true, gesture});
+      gesture.end();
+      expect(tb.undo.size.undo).toBe(1);
+      tb.undo.undo();
+      expect(tb.snap.rate).toBe(1);
+      expect(tb.engine.rate).toBe(1);
+    });
 
   test('keep pitch is per song and switches the processing path', async () => {
     const tb = await bed({rate: 0.8});
