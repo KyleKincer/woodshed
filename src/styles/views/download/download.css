@@ -97,6 +97,10 @@
     font-size: var(--fs-20);
     line-height: 1.4;
   }
+  .download-lead-strong {
+    color: var(--ink);
+    font-weight: var(--fw-semibold);
+  }
   .download-primary {
     display: flex;
     flex-wrap: wrap;

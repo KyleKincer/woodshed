@@ -10,8 +10,10 @@
 //   dl1-unavailable   every lookup fails: the alert line, unavailable cards, Try again
 //   dl1-retry         after an outage, Try again (keyboard) recovers and focus lands on the primary download
 //   dl1-desktop       inside the desktop app: the way back into the app navigates in place (no target),
-//                     external links keep their new tab
-//   dl1-download      clicking the primary says the download should start shortly; Other platforms
+//                     external links keep target=_blank and say "(opens in your browser)"
+//   dl1-settle-focus  the keyboard sits on the primary while loading; when the lookup settles focus
+//                     moves to the new primary download instead of dropping to <body>
+//   dl1-download      the empty status line is still a live region; clicking the primary says the download should start shortly; Other platforms
 //                     moves focus to the platform heading without changing the URL
 //   dl1-focus         every focus stop shows the focus ring (laptop, both themes)
 'use strict';
@@ -158,7 +160,26 @@ module.exports = [
       const sameOriginNewTab = await page.evaluate(() => [...document.querySelectorAll('a[target=_blank]')]
         .filter(a => new URL(a.href, location.href).origin === location.origin).map(a => a.textContent));
       t.expect(sameOriginNewTab.length === 0, `no same-origin new-tab links (${sameOriginNewTab})`);
-      t.expect(await page.getByRole('link', {name: 'Release notes (opens in a new tab)'}).getAttribute('target') === '_blank', 'external links keep their new tab');
+      const notes = page.getByRole('link', {name: 'Release notes (opens in your browser)', exact: true});
+      t.expect(await notes.count() === 1, 'external links say they open in the browser');
+      t.expect(await notes.getAttribute('target') === '_blank', 'external links keep target=_blank (main opens them externally)');
+      t.expect(await page.getByRole('link', {name: /opens in a new tab/}).count() === 0, 'nothing claims a new tab inside the app');
+    },
+  },
+  {
+    name: 'dl1-settle-focus',
+    url: `${BASE}?release=slow&fx-platform=mac`,
+    opts: {devices: ['laptop'], themes: ['light'], capture: false},
+    async fn(page, t) {
+      await page.waitForSelector('.download-page[data-release-state="loading"]');
+      await page.locator('.download-primary-link').focus();
+      await page.evaluate(() => window.__dl1.answer());
+      await page.waitForSelector(READY);
+      const focused = await page.evaluate(() => {
+        const a = document.activeElement;
+        return a?.classList.contains('download-primary-link') ? a.textContent.replace(/\s+/g, ' ').trim() : a?.tagName;
+      });
+      t.expect(focused === 'Download for macOS (Apple Silicon)', `focus moved to the new primary (${focused})`);
     },
   },
   {
@@ -168,6 +189,8 @@ module.exports = [
     async fn(page, t) {
       await page.waitForSelector(READY);
       const before = page.url();
+      const region = await page.locator('.download-status').evaluate(el => ({role: el.getAttribute('role'), shown: getComputedStyle(el).display !== 'none' && !el.closest('[hidden]')}));
+      t.expect(region.role === 'status' && region.shown, `the empty status line stays a live region (${JSON.stringify(region)})`);
       await page.locator('.download-primary-link').click();
       t.expect(await page.getByRole('status').filter({hasText: 'Your download should start shortly.'}).count() === 1, 'the started status');
       t.expect(page.url() === before, 'the installer click stayed on the page');

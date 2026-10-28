@@ -1,7 +1,10 @@
 // Copy and controls for the /download page (architecture §9.6 DL1; spec §1.2 and §3.3).
 // The page is 1.9's download page (src/js/desktop.js renderDownload) on the 2.0 primitives and
-// tokens; its sentences are kept, the lead is spec §3.3's panel sentence, and the platform-detected
-// primary uses spec §3.3's label ("Download for macOS (Apple Silicon)").
+// tokens; its sentences are kept and the platform-detected primary uses spec §3.3's label
+// ("Download for macOS (Apple Silicon)"). The lead is ADAPTED from spec §3.3's Add-sheet panel: its
+// first sentence is emphasised as there, but the last one says "in your library on every device,
+// including iPad" instead of "here and on your iPad automatically", because /download is not the
+// library ("here" would point at this page). This deviation is reported in the DL1 handoff.
 
 /** Display names, keyed by detectPlatform() / normalizeRelease() platform keys. */
 export const PLATFORMS = Object.freeze({
@@ -39,9 +42,13 @@ export const COPY = Object.freeze({
   openApp: 'Open web player',
   openAppDesktop: 'Back to your library',
   newTab: '(opens in a new tab)',
+  /** Inside the desktop app an external link opens in the system browser (desktop/permissions.cjs). */
+  opensBrowser: '(opens in your browser)',
 
   eyebrow: 'Woodshed for desktop',
   title: 'Download Woodshed',
+  /** The lead's emphasised opening (spec §3.3 sets it in bold); `lead` starts with it. */
+  leadStrong: 'Splitting happens on your computer.',
   lead: 'Splitting happens on your computer. Woodshed for Mac, Windows or Linux downloads songs and splits them into stems. Everything you add appears in your library on every device, including iPad.',
   iconAlt: 'Woodshed app icon',
   tagline: 'Built for the shed.',
@@ -102,19 +109,68 @@ export const LINKS = Object.freeze({
   source: 'https://github.com/KyleKincer/woodshed',
 });
 
+const newTab = name => `${name} ${COPY.newTab}`;
+const inBrowser = name => `${name} ${COPY.opensBrowser}`;
+const FILE_ROWS = Object.freeze([
+  /^Download Woodshed for macOS, DMG installer, \d+ MB$/,
+  /^Download Woodshed for macOS, ZIP archive, \d+ MB$/,
+  /^Download Woodshed for Windows, EXE installer, \d+ MB$/,
+  /^Download Woodshed for Linux, AppImage, \d+ MB$/,
+]);
+
 /**
- * The page's controls (role and accessible name) once the release has loaded on a Mac on the web.
- * The table-driven test renders the page and finds each row by role and name.
+ * The contexts the CONTROLS table covers. `ready`, `loading` and `unavailable` are a Mac on the
+ * web with the release loaded, still loading and not loadable; `mobile` is an iPad on the web with
+ * the release loaded; `desktop` is a Mac inside the desktop app with the release loaded.
+ */
+export const CONTROL_CONTEXTS = Object.freeze(['ready', 'loading', 'unavailable', 'mobile', 'desktop']);
+
+/**
+ * The page's controls per context: [{context, role, name, count?}] (count defaults to 1). The
+ * table-driven test renders each context, finds every row by computed role and accessible name, and
+ * checks that the context has no control outside its rows.
  */
 export const CONTROLS = Object.freeze([
-  {role: 'link', name: COPY.brand},
-  {role: 'link', name: `${COPY.openApp} ${COPY.newTab}`},
-  {role: 'link', name: PLATFORMS.mac.primary},
-  {role: 'link', name: COPY.otherPlatforms},
-  {role: 'link', name: /^Download Woodshed for macOS, DMG installer, \d+ MB$/},
-  {role: 'link', name: /^Download Woodshed for macOS, ZIP archive, \d+ MB$/},
-  {role: 'link', name: /^Download Woodshed for Windows, EXE installer, \d+ MB$/},
-  {role: 'link', name: /^Download Woodshed for Linux, AppImage, \d+ MB$/},
-  {role: 'link', name: `${COPY.releaseNotes} ${COPY.newTab}`},
-  {role: 'link', name: `${COPY.source} ${COPY.newTab}`},
-]);
+  ...[
+    {role: 'link', name: COPY.brand},
+    {role: 'link', name: newTab(COPY.openApp)},
+    {role: 'link', name: PLATFORMS.mac.primary},
+    {role: 'link', name: COPY.otherPlatforms},
+    ...FILE_ROWS.map(name => ({role: 'link', name})),
+    {role: 'link', name: newTab(COPY.releaseNotes)},
+    {role: 'link', name: newTab(COPY.source)},
+  ].map(row => ({context: 'ready', ...row})),
+  ...[
+    {role: 'link', name: COPY.brand},
+    {role: 'link', name: newTab(COPY.openApp)},
+    {role: 'link', name: COPY.primaryFallback},
+    {role: 'link', name: newTab(COPY.releaseNotes)},
+    {role: 'link', name: newTab(COPY.source)},
+  ].map(row => ({context: 'loading', ...row})),
+  ...[
+    {role: 'link', name: COPY.brand},
+    {role: 'link', name: newTab(COPY.openApp)},
+    {role: 'link', name: COPY.primaryFallback},
+    {role: 'button', name: COPY.retry},
+    {role: 'link', name: newTab(COPY.releaseNotes)},
+    {role: 'link', name: newTab(COPY.source)},
+  ].map(row => ({context: 'unavailable', ...row})),
+  ...[
+    {role: 'link', name: COPY.brand},
+    // The header link and the primary: same name, same destination.
+    {role: 'link', name: newTab(COPY.openApp), count: 2},
+    {role: 'link', name: COPY.primaryFallback},
+    ...FILE_ROWS.map(name => ({role: 'link', name})),
+    {role: 'link', name: newTab(COPY.releaseNotes)},
+    {role: 'link', name: newTab(COPY.source)},
+  ].map(row => ({context: 'mobile', ...row})),
+  ...[
+    {role: 'link', name: COPY.brand},
+    {role: 'link', name: COPY.openAppDesktop},
+    {role: 'link', name: PLATFORMS.mac.primary},
+    {role: 'link', name: COPY.otherPlatforms},
+    ...FILE_ROWS.map(name => ({role: 'link', name})),
+    {role: 'link', name: inBrowser(COPY.releaseNotes)},
+    {role: 'link', name: inBrowser(COPY.source)},
+  ].map(row => ({context: 'desktop', ...row})),
+].map(Object.freeze));

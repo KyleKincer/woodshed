@@ -19,9 +19,14 @@
 // unavailable) for tests and the fixture.
 //
 // New-tab links (spec §1.2's ↗): on the web they open a new tab. Inside the desktop app the main
-// process denies every window.open and opens only https URLs externally (desktop/main.cjs), so a
-// same-origin new-tab link would silently do nothing: there it navigates in place, without the
-// new-tab icon and text. External https links keep their new tab (main opens them in the browser).
+// process denies every window.open and opens only https URLs externally (desktop/permissions.cjs),
+// so a same-origin new-tab link would silently do nothing: there it navigates in place, without the
+// new-tab icon and text. External https links keep target=_blank, which main turns into the system
+// browser, so there they say "(opens in your browser)" instead of "(opens in a new tab)".
+//
+// Live regions: the release status line stays in the accessibility tree while empty (visually
+// hidden, never `hidden`), so "Your download should start shortly" lands in a region that already
+// exists. A settled lookup that replaces the focused primary link moves focus to its successor.
 //
 // html and body never scroll (D26): the page is its own [data-scroller]. Its links are <a> elements;
 // the primary ones wear the Button primitive's classes (.ui-button, data-variant, data-size).
@@ -91,7 +96,7 @@ export function mountDownload(el, deps = {}) {
     if (!how.inPlace) {
       const ext = icon('external-link', {size: 20});
       ext.classList.add('download-link-ext');
-      content.push(ext, h('span', {class: 'sr-only'}, ` ${COPY.newTab}`));
+      content.push(ext, h('span', {class: 'sr-only'}, ` ${env.desktopApp ? COPY.opensBrowser : COPY.newTab}`));
     }
     return h('a', {
       href,
@@ -121,7 +126,7 @@ export function mountDownload(el, deps = {}) {
     h('div', {class: 'download-hero-copy'},
       h('p', {class: 'download-eyebrow'}, COPY.eyebrow),
       h('h1', {class: 'download-title', id: 'download-title'}, COPY.title),
-      h('p', {class: 'download-lead selectable'}, COPY.lead),
+      h('p', {class: 'download-lead selectable'}, h('strong', {class: 'download-lead-strong'}, COPY.leadStrong), COPY.lead.slice(COPY.leadStrong.length)),
       primarySlot,
       detail,
       releaseStatus.el),
@@ -145,7 +150,11 @@ export function mountDownload(el, deps = {}) {
       nodes.push(link({href: `#${SECTION_ID}`, label: COPY.primaryFallback, variant: 'primary', size: 'lg', iconName: 'arrow-down-to-line',
         className: 'download-primary-link', on: {click: jump}}));
     }
+    // A keyboard or AT user sitting on the primary when the lookup settles keeps a focus target.
+    const doc = el.ownerDocument;
+    const hadFocus = primarySlot.contains(doc.activeElement);
     primarySlot.replaceChildren(...nodes);
+    if (hadFocus) nodes[0].focus({preventScroll: true});
   }
 
   function setDetail(release) {
@@ -238,8 +247,10 @@ export function mountDownload(el, deps = {}) {
   let destroyed = false;
   let refocus = false;
 
+  // Empty, the line is visually hidden but stays in the accessibility tree (see the header).
   function setStatus({tone, text, action = null}) {
-    releaseStatus.el.hidden = !text;
+    releaseStatus.el.classList.toggle('sr-only', !text);
+    releaseStatus.el.toggleAttribute('data-empty', !text);
     releaseStatus.set({tone, text: text ?? '', action});
   }
 
@@ -272,21 +283,31 @@ export function mountDownload(el, deps = {}) {
     return load();
   }
 
-  async function load() {
+  // load() → Promise<state>. After destroy() it does nothing; a load superseded by a newer one
+  // resolves with the newer one's settled state (so `ready` never resolves to a stale 'loading').
+  let current = null;
+  function load() {
+    if (destroyed) return Promise.resolve(state);
+    current = lookup();
+    return current;
+  }
+
+  async function lookup() {
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
     setState('loading');
+    let release = null;
     try {
-      const release = await fetchRelease({
+      release = await fetchRelease({
         ...(env.fetch ? {fetch: env.fetch} : {}), sources: env.sources, timeoutMs: env.timeoutMs, signal: mine.signal,
       });
-      if (destroyed || mine.signal.aborted) return state;
-      setState('ready', release);
-    } catch (error) {
-      if (destroyed || mine.signal.aborted) return state;
-      setState('unavailable');
+    } catch {
+      release = null;
     }
+    if (destroyed) return state;
+    if (mine.signal.aborted) return current;
+    setState(release ? 'ready' : 'unavailable', release);
     restoreFocus();
     return state;
   }

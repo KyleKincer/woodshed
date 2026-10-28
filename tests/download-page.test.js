@@ -3,7 +3,7 @@
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {boot, isSameOrigin, linkTarget, mountDownload, RELEASE_STATES} from '../src/download/download.js';
-import {CONTROLS, COPY, LINKS, PLATFORMS} from '../src/download/download.copy.js';
+import {CONTROL_CONTEXTS, CONTROLS, COPY, LINKS, PLATFORMS} from '../src/download/download.copy.js';
 import {RELEASE_SOURCES} from '../src/js/download-release.js';
 
 const manifest = JSON.parse(readFileSync(`${process.cwd()}/public/downloads.json`, 'utf8'));
@@ -49,6 +49,24 @@ const collapse = s => s.replace(/\s+/g, ' ').trim();
 const nameOf = el => collapse(el.getAttribute('aria-label') ?? el.textContent ?? '');
 const links = root => [...root.querySelectorAll('a[href]')];
 const linkNamed = (root, name) => links(root).filter(a => (name instanceof RegExp ? name.test(nameOf(a)) : nameOf(a) === name));
+/** The computed role of an element (explicit role, else the implicit link/button role). */
+const roleOf = el => el.getAttribute('role') ?? (el.matches('a[href]') ? 'link' : el.matches('button') ? 'button' : null);
+/** Accessible name: aria-label, else the text of the subtree minus aria-hidden parts. */
+function accName(el) {
+  if (el.hasAttribute('aria-label')) return collapse(el.getAttribute('aria-label'));
+  const walk = node => {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1 || node.getAttribute('aria-hidden') === 'true' || node.hidden) return '';
+    return [...node.childNodes].map(walk).join('');
+  };
+  return collapse(walk(el));
+}
+/** Every control exposed to assistive tech (not inside [hidden] or aria-hidden). */
+const exposedControls = root => [...root.querySelectorAll('a[href], button, [role=link], [role=button]')]
+  .filter(el => !el.closest('[hidden], [aria-hidden=true]'));
+/** The exposed controls with this computed role and accessible name (string or RegExp). */
+const getAllByRole = (root, role, name) => exposedControls(root)
+  .filter(el => roleOf(el) === role && (name instanceof RegExp ? name.test(accName(el)) : accName(el) === name));
 const primary = root => root.querySelector('.download-primary-link');
 const status = root => root.querySelector('.download-status');
 const card = (root, key) => root.querySelector(`.download-platform[data-platform=${key}]`);
@@ -105,7 +123,12 @@ describe('the recommended installer', () => {
     }
     expect(root.querySelector('.download-version').textContent).toBe(COPY.version(VERSION));
     expect(root.querySelector('.download-platforms').hasAttribute('aria-busy')).toBe(false);
-    expect(status(root).hidden).toBe(true);
+    // Empty, the status line is visually hidden but stays a live region in the tree.
+    expect(status(root).hidden).toBe(false);
+    expect(status(root).closest('[hidden]')).toBeNull();
+    expect(status(root).getAttribute('role')).toBe('status');
+    expect(status(root).classList.contains('sr-only')).toBe(true);
+    expect(status(root).hasAttribute('data-empty')).toBe(true);
   });
 
   test('iPad and phones get the web player as the primary, in a new tab, and no recommended card', async () => {
@@ -131,8 +154,15 @@ describe('the recommended installer', () => {
     const {root} = await mount();
     const prevent = e => e.preventDefault();
     document.addEventListener('click', prevent);
+    // The live region is already in the tree before the message lands in it.
+    const region = status(root);
+    expect(region.hidden).toBe(false);
+    expect(region.getAttribute('role')).toBe('status');
     primary(root).click();
+    expect(status(root)).toBe(region);
     expect(status(root).hidden).toBe(false);
+    expect(status(root).classList.contains('sr-only')).toBe(false);
+    expect(status(root).hasAttribute('data-empty')).toBe(false);
     expect(status(root).getAttribute('role')).toBe('status');
     expect(status(root).textContent).toContain(COPY.started);
     root.querySelector('.download-file').click();
@@ -197,7 +227,7 @@ describe('looking up the release', () => {
     await vi.waitFor(() => expect(view.state()).toBe('ready'));
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(root.querySelectorAll('.download-file')).toHaveLength(4);
-    expect(status(root).hidden).toBe(true);
+    expect(status(root).hasAttribute('data-empty')).toBe(true);
     // Try again hid itself while loading; focus lands on the download it found.
     expect(document.activeElement).toBe(primary(root));
   });
@@ -225,6 +255,49 @@ describe('looking up the release', () => {
     const {view, fetch} = await mount();
     expect(await view.reload()).toBe('ready');
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('reload() after destroy() does nothing', async () => {
+    const {view, fetch} = await mount();
+    view.destroy();
+    expect(await view.reload()).toBe('ready');
+    expect(view.state()).toBe('ready');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('a load superseded by reload() resolves with the settled state, not "loading"', async () => {
+    const {view, fetch} = await mount({fetch: fakeFetch('hang'), settle: false, timeoutMs: 60000});
+    const again = view.reload();
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(await view.ready).toBe('ready');
+    expect(await again).toBe('ready');
+    expect(view.state()).toBe('ready');
+  });
+
+  test.each([
+    ['a Mac', NAV.mac, () => PLATFORMS.mac.primary],
+    ['an iPad', NAV.ipad, () => `${COPY.openApp} ${COPY.newTab}`],
+  ])('on %s, focus on the primary while loading moves to the new primary when the lookup settles', async (_label, nav, name) => {
+    let answer;
+    const fetch = vi.fn(() => new Promise(resolve => { answer = resolve; }));
+    const {root, view} = await mount({nav, fetch, settle: false, timeoutMs: 60000});
+    primary(root).focus();
+    expect(document.activeElement).toBe(primary(root));
+    answer(ok());
+    expect(await view.ready).toBe('ready');
+    expect(nameOf(primary(root))).toBe(name());
+    expect(document.activeElement).toBe(primary(root));
+  });
+
+  test('focus elsewhere is left alone when the lookup settles', async () => {
+    let answer;
+    const fetch = vi.fn(() => new Promise(resolve => { answer = resolve; }));
+    const {root, view} = await mount({fetch, settle: false, timeoutMs: 60000});
+    const brand = root.querySelector('.download-brand');
+    brand.focus();
+    answer(ok());
+    await view.ready;
+    expect(document.activeElement).toBe(brand);
   });
 
   test('the release states are the documented three', () => {
@@ -274,10 +347,14 @@ describe('new-tab links', () => {
     expect(linkNamed(root, COPY.openAppDesktop)).toHaveLength(1);
     expect(nameOf(primary(root))).toBe(COPY.openApp);
     for (const name of [COPY.releaseNotes, COPY.source]) {
-      const [a] = linkNamed(root, `${name} ${COPY.newTab}`);
+      // Main opens these in the system browser, so they say so (not "a new tab").
+      expect(linkNamed(root, `${name} ${COPY.newTab}`)).toHaveLength(0);
+      const [a] = linkNamed(root, `${name} ${COPY.opensBrowser}`);
       expect(a.getAttribute('target')).toBe('_blank');
       expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+      expect(a.querySelector('.download-link-ext')).not.toBeNull();
     }
+    expect(nameOf(root)).not.toContain(COPY.newTab);
   });
 
   test('the platform list link scrolls to the cards and focuses their heading without touching the URL', async () => {
@@ -295,18 +372,37 @@ describe('new-tab links', () => {
   });
 });
 
+/** Renders the page in one of CONTROL_CONTEXTS. */
+function mountContext(context) {
+  if (context === 'loading') return mount({fetch: fakeFetch('hang'), settle: false, timeoutMs: 60000});
+  if (context === 'unavailable') return mount({fetch: fakeFetch('down', 'down')});
+  if (context === 'mobile') return mount({nav: NAV.ipad});
+  if (context === 'desktop') return mount({desktopApp: true});
+  return mount();
+}
+
 describe('controls and structure', () => {
-  test.each(CONTROLS.map(c => [c.role, String(c.name), c]))('%s "%s" is on the page exactly once', async (role, _name, row) => {
-    const {root} = await mount();
-    expect(role).toBe('link');
-    expect(linkNamed(root, row.name)).toHaveLength(1);
+  test.each(CONTROLS.map(c => [c.context, c.role, String(c.name), c]))('%s: %s "%s" is on the page', async (context, role, _name, row) => {
+    const {root, view} = await mountContext(context);
+    expect(getAllByRole(root, role, row.name)).toHaveLength(row.count ?? 1);
+    view.destroy();
   });
 
-  test('every link on the page is a CONTROLS row', async () => {
-    const {root} = await mount();
-    for (const a of links(root)) {
-      expect(CONTROLS.some(c => (c.name instanceof RegExp ? c.name.test(nameOf(a)) : c.name === nameOf(a))), nameOf(a)).toBe(true);
+  test.each(CONTROL_CONTEXTS)('%s: every control on the page is a CONTROLS row of that context', async context => {
+    const {root, view} = await mountContext(context);
+    const rows = CONTROLS.filter(c => c.context === context);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const el of exposedControls(root)) {
+      const role = roleOf(el);
+      const name = accName(el);
+      expect(rows.some(c => c.role === role && (c.name instanceof RegExp ? c.name.test(name) : c.name === name)), `${role} "${name}"`).toBe(true);
     }
+    view.destroy();
+  });
+
+  test('the table covers every context and the Try again button', () => {
+    expect(new Set(CONTROLS.map(c => c.context))).toEqual(new Set(CONTROL_CONTEXTS));
+    expect(CONTROLS.some(c => c.context === 'unavailable' && c.role === 'button' && c.name === COPY.retry)).toBe(true);
   });
 
   test('landmarks, headings and the one scroller', async () => {
@@ -325,6 +421,8 @@ describe('controls and structure', () => {
     expect(root.querySelector('img').getAttribute('alt')).toBe(COPY.iconAlt);
     expect(root.querySelector('.download-footer').textContent).toContain(COPY.footerNote);
     expect(root.querySelector('.download-lead').textContent).toBe(COPY.lead);
+    expect(COPY.lead.startsWith(COPY.leadStrong)).toBe(true);
+    expect(root.querySelector('.download-lead strong').textContent).toBe(COPY.leadStrong);
   });
 
   test('the page keeps no theme picker (theme follows the device prefs)', async () => {
