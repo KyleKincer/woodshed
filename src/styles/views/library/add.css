@@ -1,0 +1,463 @@
+/* The Add sheet (src/library/add-sheet.js, spec §3.2–3.3): a centred 640 px modal dialog on fine pointers, a
+ * bottom sheet at 90% of the viewport with a grabber on iPad (data-presentation=sheet). A 56 px omnibox, 72 px
+ * candidate radio rows (80 coarse), the defaults line with Change, and a footer with the device line and the
+ * actions. Also the new card's 1.5 s accent ring in the Library ([data-add-ring], set after a submit). */
+@layer views {
+  .lib-add {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    inline-size: min(640px, calc(100vw - 2 * var(--s4)));
+    max-inline-size: none;
+    max-block-size: calc(100dvh - 2 * var(--s6));
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-dialog);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+  .lib-add:not([open]) { display: none; }
+  .lib-add::backdrop { background: var(--backdrop); }
+
+  .lib-add[data-presentation=sheet] {
+    position: fixed;
+    inset: auto 0 0 0;
+    inline-size: min(100%, 820px);
+    block-size: 90dvh;
+    max-block-size: 90dvh;
+    margin: 0 auto;
+    padding-block-end: var(--safe-bottom, 0px);
+    border-block-end: 0;
+    border-radius: var(--r-surface) var(--r-surface) 0 0;
+    box-shadow: var(--shadow-sheet);
+    transition: translate var(--motion-fast) var(--ease);
+    animation: ui-sheet-in var(--motion-nav) var(--ease);
+  }
+  .lib-add[data-dragging] { transition: none; }
+
+  /* ---------- head */
+  .lib-add-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex: none;
+    padding: var(--s5) var(--s3) var(--s3) var(--s5);
+  }
+  .lib-add[data-presentation=sheet] .lib-add-head { touch-action: none; cursor: grab; }
+  .lib-add-grabber { display: none; }
+  .lib-add[data-presentation=sheet] .lib-add-grabber {
+    display: block;
+    position: absolute;
+    inset-block-start: var(--s2);
+    inset-inline-start: 50%;
+    translate: -50% 0;
+    inline-size: 36px;
+    block-size: 5px;
+    border-radius: var(--r-pill);
+    background: var(--line-strong);
+  }
+  .lib-add-title {
+    flex: 1 1 auto;
+    margin: 0;
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+    line-height: 1.2;
+  }
+  .lib-add-close {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    inline-size: 44px;
+    block-size: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .lib-add-close:hover { background: var(--surface-2); color: var(--ink); }
+
+  /* ---------- body */
+  .lib-add-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0 var(--s5) var(--s4);
+  }
+  .lib-add-form { display: flex; flex-direction: column; gap: var(--s3); }
+  .lib-add-form[hidden], .lib-add-explainer[hidden], .lib-add-paused[hidden] { display: none; }
+  .lib-add-paused { margin-block-end: var(--s3); }
+
+  .lib-add-omnibox {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: 56px;
+    padding: 0 var(--s1) 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink-3);
+  }
+  .lib-add-omnibox:focus-within { border-color: var(--focus-ring); box-shadow: 0 0 0 1px var(--focus-ring); }
+  .lib-add-input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    block-size: 54px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: calc(var(--fs-16) * 1.125);
+  }
+  .lib-add-input:focus, .lib-add-input:focus-visible { outline: none; }
+  .lib-add-input::placeholder { color: var(--ink-3); opacity: 1; }
+  .lib-add-file-input { display: none; }
+  .lib-add-choose, .lib-add-paste { flex: none; white-space: nowrap; }
+
+  .lib-add-hint, .lib-add-files-note, .lib-add-field-hint {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: calc(var(--fs-12) * 1.0834);
+  }
+  .lib-add-hint { margin-block-start: calc(-1 * var(--s1)); }
+  .lib-add-files-note[hidden], .lib-add-warning[hidden], .lib-add-notice[hidden], .lib-add-panel[hidden] { display: none; }
+
+  .lib-add-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .lib-add-line .ui-icon { flex: none; color: var(--ink-3); }
+  .lib-add-looking .ui-icon { animation: lib-add-spin 1s linear infinite; }
+  @keyframes lib-add-spin { to { rotate: 1turn; } }
+  .lib-add-fallback { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s1); }
+  .lib-add-url {
+    margin: 0;
+    font: var(--fs-14)/1.4 var(--font-mono);
+    color: var(--ink-3);
+    overflow-wrap: anywhere;
+  }
+  .lib-add-resolution { display: flex; flex-direction: column; gap: var(--s2); }
+  .lib-add-resolution:empty { display: none; }
+
+  /* ---------- candidates (radio rows) */
+  .lib-add-candidates { display: flex; flex-direction: column; gap: var(--s1); }
+  .lib-add-candidate {
+    display: grid;
+    grid-template-columns: 20px 96px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: 72px;
+    padding: var(--s2) var(--s3);
+    border: 1px solid transparent;
+    border-radius: var(--r-control);
+    cursor: pointer;
+  }
+  .lib-add-candidate:hover { background: var(--surface-2); }
+  .lib-add-candidate[aria-checked=true] { border-color: var(--accent); background: var(--accent-soft); }
+  .lib-add-radio {
+    inline-size: 18px;
+    block-size: 18px;
+    border: 2px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    box-sizing: border-box;
+  }
+  .lib-add-candidate[aria-checked=true] .lib-add-radio { border: 5px solid var(--accent); }
+  .lib-add-thumb {
+    display: grid;
+    place-items: center;
+    inline-size: 96px;
+    block-size: 54px;
+    object-fit: cover;
+    border-radius: 0;
+    background: var(--surface-2);
+    color: var(--ink-3);
+  }
+  .lib-add-candidate-text { display: flex; flex-direction: column; min-inline-size: 0; }
+  .lib-add-candidate-title {
+    font-weight: var(--fw-semibold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lib-add-candidate-meta { color: var(--ink-3); font-size: var(--fs-14); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lib-add-candidate-meta > .ui-icon { inline-size: 1em; block-size: 1em; margin-inline-end: var(--s1); vertical-align: -0.125em; }
+  .lib-add-candidate-end { display: flex; align-items: center; gap: var(--s2); }
+  .lib-add-badge {
+    padding: 0 var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink-2);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .lib-add-badge[data-badge=official] { border-color: var(--accent); color: var(--accent); }
+  .lib-add-duration { color: var(--ink-2); font-size: var(--fs-14); font-variant-numeric: tabular-nums; }
+
+  /* ---------- files */
+  .lib-add-files-block { display: flex; flex-direction: column; gap: var(--s2); }
+  .lib-add-files { display: flex; flex-direction: column; gap: var(--s1); margin: 0; padding: 0; list-style: none; }
+  .lib-add-file {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto 44px;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: 48px;
+    padding: 0 0 0 var(--s3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+  }
+  .lib-add-file[data-disabled] { color: var(--ink-3); }
+  .lib-add-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lib-add-file-meta { color: var(--ink-3); font-size: var(--fs-14); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lib-add-file-remove {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 44px;
+    block-size: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .lib-add-file-remove:hover { background: var(--surface-2); color: var(--ink); }
+  .lib-add-flag {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: 0;
+    padding-inline-start: var(--s3);
+    color: var(--warn);
+    font-size: var(--fs-14);
+  }
+  .lib-add-flag > .ui-icon { flex: none; }
+  .lib-add-flag > span { flex: 1 1 auto; color: var(--ink-2); }
+  .lib-add-title-field { display: flex; flex-direction: column; gap: var(--s1); }
+  .lib-add-label { font-size: var(--fs-14); font-weight: var(--fw-semibold); }
+  .lib-add-title-input {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-block-size: var(--h-md);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: inherit;
+  }
+
+  /* ---------- duplicate, errors, warnings */
+  .lib-add-duplicate, .lib-add-error {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s2) var(--s3);
+    padding: var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+  }
+  .lib-add-duplicate > .ui-icon { color: var(--accent); }
+  .lib-add-duplicate-text { margin: 0; }
+  .lib-add-duplicate-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .lib-add-error { grid-template-columns: minmax(0, 1fr); border-inline-start: 3px solid var(--danger); }
+  .lib-add-error-text { display: flex; align-items: flex-start; gap: var(--s2); margin: 0; }
+  .lib-add-error-text > .ui-icon { flex: none; color: var(--danger); }
+  .lib-add-error-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .lib-add-error-action, .lib-add-error-toggle, .lib-add-error-copy {
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .lib-add-error-action:first-child { border-color: var(--accent-fill); background: var(--accent-fill); color: var(--on-accent); }
+  .lib-add-error-toggle, .lib-add-error-copy { border-color: transparent; background: transparent; color: var(--accent); }
+  .lib-add-error-details {
+    margin: 0;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    font: var(--fs-12)/1.5 var(--font-mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .lib-add-warning, .lib-add-notice { margin: 0; font-size: var(--fs-14); }
+  .lib-add-warning { color: var(--warn); }
+  .lib-add-notice { color: var(--ok); }
+
+  /* ---------- defaults line and Change */
+  .lib-add-defaults { margin: 0; font-size: var(--fs-14); color: var(--ink-2); }
+  .lib-add-defaults strong { color: var(--ink); }
+  .lib-add-change {
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .lib-add-change:hover { background: var(--accent-soft); }
+  .lib-add-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    padding: var(--s3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+  }
+  .lib-add-panel-row { display: flex; flex-direction: column; gap: var(--s1); }
+  .lib-add-seg { display: flex; }
+  .lib-add-seg .ui-segmented-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    inline-size: 100%;
+    border-radius: var(--r-surface);
+  }
+  .lib-add-seg .ui-segmented-option { border-radius: var(--r-control); white-space: normal; text-align: center; }
+  .lib-add-save { display: flex; align-items: center; gap: var(--s2); min-block-size: var(--h-sm); cursor: pointer; }
+  .lib-add-save-input { inline-size: 18px; block-size: 18px; margin: 0; accent-color: var(--accent-fill); }
+
+  /* ---------- footer */
+  .lib-add-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    flex: none;
+    padding: var(--s3) var(--s5) var(--s4);
+    border-block-start: 1px solid var(--line);
+  }
+  .lib-add-footer[hidden] { display: none; }
+  .lib-add-device { display: flex; align-items: center; gap: var(--s1); min-inline-size: 0; flex: 1 1 260px; }
+  .lib-add-device-text { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin: 0; color: var(--ink-2); font-size: var(--fs-14); }
+  .lib-add-device-text > .ui-icon { color: var(--ink-3); }
+  .lib-add-device-text strong { color: var(--ink); }
+  .lib-add-dot { inline-size: 8px; block-size: 8px; border-radius: var(--r-pill); background: var(--ink-3); }
+  .lib-add-dot[data-tone=ok] { background: var(--ok); }
+  .lib-add-dot[data-tone=danger] { background: var(--danger); }
+  .lib-add-device-pick {
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--h-sm);
+    block-size: var(--h-sm);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .lib-add-device-pick:hover { background: var(--surface-2); color: var(--ink); }
+  .lib-add-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--s2); margin-inline-start: auto; }
+  .lib-add-another { display: inline-flex; align-items: center; gap: var(--s1); color: var(--ink-3); font-size: calc(var(--fs-12) * 1.0834); white-space: nowrap; }
+  .lib-add-another[hidden] { display: none; }
+  @media (hover: none) and (pointer: coarse) { .lib-add-another { display: none; } }
+  .lib-add-submit, .lib-add-cancel { white-space: nowrap; }
+  .lib-add[data-presentation=sheet] .lib-add-actions { flex: 1 1 100%; }
+  .lib-add[data-presentation=sheet] .lib-add-submit { flex: 1 1 auto; min-block-size: 56px; }
+
+  /* ---------- the drop target */
+  .lib-add-drop {
+    position: absolute;
+    inset: var(--s2);
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--s2);
+    border: 2px dashed var(--accent);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+    color: var(--accent);
+    font-size: var(--fs-20);
+    font-weight: var(--fw-semibold);
+    pointer-events: none;
+  }
+  .lib-add-drop[hidden] { display: none; }
+  .lib-add-drop p { margin: 0; }
+
+  /* ---------- the web explainer (spec §3.3) */
+  .lib-add-explainer { display: flex; flex-direction: column; gap: var(--s4); padding-block-end: var(--s2); }
+  .lib-add-explainer-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    padding: var(--s5);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface-2);
+  }
+  .lib-add-explainer-lead { margin: 0; color: var(--ink-2); }
+  .lib-add-explainer-lead strong { color: var(--ink); }
+  .lib-add-explainer-actions { display: flex; }
+  .lib-add-download {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: var(--h-lg);
+    padding: 0 var(--s5);
+    border-radius: var(--r-control);
+    background: var(--accent-fill);
+    color: var(--on-accent);
+    font-weight: var(--fw-semibold);
+    text-decoration: none;
+  }
+  .lib-add-explainer-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+  .lib-add-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    min-block-size: var(--h-md);
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    text-decoration: none;
+  }
+  .lib-add-link:hover, .lib-add-download:hover { text-decoration: underline; }
+  .lib-add-explainer-status { margin: 0; color: var(--ok); font-size: var(--fs-14); }
+  .lib-add-explainer-status:empty { display: none; }
+  .lib-add-meanwhile { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: 0; color: var(--ink-2); }
+
+  @media (pointer: coarse) {
+    .lib-add-candidate { min-block-size: 80px; }
+    .lib-add-file { min-block-size: 56px; }
+  }
+
+  /* ---------- the new card in the Library (spec §3.2: a 1.5 s accent ring) */
+  [data-add-ring] {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+    animation: lib-add-ring 1500ms var(--ease) forwards;
+  }
+  @keyframes lib-add-ring {
+    0%, 70% { outline-color: var(--accent); }
+    100% { outline-color: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-add-ring] { animation: none; }
+  }
+}
