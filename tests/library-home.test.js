@@ -6,7 +6,7 @@
 //
 // home.js imports LB1b's jobs.js and review-chip.js (same-wave peers, §9.0). They are mocked here; the suites that
 // import home.js are skipped until both files exist (Appendix C item 60), and run at integration I1b.
-import {existsSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import {installPopoverShim, restoreDomShims, setRect} from './helpers/dom.js';
@@ -475,11 +475,25 @@ describe('ContinueSection', () => {
     const recents = [...section.el.querySelectorAll('.lib-recent')];
     expect(recents.map(a => a.querySelector('.lib-compact-title').textContent)).toEqual(['Paper Lanterns', 'A', 'B']);
     expect(recents[0].getAttribute('href')).toBe('/s/lanterns');
-    expect(nameOf(recents[0])).toBe('Paper Lanterns, 100%, practised 3 days ago');
+    expect(nameOf(recents[0])).toBe('Paper Lanterns, 100% · practised 3 days ago');
+    // VF1-1: one state line in the hero's format (stateLine, joined with ' · '), never two lines
+    const lines = recents.map(a => a.querySelector('.lib-compact-line').textContent);
+    expect(lines[0]).toBe('100% · practised 3 days ago');
+    expect(lines.slice(1)).toEqual(['practised 4 days ago', 'practised 5 days ago']);
+    for (const text of lines) expect(text).not.toMatch(/\n/);
     // a later update reuses the nodes
     const first = recents[0];
     section.update({songs: more, now: NOW});
     expect(section.el.querySelector('.lib-recent')).toBe(first);
+  });
+
+  it('a compact card keeps its line on one line, ellipsized (VF1-1)', () => {
+    const css = readFileSync(join(process.cwd(), 'src/styles/views/library/cards.css'), 'utf8');
+    const rule = css.match(/\.lib-compact-line\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule).toMatch(/overflow:\s*hidden/);
+    expect(rule).not.toMatch(/pre-line|line-clamp/);
   });
 
   it('is hidden when nothing was practised; opening names the cover', () => {
@@ -688,7 +702,18 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     expect(pinned.hidden).toBe(false);
     expect([...pinned.querySelectorAll('.lib-compact-title')].map(n => n.textContent)).toEqual(['Glasshouse']);
     expect(cardsShown()).toEqual(['song:lowtide', 'song:lanterns', 'song:glasshouse', 'song:jam03', 'song:shuffle', 'song:velvet']);
-    expect(el.querySelector('.lib-count').textContent).toBe('6');
+    // VF1-2: '6' on screen (aria-hidden) and '6 songs' visually hidden; no aria-label on the generic span
+    const count = el.querySelector('.lib-count');
+    expect(count.hasAttribute('aria-label')).toBe(false);
+    expect(count.querySelector('[aria-hidden="true"]').textContent).toBe('6');
+    expect(count.querySelector('.sr-only').textContent).toBe('6 songs');
+    const heading = el.querySelector('#lib-library-title');
+    const spoken = [...heading.childNodes].map(function text(n) {
+      if (n.nodeType === 3) return n.textContent;
+      if (n.getAttribute('aria-hidden') === 'true') return '';
+      return [...n.childNodes].map(text).join(' ');
+    }).join(' ').replace(/\s+/g, ' ').trim();
+    expect(spoken).toBe('Library 6 songs');
     expect(ctx.topbar.setSearch).toHaveBeenCalledWith(expect.objectContaining({value: ''}));
   });
 
@@ -753,7 +778,7 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     expect(cardsShown()).toEqual(['song:glasshouse', 'song:lowtide']);
     search().onInput('marisol');
     expect(cardsShown()).toEqual(['song:lanterns', 'song:velvet']);
-    expect(ctx.router.setQuery).toHaveBeenLastCalledWith({q: 'marisol', sort: 'title', group: 'album', filter: null, artist: null, album: null}, {debounceMs: 400});
+    expect(ctx.router.setQuery).toHaveBeenLastCalledWith({q: 'marisol', sort: 'title', group: 'album', filter: null, artist: null, album: null, layout: null}, {debounceMs: 400});
     expect(el.querySelector('.lib-sort-menu').textContent).toContain(COPY.sortButton(COPY.sorts.title));
   });
 
@@ -847,6 +872,8 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     byRole(el, 'radio', COPY.list).click();
     await flush();
     expect(prefs.value.peek().library.layout).toBe('list');
+    // VF1-3: the layout is mirrored to the URL as ?layout=list, like sort
+    expect(ctx.router.setQuery).toHaveBeenLastCalledWith(expect.objectContaining({layout: 'list'}), {debounceMs: 400});
     const table = byRole(el, 'table', COPY.listLabel);
     expect(table).not.toBeNull();
     expect(table.querySelectorAll('.lib-rows > .lib-row')).toHaveLength(6);
@@ -1129,6 +1156,26 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     view.update({name: 'library', query: {}});
     await flush();
     expect(cardsShown()).toHaveLength(6);
+  });
+
+  it('?layout=list wins over prefs on mount and on update; grid clears it from the URL (VF1-3)', async () => {
+    await mountHome({query: {layout: 'list'}});
+    expect(el.querySelector('[role=table]')).not.toBeNull();
+    expect(registry.context().library.layout).toBe('list');
+    view.update({name: 'library', query: {}});
+    await flush();
+    expect(el.querySelector('[role=table]')).toBeNull();
+    view.update({name: 'library', query: {layout: 'list', sort: 'title'}});
+    await flush();
+    expect(el.querySelector('[role=table]')).not.toBeNull();
+    byRole(el, 'radio', COPY.grid).click();
+    await flush();
+    expect(el.querySelector('[role=table]')).toBeNull();
+    expect(prefs.value.peek().library.layout).toBe('grid');
+    expect(ctx.router.setQuery).toHaveBeenLastCalledWith(expect.objectContaining({layout: null, sort: 'title'}), {debounceMs: 400});
+    registry.run('library.view');
+    await flush();
+    expect(ctx.router.setQuery).toHaveBeenLastCalledWith(expect.objectContaining({layout: 'list'}), {debounceMs: 400});
   });
 });
 
