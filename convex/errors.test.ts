@@ -3,7 +3,7 @@ import { convexTest } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
-import { api } from './_generated/api';
+import { api, internal } from './_generated/api';
 import { CODES, JOB_ERROR_CODES, codeOf, fail, isCode, isJobErrorCode, type Code } from './lib/errors';
 import { getUserId, requireAdmin, requireUserId, requireWritableUserId, assertAccountAccess } from './lib/auth';
 
@@ -162,5 +162,16 @@ describe('lib/auth coded errors', () => {
     await control(t, 'suspended');
     const error = await caught(() => t.withIdentity({ subject: 'alice' }).query(api.songs.list, {}));
     expect(codeOf(error)).toBe('account_suspended');
+  });
+
+  test('the share-save path carries an object `data` with a string message (the 1.9 share page must read data.message)', async () => {
+    const t = setup();
+    await control(t, 'export_only');
+    const error = await caught(() => t.withIdentity({ subject: 'alice' }).query(internal.sharing.importContext, { token: 'any' }));
+    expect(codeOf(error)).toBe('account_export_only');
+    expect(dataOf(error)).toEqual({
+      code: 'account_export_only',
+      message: 'Your account is in export-only mode. Playback and library export remain available.',
+    });
   });
 });

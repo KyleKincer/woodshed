@@ -81,8 +81,12 @@ const legacyJobs = (userId: string, deviceId: Id<'devices'>, songId: Id<'songs'>
     { ...base, kind: 'separate', label: 'Weird Fishes', source: search, settings: sepSettings, status: 'running', stage: 'download', percent: 12, message: 'Downloading…', attempts: 1, meta: { title: 'Weird Fishes/Arpeggi', thumbnail: 'https://i.ytimg.com/vi/x/hq.jpg', duration: 318 } },
     { ...base, kind: 'separate', label: 'take 3', source: upload, settings: sepSettings, status: 'running', stage: 'separate', percent: 55, message: 'Separating 2/4', attempts: 2 },
     { ...base, kind: 'separate', label: 'take 3', source: upload, settings: sepSettings, status: 'running', stage: 'finalize', percent: 98, songId },
+    // companion/server.mjs: the library sync step after separation.
+    { ...base, kind: 'separate', label: 'take 3', source: upload, settings: sepSettings, status: 'running', stage: 'sync', percent: 95, message: 'Syncing your library…', attempts: 1 },
     { ...base, kind: 'separate', label: 'Weird Fishes', source: search, settings: sepSettings, status: 'done', stage: 'done', percent: 100, songId },
     { ...base, kind: 'separate', label: 'Weird Fishes', source: search, settings: sepSettings, status: 'error', stage: 'download', error: 'ERROR: Sign in to confirm you’re not a bot', attempts: 3 },
+    // companion/server.mjs generic failure row (worker.progress with `error`): stage 'error', percent reset to 0.
+    { ...base, kind: 'separate', label: 'take 3', source: upload, settings: sepSettings, status: 'error', stage: 'error', percent: 0, error: 'Sync upload failed (500). Your local files are safe.', attempts: 1 },
     { ...base, kind: 'separate', label: 'Weird Fishes', source: { type: 'url', value: 'https://youtu.be/abc' }, status: 'canceled', stage: 'queued' },
     { ...base, kind: 'separate', label: 'Spotify pick', source: { type: 'spotify', value: 'https://open.spotify.com/track/1' }, status: 'queued', stage: 'queued' },
     { ...base, kind: 'beats', label: 'Detect beats', songId, status: 'queued', stage: 'queued' },
@@ -186,6 +190,8 @@ describe('1.9 rows under the 2.0 schema', () => {
     const activeIds = new Set(active.map((row: { jobId: string }) => row.jobId));
     const live = stored.filter(job => job && ['queued', 'running', 'error'].includes(job.status));
     expect(live.length).toBeGreaterThanOrEqual(10);
+    // The companion's two most common stage literals: the sync step and its generic failure row.
+    expect(live.map(job => job!.stage)).toEqual(expect.arrayContaining(['sync', 'error']));
     for (const job of live) {
       expect(activeIds.has(job!._id)).toBe(true);
       expect(active.find((row: { jobId: string }) => row.jobId === job!._id)).toMatchObject({
