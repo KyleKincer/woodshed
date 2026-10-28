@@ -1,5 +1,5 @@
 # Forward requests for later packages
-Requests from earlier waves' handoffs, grouped by target package ID, for the orchestrator to pass on. Contract changes they rely on are in `docs/ux2/architecture.md` Appendix C. Sections addressed to packages that have since run are removed by the next integration (I0B removed F4b, ED1, U1, U2, PL1, AU1, ST0 and BK1–BK7; I1 removed S1, S2, ST1a, ST1b, DL1, CPB and I1: all done or ticketed as I1-1 … I1-7; I1b removed ST1c, LB1a, LB1b, CPC, VF1 and I1b: all done or ticketed as I1b-1 … I1b-3; I2a removed ST4, ST5, ST6, LB2a, SE1, SE3 and I2a: all done or ticketed as I2a-1 … I2a-15).
+Requests from earlier waves' handoffs, grouped by target package ID, for the orchestrator to pass on. Contract changes they rely on are in `docs/ux2/architecture.md` Appendix C. Sections addressed to packages that have since run are removed by the next integration (I0B removed F4b, ED1, U1, U2, PL1, AU1, ST0 and BK1–BK7; I1 removed S1, S2, ST1a, ST1b, DL1, CPB and I1: all done or ticketed as I1-1 … I1-7; I1b removed ST1c, LB1a, LB1b, CPC, VF1 and I1b: all done or ticketed as I1b-1 … I1b-3; I2a removed ST4, ST5, ST6, LB2a, SE1, SE3 and I2a: all done or ticketed as I2a-1 … I2a-15, which landed in wave 2ax; its re-verification ticketed I2a-16 … I2a-18).
 
 ## From I0A (wave 0A handoffs)
 
@@ -122,12 +122,12 @@ Contract details are in Appendix C items 76–84.
 
 
 ## From I2a (wave 2a handoffs)
-Contract details are in Appendix C items 88–100.
+Contract details are in Appendix C items 88–103.
 
 ### LB2b
 - Uploads (LB2a, item 94): read the staged files with `takeStagedFiles()` on mount. Call `startUploads(files, {settings: <stored account settings>, profile: <account profile>, choice: <Change panel {stemMode?, preset?} or null>, deviceId, title})`; do not resolve the settings first (`upload.js` applies `jobSettings(profile, settings, choice)` itself, so a chosen layout must come in through `choice`). Calling `uploadDevice()` first lets a missing processor show inline before the sheet closes. The toast's Undo is `handle.cancel()` (it can take up to about 4.25 s and returns false if the job could not be canceled).
 - Use `defaultsParts(profile, settings, choice)` for the bold words, `removesMyStem(profile, stemMode, jobSettings(profile, settings, choice))` / `removesMyStemLine` for the warning (a Custom 6-stem model counts as six), `audioFiles` and `COPY.notAudio`, and `findDuplicate` against `store.library.songs.value`. Files over 1 GB fail with the generic "unknown" sentence (Details explains); the sheet may flag them inline.
-- The single-file title override reaches the finished song only after tickets I2a-5 (BK2) and I2a-6 (BK3).
+- The single-file title override (`title`) reaches the finished song: `createSeparation` marks a new upload's `meta.title` with `meta.titleOverride: true`, `worker.progress` keeps it and `worker.finish` titles the song with it and locks the title (I2a-5, I2a-6, Appendix C item 101).
 
 ### LB1b (optional)
 - Upload entries offer `retry()`, which re-uploads the file; a "Try again" action on a failed upload row could call `entry.retry()`.
@@ -136,13 +136,14 @@ Contract details are in Appendix C items 88–100.
 - Adding `resolvedUrl` to the `songs.list` row lets `findDuplicate` match a pasted link against search-added songs (the matcher already reads it when present).
 
 ### SE2
-- Section modules (SE1, item 95): `src/settings/sections/{processing,plan}.js` are found through the lazy glob; default-export `{id, title, render(el, ctx) → {destroy}}` with ctx `{router, account, prefs, platform, desktop, install, store, registry, feedback, layout, headingId, window}`. Reuse `createSaver`, `settingRow({row, label, hint, scope, controls, saver, labelId})` and `desktopNote(items)` from `src/settings/settings.js`. Nav titles and list-row summaries for 'processing' and 'plan' are in `src/settings/settings.copy.js` `SECTIONS` (changing them needs an SE1 ticket); a web-hidden section needs `desktopOnly: true` there (none does today). `/billing` → `/settings/plan` falls back to `/settings/practice` until `plan.js` exists.
+- Section modules (SE1, item 95): `src/settings/sections/{processing,plan}.js` are found through the lazy glob; default-export `{id, title, render(el, ctx) → {destroy}}` with ctx `{router, account, prefs, platform, desktop, install, store, registry, feedback, layout, headingId, window}`. Reuse `createSaver`, `settingRow({row, label, hint, scope, controls, saver, labelId})` and `desktopNote(items)` from `src/settings/settings.js`. Nav titles and list-row summaries for 'processing' and 'plan' are in `src/settings/settings.copy.js` `SECTIONS` (changing them needs an SE1 ticket); a web-hidden section needs `desktopOnly: true` there (none does today). Until `plan.js` exists, `/settings/plan` (and `/billing?checkout=success`, which redirects there) keeps its URL and query and shows "Not built yet" in the detail pane, unlisted in the nav (I2a-15); once the module exists the section is listed and renders, with `?checkout=success` still on the URL.
 
 ### PD1
 - `src/settings/sections/pedals.js` is PD1's from wave 3a (item 96); today it is SE1's stub row 'shortcuts' (Button `app.shortcuts`). Use `settingRow`, `createSaver` and `desktopNote` from `src/settings/settings.js`. Finishing the section also needs a `packages.json` grant (orchestrator) on two SE1 files: `src/settings/settings.copy.js` (the pedals entries in `CONTROLS` and `ROWS`, and `SECTIONS.pedals`'s summary, today "Keyboard shortcuts") and `tests/settings-sections-a.test.js` (strict pedals control checks; pedals is left out of the strict "nothing else" count today).
 
 ### ST8a
 - Stage menus (ST4): `stage.js` calls `menus.stageMenu(session, stageApi)`, `barMenu(session, {t, bar})` and `sectionMenu(session, region)`, then `Menu.open`; the `stage.menu` command stays hidden until `menus.js` exists.
+- The strip's menu gestures are checked by ST6's `st6-strip-menu-press` only for "never cues, loops or jumps" and, while `menus.js` is absent, "opens nothing" (I2a-12). ST8a's own states check that a long-press and a right-click on a strip segment open the section menu (with "Loop this section" and "Rename…").
 - Strip menus (ST6): the strip calls `sectionMenu(session, region, {t, rename})` and opens the items with `Menu.open` at the press point, or under the focused segment for keyboard menus. `region` is a section region (from `position.regions()`, with `startBar`) or a marker region; `t` is the pressed time ("Extend loop to here"); the "Rename…" item calls `opts.rename()`, which opens the strip's inline rename. Until `menus.js` exists, long-press and right-click on the strip open nothing.
 
 ### ST9, ST10, ST11
@@ -161,4 +162,4 @@ Contract details are in Appendix C items 88–100.
 - Check that the mounted Stage has exactly one `role=status` (item 89); ST5's tests already assert the HUD renders none.
 - The cross-module "unmapped never renders Bar" suite (§10.4) must remove the strip's `COPY.noGrid` ("No bar grid · Get bars →") before scanning, as `tests/stage-strip.test.js` does.
 - In the rail, gaps around Play are 8 px (spec §4.6); the §10.4 "≥ 12 px gaps around Play" check applies to the dock (12 px, probed in `st5-hud-band`).
-- `vf1-flow-back-*` in `tests/fixture/flows/VF1.cjs` ran against the placeholder Stage; on the real Stage the ‹ is ST5's HoldButton (role button, "Back to Library") — see ticket I2a-11.
+- `vf1-flow-back-*` in `tests/fixture/flows/VF1.cjs` now run against the real Stage; `vf1-flow-back-link` presses ST5's ‹ HoldButton (role button, "Back to Library") and requires `src/stage/hud.js` (I2a-11).
