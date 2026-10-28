@@ -1,0 +1,49 @@
+@layer views {
+  /* The Get bars popover (src/stage/sheets/get-bars.js, spec §4.4C, §5.1.1): Tap the beat, Detect
+   * beats (with its reason, progress or failure) and Find a chart, each a button over a description. */
+  .getbars {
+    display: grid;
+    gap: var(--s3);
+    padding-block: var(--s2) var(--s3);
+  }
+  .getbars-intro {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+  .getbars-options {
+    display: grid;
+    gap: var(--s2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .getbars-option {
+    display: grid;
+    justify-items: start;
+    gap: var(--s2);
+    padding: var(--s3);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+  }
+  .getbars-button { min-height: var(--h-lg); }
+  .getbars-body {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+  .getbars-progress {
+    display: grid;
+    gap: var(--s1);
+    justify-self: stretch;
+  }
+  .getbars-progress-line {
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  .getbars-download {
+    color: var(--accent);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+}
