@@ -619,28 +619,119 @@ describe('createJobsModel: what finished on the open song', () => {
     expect(off).toHaveBeenCalled();
   });
 
-  test('unapplied detections from before this session are asked for once (latestDetection)', async () => {
-    const songs = Array.from({length: 15}, (_, i) => [`s${i}`, {id: `s${i}`, title: `Song ${i}`, addedAt: T0 - i * MIN, lastPracticedAt: i === 14 ? T0 : null}]);
+  // I1b-2: one jobs.listUnappliedDetections subscription across every song replaces the per-song
+  // latestDetection probe of the 12 most recent songs (architecture §6.4, Appendix C item 78).
+  const detection = (songId, over = {}) => ({
+    jobId: `det-${songId}`, kind: 'beats', status: 'done', songId, label: `Song ${songId}`, chainedFrom: null, appliedAt: null,
+    result: {beats: [[0, 1]]}, deviceId: null, createdAt: T0 - MIN, startedAt: T0 - 2 * MIN, ...over,
+  });
+  function unappliedFeed() {
+    const feed = {onValue: null, off: vi.fn()};
+    api.subscribeUnappliedDetections = vi.fn((onValue, onError) => { feed.onValue = onValue; feed.onError = onError; return feed.off; });
+    return feed;
+  }
+  const songsOf = n => new Map(Array.from({length: n}, (_, i) => [`s${i}`, {id: `s${i}`, title: `Song ${i}`, addedAt: T0 - i * MIN, lastPracticedAt: null}]));
+
+  test('unapplied detections from before this session come from one listUnappliedDetections subscription, on every song', async () => {
     s.library.loaded.value = false;
-    s.library.songs.value = new Map(songs);
+    s.library.songs.value = songsOf(20);
     s.stage.value = {songId: 's3'};
-    api.latestDetection = vi.fn(async ({songId}) => (songId === 'nightbus' || songId === 's2' || songId === 's3'
-      ? {jobId: `det-${songId}`, kind: 'beats', status: 'done', songId, chainedFrom: null, appliedAt: null, result: {beats: [[0, 1]]}} : null));
+    api.latestDetection = vi.fn(async () => null);
+    const feed = unappliedFeed();
     const m = model();
     await flush();
-    expect(api.latestDetection).not.toHaveBeenCalled();               // waits for the library
+    expect(api.subscribeUnappliedDetections).not.toHaveBeenCalled();     // waits for the library (signed in)
     s.library.loaded.value = true;
+    expect(api.subscribeUnappliedDetections).toHaveBeenCalledTimes(1);
+    expect(api.subscribeUnappliedDetections).toHaveBeenCalledWith(expect.any(Function), expect.any(Function));
+    feed.onValue([
+      detection('s19'),                                                    // the oldest song: the old probe never asked it
+      detection('s3'),                                                     // open: its Stage offers it
+      detection('s2'),
+      detection('s5', {chainedFrom: 'job-split'}),                         // chained: applied by the split itself
+      detection('s6', {appliedAt: T0 - MIN}),
+      detection('s7', {result: null}),
+    ]);
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s19', 'det-s2']);
+    const row = byId(m, 'det-s19');
+    expect(row).toMatchObject({kind: 'beats', status: 'done', songId: 's19', title: 'Song 19', line: LINES.found});
+    expect(row.actions.map(a => a.label)).toEqual([ACTIONS.openSong, ACTIONS.notNow]);
+    expect(m.chip.peek()?.text).toBe(CHIP.found(2));
+    expect(api.latestDetection).not.toHaveBeenCalled();                    // no per-song probe any more
+    s.library.songs.value = new Map([...songsOf(20), ['x', {id: 'x', title: 'X'}]]);
+    s.library.loaded.value = false;
+    s.library.loaded.value = true;
+    expect(api.subscribeUnappliedDetections).toHaveBeenCalledTimes(1);   // subscribed once
+    await row.actions[0].run();
+    expect(router.navigate).toHaveBeenCalledWith('/s/s19');
+    m.destroy();
+    expect(feed.off).toHaveBeenCalled();
+    expect(jobsModule.DETECTION_PROBE_MAX).toBeUndefined();
+  });
+
+  test('a listed detection leaves when the list drops it, and Not now or opening its song keeps it gone', async () => {
+    s.library.songs.value = songsOf(4);
+    const feed = unappliedFeed();
+    const m = model();
+    feed.onValue([detection('s0'), detection('s1'), detection('s2')]);
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s0', 'det-s1', 'det-s2']);
+    feed.onValue([detection('s0'), detection('s2')]);                      // applied elsewhere
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s0', 'det-s2']);
+    await byId(m, 'det-s0').actions.find(a => a.label === ACTIONS.notNow).run();
+    expect(api.markApplied).toHaveBeenCalledWith({jobId: 'det-s0'});
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s2']);
+    feed.onValue([detection('s0'), detection('s2')]);                      // a value from before markApplied landed
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s2']);
+    s.stage.value = {songId: 's2'};                                         // opening the song: the Stage offers it
+    expect(m.items.peek()).toEqual([]);
+    s.stage.value = null;
+    feed.onValue([detection('s2'), detection('s3')]);
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s3']);
+    feed.onValue(null);
+    expect(m.items.peek()).toEqual([]);
+    expect(m.chip.peek()).toBeNull();
+    feed.onError?.(new Error('offline'));                                   // an error is not thrown at the client
+  });
+
+  test('a detection seen live this session and listed is one row, followed by jobs.get', async () => {
+    s.library.songs.value = new Map([['song1', {id: 'song1', title: 'Song One'}]]);
+    const subs = new Map();
+    api.subscribeJob = vi.fn(({jobId}, onValue) => { subs.set(jobId, onValue); return vi.fn(); });
+    const feed = unappliedFeed();
+    const live = beatsLive();
+    s.library.jobs.value = [live];
+    const m = model();
+    api.get.mockResolvedValueOnce(doneOf(live));
+    s.library.jobs.value = [];
+    await flush();
+    feed.onValue([doneOf(live)]);
+    expect(m.items.peek().map(i => i.id)).toEqual(['b1']);
+    feed.onValue([]);                                                       // a capped list may drop it: jobs.get still follows it
+    expect(m.items.peek().map(i => i.id)).toEqual(['b1']);
+    subs.get('b1')(doneOf(live, {appliedAt: T0 + 1}));
+    expect(m.items.peek()).toEqual([]);
+  });
+
+  test('without the subscription it asks listUnappliedDetections once; a failure or signed-out client offers nothing', async () => {
+    s.library.songs.value = songsOf(2);
+    api.listUnappliedDetections = vi.fn(async () => [detection('s1')]);
+    const m = model();
     await flush();
     await flush();
-    const asked = api.latestDetection.mock.calls.map(c => c[0].songId);
-    expect(asked).toHaveLength(12);
-    expect(asked[0]).toBe('s14');                                       // practiced most recently first
-    expect(asked).not.toContain('s12');
-    expect(m.items.peek().map(i => i.id)).toEqual(['det-s2']);           // s3 is open: its Stage offers it
-    expect(m.chip.peek()?.text).toBe('Bars found');
-    s.library.songs.value = new Map([...songs, ['x', {id: 'x', title: 'X'}]]);
+    expect(api.listUnappliedDetections).toHaveBeenCalledTimes(1);
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s1']);
+    api.listUnappliedDetections = vi.fn(async () => { throw new Error('not signed in'); });
+    const m2 = model();
     await flush();
-    expect(api.latestDetection).toHaveBeenCalledTimes(12);
+    await flush();
+    expect(m2.items.peek()).toEqual([]);
+    delete api.listUnappliedDetections;
+    api.subscribeUnappliedDetections = vi.fn(() => { throw new Error('not signed in'); });
+    s.library.loaded.value = false;
+    const m3 = model();
+    s.library.loaded.value = true;
+    expect(m3.items.peek()).toEqual([]);
+    expect(api.subscribeUnappliedDetections).toHaveBeenCalled();
   });
 });
 
