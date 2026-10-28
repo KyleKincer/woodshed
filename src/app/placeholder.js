@@ -41,12 +41,28 @@ export const CONTROLS = Object.freeze([
 
 const titleOf = match => COPY.titles[match?.name] ?? COPY.notBuilt;
 
-function page(match, {modal = false, headingId}) {
+/**
+ * "Back to Library" is a Back (§10.3): a plain click goes back through history, so the Library
+ * comes back from its entry (focus and scroll restored) instead of a new one being pushed. The
+ * href stays for modified clicks (new tab) and for boot pages, which have no router.
+ */
+function backLink(ctx) {
+  const link = h('a', {class: 'shell-placeholder-link', href: '/'}, COPY.back);
+  link.addEventListener('click', e => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (typeof ctx?.router?.back !== 'function') return;
+    e.preventDefault();
+    ctx.router.back({fallback: '/'});
+  });
+  return link;
+}
+
+function page(match, {modal = false, headingId, ctx}) {
   return [
     h('p', {class: 'shell-placeholder-kicker'}, COPY.notBuilt),
     h('h1', {class: 'shell-placeholder-title', id: headingId}, titleOf(match)),
     h('p', {class: 'shell-placeholder-body'}, COPY.body),
-    modal || match?.name === 'library' ? null : h('a', {class: 'shell-placeholder-link', href: '/'}, COPY.back),
+    modal || match?.name === 'library' ? null : backLink(ctx),
   ];
 }
 
@@ -56,7 +72,7 @@ let seq = 0;
 export function mount(el, match, ctx = {}) {
   const headingId = `shell-placeholder-${++seq}`;
   if (match?.route?.modalOver) return mountModal(el, match, ctx, headingId);
-  const body = h('div', {class: 'shell-placeholder', attrs: {'data-placeholder': match?.name ?? ''}}, ...page(match, {headingId}));
+  const body = h('div', {class: 'shell-placeholder', attrs: {'data-placeholder': match?.name ?? ''}}, ...page(match, {headingId, ctx}));
   const scroller = h('div', {class: 'shell-placeholder-scroller', attrs: {'data-scroller': true}},
     h('div', {class: 'app-content'}, body));
   el.replaceChildren(scroller);

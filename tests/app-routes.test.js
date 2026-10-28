@@ -148,6 +148,67 @@ describe('the placeholder view', () => {
     expect(outlet.querySelector('[data-placeholder]').dataset.placeholder).toBe('settingsPage');
   });
 
+  // VF1-6 (§10.3): "Back to Library" is a Back, not a link to a new Library entry.
+  test('"Back to Library" goes back through history and the opened card regains focus', async () => {
+    // A Library with one focusable card, so the router has something to refocus on Back.
+    const library = {mount(el) {
+      const card = document.createElement('button');
+      card.dataset.focusKey = 'song:song-1';
+      const scroller = document.createElement('div');
+      scroller.dataset.scroller = '';
+      scroller.append(card);
+      el.replaceChildren(scroller);
+      return {update() {}, unmount() { scroller.remove(); }};
+    }};
+    router = createRouter({routes: placeholderRoutes().map(r => (r.name === 'library' ? {...r, view: async () => library} : r)),
+      redirects, outlet, modalOutlet,
+      ctx: {store: {session: signal({admin: false})}, feedback: {toast: vi.fn()}, getSession: async id => ({id}), disposeSession: async () => {}}});
+    const unlink = router.link(outlet);   // main.js's link delegate must not turn it into a push
+    try {
+      await router.start();
+      outlet.querySelector('[data-focus-key]').focus();
+      await router.navigate('/s/song-1');
+      const idx = history.state.idx;
+      expect(idx).toBe(1);
+      const navigate = vi.spyOn(router, 'navigate');
+      const click = new MouseEvent('click', {bubbles: true, cancelable: true, button: 0});
+      outlet.querySelector('a').dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+      expect(navigate).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(root.dataset.viewReady).toBe('library'));
+      await router.settled();
+      expect(location.pathname).toBe('/');
+      expect(history.state.idx).toBe(idx - 1);
+      expect(document.activeElement?.dataset.focusKey).toBe('song:song-1');
+    } finally {
+      unlink();
+    }
+  });
+
+  test('"Back to Library" with no entry of ours behind it navigates to the Library (fallback)', async () => {
+    history.replaceState(null, '', '/s/deep');
+    make();
+    await router.start();
+    expect(root.dataset.viewReady).toBe('stage');
+    const back = vi.spyOn(history, 'back');
+    outlet.querySelector('a').click();
+    await vi.waitFor(() => expect(root.dataset.viewReady).toBe('library'));
+    expect(back).not.toHaveBeenCalled();
+    expect(location.pathname).toBe('/');
+  });
+
+  test('a modified click on "Back to Library" is left to the browser (new tab)', async () => {
+    make();
+    await router.start();
+    await router.navigate('/s/song-1');
+    const back = vi.spyOn(router, 'back');
+    const click = new MouseEvent('click', {bubbles: true, cancelable: true, button: 0, metaKey: true});
+    const link = outlet.querySelector('a');
+    link.addEventListener('click', e => e.preventDefault(), {once: true});   // keep happy-dom from following it
+    link.dispatchEvent(click);
+    expect(back).not.toHaveBeenCalled();
+  });
+
   test('a modal route (/add) mounts a modal panel over its parent; Esc and Close go back', async () => {
     const stop = startDispatcher();
     try {
