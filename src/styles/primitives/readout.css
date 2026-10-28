@@ -1,0 +1,38 @@
+@layer primitives {
+  /* Readout (src/ui/readout.js). Sizes are the Stage scale tokens, which follow
+   * [data-distance] and [data-stage-layout] on the Stage root (§7.2); numerals
+   * are tabular and never animate. The value's min-width (in ch) is inline. */
+  .ui-readout {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    min-inline-size: 0;
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.15 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ui-readout-value {
+    display: inline-block;
+    font-size: inherit;
+  }
+  .ui-readout-sub {
+    display: inline-block;
+    color: var(--ink-3);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.3 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ui-readout[data-size=identity] { font-size: var(--fs-stage-identity); }
+  .ui-readout[data-size=sub] { font-size: var(--fs-stage-sub); }
+  .ui-readout[data-size=loop] { font-size: var(--fs-stage-loop); font-weight: var(--fw-semibold); }
+  .ui-readout[data-size=section] { font-size: var(--fs-stage-section); font-weight: var(--fw-bold); line-height: 1.1; }
+  .ui-readout[data-size=speed] { font-size: var(--fs-stage-speed); font-weight: var(--fw-heavy); line-height: 1; }
+  .ui-readout[data-size=position] { font-size: var(--fs-stage-position); font-weight: var(--fw-heavy); line-height: 1; }
+  .ui-readout[data-size=count] { font-size: var(--fs-stage-count); font-weight: var(--fw-heavy); line-height: 1; }
+
+  .ui-readout[data-tone=ink-3] .ui-readout-value { color: var(--ink-3); }
+  .ui-readout[data-tone=now] .ui-readout-value { color: var(--now); }
+  .ui-readout[data-mono] .ui-readout-value { font-family: var(--font-mono); }
+}
