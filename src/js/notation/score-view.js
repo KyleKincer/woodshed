@@ -101,13 +101,13 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
   for (const element of ['ScoreTitle', 'ScoreSubTitle', 'ScoreArtist', 'ScoreAlbum', 'ScoreWords', 'ScoreMusic', 'ScoreWordsAndMusic', 'ScoreCopyright', 'GuitarTuning', 'TrackNames', 'EffectDynamics', 'ChordDiagrams'])
     settings.notation.elements.set(alphaTab.NotationElement[element], false);
 
-  // Theme: --ink for glyphs, --ink-3 for bar numbers, --ink-2 for staff lines and bar separators.
+  // Theme (spec §8.3): --ink for glyphs, --ink-3 for staff lines and bar separators, --ink-2 for bar numbers.
   function themeResources() {
     const ink = print ? css('--print-ink') || PRINT.ink : css('--ink') || FALLBACK.ink;
-    const muted = print ? PRINT.muted : css('--ink-3') || FALLBACK.ink3;
-    const lines = print ? PRINT.lines : css('--ink-2') || FALLBACK.ink2;
+    const numbers = print ? PRINT.muted : css('--ink-2') || FALLBACK.ink2;
+    const lines = print ? PRINT.lines : css('--ink-3') || FALLBACK.ink3;
     // The second voice uses secondaryGlyphColor; drums need both voices at full ink.
-    return {mainGlyphColor: ink, secondaryGlyphColor: ink, staffLineColor: lines, barSeparatorColor: lines, barNumberColor: muted, scoreInfoColor: ink};
+    return {mainGlyphColor: ink, secondaryGlyphColor: ink, staffLineColor: lines, barSeparatorColor: lines, barNumberColor: numbers, scoreInfoColor: ink};
   }
   let labelSizes = {...DEFAULT_FONTS, ...pickFonts(fonts)};
   // Labels use the app's typeface; section marks read like rehearsal letters.

@@ -99,6 +99,11 @@ export function createChart({
   let lastQ = null, lastTime = null, lastSystem = null, relayoutStart = null, pendingAnchor = null, pendingReveal = null;
   let loopRange = null, pendingCommit = null, commitTimer = null;
   let gesture = null, lastTap = null, lastDoubleAt = -Infinity, lastTouchAt = -Infinity, programmaticAt = -Infinity, pageAnimation = null;
+  let scrollRetry = null, touchStart = null;
+  // Touch and pen pointers down on the score. Two or more is the surface's pinch:
+  // no gesture is recognised until every one of them is up.
+  const contacts = new Set();
+  let multiTouch = false;
   let startsCache = {timeline: null, starts: []};
 
   host.classList.add('chart');
@@ -171,8 +176,9 @@ export function createChart({
 
   // ---------- engraving ----------
   const floorsNow = () => fontFloors(state.floors, state.scale);
-  function beginRelayout(keepAnchor) {
-    relayoutStart = now();
+  /** `report`: a relayout the surface asked for (scale, display, fonts); only those are timed for D54. */
+  function beginRelayout(keepAnchor, report = true) {
+    if (report) relayoutStart = now();
     host.setAttribute('aria-busy', 'true');
     if (keepAnchor && view?.ready && !pendingAnchor) pendingAnchor = captureAnchor();
   }
@@ -188,6 +194,8 @@ export function createChart({
   }
   function destroyView() {
     cancelGesture();
+    contacts.clear();
+    multiTouch = false;
     view?.destroy();
     view = null;
     renderedScore = null;
@@ -217,7 +225,8 @@ export function createChart({
     if (renderedScore !== part.score || renderedLayout !== layout()) {
       renderedScore = part.score;
       renderedLayout = layout();
-      beginRelayout(true);
+      // The first engraving and part edits are not timed: the first waits for the UI font (D54 measures layout cost).
+      beginRelayout(true, false);
       view.setScore(part.score, {layout: layout()});
     }
   }
@@ -230,8 +239,12 @@ export function createChart({
     drawLoop();
     if (lastQ != null) view.setPlayhead(lastQ);
     lastSystem = null;
-    if (pendingAnchor) { restoreAnchor(pendingAnchor); pendingAnchor = null; }
-    else if (pendingReveal) { const {t, smooth} = pendingReveal; pendingReveal = null; reveal(t, {smooth}); }
+    // An explicit reveal asked for while engraving wins over the anchor the relayout captured.
+    const revealing = pendingReveal, anchor = pendingAnchor;
+    pendingReveal = null;
+    pendingAnchor = null;
+    if (revealing) reveal(revealing.t, {smooth: revealing.smooth});
+    else if (anchor) restoreAnchor(anchor);
     else if (state.follow) followNow(false);
     if (relayoutStart != null) {
       const ms = Math.max(0, now() - relayoutStart);
@@ -246,9 +259,11 @@ export function createChart({
 
   // ---------- scrolling and follow ----------
   function cancelPageAnimation() { if (pageAnimation) { caf(pageAnimation.id); pageAnimation = null; } }
+  function cancelScrollRetry() { if (scrollRetry != null) { caf(scrollRetry); scrollRetry = null; } }
   const maxScroll = () => Math.max(0, scroller.scrollHeight - scroller.clientHeight);
   function jumpTo(top) {
     cancelPageAnimation();
+    cancelScrollRetry();
     programmaticAt = now();
     scroller.scrollTop = Math.max(0, top);
   }
@@ -256,8 +271,12 @@ export function createChart({
   function scrollToY(target, smooth, attempt = 0) {
     const top = Math.max(0, target);
     cancelPageAnimation();
+    cancelScrollRetry();   // a newer target (or a jump) supersedes a waiting one
     if (Math.abs(scroller.scrollTop - top) < 4) return;
-    if (maxScroll() < top - 1 && attempt < 30 && scroller.scrollHeight > 0) { raf(() => { if (!disposed) scrollToY(target, smooth, attempt + 1); }); return; }
+    if (maxScroll() < top - 1 && attempt < 30 && scroller.scrollHeight > 0) {
+      scrollRetry = raf(() => { scrollRetry = null; if (!disposed) scrollToY(target, smooth, attempt + 1); });
+      return;
+    }
     programmaticAt = now();
     if (smooth && !reducedMotion() && typeof scroller.scrollTo === 'function') scroller.scrollTo({top, behavior: 'smooth'});
     else scroller.scrollTop = top;
@@ -267,6 +286,7 @@ export function createChart({
     const to = Math.min(Math.max(0, target), maxScroll() || Math.max(0, target));
     if (!smooth || reducedMotion()) { jumpTo(to); return; }
     cancelPageAnimation();
+    cancelScrollRetry();
     const from = scroller.scrollTop;
     if (Math.abs(to - from) < 1) return;
     const animation = {start: null, id: 0};
@@ -336,11 +356,25 @@ export function createChart({
     if (event.type === 'wheel' && (event.ctrlKey || event.metaKey)) return;   // ⌘-wheel / trackpad pinch is the surface's zoom
     if (event.touches && event.touches.length > 1) return;                      // two fingers: the surface's pinch
     if (event.type === 'pointerdown' && event.target !== scroller) return;      // only the scrollbar itself
+    if (event.type === 'touchmove') {
+      // A press on the music (a tap, a long-press for the bar menu) is not a scroll:
+      // it cancels itself once the finger passes the slop, and only then is this a scroll.
+      if (multiTouch || (gesture && gesture.type !== 'mouse')) return;
+      const touch = event.touches?.[0];
+      if (touchStart && touch && Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) <= SLOP_PX) return;
+    }
     if (now() - programmaticAt < FOLLOW_GUARD_MS) return;
     cancelPageAnimation();
+    cancelScrollRetry();   // a waiting reveal or follow target must not override the reader
+    pendingReveal = null;
     setFollowState(false);
   }
+  function touchStarted(event) {
+    const touch = event.touches?.length === 1 ? event.touches[0] : null;
+    touchStart = touch && Number.isFinite(touch.clientX) && Number.isFinite(touch.clientY) ? {x: touch.clientX, y: touch.clientY} : null;
+  }
   scroller.addEventListener('wheel', userScroll, {passive: true});
+  scroller.addEventListener('touchstart', touchStarted, {passive: true});
   scroller.addEventListener('touchmove', userScroll, {passive: true});
   scroller.addEventListener('pointerdown', userScroll);
 
@@ -394,10 +428,25 @@ export function createChart({
     onBarActivate(activation(kind, at, event, pointerType));
   }
   const typeOf = event => (event.pointerType === 'touch' || event.pointerType === 'pen' ? event.pointerType : 'mouse');
-  const gestureOwnsLoop = () => !!gesture && (gesture.mode === 'edge' || ((gesture.mode === 'create' || gesture.mode === 'move') && gesture.dragging));
+  const gestureOwnsLoop = () => !!gesture && (gesture.dragging && ['edge', 'create', 'move'].includes(gesture.mode));
   function capture(event) { try { view?.stage.setPointerCapture(event.pointerId); } catch { /* not capturable */ } }
 
   function pointer({kind, event, at}) {
+    if (typeOf(event) !== 'mouse') {
+      if (kind === 'down') {
+        contacts.add(event.pointerId);
+        // A second finger (or pen) is the surface's pinch: drop the press and recognise nothing until all are up.
+        if (contacts.size > 1) { multiTouch = true; lastTap = null; cancelGesture(); }
+      } else if (kind === 'up' || kind === 'cancel') {
+        contacts.delete(event.pointerId);
+        if (multiTouch) {
+          lastTouchAt = now();
+          if (!contacts.size) multiTouch = false;
+          return;
+        }
+      }
+      if (multiTouch) return;
+    }
     if (kind === 'down') { down(event, at); return; }
     if (!gesture || event.pointerId !== gesture.id) return;
     if (kind === 'move') move(event, at);
@@ -412,9 +461,12 @@ export function createChart({
     const edge = event.target?.closest?.('[data-loop-edge]')?.getAttribute('data-loop-edge');
     const loop = loopQ();
     if (edge && loop && (type === 'mouse' || !state.glass)) {
-      gesture = {id: event.pointerId, type, mode: 'edge', edge, loop, x: event.clientX, y: event.clientY, lastQ: edge === 'start' ? loop[0] : loop[1], range: null};
+      // A handle drag starts past the slop; a still press on a handle is a press on its bar (tap, double, long).
+      gesture = {id: event.pointerId, type, mode: 'edge', edge, loop, start: at.index != null ? at : null, x: event.clientX, y: event.clientY,
+        lastQ: edge === 'start' ? loop[0] : loop[1], dragging: false, armed: false, long: false, range: null};
       capture(event);
       event.preventDefault?.();
+      if (type !== 'mouse' && gesture.start) armLongPress(gesture);
       return;
     }
     if (at.index == null) return;
@@ -424,13 +476,15 @@ export function createChart({
       if (loop && at.q >= loop[0] - 1e-9 && at.q < loop[1] - 1e-9) gesture.inside = loop;
       return;
     }
-    const pressed = gesture;
+    armLongPress(gesture);
+  }
+  function armLongPress(pressed) {
     pressed.timer = setTimeout(() => {
-      if (gesture !== pressed) return;
+      if (gesture !== pressed || pressed.dragging) return;
       pressed.long = true;
       try { navigator.vibrate?.(HAPTIC_MS); } catch { /* no haptics */ }
-      // Glass (playing): a long-press opens the bar menu but never draws a loop.
-      if (state.glass) return;
+      // Glass (playing): a long-press opens the bar menu but never draws a loop; on a handle the drag already edits it.
+      if (state.glass || pressed.mode === 'edge') return;
       pressed.armed = true;
       view?.setRange([pressed.start.index, pressed.start.index]);
       onStatus(COPY.armHint);
@@ -440,7 +494,12 @@ export function createChart({
     const g = gesture, distance = Math.hypot(event.clientX - g.x, event.clientY - g.y);
     if (g.type === 'mouse' && event.buttons === 0) { up(event, at); return; }   // released outside the window
     if (at.index != null) g.lastAt = at;
-    if (g.mode === 'edge') { editEdge(event, at); return; }
+    if (g.mode === 'edge') {
+      if (!g.dragging && distance <= SLOP_PX) return;
+      g.dragging = true;
+      editEdge(event, at);
+      return;
+    }
     if (g.type === 'mouse') {
       if (!g.dragging && distance > SLOP_PX) { g.dragging = true; g.mode = g.inside ? 'move' : 'create'; }
     } else {
@@ -457,7 +516,8 @@ export function createChart({
     clearTimeout(g.timer);
     gesture = null;
     if (g.type !== 'mouse') lastTouchAt = now();
-    if (g.mode === 'edge' || g.dragging) { commit(g); return; }
+    if (g.dragging) { commit(g); return; }
+    if (!g.start) { drawLoop(); return; }
     if (g.armed) view?.setRange(null);
     if (g.type !== 'mouse' && g.long) { emit('long', g.start, event, g.type); return; }
     const t = now(), place = {x: event.clientX, y: event.clientY};
@@ -475,7 +535,7 @@ export function createChart({
     clearTimeout(g.timer);
     gesture = null;
     if (g.armed) view?.setRange(null);
-    if (g.mode === 'edge' || g.dragging) drawLoop();
+    if (g.dragging) drawLoop();
   }
   function preview(g, [va, vb], [sa, sb]) {
     view?.setLoop([va, vb], {dragging: true});
@@ -564,7 +624,7 @@ export function createChart({
     setVisible(next) {
       state.visible = !!next;
       host.hidden = !state.visible;
-      if (!state.visible) { cancelGesture(); return; }
+      if (!state.visible) { cancelGesture(); contacts.clear(); multiTouch = false; return; }
       const shown = view?.ready;
       render();
       // Shown again with the same engraving: put the playing system back at the follow line.
@@ -587,8 +647,10 @@ export function createChart({
       unsubscribe?.();
       clearTimeout(commitTimer);
       cancelPageAnimation();
+      cancelScrollRetry();
       destroyView();
       scroller.removeEventListener('wheel', userScroll);
+      scroller.removeEventListener('touchstart', touchStarted);
       scroller.removeEventListener('touchmove', userScroll);
       scroller.removeEventListener('pointerdown', userScroll);
       host.replaceChildren();
@@ -653,6 +715,8 @@ export function createChart({
     },
     setFollow(on) {
       setFollowState(!!on);
+      pendingReveal = null;   // the newer request wins
+      if (!state.follow) cancelScrollRetry();
       if (state.follow) followNow(true);
     },
     /** {a, b} seconds, or null. Draws the band, brackets and handles; nothing is polled. */

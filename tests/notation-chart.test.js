@@ -8,7 +8,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {pointer as firePointer, setRect, setMedia, installFrameShim, flushFrames, restoreDomShims} from './helpers/dom.js';
+import {pointer as firePointer, touchEvent, setRect, setMedia, installFrameShim, flushFrames, restoreDomShims} from './helpers/dom.js';
 
 const views = vi.hoisted(() => []);
 vi.mock('../src/js/notation/score-view.js', () => ({
@@ -155,16 +155,31 @@ describe('creation and engraving', () => {
 
   it('reports every relayout it starts with its duration and bar count', () => {
     open();
-    expect(relayouts).toEqual([{ms: 0, bars: 32}]);
+    // The first engraving waits for the UI font, and part edits are not Distance relayouts: D54 times only scale/display/fonts.
+    expect(relayouts).toEqual([]);
+    chart.refresh();
+    expect(relayouts).toEqual([]);
+    chart.setDisplay({barsPerRow: 2});
+    chart.setFonts({barNumber: 20, marker: 28});
+    expect(relayouts).toEqual([{ms: 0, bars: 32}, {ms: 0, bars: 32}]);
+    relayouts.length = 0;
     view().deferRender = true;
     chart.setScale(1.6);
     expect(host.getAttribute('aria-busy')).toBe('true');
     vi.advanceTimersByTime(140);
     view().finish();
-    expect(relayouts.at(-1)).toEqual({ms: 140, bars: 32});
+    expect(relayouts).toEqual([{ms: 140, bars: 32}]);
     expect(host.hasAttribute('aria-busy')).toBe(false);
     view().finish();   // a relayout alphaTab started itself (a width change) is not reported
-    expect(relayouts).toHaveLength(2);
+    expect(relayouts).toHaveLength(1);
+  });
+
+  it('does not time the first engraving, which includes the wait for the UI font', () => {
+    chart = createChart({host, part, engine, onRelayout: r => relayouts.push(r)});
+    sizeScroller();
+    chart.setVisible(true);
+    expect(relayouts).toEqual([]);
+    expect(host.hasAttribute('aria-busy')).toBe(false);
   });
 
   it('re-engraves when the part changes and ignores app-theme events (only score-view listens)', () => {
@@ -364,6 +379,97 @@ describe('taps, double-taps, long-presses and the bar menu', () => {
     expect(menu.defaultPrevented).toBe(true);
     fire('pointerup', at(4), {pointerType: 'touch'});
     expect(events.map(e => e.kind)).toEqual(['long']);
+  });
+});
+
+describe('two fingers are the surface’s pinch', () => {
+  const touch = (type, point, id, extra = {}) => fire(type, point, {pointerType: 'touch', pointerId: id, isPrimary: id === 11, ...extra});
+
+  it('two fingers held then spread never arm a long-press, buzz or edit the loop', () => {
+    open();
+    const vibrate = vi.fn();
+    Object.defineProperty(navigator, 'vibrate', {value: vibrate, configurable: true});
+    touch('pointerdown', at(5), 11);
+    touch('pointerdown', at(6), 12);
+    vi.advanceTimersByTime(LONG_PRESS_MS + 20);
+    touch('pointermove', at(9), 12, {buttons: 1});
+    touch('pointermove', at(2), 11, {buttons: 1});
+    touch('pointerup', at(9), 12);
+    touch('pointerup', at(2), 11);
+    vi.advanceTimersByTime(LONG_PRESS_MS + 20);
+    expect(vibrate).not.toHaveBeenCalled();
+    expect(statuses).toEqual([]);
+    expect(edits).toEqual([]);
+    expect(events).toEqual([]);
+    expect(view().calls.setRange).toEqual([]);
+    delete navigator.vibrate;
+  });
+
+  it('a still two-finger tap or hold emits nothing; one finger afterwards is a tap again', () => {
+    open();
+    touch('pointerdown', at(5), 11);
+    touch('pointerdown', at(6), 12);
+    touch('pointerup', at(6), 12);
+    touch('pointerup', at(5), 11);
+    touch('pointerdown', at(5), 11);
+    touch('pointerdown', at(6), 12);
+    vi.advanceTimersByTime(500);
+    touch('pointerup', at(5), 11);
+    touch('pointerup', at(6), 12);
+    expect(events).toEqual([]);
+    vi.advanceTimersByTime(500);
+    touchTap(at(7), {pointerId: 13});
+    expect(events.map(e => [e.kind, e.index])).toEqual([['tap', 7]]);
+  });
+
+  it('a second finger on an armed long-press drag cancels it and restores the loop', () => {
+    open();
+    chart.setLoopRange({a: 4, b: 8});
+    touch('pointerdown', at(10), 11);
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    touch('pointermove', at(12), 11, {buttons: 1});
+    expect(edits.map(e => e.phase)).toEqual(['preview']);
+    touch('pointerdown', at(13), 12);
+    touch('pointermove', at(14), 11, {buttons: 1});
+    touch('pointerup', at(14), 11);
+    touch('pointerup', at(13), 12);
+    expect(edits.map(e => e.phase)).toEqual(['preview']);
+    expect(view().calls.setLoop.at(-1)[0]).toEqual([8, 16]);
+  });
+});
+
+describe('a press on a loop handle', () => {
+  it('a click or touch tap on a handle without a drag is a tap on its bar, and a double-click a double', () => {
+    open();
+    chart.setLoopRange({a: 4, b: 8});   // bars 3–4
+    const end = target(view().edges.end);
+    end.dispatch('pointerdown', at(3, 0.98), {buttons: 1});
+    fire('pointermove', at(3, 0.99), {buttons: 1});   // within the slop
+    fire('pointerup', at(3, 0.99));
+    end.dispatch('pointerdown', at(3, 0.98), {buttons: 1});
+    fire('pointerup', at(3, 0.98));
+    vi.advanceTimersByTime(500);
+    target(view().edges.start).dispatch('pointerdown', at(2, 0.02), {pointerType: 'touch'});
+    fire('pointerup', at(2, 0.02), {pointerType: 'touch'});
+    expect(events.map(e => [e.kind, e.index, e.pointerType])).toEqual([['tap', 3, 'mouse'], ['double', 3, 'mouse'], ['tap', 2, 'touch']]);
+    expect(edits).toEqual([]);
+    expect(view().calls.setLoop.at(-1)[0]).toEqual([8, 16]);
+  });
+
+  it('a still touch long-press on a handle emits long (the bar menu); a drag after it still moves the edge', () => {
+    open();
+    chart.setLoopRange({a: 4, b: 8});
+    target(view().edges.end).dispatch('pointerdown', at(3, 0.98), {pointerType: 'touch'});
+    vi.advanceTimersByTime(LONG_PRESS_MS + 50);
+    fire('pointerup', at(3, 0.98), {pointerType: 'touch'});
+    expect(events.map(e => [e.kind, e.index])).toEqual([['long', 3]]);
+    expect(statuses).toEqual([]);
+    target(view().edges.end).dispatch('pointerdown', at(3, 0.98), {pointerType: 'touch'});
+    vi.advanceTimersByTime(LONG_PRESS_MS + 50);
+    fire('pointermove', at(4, 0.6), {pointerType: 'touch', buttons: 1});
+    fire('pointerup', at(4, 0.6), {pointerType: 'touch'});
+    expect(events).toHaveLength(1);
+    expect(edits.at(-1)).toMatchObject({phase: 'commit', b: 10});
   });
 });
 
@@ -834,6 +940,81 @@ describe('follow', () => {
     expect(scroller().scrollTop).toBeCloseTo(600 - 0.33 * 800, 6);
     chart.reveal(8 * BAR);
     expect(scroller().scrollTop).toBe(0);   // y 200 − 264 clamps at the top
+  });
+
+  it('a tap or still long-press with finger jitter does not pause Follow; a touch scroll past the slop does', () => {
+    open({scale: 1});
+    vi.advanceTimersByTime(1000);
+    const p = at(5, 0.5, 1);
+    scroller().dispatchEvent(touchEvent('touchstart', stage(), [{x: p.x, y: p.y}]));
+    fire('pointerdown', p, {pointerType: 'touch'});
+    scroller().dispatchEvent(touchEvent('touchmove', stage(), [{x: p.x + 2, y: p.y + 1}]));
+    fire('pointermove', {x: p.x + 2, y: p.y + 1}, {pointerType: 'touch', buttons: 1});
+    fire('pointerup', {x: p.x + 2, y: p.y + 1}, {pointerType: 'touch'});
+    expect(events.map(e => e.kind)).toEqual(['tap']);
+    vi.advanceTimersByTime(500);
+    chart.setGlass(true);
+    scroller().dispatchEvent(touchEvent('touchstart', stage(), [{x: p.x, y: p.y}]));
+    fire('pointerdown', p, {pointerType: 'touch'});
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10);
+    scroller().dispatchEvent(touchEvent('touchmove', stage(), [{x: p.x + 1, y: p.y + 3}]));
+    fire('pointerup', {x: p.x + 1, y: p.y + 3}, {pointerType: 'touch'});
+    expect(events.map(e => e.kind)).toEqual(['tap', 'long']);
+    // Jitter outside the music (the score padding) is not a scroll either.
+    scroller().dispatchEvent(touchEvent('touchstart', scroller(), [{x: 850, y: 40}]));
+    scroller().dispatchEvent(touchEvent('touchmove', scroller(), [{x: 853, y: 44}]));
+    expect(follows).toEqual([]);
+    expect(chart.state.follow).toBe(true);
+    // A real scroll: the press cancels itself past the slop, then the touchmove pauses Follow.
+    scroller().dispatchEvent(touchEvent('touchstart', stage(), [{x: p.x, y: p.y}]));
+    fire('pointerdown', p, {pointerType: 'touch'});
+    fire('pointermove', {x: p.x, y: p.y - 40}, {pointerType: 'touch', buttons: 1});
+    scroller().dispatchEvent(touchEvent('touchmove', stage(), [{x: p.x, y: p.y - 40}]));
+    expect(follows).toEqual([false]);
+  });
+
+  it('a waiting scroll target is dropped when the reader scrolls, a newer target lands, or the chart is destroyed', () => {
+    open({scale: 1});
+    setRect(scroller(), {width: 900, height: 800, scrollHeight: 900});   // alphaTab has not grown the surface yet
+    vi.advanceTimersByTime(1000);
+    chart.reveal(20 * BAR);            // bar 20: y 500 → target 236, beyond the 100 px of scroll
+    expect(scroller().scrollTop).toBe(0);
+    vi.advanceTimersByTime(1000);
+    scroller().scrollTop = 60;
+    scroller().dispatchEvent(new WheelEvent('wheel', {deltaY: 40}));
+    expect(follows).toEqual([false]);
+    setRect(scroller(), {width: 900, height: 800, scrollHeight: 20000});
+    flushFrames(3);
+    expect(scroller().scrollTop).toBe(60);
+    // A newer target supersedes a waiting one.
+    setRect(scroller(), {width: 900, height: 800, scrollHeight: 900});
+    chart.reveal(28 * BAR);            // y 700 → 436, waits
+    chart.reveal(4 * BAR);             // y 100 → clamps to 0, lands now
+    expect(scroller().scrollTop).toBe(0);
+    setRect(scroller(), {width: 900, height: 800, scrollHeight: 20000});
+    flushFrames(3);
+    expect(scroller().scrollTop).toBe(0);
+    setRect(scroller(), {width: 900, height: 800, scrollHeight: 900});
+    chart.reveal(28 * BAR);
+    chart.destroy();
+    chart = null;
+    flushFrames(3);
+    expect(scroller()).toBeNull();
+  });
+
+  it('a reveal asked for during an anchored relayout wins, and is not replayed by a later engraving', () => {
+    open({scale: 1.2});
+    chart.setFollow(false);
+    scroller().scrollTop = 250;
+    view().deferRender = true;
+    chart.setScale(1.45);
+    chart.reveal(20 * BAR);           // bar 20: system 5
+    view().finish();
+    expect(scroller().scrollTop).toBeCloseTo(5 * 145 - 0.33 * 800, 6);
+    vi.advanceTimersByTime(1000);
+    scroller().scrollTop = 123;
+    view().finish();                  // a theme or width re-engraving
+    expect(scroller().scrollTop).toBe(123);
   });
 
   it('anchorBar is the playing bar when its system is at the follow line, else that system’s first bar', () => {

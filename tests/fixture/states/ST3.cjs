@@ -29,7 +29,10 @@ function readLabels(labels) {
   const glyph = texts.find(t => /alphaTab/.test(getComputedStyle(t).fontFamily));
   const host = document.querySelector('[data-rendered]');
   const token = name => getComputedStyle(host).getPropertyValue(name).trim().toLowerCase();
+  // Staff lines: alphaTab's long, thin rects (or paths) in the engraving.
+  const staff = [...document.querySelectorAll('.score-engraving rect')].find(r => { const b = r.getBBox(); return b.width > 100 && b.height <= 2; });
   return {
+    staffFill: staff?.getAttribute('fill')?.toLowerCase(),
     barNumbers: barNumbers.map(size), markers: markers.map(size),
     barNumberFill: barNumbers[0]?.getAttribute('fill')?.toLowerCase(), glyphFill: glyph?.getAttribute('fill')?.toLowerCase(),
     ink: token('--ink'), ink2: token('--ink-2'), ink3: token('--ink-3'), family: ui[0] ? getComputedStyle(ui[0]).fontFamily : '',
@@ -61,7 +64,8 @@ module.exports = [
       t.expect(await page.getByRole('img', {name: /^Drum chart, 32 bars$/}).count() === 1, 'the engraving is one labelled image');
       const labels = await page.evaluate(readLabels, LABELS);
       t.expect(labels.glyphFill === labels.ink, `notes are drawn in --ink (${labels.glyphFill} vs ${labels.ink})`);
-      t.expect(labels.barNumberFill === labels.ink3, `bar numbers are drawn in --ink-3 (${labels.barNumberFill} vs ${labels.ink3})`);
+      t.expect(labels.barNumberFill === labels.ink2, `bar numbers are drawn in --ink-2 (${labels.barNumberFill} vs ${labels.ink2})`);
+      t.expect(labels.staffFill === labels.ink3, `staff lines are drawn in --ink-3 (${labels.staffFill} vs ${labels.ink3})`);
       t.expect(/Atkinson Hyperlegible Next/.test(labels.family), `labels use --font-ui (${labels.family})`);
       const now = await page.evaluate(() => {
         const bar = document.querySelector('.score-now-bar'), line = document.querySelector('.score-playhead'), host = document.querySelector('[data-rendered]');
@@ -84,7 +88,8 @@ module.exports = [
       const labels = await page.evaluate(readLabels, LABELS);
       t.expect(labels.ink === '#ffffff', `the harness is on the Stage tokens (--ink ${labels.ink})`);
       t.expect(labels.glyphFill === '#ffffff', `notes are drawn in the Stage --ink, not the desk theme (${labels.glyphFill})`);
-      t.expect(labels.barNumberFill === labels.ink3, `bar numbers in the Stage --ink-3 (${labels.barNumberFill})`);
+      t.expect(labels.barNumberFill === labels.ink2, `bar numbers in the Stage --ink-2 (${labels.barNumberFill})`);
+      t.expect(labels.staffFill === labels.ink3, `staff lines in the Stage --ink-3 (${labels.staffFill})`);
       // A desk theme event changes nothing on the Stage: no re-engraving.
       const before = await page.locator('[data-rendered]').getAttribute('data-rendered');
       await page.evaluate(() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; window.dispatchEvent(new Event('woodshed:theme')); });

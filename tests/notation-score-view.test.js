@@ -154,13 +154,13 @@ describe('fonts', () => {
 });
 
 describe('theme', () => {
-  it('reads --ink, --ink-3 and --ink-2 from the host, not the document root', async () => {
+  it('reads --ink (notes), --ink-3 (staff lines) and --ink-2 (bar numbers) from the host, not the document root (spec §8.3)', async () => {
     document.documentElement.style.setProperty('--ink', '#000001');
     setTokens({'--ink': '#ffffff', '--ink-3': '#9aa5a0', '--ink-2': '#d3dad6'});
     view = createScoreView(host);
     view.setScore(demoScore(32, 120));
     await flush();
-    expect(api().snapshot.colours).toEqual({main: 'color(#ffffff)', lines: 'color(#d3dad6)', bar: 'color(#9aa5a0)'});
+    expect(api().snapshot.colours).toEqual({main: 'color(#ffffff)', lines: 'color(#9aa5a0)', bar: 'color(#d3dad6)'});
     document.documentElement.style.removeProperty('--ink');
   });
 
