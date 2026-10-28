@@ -1,5 +1,5 @@
 # Forward requests for later packages
-Requests from earlier waves' handoffs, grouped by target package ID, for the orchestrator to pass on. Contract changes they rely on are in `docs/ux2/architecture.md` Appendix C. Sections addressed to packages that have since run are removed by the next integration (I0B removed F4b, ED1, U1, U2, PL1, AU1, ST0 and BK1–BK7; I1 removed S1, S2, ST1a, ST1b, DL1, CPB and I1: all done or ticketed as I1-1 … I1-7; I1b removed ST1c, LB1a, LB1b, CPC, VF1 and I1b: all done or ticketed as I1b-1 … I1b-3; I2a removed ST4, ST5, ST6, LB2a, SE1, SE3 and I2a: all done or ticketed as I2a-1 … I2a-15, which landed in wave 2ax; its re-verification ticketed I2a-16 … I2a-18).
+Requests from earlier waves' handoffs, grouped by target package ID, for the orchestrator to pass on. Contract changes they rely on are in `docs/ux2/architecture.md` Appendix C. Sections addressed to packages that have since run are removed by the next integration (I0B removed F4b, ED1, U1, U2, PL1, AU1, ST0 and BK1–BK7; I1 removed S1, S2, ST1a, ST1b, DL1, CPB and I1: all done or ticketed as I1-1 … I1-7; I1b removed ST1c, LB1a, LB1b, CPC, VF1 and I1b: all done or ticketed as I1b-1 … I1b-3; I2a removed ST4, ST5, ST6, LB2a, SE1, SE3 and I2a: all done or ticketed as I2a-1 … I2a-15, which landed in wave 2ax; its re-verification ticketed I2a-16 … I2a-18, which landed in round 3, whose re-verification ticketed I2a-19).
 
 ## From I0A (wave 0A handoffs)
 
@@ -122,7 +122,7 @@ Contract details are in Appendix C items 76–84.
 
 
 ## From I2a (wave 2a handoffs)
-Contract details are in Appendix C items 88–103.
+Contract details are in Appendix C items 88–104.
 
 ### LB2b
 - Uploads (LB2a, item 94): read the staged files with `takeStagedFiles()` on mount. Call `startUploads(files, {settings: <stored account settings>, profile: <account profile>, choice: <Change panel {stemMode?, preset?} or null>, deviceId, title})`; do not resolve the settings first (`upload.js` applies `jobSettings(profile, settings, choice)` itself, so a chosen layout must come in through `choice`). Calling `uploadDevice()` first lets a missing processor show inline before the sheet closes. The toast's Undo is `handle.cancel()` (it can take up to about 4.25 s and returns false if the job could not be canceled).
