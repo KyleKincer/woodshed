@@ -3,8 +3,10 @@
 //   npm run fixture:capture -- --state-file tests/fixture/flows/VF1.cjs --strict-requires
 // Every route that exists after I1b is probed at laptop 1440×900 and iPad 820×1180 (touch,
 // fx-platform=ipad) in both themes:
-//   vf1-probe-<route>      targets (fine ≥ 24, coarse ≥ 44), readouts (spec sizes), the 12 px type
-//                          floor, and captures of every scroll position (visual review)
+//   vf1-probe-<route>      targets (fine ≥ 24, coarse ≥ 44), readouts (spec sizes), the type floor
+//                          (12 px; 14 px for control text on iPad except 12/600 caps overlines;
+//                          spec §8.1), and
+//                          captures of every scroll position (visual review)
 //   vf1-axe-<route>        axe-core 4.10.3, WCAG 2.0–2.2 A/AA + best practice (probe-axe.cjs)
 //   vf1-focus-<route>      the focus ring on every Tab stop (laptop; probe-focus.cjs)
 // for the routes library (/), signin (fx-auth=signedout), welcome (/welcome) and download
@@ -16,7 +18,8 @@
 //                          shorter press is a tap, job cards never ask for a menu (probe-touch.cjs)
 //   vf1-touch-app-card     in the app a tap on a card opens the song
 //   vf1-flow-back-*        Back from the placeholder Stage refocuses the opened card (mouse,
-//                          keyboard with a visible ring, iPad tap with the scroll position kept)
+//                          keyboard with a visible ring, iPad tap with the scroll position kept,
+//                          and the placeholder's own "Back to Library" link)
 //   vf1-flow-intended-*    the intended route survives sign-in (web: the OAuth return URL is the
 //                          route; desktop: ws.intendedRoute brings the reload at / back to it)
 //   vf1-flow-prefs-tabs    Library prefs sync across two tabs (storage event, both ways), the URL
@@ -31,6 +34,7 @@ const {longPressOpens, shortPressDoesNotOpen} = require('../probes/probe-touch.c
 const {checkAxe} = require('../probes/probe-axe.cjs');
 const {checkReadouts} = require('../probes/probe-readouts.cjs');
 const {decodePng, fitAlpha, parseRgb} = require('./png.cjs');
+const {CONTROL, textFacts, typeProblems, veilProblems, recentsProblems} = require('./vf1-checks.cjs');
 
 const NOW = 'fx-now=2026-10-28T12:00:00Z';
 const LIBRARY = ['src/library/home.js', 'src/library/jobs.js', 'src/library/review-chip.js'];
@@ -76,22 +80,6 @@ const READOUTS = {
   ],
 };
 
-/** Runs in the page: visible text below the 12 px floor (spec §8.1), outside the Stage. */
-function smallText() {
-  const out = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const el = n.parentElement;
-    if (!el || !n.textContent.trim() || el.closest('[aria-hidden=true], .sr-only, .visually-hidden, [data-volatile], svg')) continue;
-    if (el.checkVisibility && !el.checkVisibility({visibilityProperty: true, opacityProperty: true})) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) continue;
-    const size = parseFloat(getComputedStyle(el).fontSize);
-    if (size < 12) out.push(`${size}px "${n.textContent.trim().slice(0, 30)}" (${el.className || el.tagName})`);
-  }
-  return [...new Set(out)];
-}
-
 /** Runs in the page: every [data-scroller] position needed to see the whole place. */
 function scrollStops() {
   const s = document.querySelector('[data-scroller]') ?? document.scrollingElement;
@@ -119,7 +107,7 @@ function routeStates(key) {
         const problems = [
           ...await checkTargets(page),
           ...await checkReadouts(page, READOUTS[key](coarse)),
-          ...(await page.evaluate(smallText)).map(s => `type below 12px: ${s}`),
+          ...typeProblems(await page.evaluate(textFacts, CONTROL), {coarse: t.device === 'ipad'}),
         ];
         // Visual review: every scroll position of the place.
         const stops = await page.evaluate(scrollStops);
@@ -196,7 +184,7 @@ module.exports = [
       await t.capture();
       const problems = [
         ...await checkTargets(page),
-        ...(await page.evaluate(smallText)).map(s => `type below 12px: ${s}`),
+        ...typeProblems(await page.evaluate(textFacts, CONTROL), {coarse: t.device === 'ipad'}),
         ...await checkAxe(page, {include: ['[popover]:popover-open']}),
       ];
       const rows = await page.evaluate(() => {
@@ -240,7 +228,7 @@ module.exports = [
       await settle(page);
       await t.capture();
       const problems = [...await checkTargets(page), ...await checkAxe(page, {include: ['[popover]:popover-open']}),
-        ...(await page.evaluate(smallText)).map(s => `type below 12px: ${s}`)];
+        ...typeProblems(await page.evaluate(textFacts, CONTROL), {coarse: t.device === 'ipad'})];
       t.expect(!problems.length, problems.join('; '));
     },
   },
@@ -264,7 +252,7 @@ module.exports = [
       await t.capture();
       // Over the Library only the banner is the shell's (vf1-axe-library covers the rest).
       const problems = [...await checkTargets(page), ...await checkAxe(page, {include: screen.axe ?? []}),
-        ...(await page.evaluate(smallText)).map(s => `type below 12px: ${s}`)];
+        ...typeProblems(await page.evaluate(textFacts, CONTROL), {coarse: t.device === 'ipad'})];
       if (t.device === 'laptop') problems.push(...await walkFocus(page, {stops: 40}));
       t.expect(!problems.length, problems.join('; '));
     },
@@ -284,7 +272,7 @@ module.exports = [
       await settle(page);
       await t.capture();
       const problems = [...await checkTargets(page), ...await checkAxe(page, {include: ['dialog[open], [role=dialog]']}),
-        ...(await page.evaluate(smallText)).map(s => `type below 12px: ${s}`)];
+        ...typeProblems(await page.evaluate(textFacts, CONTROL), {coarse: t.device === 'ipad'})];
       t.expect(!problems.length, problems.join('; '));
     },
   },
@@ -322,9 +310,19 @@ module.exports = [
         await page.waitForSelector('[role=menu]', {state: 'detached'});
       }
       const jobs = await page.evaluate(() => [...document.querySelectorAll('.lib-grid > .lib-card')].filter(c => c.dataset.key?.startsWith('job:')).map(c => c.dataset.key));
+      t.expect(jobs.length >= 2, `job cards in the harness (${jobs})`);
+      const counts = () => page.evaluate(() => ({menu: window.__cards.menu.length, jobs: window.__cards.jobs.length, opened: window.__cards.opened.length}));
       for (const key of jobs.slice(0, 2)) {
-        await touch.longPress(page.locator(`[data-key="${key}"] .lib-card-cover`), {ms: 550});
-        t.expect(!(await page.locator('[role=menu]').count()), `a job card (${key}) opens no song menu`);
+        const before = await counts();
+        // A long-press on a job card is not a song gesture: no menu appears within the probe's
+        // window (longPressOpens waits withinMs after release), no onMenu, no onOpen.
+        const menu = await longPressOpens(page, page.locator(`[data-key="${key}"] .lib-card-cover`), {ms: 550, touch});
+        t.expect(!menu.ok, `a job card (${key}) opens no song menu`);
+        const after = await counts();
+        t.expect(after.menu === before.menu && after.opened === before.opened, `a long-press on ${key} asks for no song menu and opens no song (${JSON.stringify(before)} → ${JSON.stringify(after)})`);
+        // A job card defines no long-press (spec §7.6 gives the card menu to song cards), so its
+        // button activates on release as any button does; logged, not judged.
+        t.log(`${key}: onJob ${after.jobs - before.jobs}× after the long-press`);
       }
       const short = await shortPressDoesNotOpen(page, page.locator(`[data-key="${songs[1]}"] .lib-card-cover`), {ms: 500, touch});
       t.expect(short.ok, 'a shorter press opens no menu');
@@ -426,6 +424,28 @@ module.exports = [
       t.expect(key === 'song:secondwind', `Back after a tap refocuses the card (${key})`);
       const after = await page.evaluate(() => document.querySelector('[data-scroller]')?.scrollTop ?? 0);
       t.expect(Math.abs(after - before) <= 2, `Back restores the Library's scroll position (${before} → ${after})`);
+    },
+  },
+
+  {
+    name: 'vf1-flow-back-link',
+    url: ROUTES.library.url,
+    opts: {requires: LIBRARY, ready: 'library', devices: ['laptop'], structure: PLACEHOLDER_OK, capture: false},
+    async fn(page, t) {
+      // The placeholder Stage's own visible Back control, not the browser's: it is a Back too, so it
+      // returns through history and refocuses the card as page.goBack() does.
+      await page.locator('[data-key="song:glasshouse"] .lib-open-cover').click();
+      await t.ready('stage');
+      const idx = await page.evaluate(() => history.state?.idx ?? null);
+      await page.getByRole('link', {name: 'Back to Library'}).click();
+      await t.ready('library');
+      const focus = await page.waitForFunction(() => {
+        const a = document.activeElement;
+        return a && a !== document.body ? {inCard: !!a.closest('[data-key="song:glasshouse"]'), visible: a.checkVisibility()} : null;
+      }, null, {timeout: 5000}).then(h => h.jsonValue(), () => null);
+      const after = await page.evaluate(() => ({idx: history.state?.idx ?? null, active: document.activeElement?.tagName}));
+      t.expect(focus?.inCard && focus.visible, `"Back to Library" refocuses Glasshouse's card (${JSON.stringify(focus ?? after)})`);
+      t.expect(idx != null && after.idx === idx - 1, `"Back to Library" goes back in history, not forward (idx ${idx} → ${after.idx})`);
     },
   },
 
@@ -541,22 +561,22 @@ module.exports = [
       const keys = await page.evaluate(() => [...document.querySelectorAll('.lib-grid > .lib-card')]
         .filter(c => c.dataset.state === 'processing' || c.dataset.state === 'resplitting').map(c => c.dataset.key));
       t.expect(keys.some(k => k.startsWith('job:')) && keys.some(k => k.startsWith('song:')), `processing and re-splitting cards in the seed (${keys})`);
-      const problems = [];
       const measured = [];
       for (const key of keys) {
         await page.locator(`[data-key="${key}"] .lib-card-cover`).scrollIntoViewIfNeeded();
         const facts = await page.evaluate(veilFacts, key);
+        if (!facts) { measured.push({key, missing: true}); continue; }
         const inset = 8, rail = 8;
         const clip = {x: facts.rect.x + inset, y: facts.rect.y + inset, width: facts.rect.w - 2 * inset, height: facts.rect.h - 2 * inset - rail};
         const shown = decodePng(await page.screenshot({clip, animations: 'disabled'}));
         await page.addStyleTag({content: `[data-key="${key}"] .lib-card-cover::after, [data-key="${key}"] .lib-card-cover::before { display: none !important; } [data-key="${key}"] .lib-card-cover { opacity: 1 !important; }`});
         const art = decodePng(await page.screenshot({clip, animations: 'disabled'}));
-        const alpha = fitAlpha(shown, art, parseRgb(facts.behind));
-        measured.push(`${key} ${facts.state} ${alpha == null ? 'n/a' : alpha.toFixed(2)}`);
-        if (alpha == null) continue;   // art too close to the page colour to measure
-        if (Math.abs(alpha - 0.55) > 0.05) problems.push(`${key} (${facts.state}) renders its cover at ${Math.round(alpha * 100)}%, expected 55%`);
+        // null when the art is too close to the page colour to measure; veilProblems() needs at
+        // least one measured processing and one measured re-splitting card.
+        measured.push({key, state: facts.state, alpha: fitAlpha(shown, art, parseRgb(facts.behind))});
       }
-      t.log(measured.join(', '));
+      t.log(measured.map(m => `${m.key} ${m.missing ? 'no cover' : `${m.state} ${m.alpha == null ? 'n/a' : m.alpha.toFixed(2)}`}`).join(', '));
+      const problems = veilProblems(measured);
       t.expect(!problems.length, problems.join('; '));
     },
   },
@@ -566,16 +586,15 @@ module.exports = [
     opts: {requires: LIBRARY, ready: 'library', capture: false},
     async fn(page, t) {
       const recents = await page.evaluate(() => [...document.querySelectorAll('.lib-recent')].map(r => {
+        const title = r.querySelector('.lib-compact-title')?.textContent ?? r.dataset.key ?? '?';
         const line = r.querySelector('.lib-compact-line');
+        if (!line) return {title, missing: true};
         const cs = getComputedStyle(line);
         const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
-        return {title: r.querySelector('.lib-compact-title')?.textContent, text: line.textContent, lines: Math.round(line.getBoundingClientRect().height / lh), size: parseFloat(cs.fontSize)};
+        return {title, text: line.textContent, lines: Math.round(line.getBoundingClientRect().height / lh), size: parseFloat(cs.fontSize)};
       }));
       t.expect(recents.length >= 1, 'the seed has a compact recent');
-      const problems = recents.flatMap(r => [
-        ...(r.lines > 1 || /\n/.test(r.text) ? [`"${r.title}" shows its state on ${r.lines} lines ("${r.text.replace(/\n/g, '⏎')}"); spec §2.2 wants one state line`] : []),
-        ...(/·/.test(r.text) && /practised/.test(r.text) ? [] : [`"${r.title}" state line "${r.text.replace(/\n/g, '⏎')}" is not joined with " · " like the hero's`]),
-      ]);
+      const problems = recentsProblems(recents);
       t.expect(!problems.length, problems.join('; '));
     },
   },

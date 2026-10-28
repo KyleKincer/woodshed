@@ -12,6 +12,7 @@ const axe = require('../probes/probe-axe.cjs');
 const readouts = require('../probes/probe-readouts.cjs');
 const perf = require('../probes/probe-perf.cjs');
 const {validateStates} = require('../lib/runner.cjs');
+const checks = require('./vf1-checks.cjs');
 
 describe('probe-axe.cjs', () => {
   const node = (target, summary = '') => ({target, html: '<x>', summary});
@@ -87,7 +88,11 @@ describe('probe-perf.cjs', () => {
     const slow = perf.compare('relayout64', [60, 61, 62, 63, 64], doc);
     expect(slow).toMatchObject({median: 62, ok: false});
     expect(slow.reason).toMatch(/1\.39× the baseline 44\.6 \(max 1\.15×\)/);
-    expect(perf.compare('frameRoadmap', [6.33 * 1.15], doc).ok).toBe(true);
+    // Exactly at the limit passes; just above it fails, even when the rounded ratio reads 1.15.
+    expect(perf.compare('relayout64', [23], {metrics: {relayout64Ms: {median: 20}}})).toMatchObject({ratio: 1.15, ok: true});
+    expect(perf.compare('relayout64', [6.9], {metrics: {relayout64Ms: {median: 6}}})).toMatchObject({ratio: 1.15, ok: true});
+    expect(perf.compare('relayout64', [51.31], doc)).toMatchObject({ratio: 1.15, ok: false});
+    expect(perf.compare('frameRoadmap', [7.29], doc).ok).toBe(false);
     expect(perf.compare('frameChart', [], doc)).toMatchObject({ok: false, reason: 'no finite median'});
     expect(perf.compare('openToPlay', [100], {metrics: {}})).toMatchObject({ok: false, reason: 'the baseline has no openToPlayMs median'});
     expect(perf.compare('openToPlay', [3000], doc, 1.25).ok).toBe(true);
@@ -116,6 +121,36 @@ describe('flows/VF1.cjs', () => {
     const names = states.map(s => s.name);
     expect(new Set(names).size).toBe(names.length);
     expect(names.every(n => n.startsWith('vf1-'))).toBe(true);
+  });
+});
+
+describe('flows/vf1-checks.cjs', () => {
+  const fact = (size, extra) => ({size, weight: 400, transform: 'none', control: true, text: 't', cls: 'c', ...extra});
+  it('holds 12 px everywhere and 14 px on coarse pointers, overlines excepted (spec §8.1)', () => {
+    expect(checks.typeProblems([fact(12), fact(11.5)])).toEqual(['type below 12px: 11.5px "t" (c)']);
+    expect(checks.typeProblems([fact(13)], {coarse: true})).toEqual(['type below 14px: 13px "t" (c)']);
+    expect(checks.typeProblems([fact(14)], {coarse: true})).toEqual([]);
+    // Prose outside a control keeps the 12 px floor on iPad (the Jobs popover's job.message, §2.8).
+    expect(checks.typeProblems([fact(12, {control: false})], {coarse: true})).toEqual([]);
+    expect(checks.typeProblems([fact(11, {control: false})], {coarse: true})).toEqual(['type below 12px: 11px "t" (c)']);
+    // A 12/600 caps overline is allowed on iPad; 12 px caps at 400, or 11 px caps, are not.
+    expect(checks.typeProblems([fact(12, {weight: 600, transform: 'uppercase'})], {coarse: true})).toEqual([]);
+    expect(checks.typeProblems([fact(12, {transform: 'uppercase'})], {coarse: true})).toHaveLength(1);
+    expect(checks.typeProblems([fact(11, {weight: 600, transform: 'uppercase'})])).toHaveLength(1);
+  });
+  it('fails the cover veil outside 55% ± 2% and when nothing was measured', () => {
+    const ok = [{key: 'job:a', state: 'processing', alpha: 0.55}, {key: 'song:b', state: 'resplitting', alpha: 0.57}];
+    expect(checks.veilProblems(ok)).toEqual([]);
+    expect(checks.veilProblems([...ok, {key: 'job:c', state: 'processing', alpha: 0.60}])).toEqual(['job:c (processing) renders its cover at 60%, expected 55%']);
+    expect(checks.veilProblems([...ok, {key: 'job:d', state: 'processing', alpha: 0.5}])).toHaveLength(1);
+    expect(checks.veilProblems([{key: 'job:a', alpha: null}, {key: 'song:b', alpha: null}]))
+      .toEqual(['veil not measurable: no processing (job:) card gave an alpha', 'veil not measurable: no re-splitting (song:) card gave an alpha']);
+    expect(checks.veilProblems([...ok, {key: 'job:e', missing: true}])).toEqual(['job:e has no .lib-card-cover to measure']);
+  });
+  it('wants one " · " state line on every compact recent and names a recent without one', () => {
+    expect(checks.recentsProblems([{title: 'A', text: '100% · practised 3 days ago', lines: 1}])).toEqual([]);
+    expect(checks.recentsProblems([{title: 'A', text: '100%\npractised 3 days ago', lines: 2}])).toHaveLength(2);
+    expect(checks.recentsProblems([{title: 'B', missing: true}])).toEqual(['"B" has no .lib-compact-line state line']);
   });
 });
 

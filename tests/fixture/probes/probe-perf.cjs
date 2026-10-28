@@ -22,7 +22,7 @@
 //
 // Usage:
 //   NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-perf.cjs [options]
-//   --url <base>          a running fixture (default: start one from FIXTURE_PORT or a free port)
+//   --url <base>          a running fixture (default: start one on --port or a free port)
 //   --runs 5 --warmup 1 --seconds 10
 //   --metrics openToPlay,relayout64,frameChart,frameRoadmap
 //   --baseline <file>     default tests/fixture/baselines/legacy/perf.json
@@ -73,8 +73,10 @@ function compare(metric, values, baselineDoc, maxRatio = MAX_RATIO) {
   const med = round(median(values));
   if (!Number.isFinite(med)) return {median: null, baseline: base ?? null, ratio: null, ok: false, reason: 'no finite median'};
   if (!Number.isFinite(base) || base <= 0) return {median: med, baseline: null, ratio: null, ok: false, reason: `the baseline has no ${BASELINE_KEY[metric]} median`};
+  // The verdict uses the unrounded ratio (with a float-noise epsilon, so 6.9 / 6 counts as exactly
+  // 1.15×); only the reported value is rounded.
+  const ok = med / base <= maxRatio + 1e-9;
   const ratio = Math.round(med / base * 1000) / 1000;
-  const ok = ratio <= maxRatio;
   return {median: med, baseline: base, ratio, ok, reason: ok ? null : `${metric} median ${med} is ${ratio}× the baseline ${base} (max ${maxRatio}×)`};
 }
 
@@ -263,8 +265,9 @@ async function main(argv = process.argv.slice(2)) {
     let base = typeof args.url === 'string' ? args.url.replace(/\/$/, '') : null;
     try {
       if (!base) {
-        const port = args.port ?? (process.env.FIXTURE_PORT ? Number(process.env.FIXTURE_PORT) : undefined);
-        server = await startServer({root: REPO, port, probePath: HARNESS});
+        // As probe-perf-legacy: a free port unless --port names one (FIXTURE_PORT may be the
+        // agent's own running fixture).
+        server = await startServer({root: REPO, port: args.port, probePath: HARNESS});
         base = server.base;
       }
       browser = await chromium.launch({args: ['--autoplay-policy=no-user-gesture-required']});
