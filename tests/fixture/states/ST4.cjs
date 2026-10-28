@@ -11,7 +11,8 @@
 //   st4-frame-kit            Distance Kit: the 312 px rail
 //   st4-frame-focus          Focus: the 120 px mini rail; on the band the strip and dock go, height only
 //   st4-frame-relayout       laptop → 820×1180 → band, once, 150 ms after the resize settles
-//   st4-frame-resume         the resume chip "Back at **Chorus loop** · 75% · Drums out [Start over]"
+//   st4-frame-resume         the resume chip "Back at **Chorus loop** · 75% · Drums out [Start over]",
+//                            read as it appears (it lives RESUME_MS = 4 s from mount, not from data-load-phase=ready)
 //   st4-frame-loading        interactive loading: live controls, data-load-phase not ready
 //   st4-frame-error          the storage error in the music area; the controls aria-disabled with the reason
 //   st4-frame-error-missing  missing stems: the stems named, [Try again] [Re-split]
@@ -30,7 +31,7 @@
 //                            with fx-nofeature=viewtransition it does not, and the Stage still opens
 //   st4-app-review           /s/shuffle (an unconfirmed search) shows the recording banner
 //   st4-app-setlist          /s/lowtide?set=set-friday: Alt+↓ replaces the entry with the next song in the set
-//   st4-app-resume           /s/lowtide (saved v2 practice): the resume chip in the status line
+//   st4-app-resume           /s/lowtide (saved v2 practice): the resume chip in the status line, read as it appears
 'use strict';
 
 const {checkTargets} = require('../probes/probe-targets.cjs');
@@ -65,6 +66,35 @@ function frameFacts() {
 
 const statusText = (page) => page.evaluate(() => (document.querySelector('.stage-status')?.textContent ?? '').replace(/\s+/g, ' ').trim());
 const loaded = (t) => t.loadPhase('ready');
+
+/**
+ * The resume chip, read the moment it shows. stage.js clears it RESUME_MS (4 s) of wall-clock time
+ * after mount (spec §4.12 step 5), and under load mount → data-load-phase=ready alone can take
+ * longer than that, so these states run with opts.ready false: the poll starts at the page's load
+ * event, before the Stage mounts, and the text, the bold part and the [Start over] button are read
+ * in the same frame that first shows "Back at" (no second round trip for the chip to expire in).
+ * Then the route's (or harness's) view-ready is awaited as the runner would have.
+ */
+async function readResumeChip(page, t, route) {
+  const handle = await page.waitForFunction(() => {
+    const root = document.documentElement;
+    if (root.dataset.harnessError) return {harnessError: root.dataset.harnessError};
+    const el = document.querySelector('.stage-status');
+    const text = (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (!text.startsWith('Back at')) return false;
+    const visible = (node) => !!node && (!node.checkVisibility || node.checkVisibility()) && node.getBoundingClientRect().width > 0;
+    const startOver = [...el.querySelectorAll('button')].find((b) => b.textContent.replace(/\s+/g, ' ').trim() === 'Start over');
+    return {text, strong: el.querySelector('.stage-status-strong')?.textContent ?? null, startOver: visible(startOver)};
+  }, null, {timeout: 30_000}).catch((error) => {
+    throw new Error(`expectation failed: the resume chip never showed (${error.message.split('\n')[0]})`);
+  });
+  const chip = await handle.jsonValue();
+  if (chip.harnessError) throw new Error(`harness: ${chip.harnessError}`);
+  await t.ready(route);
+  const harnessError = await page.evaluate(() => document.documentElement.dataset.harnessError);
+  if (harnessError) throw new Error(`harness: ${harnessError}`);
+  return chip;
+}
 
 async function expectTargets(t, page) {
   const problems = await checkTargets(page);
@@ -157,14 +187,13 @@ module.exports = [
   {
     name: 'st4-frame-resume',
     url: frame('practice=resume'),
-    opts: FRAME,
+    opts: {...FRAME, ready: false},
     async fn(page, t) {
+      const chip = await readResumeChip(page, t, 'frame');
+      t.expect(chip.text.startsWith('Back at Chorus loop · 75% · Drums out'), `the resume chip (${chip.text})`);
+      t.expect(chip.strong === 'Chorus loop', `the bold part (${chip.strong})`);
+      t.expect(chip.startOver, '[Start over]');
       await loaded(t);
-      const text = await statusText(page);
-      t.expect(text.startsWith('Back at Chorus loop · 75% · Drums out'), `the resume chip (${text})`);
-      const strong = await page.evaluate(() => document.querySelector('.stage-status-strong')?.textContent);
-      t.expect(strong === 'Chorus loop', `the bold part (${strong})`);
-      t.expect(await page.getByRole('button', {name: 'Start over'}).isVisible(), '[Start over]');
     },
   },
   {
@@ -399,12 +428,12 @@ module.exports = [
   {
     name: 'st4-app-resume',
     url: app('/s/lowtide'),
-    opts: APP,
+    opts: {...APP, ready: false},
     async fn(page, t) {
+      const chip = await readResumeChip(page, t, 'stage');
+      t.expect(chip.text.startsWith('Back at'), `the resume chip (${chip.text})`);
+      t.expect(chip.startOver, '[Start over]');
       await loaded(t);
-      const text = await statusText(page);
-      t.expect(text.startsWith('Back at'), `the resume chip (${text})`);
-      t.expect(await page.getByRole('button', {name: 'Start over'}).isVisible(), '[Start over]');
     },
   },
 ];
