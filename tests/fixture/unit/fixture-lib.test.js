@@ -25,6 +25,18 @@ describe('lib/structure.cjs', () => {
     const t = [{label: 'card', path: 'a', rect: rect(0, 0, 100, 100)}, {label: 'menu', path: 'b', rect: rect(80, 0, 20, 20)}, {label: 'other', path: 'c', rect: rect(90, 10, 40, 40)}];
     expect(structure.findOverlaps(t, [[0, 1]]).map(o => [o.a.label, o.b.label])).toEqual([['card', 'other'], ['menu', 'other']]);
   });
+  it('findOverlaps compares one frame by rect, and different frames only where both were on screen at the start', () => {
+    // A [data-scroller]'s pair scrolled into view (no view), a fixed button where they would be
+    // unscrolled, a window target under the fixed button at the start, and one scrolled into view.
+    const t = [
+      {label: 'fifth', path: 'a', frame: 'scroller:0', rect: rect(0, 600, 120, 40), view: null},
+      {label: 'sixth', path: 'b', frame: 'scroller:0', rect: rect(60, 610, 120, 40), view: null},
+      {label: 'decoy', path: 'c', frame: 'fixed', rect: rect(0, 600, 180, 50), view: rect(0, 600, 180, 50)},
+      {label: 'row', path: 'd', frame: 'window', rect: rect(2000, 2600, 100, 40), view: rect(100, 620, 100, 40)},
+      {label: 'far', path: 'e', frame: 'window', rect: rect(2050, 2610, 100, 40), view: null},
+    ];
+    expect(structure.findOverlaps(t).map(o => [o.a.label, o.b.label])).toEqual([['fifth', 'sixth'], ['decoy', 'row'], ['row', 'far']]);
+  });
   it('the clip check names chips and readouts, not their containers', () => {
     const token = new RegExp(structure.LABEL_CLASS);
     for (const c of ['chip', 'readout', 'stage-chip', 'hud_readout', 'chip--on', 'filter-chip--active']) expect(token.test(c), c).toBe(true);

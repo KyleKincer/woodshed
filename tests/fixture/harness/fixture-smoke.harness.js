@@ -4,8 +4,12 @@
 // ?demo=overflow|overlap|clip|placeholder renders one structural problem on
 // purpose, so the runner's structural checks can be proven against a real page;
 // placeholder-nested (the text next to an icon and a code span), overlap-below
-// (2000 px below the fold) and focus-shadow (a resting shadow, no focus ring)
-// are the harder cases, and chip-row (a scrolling row of chips) must pass.
+// (2000 px below the fold of the page's [data-scroller], main#harness),
+// overlap-below-window (the same, on a page where the window scrolls instead),
+// overlap-sheet (below the fold of a fixed sheet's own scroller, beside a fixed
+// button where the sheet's buttons would be if it were not scrolled: one
+// problem, not two) and focus-shadow (a resting shadow, no focus ring) are the
+// harder cases, and chip-row (a scrolling row of chips) must pass.
 const mapLabel = song => {
   const t = song.tempo;
   if (!t) return 'no tempo';
@@ -52,6 +56,19 @@ export default async function mount(el, {fixture, query, h}) {
   if (demo === 'overlap-below') el.append(styled(h('div', {},
     styled(h('button', {type: 'button'}, 'Third'), 'position: absolute; left: 0; top: 0; width: 120px; height: 40px'),
     styled(h('button', {type: 'button'}, 'Fourth'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px; margin-top: 2000px'));
+  if (demo === 'overlap-below-window') {
+    // Undo D26 for this page only: html, body and main#harness grow, so the window scrolls.
+    el.prepend(h('style', {}, 'html, body { height: auto !important; overflow: visible !important; } #harness { height: auto !important; overflow: visible !important; }'));
+    el.append(styled(h('div', {},
+      styled(h('button', {type: 'button'}, 'Third'), 'position: absolute; left: 0; top: 0; width: 120px; height: 40px'),
+      styled(h('button', {type: 'button'}, 'Fourth'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px; margin-top: 2000px'));
+  }
+  if (demo === 'overlap-sheet') el.append(
+    styled(h('div', {'data-scroller': '', 'aria-label': 'Sheet', id: 'fx-sheet'}, styled(h('div', {},
+      styled(h('button', {type: 'button'}, 'Fifth'), 'position: absolute; left: 0; top: 0; width: 120px; height: 40px'),
+      styled(h('button', {type: 'button'}, 'Sixth'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px; margin-top: 600px')),
+    'position: fixed; top: 0; right: 0; width: 240px; height: 200px; overflow: auto; background: var(--bg, white); padding: 0; margin: 0; box-sizing: border-box'),
+    styled(h('button', {type: 'button'}, 'Decoy'), 'position: fixed; top: 600px; right: 60px; width: 180px; height: 50px; margin: 0'));
   if (demo === 'chip-row') el.prepend(styled(h('div', {class: 'chips'}, ...Array.from({length: 8}, (_, i) => styled(h('button', {type: 'button', class: 'chip'}, `Section ${i}`), 'flex: none; white-space: nowrap'))), 'display: flex; gap: 8px; overflow-x: auto; width: 200px'));
   if (demo === 'focus-shadow') el.prepend(h('div', {},
     h('style', {}, '.fx-flat:focus { outline: none !important; } .fx-ring:focus-visible { outline: 3px solid rgb(23, 75, 209); outline-offset: 2px; }'),
