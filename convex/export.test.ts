@@ -11,7 +11,8 @@ test('whole-library streaming export creates readable audio and settings archive
  vi.stubGlobal('window',{showSaveFilePicker:async()=>({createWritable:async()=>({write:async(c:Uint8Array)=>{chunks.push(c);},close,abort})})});
  const audio=new Uint8Array([10,20,30,40]);
  vi.stubGlobal('fetch',async()=>new Response(audio));
- const song={id:'song1',title:'Practice',duration:20,practice:{loop:{a:1,b:2,enabled:true}},stems:[{name:'drums',key:'users/owner/drums.webm',bytes:4}],coverKey:null};
+ // songs.exportPage joins each song's practice from songPractice (B1), so pages carry it as before.
+ const song={id:'song1',title:'Practice',duration:20,practice:{v:2,cue:0,rate:1,loop:{on:true,a:1,b:2,eachPassCount:true,playTimes:0,between:'none'},tracks:[],minusMe:false,trainer:null,spots:[],markers:[]},stems:[{name:'drums',key:'users/owner/drums.webm',bytes:4}],coverKey:null};
  vi.mocked(backend.exportPage).mockResolvedValue({page:[song],isDone:true,continueCursor:''});
  vi.mocked(backend.getConfig).mockResolvedValue({settings:{bitrate:192}});
  vi.mocked(backend.signKeys).mockResolvedValue({'users/owner/drums.webm':'https://example.test/audio'});
