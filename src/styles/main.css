@@ -1,0 +1,14 @@
+@layer reset, tokens, base, primitives, layout, views, utilities;
+@import './reset.css' layer(reset);
+@import './tokens.css' layer(tokens);
+@import './fonts.css' layer(tokens);
+@import './base.css' layer(base);
+@import './layout.css' layer(layout);
+@import './utilities.css' layer(utilities);
+
+/* The app stylesheet (architecture §7.1), imported first by src/app/main.js.
+ * The layer order above is the whole cascade: primitives import
+ * src/styles/primitives/<name>.css (one @layer primitives block) and views
+ * import src/styles/views/<area>/<name>.css (one @layer views block), so lazy
+ * chunks land in their declared layer whatever order they load in. There is
+ * no legacy layer (D1). */

@@ -1,0 +1,86 @@
+/* App frame (architecture §7.1, spec §1 and §2). Imported by main.css into
+ * @layer layout.
+ *
+ *   <div id="app" class="app-frame" data-chrome="topbar|none">
+ *     <header class="app-topbar">…</header>          only with data-chrome=topbar
+ *     <main class="app-main">                        the place's view
+ *       <div data-scroller> <div class="app-content">…</div> </div>
+ *     </main>
+ *   </div>
+ *
+ * Top-bar places (Library, Settings, Admin) get a 56 px bar (60 on coarse
+ * pointers) and a content column of at most 1280 px with 32 px gutters on
+ * laptops and 24 px on iPad. Full-bleed places (Stage, Edit, welcome) fill the
+ * window; their views place the safe-area insets on the dock and rail. */
+
+:root {
+  --content-max: 1280px;
+  --gutter: var(--s6);
+  --h-topbar: 56px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+@media (pointer: coarse) {
+  :root { --h-topbar: 60px; }
+}
+
+/* iPad widths (portrait 820, landscape 1180) and coarse pointers. */
+@media (max-width: 1199px), (pointer: coarse) {
+  :root { --gutter: var(--s5); }
+}
+
+.app-frame {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.app-frame[data-chrome=topbar] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-topbar {
+  position: relative;
+  z-index: var(--z-sticky);
+  box-sizing: content-box;
+  height: var(--h-topbar);
+  padding-top: var(--safe-top);
+  padding-inline: max(var(--gutter), var(--safe-left)) max(var(--gutter), var(--safe-right));
+  background: var(--bg);
+  box-shadow: var(--shadow-sticky);
+}
+
+.app-main {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The one scroller per place (D26); the router saves and restores scrollTop. */
+[data-scroller] {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* The content column of a top-bar place. */
+.app-content {
+  width: 100%;
+  max-width: calc(var(--content-max) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding-inline: max(var(--gutter), var(--safe-left)) max(var(--gutter), var(--safe-right));
+  padding-bottom: max(var(--s6), var(--safe-bottom));
+}
+
+/* A full-bleed place: the view owns the whole frame. */
+.app-frame[data-chrome=none] > .app-main { height: 100%; }
