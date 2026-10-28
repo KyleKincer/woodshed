@@ -139,12 +139,13 @@ async function runSmokeTest() {
   if(!page.bridge||!page.header||page.sidebar)throw Error('Desktop UI smoke check failed');
   const appearance = await window.webContents.executeJavaScript(`(async () => {
     if(!window.woodshedAppearance)throw Error('Appearance bootstrap missing');
+    // apply() paints without persisting (theme-init.js, §2.5); setTheme drives nativeTheme.
     for(const theme of ['dark','light']) {
-      window.woodshedAppearance.set(theme);
+      window.woodshedAppearance.apply({theme});
       await window.woodshedDesktop.setTheme(theme);
       if(document.documentElement.dataset.theme!==theme || getComputedStyle(document.body).colorScheme!==theme)throw Error('Theme did not apply: '+theme);
     }
-    window.woodshedAppearance.set('system');
+    window.woodshedAppearance.apply({theme:'system'});
     await window.woodshedDesktop.setTheme('system');
     return document.documentElement.dataset.theme;
   })()`);
