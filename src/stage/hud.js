@@ -598,12 +598,12 @@ export function mountHud(el, {
   // The drag is one gesture-bounded undo step (§2.14.10, ticket I2a-3): pointerdown opens
   // undo.beginGesture('speed') (I2a-1), every step passes it to transport.setSpeed(rate, {gesture})
   // (I2a-2), and pointerup / pointercancel / lost capture end it. So a pause past the 1 s coalescing
-  // window mid-drag is still one step, and a +/− tap just before the drag stays its own step. Without
-  // the gesture API (an older session) the steps fall back to the 1 s 'speed' coalescing window.
+  // window mid-drag is still one step, and a +/− tap just before the drag stays its own step. The
+  // session's undo always has beginGesture (§2.14.6); there is no coalescing-only fallback.
   let drag = null;
   const closeDrag = () => {
     if (!drag) return;
-    try { drag.gesture?.end?.(); } finally {
+    try { drag.gesture.end(); } finally {
       drag = null;
       root.removeAttribute('data-speed-drag');
     }
@@ -611,8 +611,7 @@ export function mountHud(el, {
   speed.el.addEventListener('pointerdown', (e) => {
     if (!e.isPrimary || e.button !== 0) return;
     closeDrag();
-    const undo = session.undo;
-    const gesture = typeof undo?.beginGesture === 'function' ? undo.beginGesture('speed') : null;
+    const gesture = session.undo.beginGesture('speed');
     drag = {id: e.pointerId, y: e.clientY, rate: snap().rate, steps: 0, moved: false, gesture};
     speed.el.setPointerCapture?.(e.pointerId);
   }, listen);
@@ -624,7 +623,7 @@ export function mountHud(el, {
     if (steps === drag.steps) return;
     drag.steps = steps;
     root.setAttribute('data-speed-drag', '');
-    transport.setSpeed(Math.round(drag.rate * 100 + steps) / 100, drag.gesture ? {coalesce: true, gesture: drag.gesture} : {coalesce: true});
+    transport.setSpeed(Math.round(drag.rate * 100 + steps) / 100, {coalesce: true, gesture: drag.gesture});
   }, listen);
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
