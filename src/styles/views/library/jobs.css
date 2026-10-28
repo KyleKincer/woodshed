@@ -1,0 +1,166 @@
+/* The Jobs chip and the Jobs popover (src/library/jobs.js, spec §2.1, §2.8). */
+@layer views {
+  /* ---------- chip (top bar) ---------- */
+  .lib-jobs-chip { white-space: nowrap; }
+  .lib-jobs-chip[data-tone=warn] { color: var(--warn); }
+  .lib-jobs-chip[data-tone=danger] { color: var(--danger); }
+  .lib-jobs-chip[data-tone=accent] { color: var(--accent); }
+  .lib-jobs-chip[data-tone=neutral] .ui-icon { animation: lib-jobs-spin calc(var(--motion-slow) * 6) linear infinite; }
+  @keyframes lib-jobs-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .lib-jobs-chip[data-tone=neutral] .ui-icon { animation: none; }
+  }
+
+  /* ---------- popover frame ---------- */
+  .lib-jobs-popover .ui-popover-body { padding: 0; }
+  .lib-jobs {
+    display: flex;
+    flex-direction: column;
+    max-block-size: min(72vh, 640px);
+  }
+  .lib-jobs-title {
+    margin: 0;
+    padding: var(--s4) var(--s4) var(--s2);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-bold);
+  }
+  .lib-jobs-list {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    margin: 0;
+    padding: 0 0 var(--s2);
+    list-style: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .lib-jobs-empty { padding: var(--s2) var(--s4) var(--s5); }
+  .lib-jobs-empty-title { margin: 0; font-weight: var(--fw-semibold); }
+  .lib-jobs-empty-hint { margin: var(--s1) 0 0; color: var(--ink-2); font-size: var(--fs-14); }
+
+  /* ---------- a row ---------- */
+  .lib-job {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: var(--s3);
+    padding: var(--s3) var(--s4);
+    border-block-start: 1px solid var(--line);
+  }
+  .lib-job:first-child { border-block-start: 0; }
+  .lib-job:focus { outline: none; }
+  .lib-job:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
+
+  .lib-job-cover {
+    position: relative;
+    display: grid;
+    place-items: center;
+    inline-size: var(--lib-cover, 40px);
+    block-size: var(--lib-cover, 40px);
+    overflow: hidden;
+    border-radius: 0;
+    background: var(--surface-2);
+    color: var(--ink-3);
+  }
+  .lib-job-cover-image {
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+    border-radius: 0;
+  }
+
+  .lib-job-body { display: flex; flex-direction: column; gap: var(--s1); min-inline-size: 0; }
+  .lib-job-title {
+    margin: 0;
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .lib-job-stepper { font-size: var(--fs-14); }
+  .lib-job-activity,
+  .lib-job-ahead,
+  .lib-job-settings { margin: 0; font-size: var(--fs-14); color: var(--ink-2); }
+  .lib-job-activity[data-tone=danger] { color: var(--danger); }
+  .lib-job-message {
+    margin: 0;
+    font-size: var(--fs-12);
+    color: var(--ink-3);
+    overflow-wrap: anywhere;
+  }
+  .lib-job-source {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    align-self: flex-start;
+    min-block-size: var(--hit-handle);
+    font-size: var(--fs-14);
+    color: var(--accent);
+    text-decoration: none;
+    border-radius: var(--r-control);
+  }
+  .lib-job-source:hover .lib-job-source-text { text-decoration: underline; }
+  .lib-job-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    margin-block-start: var(--s1);
+  }
+  .lib-job-actions { display: contents; }
+  .lib-job-action[data-tone=danger][data-variant=quiet] { color: var(--danger); }
+  .lib-job-details {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s2);
+    margin-block-start: var(--s2);
+  }
+  .lib-job-details-text {
+    box-sizing: border-box;
+    inline-size: 100%;
+    max-block-size: 160px;
+    margin: 0;
+    padding: var(--s2) var(--s3);
+    overflow: auto;
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- footer ---------- */
+  .lib-jobs-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    padding: var(--s3) var(--s4);
+    border-block-start: 1px solid var(--line);
+    background: var(--surface-2);
+    font-size: var(--fs-14);
+  }
+  .lib-jobs-footer-text { flex: 1 1 12em; margin: 0; color: var(--ink-2); }
+  .lib-jobs-footer-dot {
+    flex: none;
+    inline-size: var(--s2);
+    block-size: var(--s2);
+    border-radius: var(--r-pill);
+    background: var(--ok);
+  }
+  .lib-jobs-footer[data-state=wait] .lib-jobs-footer-dot { background: var(--warn); }
+  .lib-jobs-footer[data-state=off] .lib-jobs-footer-dot { background: var(--danger); }
+  .lib-jobs-footer-link {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--h-sm);
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    text-decoration: none;
+    border-radius: var(--r-control);
+  }
+  .lib-jobs-footer-link:hover { text-decoration: underline; }
+}
