@@ -6,7 +6,9 @@
 //     change clears the ids and the suggestion (a title change also needsReview),
 //     album/albumArtist clears the release id; `match` sets 'matched' and the ids;
 //   - `confirm` sets 'matched', locks the identity fields present, clears the
-//     suggestion and needsReview (never recordingUnconfirmed);
+//     suggestion and needsReview (never recordingUnconfirmed), and keeps the
+//     suggestion's ids when it names the song's current title and artist;
+//   - cleared ids are deleted (absent), as on the server;
 //   - field errors are coded {code: 'invalid', message, field}.
 // Seed: the `counting` song carries a `metadataSuggestion` (metadataStatus
 // 'uncertain'); `jam03` has `needsReview`.
@@ -14,7 +16,8 @@
 // `metadataLookup:retry` marks the song 'pending' and finishes the lookup 1.2 s
 // later (a song with an artist matches; one without stays 'uncertain', no
 // suggestion). The due time lives in `db.metadataLookups` ({songId: dueAt}) so a
-// reload finishes it (`settle`/`resume`). The fixture has no artwork storage:
+// reload finishes it (`settle`/`resume`). A song 'pending' with no entry there
+// (a lookup that died) is queued again; a confirm or match meanwhile wins. The fixture has no artwork storage:
 // `artworkUpload:prepare` fails (coded `account_export_only` on such accounts).
 import {db, changed, convexError, wait, findSong} from './runtime.js';
 import {COVERS} from './seed.js';
@@ -22,6 +25,9 @@ import {IDENTITY_KEYS, LIMITS, MBID, RECORDING_KEYS, RELEASE_KEYS, changedKeys, 
 
 export const LOOKUP_MS = 1200;
 const UNAVAILABLE = 'Song unavailable.';
+
+/** convex/lib/musicBrainz.ts#normalize (the server's title comparison). */
+const normalize = s => String(s ?? '').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 const invalid = (message, extra = {}) => convexError({code: 'invalid', message, ...extra});
 const notFound = () => convexError({code: 'not_found', message: UNAVAILABLE});
@@ -65,16 +71,17 @@ function applyEdit(song, patch, unlock, match) {
     if (key === 'artwork') showArtwork(song, patch.artwork);
   }
   if (RECORDING_KEYS.some(k => keys.includes(k))) {
-    song.metadataRecordingId = null;
-    song.metadataReleaseId = null;
+    delete song.metadataRecordingId;
+    delete song.metadataReleaseId;
     delete song.metadataSuggestion;
-  } else if (RELEASE_KEYS.some(k => keys.includes(k))) song.metadataReleaseId = null;
+  } else if (RELEASE_KEYS.some(k => keys.includes(k))) delete song.metadataReleaseId;
   if (keys.includes('title')) delete song.needsReview;
   song.metadataLocks = [...new Set([...(song.metadataLocks ?? []), ...keys])].filter(k => !unlock.includes(k));
   if (match) {
     song.metadataStatus = 'matched';
     song.metadataRecordingId = match.recordingId;
-    song.metadataReleaseId = match.releaseId ?? null;
+    if (match.releaseId) song.metadataReleaseId = match.releaseId;
+    else delete song.metadataReleaseId;
     delete song.metadataSuggestion;
     delete song.needsReview;
   }
@@ -139,9 +146,10 @@ export const handlers = {
     const unique = [...new Set(ids ?? [])];
     if (!unique.length || unique.length > LIMITS.bulk) throw invalid(`Select between 1 and ${LIMITS.bulk} songs.`);
     const patch = clean(changes), keys = cleanUnlock(unlock), chosen = cleanMatch(match, unique.length);
-    if (!Object.keys(patch).length && !keys.length && !chosen) return null;
     if (patch.artwork?.kind === 'upload' && unique.length !== 1) throw invalid('Upload artwork for one song at a time.', {field: 'artwork'});
+    // Ownership first: a missing id fails even an empty patch.
     const songs = unique.map(owned);
+    if (!Object.keys(patch).length && !keys.length && !chosen) return null;
     for (const song of songs) applyEdit(song, patch, keys, chosen);
     changed();
     return null;
@@ -159,6 +167,13 @@ export const handlers = {
     const identity = [...IDENTITY_KEYS.filter(k => hasValue(song, k)), ...(hasValue(song, 'artwork') ? ['artwork'] : [])];
     song.metadataStatus = 'matched';
     song.metadataLocks = [...new Set([...(song.metadataLocks ?? []), ...identity])];
+    const s = song.metadataSuggestion;
+    if (s && !song.metadataRecordingId && MBID.test(s.recordingId ?? '') &&
+        normalize(s.title) === normalize(song.title) && normalize(s.artist) === normalize(song.artist)) {
+      song.metadataRecordingId = s.recordingId;
+      if (s.releaseId && MBID.test(s.releaseId) && s.album && normalize(s.album) === normalize(song.album))
+        song.metadataReleaseId = s.releaseId;
+    }
     delete song.metadataSuggestion;
     delete song.needsReview;
     changed();
@@ -185,7 +200,7 @@ export const handlers = {
   },
   'metadataLookup:retry': ({id}) => {
     const song = owned(id);
-    if (song.metadataStatus === 'pending') return null;
+    if (song.metadataStatus === 'pending' && db.metadataLookups?.[song.id]) return null;
     if (song.metadataStatus === 'matched') throw invalid('This song is already matched.');
     song.metadataStatus = 'pending';
     (db.metadataLookups ??= {})[song.id] = Date.now() + LOOKUP_MS;

@@ -1,5 +1,5 @@
 "use node";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { fail } from "./lib/errors";
 import { LIMITS } from "../shared/metadata";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
@@ -28,6 +28,16 @@ import { catalogRequest } from "./lib/catalogRequest";
 const LOOKUP_UNAVAILABLE =
   "Online metadata lookup is currently unavailable. You can still edit every field.";
 const lookupEnabled = () => process.env.MUSICBRAINZ_ENABLED === "true";
+/**
+ * `lib/catalogRequest` throws bare-string ConvexErrors; every failure that
+ * reaches the user from here carries a code (§6.1). Coded errors (such as
+ * `lookup_busy` from the limiter) pass through unchanged.
+ */
+function coded(error: unknown): never {
+  if (error instanceof ConvexError && typeof error.data === "string")
+    fail(/too large/i.test(error.data) ? "invalid" : "lookup_unavailable", error.data);
+  throw error;
+}
 async function request(ctx: ActionCtx, path: string): Promise<any> {
   if (!lookupEnabled()) fail("lookup_unavailable", LOOKUP_UNAVAILABLE);
   const key = `mb:${path}`;
@@ -42,7 +52,7 @@ async function request(ctx: ActionCtx, path: string): Promise<any> {
         delay: ms,
       });
     },
-  });
+  }).catch(coded);
   await ctx.runMutation(internal.metadata.cache, { key, payload });
   return payload;
 }
@@ -210,7 +220,8 @@ export const enrich = internalAction({
       internal.songsInternal.load,
       { songId: id },
     );
-    if (!song) return null;
+    // Confirmed or matched by the user since this lookup was queued: nothing to do.
+    if (!song || song.metadataStatus !== "pending") return null;
     const before: MetadataPatch = Object.fromEntries(
       Object.keys(metadataFields)
         .filter((key) => song[key as keyof typeof song] !== undefined)

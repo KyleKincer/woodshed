@@ -61,5 +61,12 @@ export async function uploadArtwork({id, file, signal}) {
   }
   if (!response.ok) throw new ApiError({message: ARTWORK_FAILED, data: {status: response.status}});
   signal?.throwIfAborted();
-  return action('artworkUpload:complete', {objectId});
+  try {
+    return await action('artworkUpload:complete', {objectId});
+  } catch (error) {
+    // artworkUpload.complete reports a mismatched upload as a bare string; give it a code (§6.1).
+    if (error instanceof ApiError && error.code === 'unknown')
+      throw new ApiError({code: 'invalid', message: error.message, data: {code: 'invalid', message: error.message, field: 'artwork'}, raw: error.raw});
+    throw error;
+  }
 }

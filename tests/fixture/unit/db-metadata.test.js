@@ -82,6 +82,26 @@ describe('metadata:updateEach and metadata:confirm', () => {
     await call('mutation', 'metadata:confirm', {id: 'jam03'});
     expect(song('jam03').needsReview).toBeUndefined();
   });
+
+  it('confirm keeps the suggestion ids when it names the current title, artist and album (server rule)', async () => {
+    const {recordingId, releaseId} = song('counting').metadataSuggestion;
+    await call('mutation', 'metadata:confirm', {id: 'counting'});
+    expect(song('counting')).toMatchObject({metadataRecordingId: recordingId, metadataReleaseId: releaseId});
+    // A suggestion for another title keeps no ids.
+    Object.assign(song('glasshouse'), {metadataStatus: 'uncertain', metadataSuggestion: {recordingId: REC, releaseId: REL, title: 'Something else', artist: song('glasshouse').artist}});
+    delete song('glasshouse').metadataRecordingId;
+    await call('mutation', 'metadata:confirm', {id: 'glasshouse'});
+    expect(song('glasshouse').metadataRecordingId).toBeFalsy();
+  });
+
+  it('cleared ids are absent, and an empty update still refuses a missing id', async () => {
+    await call('mutation', 'metadata:update', {ids: ['counting'], changes: {}, match: {recordingId: REC, releaseId: REL}});
+    await call('mutation', 'metadata:update', {ids: ['counting'], changes: {}, match: {recordingId: REC}});
+    expect('metadataReleaseId' in song('counting')).toBe(false);
+    await call('mutation', 'metadata:update', {ids: ['counting'], changes: {title: 'Renamed'}});
+    expect('metadataRecordingId' in song('counting')).toBe(false);
+    expect(await errorOf(call('mutation', 'metadata:update', {ids: ['counting', 'missing'], changes: {}}))).toMatchObject({code: 'not_found'});
+  });
 });
 
 describe('metadataLookup', () => {
@@ -114,6 +134,19 @@ describe('metadataLookup', () => {
     expect(settleAll()).toBe(true);
     expect(song('jam03').metadataStatus).toBe('uncertain');
     expect(await errorOf(call('action', 'metadataLookup:retry', {id: 'glasshouse'}))).toMatchObject({code: 'invalid'});
+  });
+
+  it('retry re-queues a song left pending by a lookup that died; a confirm meanwhile wins', async () => {
+    vi.useFakeTimers({now: NOW});
+    expect(song('metropolis').metadataStatus).toBe('pending'); // seeded pending, no lookup behind it
+    await call('action', 'metadataLookup:retry', {id: 'metropolis'});
+    await vi.advanceTimersByTimeAsync(LOOKUP_MS + 10);
+    expect(song('metropolis').metadataStatus).toBe('matched');
+    song('quiet').metadataStatus = 'unavailable';
+    await call('action', 'metadataLookup:retry', {id: 'quiet'});
+    await call('mutation', 'metadata:update', {ids: ['quiet'], changes: {}, match: {recordingId: REC}});
+    await vi.advanceTimersByTimeAsync(LOOKUP_MS + 10);
+    expect(song('quiet')).toMatchObject({metadataStatus: 'matched', metadataRecordingId: REC});
   });
 
   it('artwork upload is refused with a coded error', async () => {

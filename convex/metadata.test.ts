@@ -39,6 +39,9 @@ async function errorOf(fn: () => Promise<unknown>): Promise<Record<string, unkno
   throw new Error('expected the call to fail');
 }
 const codeOfCall = async (fn: () => Promise<unknown>) => (await errorOf(fn)).code;
+/** Marks a song as waiting on a lookup, as every enrich entry point does first. */
+const pending = (t: ReturnType<typeof convexTest>, id: Id<'songs'>) =>
+  t.run((ctx) => ctx.db.patch('songs', id, { metadataStatus: 'pending' }));
 async function setup() {
   vi.useFakeTimers();
   const t = convexTest(schema, modules),
@@ -115,6 +118,7 @@ test('manual clearing and removing artwork wins over an in-flight lookup', async
     ids: [id],
     changes: { artist: '', album: '', artwork: { kind: 'removed' } },
   });
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, {
     id,
     before: { title: 'Original', artist: 'Artist', album: 'Album' },
@@ -140,6 +144,7 @@ test('manual clearing and removing artwork wins over an in-flight lookup', async
     artwork: { kind: 'removed' },
   });
   // Another automatic write changed title while this request was in flight.
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, {
     id,
     before: { title: 'Original' },
@@ -518,15 +523,19 @@ test('the suggestion is stored on uncertain, kept on unavailable, cleared on mat
   const { t, alice, add } = await setup();
   const id = await add();
   const before = { title: 'Original', artist: 'Artist', album: 'Album' };
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, { id, before, changes: {}, suggestion, status: 'uncertain' });
   expect(await doc(t, id)).toMatchObject({ metadataStatus: 'uncertain', metadataSuggestion: suggestion });
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, { id, before, changes: {}, status: 'unavailable' });
   expect(await doc(t, id)).toMatchObject({ metadataStatus: 'unavailable', metadataSuggestion: suggestion });
   await alice.mutation(api.metadata.update, { ids: [id], changes: { title: 'Typed title' } });
   expect((await doc(t, id))?.metadataSuggestion).toBeUndefined();
   // A suggestion for the title the lookup started with is stale once the user retitled the song.
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, { id, before, changes: {}, suggestion, status: 'uncertain' });
   expect((await doc(t, id))?.metadataSuggestion).toBeUndefined();
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, {
     id,
     before: { ...before, title: 'Typed title' },
@@ -535,6 +544,7 @@ test('the suggestion is stored on uncertain, kept on unavailable, cleared on mat
     status: 'uncertain',
   });
   expect((await doc(t, id))?.metadataSuggestion).toEqual(suggestion);
+  await pending(t, id);
   await t.mutation(internal.metadata.applyAutomatic, {
     id,
     before: { ...before, title: 'Typed title' },
@@ -574,6 +584,7 @@ test('enrich stores the best weak candidate as the suggestion without another re
     });
   });
   vi.stubGlobal('fetch', fetcher);
+  await pending(t, id);
   await t.action(internal.metadataLookup.enrich, { id });
   expect(fetcher).toHaveBeenCalledTimes(1);
   const song = await doc(t, id);
@@ -598,6 +609,7 @@ test('enrich with no results is uncertain without a suggestion', async () => {
   await t.run((ctx) => ctx.db.patch('songs', id, { metadataSuggestion: suggestion }));
   vi.stubEnv('MUSICBRAINZ_ENABLED', 'true');
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ recordings: [] })));
+  await pending(t, id);
   await t.action(internal.metadataLookup.enrich, { id });
   const song = await doc(t, id);
   expect(song?.metadataStatus).toBe('uncertain');
@@ -655,11 +667,13 @@ test('retry re-schedules the lookup through the shared limiter (G17)', async () 
   const enrich = scheduled.filter((f) => f.name.includes('enrich'));
   expect(enrich).toHaveLength(1);
   expect(enrich[0].args[0]).toEqual({ id });
-  // The slot was taken from the shared MusicBrainz limiter.
-  const slot = await t.run((ctx) =>
-    ctx.db.query('metadataRequests').withIndex('by_key', (q) => q.eq('key', 'musicbrainz')).unique(),
-  );
-  expect(slot?.nextAt).toBeGreaterThan(Date.now());
+  // enrich takes its own MusicBrainz slot when it searches; queueing reserves none.
+  expect(enrich[0].scheduledTime).toBeLessThanOrEqual(Date.now());
+  expect(
+    await t.run((ctx) =>
+      ctx.db.query('metadataRequests').withIndex('by_key', (q) => q.eq('key', 'musicbrainz')).unique(),
+    ),
+  ).toBeNull();
   // A lookup already pending is not queued twice.
   await alice.action(api.metadataLookup.retry, { id });
   expect(
@@ -673,10 +687,20 @@ test('retry re-schedules the lookup through the shared limiter (G17)', async () 
   // A long queue is refused as busy.
   await t.run(async (ctx) => {
     await ctx.db.patch('songs', id, { metadataStatus: 'unavailable' });
-    await ctx.db.patch('metadataRequests', slot!._id, { nextAt: Date.now() + 60_000 });
+    await ctx.db.insert('metadataRequests', { key: 'musicbrainz', nextAt: Date.now() + 60_000 });
   });
   expect(await codeOfCall(() => alice.action(api.metadataLookup.retry, { id }))).toBe('lookup_busy');
   expect((await doc(t, id))?.metadataStatus).toBe('unavailable');
+  // A queue under the limit is checked, not advanced.
+  await t.run(async (ctx) => {
+    const row = await ctx.db.query('metadataRequests').withIndex('by_key', (q) => q.eq('key', 'musicbrainz')).unique();
+    await ctx.db.patch('metadataRequests', row!._id, { nextAt: Date.now() + 10_000 });
+  });
+  await alice.action(api.metadataLookup.retry, { id });
+  expect(
+    (await t.run((ctx) => ctx.db.query('metadataRequests').withIndex('by_key', (q) => q.eq('key', 'musicbrainz')).unique()))
+      ?.nextAt,
+  ).toBe(Date.now() + 10_000);
 });
 
 test('field errors carry the field and labelled copy', async () => {
@@ -747,4 +771,132 @@ test('export-only accounts edit metadata but cannot upload artwork (D10)', async
       alice.mutation(internal.metadata.reserveArtwork, { id, bytes: 10, mime: 'image/png', checksum: 'a'.repeat(43) + '=' }),
     ),
   ).toBe('account_export_only');
+});
+
+test('a late lookup result never overrides a confirm or a chosen match made while it ran', async () => {
+  const { t, alice, add } = await setup();
+  const R2 = '55555555-5555-4555-8555-555555555555';
+  const before = { title: 'Original', artist: 'Artist', album: 'Album' };
+  // "Yes, that's it" while the lookup is pending, then the lookup ends uncertain.
+  const confirmed = await add();
+  await t.run((ctx) => ctx.db.patch('songs', confirmed, { metadataStatus: 'pending', metadataSuggestion: suggestion }));
+  await alice.mutation(api.metadata.confirm, { id: confirmed });
+  const afterConfirm = await doc(t, confirmed);
+  await t.mutation(internal.metadata.applyAutomatic, {
+    id: confirmed,
+    before,
+    changes: { genre: 'Pop' },
+    suggestion: { ...suggestion, recordingId: R2 },
+    status: 'uncertain',
+  });
+  expect(await doc(t, confirmed)).toEqual(afterConfirm);
+  // A match chosen while pending survives a late automatic match and a late outage.
+  const matched = await add();
+  await pending(t, matched);
+  await alice.mutation(api.metadata.update, { ids: [matched], changes: {}, match: { recordingId: REC, releaseId: REL } });
+  for (const late of [
+    { status: 'matched' as const, candidate: { ...suggestion, recordingId: R2, releaseId: REL2 }, changes: { album: 'Other' } },
+    { status: 'unavailable' as const, changes: {} },
+  ])
+    await t.mutation(internal.metadata.applyAutomatic, { id: matched, before, ...late });
+  expect(await doc(t, matched)).toMatchObject({
+    metadataStatus: 'matched',
+    metadataRecordingId: REC,
+    metadataReleaseId: REL,
+    album: 'Album',
+  });
+  // A queued enrich for a song the user matched meanwhile makes no request at all.
+  vi.stubEnv('MUSICBRAINZ_ENABLED', 'true');
+  const fetcher = vi.fn(async () => Response.json({ recordings: [] }));
+  vi.stubGlobal('fetch', fetcher);
+  await t.action(internal.metadataLookup.enrich, { id: matched });
+  expect(fetcher).not.toHaveBeenCalled();
+  expect((await doc(t, matched))?.metadataStatus).toBe('matched');
+});
+
+test('retry recovers a song left pending by a lookup that died', async () => {
+  const { t, alice, add } = await setup();
+  const id = await add();
+  // Pending, but no enrich is scheduled or running for it (an action timeout or a restart).
+  await pending(t, id);
+  vi.stubEnv('MUSICBRAINZ_ENABLED', 'true');
+  await alice.action(api.metadataLookup.retry, { id });
+  const jobs = async () =>
+    (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).filter((f) => f.name.includes('enrich'));
+  expect(await jobs()).toHaveLength(1);
+  expect((await jobs())[0].args[0]).toEqual({ id });
+  expect((await doc(t, id))?.metadataStatus).toBe('pending');
+  // That lookup is live now, so another retry leaves it alone.
+  await alice.action(api.metadataLookup.retry, { id });
+  expect(await jobs()).toHaveLength(1);
+});
+
+test('a key replaced twice stays restorable for an hour after the latest replacement (G11)', async () => {
+  const { t, alice, add } = await setup();
+  const id = await add();
+  const upload = async () => {
+    const row = await alice.mutation(internal.metadata.reserveArtwork, {
+      id,
+      bytes: 10,
+      mime: 'image/jpeg',
+      checksum: 'a'.repeat(43) + '=',
+    });
+    await alice.mutation(internal.metadata.verifiedArtwork, { objectId: row.objectId });
+    return row;
+  };
+  const show = (key: string) => alice.mutation(api.metadata.update, { ids: [id], changes: { artwork: { kind: 'upload', key } } });
+  const a = await upload(),
+    b = await upload(),
+    c = await upload();
+  const retires = async () =>
+    (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()))
+      .filter((f) => f.name.includes('retireArtwork') && f.args[0].key === a.key)
+      .map((f) => f.args[0] as { id: Id<'songs'>; key: string; due: number });
+  await show(a.key);
+  await show(b.key); // A replaced: retire(A) due in an hour
+  vi.advanceTimersByTime(10 * 60_000);
+  await show(a.key); // Revert
+  vi.advanceTimersByTime(40 * 60_000);
+  await show(c.key); // A replaced again: a later retire(A)
+  const [first, second] = (await retires()).sort((x, y) => x.due - y.due);
+  expect(second.due - first.due).toBe(50 * 60_000);
+  // The first job fires while A is still within its newer Revert window.
+  await t.mutation(internal.metadata.retireArtwork, first);
+  const status = async () => (await t.run((ctx) => ctx.db.get('audioObjects', a.objectId)))?.status;
+  expect(await status()).toBe('ready');
+  vi.advanceTimersByTime(15 * 60_000);
+  await show(a.key); // Revert C → A, 15 min after the first job: still works
+  await show(c.key);
+  const latest = (await retires()).sort((x, y) => y.due - x.due)[0];
+  await t.mutation(internal.metadata.retireArtwork, second);
+  expect(await status()).toBe('ready');
+  vi.setSystemTime(latest.due);
+  await t.mutation(internal.metadata.retireArtwork, latest);
+  expect(await status()).toBe('deleting');
+});
+
+test('an empty or no-op update still refuses foreign and missing ids', async () => {
+  const { t, alice, bob, add } = await setup();
+  const id = await add();
+  const gone = await add();
+  await t.run((ctx) => ctx.db.delete('songs', gone));
+  expect(await codeOfCall(() => bob.mutation(api.metadata.update, { ids: [id], changes: {} }))).toBe('not_found');
+  expect(await codeOfCall(() => alice.mutation(api.metadata.update, { ids: [id, gone], changes: {} }))).toBe('not_found');
+  expect(
+    await codeOfCall(() => bob.mutation(api.metadata.update, { ids: [id], changes: { title: 'Original' } })),
+  ).toBe('not_found');
+  await alice.mutation(api.metadata.update, { ids: [id], changes: {} });
+});
+
+test('MusicBrainz failures reach the user as lookup_unavailable', async () => {
+  const { alice, add } = await setup();
+  const id = await add();
+  vi.useRealTimers(); // the action's runQuery/runMutation round trips need real timers here
+  vi.stubEnv('MUSICBRAINZ_ENABLED', 'true');
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('gone', { status: 404 })));
+  expect(await errorOf(() => alice.action(api.metadataLookup.find, { id, title: 'Original', artist: 'Artist' }))).toMatchObject({
+    code: 'lookup_unavailable',
+    message: 'MusicBrainz is temporarily unavailable. Please try again shortly.',
+  });
+  expect(await codeOfCall(() => alice.action(api.metadataLookup.detail, { id, recordingId: REC }))).toBe('lookup_unavailable');
 });

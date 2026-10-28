@@ -90,6 +90,22 @@ async function claimUpload(ctx: MutationCtx, userId: string, id: Id<"songs">, ke
 }
 
 /**
+ * Schedules the retirement of a replaced upload one Revert window from now.
+ * For a `ready` artwork object `expiresAt` is the earliest time it may be
+ * erased: its signed PUT's expiry, pushed out to the latest Revert window, so
+ * an older retirement job that fires first leaves it to the newer one.
+ */
+async function scheduleRetire(ctx: MutationCtx, id: Id<"songs">, key: string) {
+  const due = Date.now() + ARTWORK_RETIRE_DELAY;
+  const object = await ctx.db
+    .query("audioObjects")
+    .withIndex("by_key", (q) => q.eq("key", key))
+    .unique();
+  if (object && object.expiresAt < due) await ctx.db.patch("audioObjects", object._id, { expiresAt: due });
+  await ctx.scheduler.runAt(due, internal.metadata.retireArtwork, { id, key, due });
+}
+
+/**
  * Applies one cleaned patch to one owned song with the edit rules above.
  * Returns whether anything was written.
  */
@@ -107,10 +123,7 @@ async function applyEdit(
   if (keys.includes("artwork") && art?.kind === "upload") await claimUpload(ctx, userId, song._id, art.key);
   // The replaced upload is retired later, so Revert can still restore it (G11).
   if (keys.includes("artwork") && song.artwork?.kind === "upload")
-    await ctx.scheduler.runAfter(ARTWORK_RETIRE_DELAY, internal.metadata.retireArtwork, {
-      id: song._id,
-      key: song.artwork.key,
-    });
+    await scheduleRetire(ctx, song._id, song.artwork.key);
   const touches = (list: readonly string[]) => list.some((k) => keys.includes(k as (typeof keys)[number]));
   if (touches(RECORDING_KEYS)) {
     changes.metadataRecordingId = undefined;
@@ -167,11 +180,12 @@ export const update = mutation({
     const patch = cleanMetadata(args.changes);
     const unlock = cleanUnlock(args.unlock);
     const match = cleanMatch(args.match, ids.length);
-    if (!Object.keys(patch).length && !unlock.length && !match) return null;
     if (patch.artwork?.kind === "upload" && ids.length !== 1)
       fail("invalid", "Upload artwork for one song at a time.", { field: "artwork" });
+    // Ownership first: a foreign or missing id fails even an empty patch.
     const songs = [];
     for (const id of ids) songs.push(await ownedSong(ctx, userId, id));
+    if (!Object.keys(patch).length && !unlock.length && !match) return null;
     for (const song of songs) await applyEdit(ctx, userId, song, patch, unlock, match);
     return null;
   },
@@ -253,23 +267,61 @@ export const confirm = mutation({
   },
 });
 
-/** Retires a replaced artwork upload unless the song shows it again (Revert) by now. */
+/**
+ * Retires a replaced artwork upload unless the song shows it again (Revert)
+ * by now, or a later replacement promised a longer Revert window (`due`
+ * earlier than the object's `expiresAt`, see `scheduleRetire`).
+ */
 export const retireArtwork = internalMutation({
-  args: { id: v.id("songs"), key: v.string() },
+  args: { id: v.id("songs"), key: v.string(), due: v.optional(v.number()) },
   returns: v.null(),
-  handler: async (ctx, { id, key }) => {
+  handler: async (ctx, { id, key, due }) => {
     const song = await ctx.db.get("songs", id);
     if (song?.artwork?.kind === "upload" && song.artwork.key === key) return null;
+    if (due !== undefined) {
+      const object = await ctx.db
+        .query("audioObjects")
+        .withIndex("by_key", (q) => q.eq("key", key))
+        .unique();
+      if (object && object.expiresAt > due) return null;
+    }
     await retireKey(ctx, key);
     return null;
   },
 });
 
 /**
+ * The longest an `enrich` job can stay scheduled or running: its 2 min
+ * backoff plus the 10 min action limit, with a margin. A job scheduled
+ * earlier than this has finished, failed or died.
+ */
+const ENRICH_WINDOW = 15 * 60_000;
+const ENRICH_NAME = /^metadataLookup(\.js)?:enrich$/;
+
+/**
+ * Whether an `enrich` for this song is still scheduled or running. Actions
+ * run at most once, so one that timed out or was lost in a restart leaves
+ * the song `pending` with no job behind it.
+ */
+async function lookupLive(ctx: MutationCtx, id: Id<"songs">): Promise<boolean> {
+  const jobs = await ctx.db.system
+    .query("_scheduled_functions")
+    .withIndex("by_creation_time", (q) => q.gt("_creationTime", Date.now() - ENRICH_WINDOW))
+    .collect();
+  return jobs.some(
+    (job) =>
+      ENRICH_NAME.test(job.name) &&
+      (job.state.kind === "pending" || job.state.kind === "inProgress") &&
+      (job.args[0] as { id?: string } | undefined)?.id === id,
+  );
+}
+
+/**
  * `metadataLookup.retry` (G17): marks the caller's song `pending` and
- * schedules `enrich` after a MusicBrainz slot from the shared limiter
- * (`lookup_busy` when the queue is too long). A lookup already pending is
- * left alone; a matched song keeps its match (Find another match changes it).
+ * schedules `enrich`, which takes its MusicBrainz slots from the shared
+ * limiter itself; `lookup_busy` when that queue is already too long. A
+ * lookup still pending is left alone (one whose job died is queued again);
+ * a matched song keeps its match (Find another match changes it).
  */
 export const queueLookup = internalMutation({
   args: { id: v.id("songs") },
@@ -277,11 +329,11 @@ export const queueLookup = internalMutation({
   handler: async (ctx, { id }) => {
     const userId = await requireUserId(ctx);
     const song = await ownedSong(ctx, userId, id);
-    if (song.metadataStatus === "pending") return null;
+    if (song.metadataStatus === "pending" && (await lookupLive(ctx, id))) return null;
     if (song.metadataStatus === "matched") fail("invalid", "This song is already matched.");
-    const delay = await reserveSlot(ctx, "musicbrainz");
-    await ctx.db.patch("songs", id, { metadataStatus: "pending" });
-    await ctx.scheduler.runAfter(delay, internal.metadataLookup.enrich, { id });
+    await checkQueue(ctx, "musicbrainz");
+    if (song.metadataStatus !== "pending") await ctx.db.patch("songs", id, { metadataStatus: "pending" });
+    await ctx.scheduler.runAfter(0, internal.metadataLookup.enrich, { id });
     return null;
   },
 });
@@ -303,7 +355,10 @@ export const applyAutomatic = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const song = await ctx.db.get("songs", args.id);
-    if (!song) return null;
+    // Every lookup starts by marking the song `pending`; anything else means the
+    // user confirmed or matched it meanwhile (confirm, update with `match`), and
+    // their answer stands over this late result.
+    if (!song || song.metadataStatus !== "pending") return null;
     const patch = unprotected(cleanMetadata(args.changes), song.metadataLocks);
     const stale = (key: string) =>
       JSON.stringify(song[key as keyof typeof song] ?? "") !==
@@ -350,19 +405,27 @@ export const applyAutomatic = internalMutation({
   },
 });
 
+const QUEUE_LIMIT = 25000;
+
+/** `lookup_busy` when a provider's next free slot is more than 25 s away; returns that slot's row. */
+async function checkQueue(ctx: MutationCtx, key: string) {
+  const row = await ctx.db
+    .query("metadataRequests")
+    .withIndex("by_key", (q) => q.eq("key", key))
+    .unique();
+  if ((row?.nextAt ?? 0) - Date.now() > QUEUE_LIMIT)
+    fail("lookup_busy", "Metadata lookup is busy. Try again shortly.");
+  return row;
+}
+
 /**
  * Reserves the next request slot for a provider (MusicBrainz 1.2 s apart,
  * others 0.4 s) and returns how long to wait; `lookup_busy` past 25 s.
  */
 async function reserveSlot(ctx: MutationCtx, key: string): Promise<number> {
-  const row = await ctx.db
-    .query("metadataRequests")
-    .withIndex("by_key", (q) => q.eq("key", key))
-    .unique();
+  const row = await checkQueue(ctx, key);
   const now = Date.now(),
     at = Math.max(now, row?.nextAt ?? now);
-  if (at - now > 25000)
-    fail("lookup_busy", "Metadata lookup is busy. Try again shortly.");
   const nextAt = at + (key === "musicbrainz" ? 1200 : 400);
   if (row) await ctx.db.patch("metadataRequests", row._id, { nextAt });
   else await ctx.db.insert("metadataRequests", { key, nextAt });

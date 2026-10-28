@@ -99,6 +99,18 @@ describe('uploadArtwork', () => {
     expect(fake.client.action).toHaveBeenCalledTimes(1);
   });
 
+  test('an uncoded verify failure arrives as invalid on the artwork field; coded ones pass through', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, {status: 200})));
+    fake.client.action.mockResolvedValueOnce({url: 'https://r2.test/put', objectId: 'o1'});
+    fake.client.action.mockRejectedValueOnce(new ConvexError('Artwork upload did not match the selected image.'));
+    expect(await metadata.uploadArtwork({id: 's1', file: file()}).catch(e => e)).toMatchObject({
+      code: 'invalid', message: 'Artwork upload did not match the selected image.', data: {field: 'artwork'},
+    });
+    fake.client.action.mockResolvedValueOnce({url: 'https://r2.test/put', objectId: 'o1'});
+    fake.client.action.mockRejectedValueOnce(new ConvexError({code: 'artwork_expired', message: 'Artwork upload expired.'}));
+    expect(await metadata.uploadArtwork({id: 's1', file: file()}).catch(e => e.code)).toBe('artwork_expired');
+  });
+
   test('a coded prepare failure (export-only, storage full) passes through', async () => {
     fake.client.action.mockRejectedValueOnce(new ConvexError({code: 'storage_full_user', message: 'There is not enough cloud storage for this image.'}));
     expect(await metadata.uploadArtwork({id: 's1', file: file()}).catch(e => e.code)).toBe('storage_full_user');
