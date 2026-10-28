@@ -93,6 +93,7 @@ function desk(el, h, made) {
   const empties = [
     EmptyState({title: 'No drum chart yet', actions: [{label: 'Find a chart', variant: 'primary', onClick() {}}, {label: 'Import a file', onClick() {}}, {label: 'Write one', variant: 'quiet', onClick() {}}]}),
     EmptyState({title: 'No results', body: ['No songs match "', h('b', {}, 'zzzz'), '".'], actions: [{label: 'Clear search', onClick() {}}]}),
+    EmptyState({title: 'Split stems on your computer', actions: [{label: 'Get Woodshed for desktop', href: '#download', testid: 'u3-empty-link'}]}),
   ];
 
   // Skeletons

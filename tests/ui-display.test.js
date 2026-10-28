@@ -712,6 +712,71 @@ describe('EmptyState', () => {
     expect(own).toBe(button);
   });
 
+  // I0B-13: plain specs are Button primitives (one button style); an href stays a link.
+  const role = node => (node.tagName === 'BUTTON' ? 'button' : node.tagName === 'A' && node.hasAttribute('href') ? 'link' : null);
+  const accName = node => node.getAttribute('aria-label') ?? node.querySelector('.ui-button-label')?.textContent ?? node.textContent;
+  test.each([
+    [{label: 'Find a chart', variant: 'primary', onClick() {}}, 'button', 'Find a chart', 'primary'],
+    [{label: 'Import a file', onClick() {}}, 'button', 'Import a file', 'secondary'],
+    [{label: 'Write one', variant: 'quiet', onClick() {}}, 'button', 'Write one', 'quiet'],
+    [{label: 'Get Woodshed for desktop', href: '/download', target: '_blank'}, 'link', 'Get Woodshed for desktop', 'secondary'],
+    [{label: 'Open the example', href: '/example', variant: 'primary'}, 'link', 'Open the example', 'primary'],
+  ])('plain action %o → %s named %j, Button look (%s)', (action, expectedRole, name, variant) => {
+    const node = mount(EmptyState({title: 'Empty', actions: [action]})).el.querySelector('.ui-empty-actions').firstElementChild;
+    expect(role(node)).toBe(expectedRole);
+    expect(accName(node)).toBe(name);
+    expect(node.textContent).toBe(name);
+    expect(node.classList.contains('ui-button')).toBe(true);
+    expect(node.classList.contains('ui-empty-action')).toBe(false);
+    expect(node.dataset.variant).toBe(variant);
+    expect(node.dataset.size).toBe('md');
+    if (expectedRole === 'link') expect(node.hasAttribute('type')).toBe(false);
+  });
+
+  test('plain actions use Button: disabled and command props pass through; built Buttons are destroyed', () => {
+    const onClick = vi.fn();
+    const registry = createRegistry();
+    const run = vi.fn();
+    registry.register({id: 'library.find', group: 'Library', title: 'Find from command', run});
+    const e = mount(EmptyState({title: 'Empty', actions: [
+      {label: 'Not now', disabled: true, disabledReason: 'Offline', onClick},
+      {label: 'Find', command: 'library.find', registry},
+    ]}));
+    const [off, cmd] = e.el.querySelector('.ui-empty-actions').children;
+    expect(off.getAttribute('aria-disabled')).toBe('true');
+    off.click();
+    expect(onClick).not.toHaveBeenCalled();
+    cmd.click();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(cmd.querySelector('.ui-button-label').textContent).toBe('Find');
+
+    // Replacing the actions destroys the Buttons EmptyState built (their listeners go too).
+    e.set({actions: [{label: 'Again', onClick}]});
+    expect(off.isConnected).toBe(false);
+    cmd.click();
+    expect(run).toHaveBeenCalledTimes(1);
+    const again = e.el.querySelector('.ui-empty-actions button');
+    e.destroy();
+    again.click();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  test('a link action takes the common props', () => {
+    const e = mount(EmptyState({title: 'Empty', actions: [{label: 'Get it', href: '/get', testid: 'get', className: 'extra', attrs: {'aria-describedby': 'd'}}]}));
+    const link = e.el.querySelector('[data-testid=get]');
+    expect(link.tagName).toBe('A');
+    expect(link.className).toBe('extra ui-button');
+    expect(link.getAttribute('aria-describedby')).toBe('d');
+  });
+
+  test('primitives passed in are not destroyed by EmptyState', () => {
+    const own = {el: document.createElement('button'), destroy: vi.fn()};
+    const e = mount(EmptyState({title: 'Empty', actions: [own]}));
+    e.set({actions: []});
+    e.destroy();
+    expect(own.destroy).not.toHaveBeenCalled();
+  });
+
   test('heading level, hidden empty parts and updates', () => {
     const e = mount(EmptyState({title: 'Nothing here', headingLevel: 3}));
     expect(e.el.querySelector('h3').textContent).toBe('Nothing here');
