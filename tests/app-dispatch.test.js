@@ -101,12 +101,22 @@ describe('rule 2: pedals', () => {
     expect(ids()).toEqual(['nav.nextSection', 'nav.nextSection']);
   });
 
-  it('a keyup after the handler is removed still reaches it when it owned the keydown', () => {
-    const handler = {owns: () => true, down: vi.fn(), up: vi.fn()};
-    setPedalHandler(handler);
+  it('a keyup reaches the handler that took its keydown, even after that handler is replaced or removed', () => {
+    const first = {owns: () => true, down: vi.fn(), up: vi.fn()};
+    const second = {owns: () => true, down: vi.fn(), up: vi.fn()};
+    setPedalHandler(first);
     down({key: 'b', code: 'KeyB'});
+    setPedalHandler(second);
+    const u = up({key: 'b', code: 'KeyB'});
+    expect(first.up).toHaveBeenCalledTimes(1);
+    expect(second.up).not.toHaveBeenCalled();
+    expect(u.defaultPrevented).toBe(true);
+    down({key: 'b', code: 'KeyB'});
+    setPedalHandler(null);
     up({key: 'b', code: 'KeyB'});
-    expect(handler.up).toHaveBeenCalledTimes(1);
+    expect(second.up).toHaveBeenCalledTimes(1);
+    up({key: 'b', code: 'KeyB'});                            // a stray keyup with no handler is ignored
+    expect(second.up).toHaveBeenCalledTimes(1);
   });
 
   it('validates the handler', () => {
@@ -411,6 +421,40 @@ describe('rule 7: Enter and Space on focused controls (D35)', () => {
     });
   }
 
+  it('Enter on a button a pointer click focused goes to the registry (Again, not the clicked button)', () => {
+    const b = el('<button id="b">Loop</button>').querySelector('#b');
+    b.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+    b.focus();
+    const e = down(ENTER);
+    expect(ids()).toEqual(['transport.again']);
+    expect(e.defaultPrevented).toBe(true);
+    down(ENTER);                                             // still pointer-focused: keys do not change how it got focus
+    expect(ids()).toEqual(['transport.again', 'transport.again']);
+  });
+
+  it('a pointer-focused button becomes keyboard-focused when focus returns to it by keyboard', () => {
+    const host = el('<button id="a">A</button><button id="b">B</button>');
+    const [a, b] = host.querySelectorAll('button');
+    a.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+    a.focus();
+    down({key: 'Tab', code: 'Tab'});                         // Tab moves focus; code runs focus() as the browser would
+    b.focus();
+    expect(down(ENTER).defaultPrevented).toBe(false);
+    down({key: 'Tab', code: 'Tab', shiftKey: true});
+    a.focus();
+    expect(down(ENTER).defaultPrevented).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
+  it('Library: Enter on a clicked card button opens the focused song through the registry', () => {
+    setPlace('library', null);
+    const b = el('<button id="b">Song</button>').querySelector('#b');
+    b.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    b.focus();
+    down(ENTER);
+    expect(ids()).toEqual(['library.openFocused']);
+  });
+
   it('Enter elsewhere in the Stage is Again', () => {
     down(ENTER);
     expect(ids()).toEqual(['transport.again']);
@@ -514,9 +558,38 @@ describe('rule 9: the scope chain', () => {
   });
 });
 
+describe('layouts', () => {
+  it('AZERTY ? (Shift on the US M key) opens the shortcut sheet even where Shift+KeyM is bound', () => {
+    cmd('mix.onlyMe', ['Shift+KeyM'], ['stage', 'edit.map'], {group: 'Mix'});
+    cmd('app.shortcuts', ['?'], ['global'], {group: 'App'});
+    down({key: '?', code: 'KeyM', shiftKey: true});
+    down({key: 'M', code: 'KeyM', shiftKey: true});          // US Shift+M is still Only me
+    expect(ids()).toEqual(['app.shortcuts', 'mix.onlyMe']);
+  });
+
+  it('German / (Shift+7) searches in the Library and still solos stem 7 in the Stage', () => {
+    cmd('library.search', ['/'], ['library'], {group: 'Library'});
+    cmd('mix.solo.7', ['Shift+Digit7'], ['stage'], {group: 'Mix'});
+    down({key: '/', code: 'Digit7', shiftKey: true});
+    setPlace('library', null);
+    down({key: '/', code: 'Digit7', shiftKey: true});
+    expect(ids()).toEqual(['mix.solo.7', 'library.search']);
+  });
+
+  it('US + (Shift+=) makes the Stage bigger; numpad digits mute stems', () => {
+    cmd('view.bigger', ['='], ['stage'], {group: 'View'});
+    cmd('mix.mute.3', ['Digit3'], ['stage'], {group: 'Mix'});
+    down({key: '+', code: 'Equal', shiftKey: true});
+    down({key: '3', code: 'Numpad3'});
+    expect(ids()).toEqual(['view.bigger', 'mix.mute.3']);
+  });
+});
+
 describe('rule 10: reservations', () => {
   it('reserved browser keys cannot be bound, so they always stay native', () => {
     expect(() => cmd('library.addMod', ['Mod+KeyN'], ['library'], {group: 'Library'})).toThrow(/reserved/);
+    expect(() => cmd('library.addCtrl', ['Ctrl+KeyN'], ['library'], {group: 'Library'})).toThrow(/reserved/);
+    expect(() => cmd('app.closeCtrl', ['Ctrl+KeyW'], ['stage'], {group: 'App'})).toThrow(/reserved/);
     const e = down({key: 'n', code: 'KeyN', ctrlKey: true});
     expect(e.defaultPrevented).toBe(false);
     expect(ran).toEqual([]);

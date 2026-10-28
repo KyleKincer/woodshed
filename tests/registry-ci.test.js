@@ -9,7 +9,8 @@ import {fileURLToPath} from 'node:url';
 import {afterEach, describe, expect, it} from 'vitest';
 import {createRegistry, GROUPS, ID_RE, registry} from '../src/app/commands.js';
 import {activeScopeChain, setSurfaceScope, startDispatcher} from '../src/app/dispatch.js';
-import {isReserved} from '../src/app/keys.js';
+import {chordOffMac, isReserved} from '../src/app/keys.js';
+import {KIT} from '../shared/notation.ts';
 import {ALLOWED_SHADOWS, E, EC, ECS, EM, G, isAllowedShadow, L, REACHABLE_CHAINS, S, SF, SS} from './registry-shadows.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,14 +56,29 @@ function checkDynamicFamilies(reg) {
 }
 
 const KNOWN_SCOPES = new Set(REACHABLE_CHAINS.flat());
+/** Names that belong to the chains; anything else is an overlay scope (palette, menus, dialogs). */
+const CHAIN_NAME_RE = /^(stage|edit|library|global|settings?|admin)/;
+
+/**
+ * The defs bound in a scope, grouped by the chord they press off macOS: 'Ctrl+X' and 'Mod+X' are one chord there, so the
+ * two spellings cannot hide a clash. Keys are reported in their folded ('Mod+') form.
+ */
+function chordBindings(reg, scope) {
+  const out = new Map();
+  for (const key of reg.bindingsFor(scope).keys()) {
+    const chord = chordOffMac(key);
+    const list = out.get(chord) ?? [];
+    for (const def of reg.defsFor(scope, key)) if (!list.includes(def)) list.push(def);
+    out.set(chord, list);
+  }
+  return out;
+}
 
 function checkScopes(reg) {
   const problems = [];
   for (const scope of reg.boundScopes()) {
-    // Scopes outside every chain are overlay scopes (palette, menus, dialogs). A stage.* or edit.* name must be a real one.
-    if (!KNOWN_SCOPES.has(scope) && /^(stage|edit|library|global)\b/.test(scope)) problems.push(`unknown scope "${scope}"`);
-    for (const key of reg.bindingsFor(scope).keys()) {
-      const defs = reg.defsFor(scope, key);
+    if (!KNOWN_SCOPES.has(scope) && CHAIN_NAME_RE.test(scope)) problems.push(`unknown scope "${scope}"`);
+    for (const [key, defs] of chordBindings(reg, scope)) {
       if (defs.length > 1) problems.push(`${scope}: ${key} is bound twice (${defs.map(d => d.id).join(', ')})`);
     }
   }
@@ -76,11 +92,12 @@ function checkScopes(reg) {
 function checkShadowing(reg, {chains = REACHABLE_CHAINS, allowed = ALLOWED_SHADOWS} = {}) {
   const problems = new Set();
   for (const chain of chains) {
-    const keys = new Set(chain.flatMap(scope => [...reg.bindingsFor(scope).keys()]));
+    const byScope = new Map(chain.map(scope => [scope, chordBindings(reg, scope)]));
+    const keys = new Set([...byScope.values()].flatMap(m => [...m.keys()]));
     for (const key of keys) {
       const layers = [];
       for (const scope of chain) {
-        const def = reg.bindingsFor(scope).get(key);
+        const def = byScope.get(scope).get(key)?.[0];
         if (def && !layers.some(l => l.def === def)) layers.push({scope, def});
       }
       for (let i = 0; i + 1 < layers.length; i++) {
@@ -185,9 +202,8 @@ describe('registry CI: the app registry', () => {
 // ---------------------------------------------------------------------------------------------------------------
 // The contract key table (§3): every keyed command with its scopes. It must pass with exactly the listed shadows.
 
-const KIT_LETTERS = {china: 'KeyQ', splash: 'KeyW', crash: 'KeyC', crash2: 'KeyE', openHat: 'KeyJ', halfHat: 'KeyL', closedHat: 'KeyH',
-  ride: 'KeyD', rideEdge: 'KeyO', rideBell: 'KeyB', cowbell: 'KeyM', tom1: 'KeyY', rackTom: 'KeyT', tom3: 'KeyU', snare: 'KeyS',
-  rimshot: 'KeyZ', crossStick: 'KeyX', tom4: 'KeyI', floorTom: 'KeyF', floorTom2: 'KeyV', kick: 'KeyK', pedalHat: 'KeyP'};
+/** chart.piece.<kitId> for every KIT id, bound to its default letter (the choke pieces have none). */
+const KIT_LETTERS = Object.fromEntries(KIT.map(k => [k.id, k.key ? `Key${k.key.toUpperCase()}` : null]));
 const ERASE = ['Backspace', 'Delete'];
 const CONTRACT = [
   // §3.1
@@ -259,7 +275,7 @@ function contractRegistry() {
   reg.registerDynamic({id: 'map.digit.{n}', title: 'Type {n}', group: 'Map', keys: ['Digit{n}'], scopes: [EM], run}, [0, ...STEMS]);
   reg.registerDynamic({id: 'chart.step.{n}', title: 'Step {n}', group: 'Chart', keys: ['Digit{n}'], scopes: [ECS], run}, [1, 2, 3, 4, 5]);
   reg.registerMany(Object.entries(KIT_LETTERS).map(([kit, key]) => ({id: `chart.piece.${kit}`, title: `Write ${kit}`, group: 'Chart',
-    keys: [key], scopes: [ECS], run})));
+    keys: key ? [key] : [], scopes: [ECS], run})));
   reg.registerDynamic('chart.piece.{n}', Object.keys(KIT_LETTERS));
   return reg;
 }
@@ -267,6 +283,14 @@ function contractRegistry() {
 describe('registry CI: the §3 contract table', () => {
   it('passes with exactly the listed shadows', () => {
     expect(runAll(contractRegistry())).toEqual([]);
+  });
+
+  it('declares chart.piece.<kitId> for every KIT id', () => {
+    const reg = contractRegistry();
+    const family = reg.dynamicFamilies().find(f => f.template === 'chart.piece.{n}');
+    expect(family.ids).toEqual(KIT.map(k => `chart.piece.${k.id}`));
+    expect(KIT.length).toBeGreaterThanOrEqual(27);
+    for (const k of KIT) expect(reg.get(`chart.piece.${k.id}`), k.id).toBeTruthy();
   });
 
   it('every allowed shadow entry is needed', () => {
@@ -370,11 +394,26 @@ describe('registry CI: self-tests', () => {
     expect(checkScopes(reg)).toEqual(['library: KeyX is bound twice (a.one, a.two)']);
   });
 
-  it('flags unknown stage/edit scopes but allows overlay scopes', () => {
+  it('flags unknown chain scopes but allows overlay scopes', () => {
     const reg = createRegistry();
-    reg.register({...base, id: 'a.one', title: 'One', keys: ['KeyX'], scopes: ['stage.stem']});
+    reg.register({...base, id: 'a.one', title: 'One', keys: ['KeyX'], scopes: ['stage.stem', 'setting', 'admin.x', 'stagex']});
     reg.register({...base, id: 'palette.next', title: 'Next', group: 'App', keys: ['ArrowDown'], scopes: ['palette']});
-    expect(checkScopes(reg)).toEqual(['unknown scope "stage.stem"']);
+    reg.register({...base, id: 'a.two', title: 'Two', keys: ['KeyY'], scopes: ['settings', 'admin']});
+    expect(checkScopes(reg)).toEqual(['unknown scope "stage.stem"', 'unknown scope "setting"', 'unknown scope "admin.x"',
+      'unknown scope "stagex"']);
+  });
+
+  it('treats Ctrl+ and Mod+ as one chord: a clash in a scope and shadowing across scopes', () => {
+    const reg = createRegistry();
+    reg.register({...base, id: 'a.one', title: 'One', keys: ['Mod+Alt+KeyX'], scopes: [L]});
+    reg.register({...base, id: 'a.two', title: 'Two', keys: ['Ctrl+Alt+KeyX'], scopes: [L]});
+    expect(checkScopes(reg)).toEqual(['library: Mod+Alt+KeyX is bound twice (a.one, a.two)']);
+    const chain = createRegistry();
+    chain.register({...base, id: 'app.bg', title: 'Background', group: 'App', keys: ['Ctrl+Alt+Space'], scopes: [G]});
+    chain.register({...base, id: 'transport.bg', title: 'Stage', keys: ['Mod+Alt+Space'], scopes: [S]});
+    expect(checkShadowing(chain)).toEqual([
+      'Mod+Alt+Space: transport.bg (stage) shadows app.bg (global) without an entry in registry-shadows.js',
+    ]);
   });
 
   it('flags declared dynamic ids that are not registered', () => {
@@ -421,8 +460,9 @@ describe('registry CI: self-tests', () => {
   });
 
   it('flags reserved keys and missing groups on definitions that bypass validation', () => {
-    const fake = {all: () => [{id: 'x.y', title: '', group: 'Nope', keys: ['Mod+KeyN']}]};
-    expect(checkDefinitions(fake)).toEqual(['x.y: no title', 'x.y: group "Nope" is not a registry group', 'x.y: binds the reserved key Mod+KeyN']);
+    const fake = {all: () => [{id: 'x.y', title: '', group: 'Nope', keys: ['Mod+KeyN', 'Ctrl+KeyW']}]};
+    expect(checkDefinitions(fake)).toEqual(['x.y: no title', 'x.y: group "Nope" is not a registry group',
+      'x.y: binds the reserved key Mod+KeyN', 'x.y: binds the reserved key Ctrl+KeyW']);
   });
 
   it('the contract table catches a stray binding', () => {

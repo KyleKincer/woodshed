@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it} from 'vitest';
 import {
-  accelerator, aria, canonical, detectMacLike, isMacLike, isReserved, isValidKey, label, loadLayoutMap, matches, normalize,
+  accelerator, aria, canonical, chordOffMac, detectMacLike, isMacLike, isReserved, isValidKey, label, loadLayoutMap, matches, normalize,
   parseKey, setLayoutMap, setPlatform,
 } from '../src/app/keys.js';
 
@@ -101,7 +101,31 @@ describe('matching: symbols and aliases', () => {
     // Russian: the comma is Shift+Slash; German: the comma key is still Comma and prints ";" with Shift.
     expect(matches('Shift+,', ev({key: ',', code: 'Slash', shiftKey: true}))).toBe(true);
     expect(matches('Shift+,', ev({key: ';', code: 'Comma', shiftKey: true}))).toBe(true);
-    expect(matches(',', ev({key: ',', code: 'Slash', shiftKey: true}))).toBe(false);
+    // The bare ',' is offered too, but after 'Shift+,', so a Shift+, binding wins where one exists.
+    expect(normalize(ev({key: ',', code: 'Slash', shiftKey: true}), win)).toEqual(['Shift+,', ',']);
+  });
+
+  it('a symbol the layout needs Shift or Option to type also matches unshifted, after the exact forms', () => {
+    // US '+' is Shift+=; German '/' is Shift+7 and '=' is Shift+0; AZERTY '.' is Shift on the US comma key.
+    expect(normalize(ev({key: '+', code: 'Equal', shiftKey: true}), win)).toEqual(['=']);
+    expect(normalize(ev({key: '/', code: 'Digit7', shiftKey: true}), win)).toEqual(['Shift+Digit7', 'Shift+/', '/']);
+    expect(normalize(ev({key: '=', code: 'Digit0', shiftKey: true}), win)).toEqual(['Shift+Digit0', 'Shift+=', '=']);
+    expect(normalize(ev({key: '.', code: 'Comma', shiftKey: true}), win)).toEqual(['Shift+.', 'Shift+,', '.']);
+    expect(matches('/', ev({key: '/', code: 'Digit7', shiftKey: true}), win)).toBe(true);
+    // A German Mac types [ with Option+5; Option is a typing modifier there, not a shortcut one.
+    expect(normalize(ev({key: '[', code: 'Digit5', altKey: true}), mac)).toEqual(['Alt+Digit5', 'Alt+[', '[']);
+    expect(matches('[', ev({key: '[', code: 'Digit5', altKey: true}), mac)).toBe(true);
+    // Off macOS Alt stays a shortcut modifier, and nothing changes for the US unshifted keys.
+    expect(matches('[', ev({key: '[', code: 'Digit5', altKey: true}), win)).toBe(false);
+    expect(matches('.', ev({key: '>', code: 'Period', shiftKey: true}), win)).toBe(false);
+    expect(matches('.', ev({key: '.', code: 'Period', shiftKey: true}), win)).toBe(false);
+    expect(matches('Mod+=', ev({key: '+', code: 'Equal', shiftKey: true, ctrlKey: true}), win)).toBe(true); // reserved, unbound
+  });
+
+  it('? and * typed on a letter key mean the character, not the letter (AZERTY ? is Shift+KeyM)', () => {
+    expect(normalize(ev({key: '?', code: 'KeyM', shiftKey: true}), win)).toEqual(['?']);
+    expect(matches('Shift+KeyM', ev({key: '?', code: 'KeyM', shiftKey: true}), win)).toBe(false);
+    expect(normalize(ev({key: '*', code: 'Digit8', shiftKey: true}), win)).toEqual(['Shift+Digit8', '*']);   // US digits keep their code
   });
 
   it('? and * ignore Shift', () => {
@@ -116,7 +140,8 @@ describe('matching: symbols and aliases', () => {
     expect(matches('=', ev({key: '=', code: 'Equal'}))).toBe(true);
     expect(matches('=', ev({key: '+', code: 'NumpadAdd'}))).toBe(true);
     expect(matches('=', ev({key: '+', code: 'BracketRight'}))).toBe(true);         // German unshifted +
-    expect(matches('=', ev({key: '+', code: 'Equal', shiftKey: true}))).toBe(false); // exact modifiers
+    expect(matches('=', ev({key: '+', code: 'Equal', shiftKey: true}))).toBe(true);  // US + needs Shift
+    expect(matches('=', ev({key: '=', code: 'Equal', shiftKey: true}))).toBe(false); // exact modifiers
     expect(matches('-', ev({key: '-', code: 'Minus'}))).toBe(true);
     expect(matches('-', ev({key: '−', code: 'Minus'}))).toBe(true);
     expect(matches('-', ev({key: '-', code: 'NumpadSubtract'}))).toBe(true);
@@ -147,6 +172,14 @@ describe('normalize', () => {
     expect(normalize(ev({key: 'k', code: 'KeyK', ctrlKey: true}), mac)).toEqual(['Ctrl+KeyK']);
   });
 
+  it('numpad digits are digits; with NumLock off they are the named keys they print', () => {
+    expect(normalize(ev({key: '1', code: 'Numpad1'}), win)).toEqual(['Digit1']);
+    expect(normalize(ev({key: '0', code: 'Numpad0', shiftKey: false}), win)).toEqual(['Digit0']);
+    expect(matches('Digit7', ev({key: '7', code: 'Numpad7'}), win)).toBe(true);
+    expect(normalize(ev({key: 'End', code: 'Numpad1'}), win)).toEqual(['End']);
+    expect(normalize(ev({key: 'Enter', code: 'NumpadEnter'}), win)).toEqual(['Enter']);
+  });
+
   it('returns nothing for events with an unbindable modifier or no event', () => {
     expect(normalize(ev({key: 'k', code: 'KeyK', metaKey: true}), win)).toEqual([]);
     expect(normalize(null)).toEqual([]);
@@ -158,6 +191,18 @@ describe('reservations (spec §7.4)', () => {
   it('flags browser and OS keys', () => {
     for (const k of ['Mod+KeyN', 'Mod+KeyW', 'Mod+KeyT', 'Mod+,', 'Mod+=', 'Mod+-', 'Mod+Digit0', 'Mod+Digit1', 'Mod+Digit9',
       'Mod+Shift+KeyT', 'Mod+Shift+=']) expect(isReserved(k), k).toBe(true);
+  });
+  it('flags the Ctrl+ spelling too: off macOS it is the same chord', () => {
+    for (const k of ['Ctrl+KeyN', 'Ctrl+KeyW', 'Ctrl+KeyT', 'Ctrl+Digit1', 'Ctrl+=', 'Ctrl+-', 'Ctrl+,', 'Ctrl+Shift+KeyT']) {
+      expect(isReserved(k), k).toBe(true);
+    }
+    expect(isReserved('Ctrl+Alt+KeyN')).toBe(false);
+  });
+  it('chordOffMac folds Ctrl+ into Mod+', () => {
+    expect(chordOffMac('Ctrl+Alt+Space')).toBe('Mod+Alt+Space');
+    expect(chordOffMac('Shift+Ctrl+KeyZ')).toBe('Mod+Shift+KeyZ');
+    expect(chordOffMac('Mod+KeyZ')).toBe('Mod+KeyZ');
+    expect(chordOffMac('Shift+?')).toBe('?');
   });
   it('leaves app keys alone', () => {
     for (const k of ['Mod+KeyK', 'Mod+KeyZ', 'Mod+Shift+KeyZ', 'KeyN', 'Digit1', '=', 'Alt+Digit1', 'Ctrl+Alt+Space', 'Mod+Alt+KeyN']) {

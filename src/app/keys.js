@@ -20,6 +20,11 @@ export const ALIAS = Object.freeze({'=': Object.freeze(['+']), '-': Object.freez
 export const US_CODE = Object.freeze({',': 'Comma', '.': 'Period', '[': 'BracketLeft', ']': 'BracketRight', '`': 'Backquote'});
 /** Symbols matched on e.key alone; Shift is ignored because most layouts need it to type them. */
 const SHIFT_FREE = new Set(['?', '*']);
+/** The US physical key that types each symbol without Shift; anywhere else, the layout needed Shift or Option to type it. */
+const US_PLAIN_CODE = Object.freeze({',': 'Comma', '.': 'Period', '[': 'BracketLeft', ']': 'BracketRight', '`': 'Backquote',
+  '=': 'Equal', '-': 'Minus', '\\': 'Backslash', '/': 'Slash'});
+const LETTER_RE = /^Key[A-Z]$/;
+const NUMPAD_DIGIT_RE = /^Numpad([0-9])$/;
 
 const NAMED = new Set(NAMED_KEYS);
 const SYMBOLS = new Set(SYMBOL_KEYS);
@@ -153,12 +158,17 @@ export function normalize(event, {platform} = {}) {
     push(format({...mods, base}));
     if (!mac && mods.mod) push(format({...mods, mod: false, ctrl: true, base}));
   };
-  const code = typeof event.code === 'string' ? event.code : '';
-  if (CODE_RE.test(code)) withMods(m, code);
+  const key = typeof event.key === 'string' ? event.key : '';
+  let code = typeof event.code === 'string' ? event.code : '';
+  // Numpad digits are Digit0…9 (NumLock off reports Home, End, arrows… as e.key instead; those match as named keys).
+  const numpad = NUMPAD_DIGIT_RE.exec(code);
+  if (numpad && key === numpad[1]) code = `Digit${numpad[1]}`;
+  // A layout that puts '?' or '*' on a letter key (AZERTY: Shift+KeyM is '?') means that character, not the letter.
+  const characterOnLetter = LETTER_RE.test(code) && SHIFT_FREE.has(key);
+  if (CODE_RE.test(code) && !characterOnLetter) withMods(m, code);
   const named = namedBase(event);
   if (named) withMods(m, named);
 
-  const key = typeof event.key === 'string' ? event.key : '';
   // AltGr (reported as Ctrl+Alt on Windows) is how many layouts type [ ] \ and friends; it is not a shortcut modifier there.
   const altGraph = typeof event.getModifierState === 'function' && event.getModifierState('AltGraph');
   const symMods = altGraph ? {...m, ctrl: false, alt: false, mod: mac ? m.mod : false} : m;
@@ -172,10 +182,23 @@ export function normalize(event, {platform} = {}) {
     const symbol = SYMBOLS.has(key) ? key : ALIAS_TO_SYMBOL.get(key);
     if (symbol && !SHIFT_FREE.has(symbol)) withMods(symMods, symbol);
   }
+  // Last, the symbol as typed when the layout needed Shift (or Option on macOS) to produce it: German '/' is Shift+7,
+  // US '+' is Shift+=, a German Mac types '[' with Option+5. The bare symbol comes after every exact form, so a
+  // 'Shift+X' binding still wins where one exists.
+  const typed = SYMBOLS.has(key) ? key : ALIAS_TO_SYMBOL.get(key);
+  const layoutMods = mac ? ['shift', 'alt'] : ['shift'];
+  if (typed && !SHIFT_FREE.has(typed) && layoutMods.some(k => symMods[k]) && code !== US_PLAIN_CODE[key]) {
+    const bare = {...symMods};
+    for (const k of layoutMods) bare[k] = false;
+    withMods(bare, typed);
+  }
   return out;
 }
 
-/** True when `event` is the key `str` with exactly its modifiers (Shift is ignored only for '?' and '*'). */
+/**
+ * True when `event` is the key `str` with exactly its modifiers. Shift is ignored for '?' and '*', and for any symbol the
+ * layout needed Shift (or Option on macOS) to type.
+ */
 export function matches(str, event, {platform} = {}) {
   return normalize(event, {platform}).includes(canonical(str));
 }
@@ -188,11 +211,21 @@ const RESERVED_BASES = new Set(['KeyN', 'KeyW', 'KeyT', ',', '=', '-', 'Digit0',
 
 /**
  * Browser and OS reservations: Mod+N, Mod+W, Mod+T, Mod+Comma, Mod+1…9, Mod+0, Mod+= and Mod+-, with or without Shift
- * (⌘⇧N, ⌘⇧T and ⌘+ are browser commands too). No command may bind these.
+ * (⌘⇧N, ⌘⇧T and ⌘+ are browser commands too). The 'Ctrl+' spelling is reserved the same way, because off macOS it is the
+ * same chord as 'Mod+' ('Ctrl+' is meant only for ⌃⌥ background shortcuts). No command may bind these.
  */
 export function isReserved(str) {
   const p = parseKey(str);
-  return p.mod && !p.ctrl && !p.alt && RESERVED_BASES.has(p.base);
+  return p.mod !== p.ctrl && !p.alt && RESERVED_BASES.has(p.base);
+}
+
+/**
+ * The chord a KeyString names off macOS, where 'Ctrl+' and 'Mod+' are the same modifier: 'Ctrl+Alt+Space' →
+ * 'Mod+Alt+Space'. Registry CI compares bindings with it so the two spellings cannot hide a clash.
+ */
+export function chordOffMac(str) {
+  const p = parseKey(canonical(str));
+  return p.ctrl && !p.mod ? format({...p, mod: true, ctrl: false}) : format(p);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

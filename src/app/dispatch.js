@@ -23,8 +23,12 @@ let activeRegistry = appRegistry;
 let activePlatform;                 // undefined → keys.js decides
 let activeDocument = typeof document !== 'undefined' ? document : null;
 const prevented = new Set();        // codes whose keydown we preventDefault()ed; their keyup is prevented too
-const pedalCodes = new Set();       // codes whose keydown went to the pedal handler
+const pedalCodes = new Map();       // code → the pedal handler that took its keydown (its keyup goes to the same handler)
 let stopCurrent = null;
+// Input modality for rule 7 (D35): Enter is native only on an element focused by keyboard (Tab, arrows, or code running
+// after a key), not on one a pointer click focused (Chromium keeps focus on a clicked button).
+let modality = 'keyboard';
+let pointerFocused = null;          // the element the last pointer interaction focused
 
 // ---------------------------------------------------------------------------------------------------------------
 // Public API
@@ -41,15 +45,25 @@ export function startDispatcher({target = globalThis.window, registry = appRegis
   const onKeydown = e => handleKeydown(e);
   const onKeyup = e => handleKeyup(e);
   const onBlur = () => prevented.clear();
+  const onPointer = () => { modality = 'pointer'; };
+  const onFocusin = e => { pointerFocused = modality === 'pointer' ? (e.composedPath?.()[0] ?? e.target) : null; };
+  const pointerTypes = ['pointerdown', 'mousedown', 'touchstart'];
   target.addEventListener('keydown', onKeydown, true);
   target.addEventListener('keyup', onKeyup, true);
   target.addEventListener('blur', onBlur);
+  target.addEventListener('focusin', onFocusin, true);
+  for (const type of pointerTypes) target.addEventListener(type, onPointer, {capture: true, passive: true});
+  modality = 'keyboard';
+  pointerFocused = null;
   const stop = () => {
     target.removeEventListener('keydown', onKeydown, true);
     target.removeEventListener('keyup', onKeyup, true);
     target.removeEventListener('blur', onBlur);
+    target.removeEventListener('focusin', onFocusin, true);
+    for (const type of pointerTypes) target.removeEventListener(type, onPointer, {capture: true});
     prevented.clear();
     pedalCodes.clear();
+    pointerFocused = null;
     if (stopCurrent === stop) { stopCurrent = null; activeRegistry = appRegistry; activePlatform = undefined; }
   };
   stopCurrent = stop;
@@ -91,13 +105,15 @@ export function activeScopeChain() {
   return [...focusScopes(focusedElement()), ...chainFor(ctx)];
 }
 
-/** Installs the pedal handler (pedals.startPedals) or removes it with null. */
+/**
+ * Installs the pedal handler (pedals.startPedals) or removes it with null. A pedal key held while the handler changes
+ * still delivers its keyup to the handler that took its keydown, so a hold in progress always completes.
+ */
 export function setPedalHandler(handler) {
   if (handler != null && (typeof handler.owns !== 'function' || typeof handler.down !== 'function' || typeof handler.up !== 'function')) {
     throw new TypeError('A pedal handler needs owns(e), down(e) and up(e).');
   }
   pedalHandler = handler ?? null;
-  pedalCodes.clear();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -203,7 +219,13 @@ function closeTop() {
   overlays[overlays.length - 1]?.onEscape?.();
 }
 
+/** Rule 7: the element was focused by keyboard (or by code after a key), not by a pointer click. */
+function keyboardFocused(el) {
+  return el !== pointerFocused;
+}
+
 function handleKeydown(e) {
+  modality = 'keyboard';
   // 1. Ignored events.
   if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.key === 'Dead') return;
   if (e.key === 'Tab' && plainOf(e)) return;
@@ -211,7 +233,7 @@ function handleKeydown(e) {
   // 2. Pedals.
   if (pedalHandler && pedalHandler.owns(e)) {
     e.preventDefault();
-    pedalCodes.add(e.code);
+    pedalCodes.set(e.code, pedalHandler);
     pedalHandler.down(e);
     return;
   }
@@ -262,9 +284,10 @@ function handleKeydown(e) {
       }
     }
 
-    // 7. Enter on a keyboard-focused interactive element is native; Space too, outside the Stage and Edit postures.
+    // 7. Enter on a keyboard-focused interactive element is native; Space on any focused one too, outside the Stage and
+    // Edit postures. Enter on a button a click focused goes on to the registry (Again, not the clicked button).
     if (el && el.matches?.(INTERACTIVE) && plainOf(e)) {
-      if (e.key === 'Enter') return;
+      if (e.key === 'Enter' && keyboardFocused(el)) return;
       if ((e.key === ' ' || e.code === 'Space') && ctx.posture !== 'stage' && ctx.posture !== 'edit') return;
     }
 
@@ -283,10 +306,11 @@ function handleKeydown(e) {
 // Keyup
 
 function handleKeyup(e) {
-  if (pedalCodes.has(e.code) || (pedalHandler && pedalHandler.owns(e))) {
+  const owner = pedalCodes.get(e.code) ?? (pedalHandler && pedalHandler.owns(e) ? pedalHandler : null);
+  if (owner) {
     pedalCodes.delete(e.code);
     e.preventDefault();
-    pedalHandler?.up(e);
+    owner.up(e);
     return;
   }
   const code = e.code || e.key;
