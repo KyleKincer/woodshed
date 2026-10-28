@@ -20,7 +20,8 @@
 //   - like the other handler modules, the queries do not refuse a suspended account
 //     (fx-auth=suspended); every mutation applies the server's account rules.
 // `db.jobs` holds done jobs too (the unapplied detection `job-detect-nightbus`,
-// finished chains); listActive returns queued, running and failed jobs only.
+// finished chains); listActive returns queued, running and failed jobs only, and
+// listUnappliedDetections the done, user-started, unapplied detections.
 import {db, fx, changed, clone, findSong, convexError} from './runtime.js';
 import {PRESETS, STEM_MODES, resolveQuality, withDefaults} from '../../../convex/lib/presets.ts';
 import {hasRealMap as songHasRealMap} from '../../../shared/song-map.ts';
@@ -39,6 +40,8 @@ const STEM_MODE_IDS = [...new Set([...Object.keys(STEM_MODES), 'six'])];
 const NO_COMPANION = 'Connect this computer’s companion in Settings first.';
 const PRESENCE_ONLINE_MS = 150_000;
 const CLAIM_MS = 1500;
+const UNAPPLIED_MAX = 20;
+const UNAPPLIED_SCAN = 200;
 
 const fail = (code, message, data = {}) => { throw convexError({...data, code, message}); };
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -267,6 +270,23 @@ export const handlers = {
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     if (!latest || latest.result == null || latest.appliedAt !== undefined) return null;
     return toDetail(latest);
+  },
+
+  // convex/jobs.ts listUnappliedDetections: the newest 200 done jobs; per song only its newest done,
+  // user-started detection counts; one with a result and no appliedAt is listed; newest first, at most 20.
+  'jobs:listUnappliedDetections': () => {
+    if (!db.user) return [];
+    const done = db.jobs.map((j, i) => ({j, i})).filter(({j}) => j.status === 'done')
+      .sort((a, b) => b.j.createdAt - a.j.createdAt || b.i - a.i).slice(0, UNAPPLIED_SCAN).map(({j}) => j);
+    const seen = new Set(), out = [];
+    for (const j of done) {
+      if (out.length >= UNAPPLIED_MAX) break;
+      if (j.kind !== 'beats' || j.chainedFrom || !j.songId || seen.has(j.songId)) continue;
+      seen.add(j.songId);
+      if (j.result == null || j.appliedAt !== undefined || !findSong(j.songId)) continue;
+      out.push(toDetail(j));
+    }
+    return out;
   },
 
   'jobs:createSeparation': ({source: given, deviceId, settings: rawSettings, label, replaceSongId, meta: rawMeta, confirmed}) => {

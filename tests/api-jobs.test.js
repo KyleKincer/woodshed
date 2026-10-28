@@ -25,6 +25,8 @@ describe('queries and subscriptions', () => {
     expect(fake.client.query).toHaveBeenLastCalledWith('jobs:get', {jobId: 'j1'});
     await jobs.latestDetection({songId: 's1'});
     expect(fake.client.query).toHaveBeenLastCalledWith('jobs:latestDetection', {songId: 's1'});
+    await jobs.listUnappliedDetections({extra: true});
+    expect(fake.client.query).toHaveBeenLastCalledWith('jobs:listUnappliedDetections', {});
   });
 
   test('subscribeActive and subscribeJob return off()', () => {
@@ -34,6 +36,8 @@ describe('queries and subscriptions', () => {
     expect(typeof off).toBe('function');
     jobs.subscribeJob({jobId: 'j2'}, onValue);
     expect(fake.client.onUpdate).toHaveBeenLastCalledWith('jobs:get', {jobId: 'j2'}, onValue, undefined);
+    expect(typeof jobs.subscribeUnappliedDetections(onValue, onError)).toBe('function');
+    expect(fake.client.onUpdate).toHaveBeenLastCalledWith('jobs:listUnappliedDetections', {}, onValue, expect.any(Function));
   });
 
   test('a subscription error arrives as an ApiError', () => {

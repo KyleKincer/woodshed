@@ -67,6 +67,35 @@ describe('latestDetection and markApplied (D44)', () => {
   });
 });
 
+describe('listUnappliedDetections (ticket I1b-1)', () => {
+  const doneBeats = (jobId, songId, extra = {}) => ({jobId, kind: 'beats', songId, status: 'done', stage: 'detect', percent: 100, label: 'x', result: {beats: [[0.5, 1]]}, attempts: 1, createdAt: NOW, updatedAt: NOW, ...extra});
+
+  it('lists the seeded unapplied user detection, never a chained one, until it is applied', async () => {
+    const rows = await call('query', 'jobs:listUnappliedDetections');
+    expect(rows.map(r => r.jobId)).toEqual(['job-detect-nightbus']);
+    expect(Object.keys(rows[0]).sort()).toEqual(detailKeys);
+    await call('mutation', 'jobs:markApplied', {jobId: 'job-detect-nightbus'});
+    expect(await call('query', 'jobs:listUnappliedDetections')).toEqual([]);
+  });
+
+  it('mirrors the server: newest first, one per song, a result and a song needed, at most 20', async () => {
+    runtime.db.jobs.push(
+      doneBeats('d-old-velvet', 'velvet', {createdAt: NOW - 5}),
+      doneBeats('d-applied-velvet', 'velvet', {createdAt: NOW - 4, appliedAt: NOW}),
+      doneBeats('d-empty', 'quiet', {createdAt: NOW - 3, result: undefined}),
+      doneBeats('d-gone', 'missing', {createdAt: NOW - 2}),
+      doneBeats('d-new', 'nightbus', {createdAt: NOW - 1}),
+    );
+    expect((await call('query', 'jobs:listUnappliedDetections')).map(r => r.jobId)).toEqual(['d-new']);
+    const songIds = runtime.db.songs.map(s => s.id);
+    for (let i = 0; i < 25; i++) runtime.db.jobs.push(doneBeats(`d-${i}`, songIds[i % songIds.length], {createdAt: NOW + i}));
+    const rows = await call('query', 'jobs:listUnappliedDetections');
+    expect(rows.length).toBeLessThanOrEqual(20);
+    for (let i = 1; i < rows.length; i++) expect(rows[i].createdAt).toBeLessThanOrEqual(rows[i - 1].createdAt);
+    expect(new Set(rows.map(r => r.songId)).size).toBe(rows.length);
+  });
+});
+
 describe('createSeparation', () => {
   it('stores meta and confirmed, returns only the job id, and is claimed after 1.5 s', async () => {
     vi.useFakeTimers({now: NOW});
