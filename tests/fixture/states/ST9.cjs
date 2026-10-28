@@ -23,8 +23,12 @@
 //   st9-chart-shared          shared, no part: "No drum chart was shared." and no actions
 //   st9-chart-opening         the part never answers: "Opening the drum chart…" (aria-busy), no chart
 //   st9-chart-error           the part fails to open: the error with Try again, which opens it
-//   st9-chart-r1              R1 (D54): a 64-bar relayout at each Distance (median of 5, the chart's own
-//                             timing) against FX0's relayout64Ms × 1.15; gated only in a quiet container
+//   st9-chart-r1              R1 (D54): a Distance change to each Distance on the 64-bar part (median of 5;
+//                             the sum of the chart's own timings of every relayout the change took) against
+//                             FX0's relayout64Ms × 1.15; gated only in a quiet container
+//   st9-chart-relayouts       how many engravings a Distance change and a rail → band switch (dense part)
+//                             take; the surface asks for at most two each (one once chart.js takes scale,
+//                             floors and bars per system in one call, the ST3 ticket)
 //   st9-app-chart             /s/glasshouse on the fixture: the Stage opens on the chart surface
 'use strict';
 
@@ -407,25 +411,50 @@ module.exports = [
       const RUNS = 5;
       for (const d of ['near', 'stand', 'kit']) {
         const other = d === 'stand' ? 'near' : 'stand';
-        const samples = [];
+        const samples = [], counts = [];
         for (let i = 0; i < RUNS + 1; i++) {
           await page.evaluate((x) => window.__chartSurface.relayout(() => window.__chartSurface.stage().setDistance(x)), other);
           const values = await page.evaluate((x) => window.__chartSurface.relayout(() => window.__chartSurface.stage().setDistance(x)), d);
           t.expect(values.length >= 1, `a Distance change to ${d} relayouts (got ${values})`);
-          // The relayout at the Distance's own scale and floors is the last one; the first run is a warm-up.
-          if (i > 0) samples.push(values.at(-1));
+          // data-relayout-ms is the change's running total, so the last value is the whole change (what
+          // the user waits through and D54 samples); the first run is a warm-up.
+          if (i > 0) {
+            samples.push(values.at(-1));
+            counts.push(await page.evaluate(() => Number(document.querySelector('.chart-surface').dataset.relayouts)));
+          }
         }
-        results[d] = {median: median(samples), runs: samples};
+        results[d] = {median: median(samples), runs: samples, relayouts: counts};
       }
       const loadAfter = os.loadavg();
       const base = JSON.parse(fs.readFileSync(BASELINE, 'utf8')).metrics.relayout64Ms.median;
       const quiet = validity(loadBefore, loadAfter, QUIET_LOAD);
       for (const [d, r] of Object.entries(results)) {
         const ratio = Math.round(r.median / base * 1000) / 1000;
-        t.log(`relayout at ${d}: median ${r.median} ms (runs ${r.runs.join(', ')}), ${ratio}× FX0's ${base} ms`);
+        t.log(`Distance change to ${d}: median ${r.median} ms (runs ${r.runs.join(', ')}; relayouts each ${r.relayouts.join(', ')}), ${ratio}× FX0's ${base} ms`);
         if (!quiet.provisional) t.expect(ratio <= MAX_RATIO + 1e-9, `R1: the relayout at ${d} is ${ratio}× the baseline (max ${MAX_RATIO}×)`);
       }
       if (quiet.provisional) t.log(quiet.reason);
+    },
+  },
+  {
+    name: 'st9-chart-relayouts', url: HARNESS(), opts: {devices: ['laptop'], themes: ['dark'], capture: false, timeout: 60_000},
+    async fn(page, t) {
+      await ready(page, t);
+      const before = await revision(page);
+      await page.evaluate(() => window.__chartSurface.relayout(() => window.__chartSurface.stage().setDistance('kit')));
+      const distance = {engravings: await revision(page) - before,
+        asked: await page.evaluate(() => Number(document.querySelector('.chart-surface').dataset.relayouts))};
+      t.expect(distance.engravings >= 1 && distance.asked >= 1 && distance.asked <= 2, `a Distance change: the surface asks for 1–2 relayouts (${JSON.stringify(distance)})`);
+      const mid = await revision(page);
+      const settled = page.evaluate(() => window.__chartSurface.relayout(() => {}));
+      await page.setViewportSize({width: 820, height: 1180});
+      await settled;
+      await page.waitForFunction(() => document.querySelector('.stage')?.dataset.stageLayout === 'band', null, {timeout: 10_000});
+      await page.evaluate(() => window.__chartSurface.relayout(() => {}));
+      const layout = {engravings: await revision(page) - mid,
+        asked: await page.evaluate(() => Number(document.querySelector('.chart-surface').dataset.relayouts))};
+      t.expect(layout.engravings >= 1 && layout.asked >= 1 && layout.asked <= 2, `a rail → band switch: the surface asks for 1–2 relayouts (${JSON.stringify(layout)})`);
+      t.log(`engravings: Distance change ${distance.engravings} (surface asked ${distance.asked}); rail → band ${layout.engravings} (asked ${layout.asked}). One each is the contract (§4.11, §2.14.9) once chart.js takes scale, floors and bars per system in one call (ST3 ticket); a width change re-engraves on its own (ST3/ST4).`);
     },
   },
   {

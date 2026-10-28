@@ -40,8 +40,20 @@ const fake = vi.hoisted(() => {
       destroy() { record('destroy'); host.replaceChildren(); chart.destroyed = true; },
       setScale(v) { const n = Math.min(SCALE_MAX, Math.max(SCALE_MIN, v)); record('setScale', n); if (n !== state.scale) { state.scale = n; chart.relayout(); } },
       previewScale(f, at) { record('previewScale', f, at); },
-      setDisplay(next) { record('setDisplay', next); if ('layout' in next) state.layout = next.layout; if ('barsPerRow' in next) state.barsPerRow = next.barsPerRow; },
-      setFonts(next) { record('setFonts', next); state.floors = {...next}; chart.relayout(); },
+      // Like chart.js: setDisplay and setFonts each relayout once when they change anything.
+      setDisplay(next) {
+        record('setDisplay', next);
+        let changed = false;
+        if ('layout' in next && next.layout !== state.layout) { state.layout = next.layout; changed = true; }
+        if ('barsPerRow' in next && next.barsPerRow !== state.barsPerRow) { state.barsPerRow = next.barsPerRow; changed = true; }
+        if (changed && state.revision) chart.relayout();
+      },
+      setFonts(next) {
+        record('setFonts', next);
+        const changed = next.barNumber !== state.floors.barNumber || next.marker !== state.floors.marker;
+        state.floors = {...next};
+        if (changed) chart.relayout();
+      },
       setFollowStyle(style, {anchor} = {}) { record('setFollowStyle', style, anchor); state.followStyle = style; if (anchor) state.followAnchor = anchor; },
       setFollow(on) { record('setFollow', !!on); if (state.follow !== !!on) { state.follow = !!on; options.onFollowChange(!!on); } },
       setLoopRange(range) { record('setLoopRange', range); state.loop = range; },
@@ -57,7 +69,12 @@ const fake = vi.hoisted(() => {
     charts.push(chart);
     return chart;
   }
-  return {charts, createChart};
+  const fake = {charts, fail: null};
+  fake.createChart = (options) => {
+    if (fake.fail) { const err = fake.fail; fake.fail = null; throw err; }
+    return createChart(options);
+  };
+  return fake;
 });
 vi.mock('../src/js/notation/chart.js', async (importOriginal) => ({...(await importOriginal()), createChart: fake.createChart}));
 
@@ -122,7 +139,7 @@ function stageApi({layout = 'rail', distance = 'stand', display = null, followSt
 }
 
 /** A session with a drum part, the surface on it, and everything the Stage would pass. */
-async function bed({score = demoScore(128, 120), layout = 'rail', distance = 'stand', readOnly = false, mapped = true, stageOpts = {}, session: sessionOpts = {}, router} = {}) {
+async function bed({score = demoScore(128, 120), layout = 'rail', distance = 'stand', readOnly = false, mapped = true, stageOpts = {}, session: sessionOpts = {}, router, surfaceOpts = {}} = {}) {
   const ts = await createTestSession({clock, ...(score ? {score} : {}), mapped, ...(readOnly ? {shared: {token: 'share-1'}} : {}), ...sessionOpts});
   await ts.session.notation.ready;
   const reg = createRegistry();
@@ -142,6 +159,7 @@ async function bed({score = demoScore(128, 120), layout = 'rail', distance = 'st
     onLoopEdit: (e) => { log.loopEdits.push(e); if (e.phase === 'commit') ts.session.transport.loopRange(e.a, e.b, {snap: 'none'}); },
     onFollowChange: (on) => log.follows.push(on),
     status: (text, options) => log.statuses.push([text, options]),
+    ...surfaceOpts,
   });
   await settle();
   const chart = fake.charts.at(-1);
@@ -266,6 +284,17 @@ describe('hosting the chart', () => {
     expect(b.surface.anchor()).toEqual({bar: 20, time: b.ts.session.map.bars[20].t0});
   });
 
+  test('if the chart cannot be created, nothing is left in the Stage layer for its fallback to sit under', async () => {
+    const ts = await createTestSession({clock, score: demoScore(128, 120)});
+    await ts.session.notation.ready;
+    current.push(() => ts.dispose());
+    const host = document.createElement('div');
+    document.body.append(host);
+    fake.fail = new Error('alphaTab failed to start');
+    await expect(createChartSurface(host, {session: ts.session, layout: 'band', registry: createRegistry()})).rejects.toThrow('alphaTab failed to start');
+    expect(host.children).toHaveLength(0);
+  });
+
   test('destroy() destroys the chart and removes the surface', async () => {
     const b = await bed();
     b.surface.destroy();
@@ -303,6 +332,23 @@ describe('glass: the chart gestures reach the Stage', () => {
     expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', t: 40, bar: 21, pointerType: 'mouse', keyboard: true});
     keydown('ContextMenu', {target: b.root.querySelector('[data-scroller]')});
     expect(b.log.activate).toHaveLength(2);
+  });
+
+  test('the menu keys on the surface\'s own buttons (the pill, Try again, the empty actions) open no bar menu', async () => {
+    const b = await bed();
+    b.chart.userScroll();
+    const pillButton = b.root.querySelector('.chart-surface-follow button');
+    pillButton.focus();
+    keydown('Shift+F10', {target: pillButton});
+    keydown('ContextMenu', {target: pillButton});
+    const empty = document.createElement('div');
+    empty.className = 'chart-empty';
+    const action = document.createElement('button');
+    empty.append(action);
+    b.root.querySelector('.chart').append(empty);
+    action.focus();
+    keydown('Shift+F10', {target: action});
+    expect(b.log.activate).toHaveLength(0);
   });
 
   test('a pointer contextmenu on the music is left to the chart (no second menu)', async () => {
@@ -407,6 +453,72 @@ describe('pinch and size', () => {
     expect(b.calls('setFollowStyle').at(-1)).toEqual(['setFollowStyle', 'scroll', 0.28]);
     expect(b.calls('setDisplay').at(-1)).toEqual(['setDisplay', {barsPerRow: 2}]);
     expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.2]);
+  });
+
+  test('a pinch during a deferred Distance change keeps the new Distance\'s label floors', async () => {
+    const b = await bed({layout: 'rail'});
+    b.chart.relayoutMs = 450;
+    b.surface.zoom(1);
+    b.surface.zoom(1);           // two slow size changes: D54 now defers
+    b.surface.setDistance('kit');
+    expect(b.log.statuses.at(-1)).toEqual([COPY.resizing, {key: 'chart-resize'}]);
+    pointer(b.root, 'pointerdown', {pointerType: 'touch', pointerId: 1, x: 100, y: 100, isPrimary: true});
+    pointer(b.root, 'pointerdown', {pointerType: 'touch', pointerId: 2, x: 200, y: 100, isPrimary: false});
+    pointer(b.root, 'pointermove', {pointerType: 'touch', pointerId: 2, x: 300, y: 100});
+    pointer(b.root, 'pointerup', {pointerType: 'touch', pointerId: 2, x: 300, y: 100});
+    vi.advanceTimersByTime(2000);
+    expect(b.chart.state.floors.barNumber).toBeCloseTo(18.2, 9);
+    expect(b.chart.state.floors.marker).toBeCloseTo(26, 9);
+    expect(b.calls('setFonts')).toHaveLength(1);
+    expect(b.chart.state.scale).toBe(prefs.get('chart.pinchScale'));
+    expect(b.chart.state.scale).toBeGreaterThan(1.6);
+  });
+
+  test('D54 judges a size change as a whole: a Distance change\'s two relayouts are summed into one sample', async () => {
+    const b = await bed({layout: 'rail'});
+    b.chart.relayoutMs = 200;    // each relayout is under 300 ms, the change is not
+    const before = b.chart.raw.revision;
+    b.surface.setDistance('kit');
+    expect(b.chart.raw.revision - before).toBe(2);   // setFonts, then setScale (one call once chart.js takes both)
+    expect(b.root.dataset.relayoutMs).toBe('400');
+    expect(b.root.dataset.relayouts).toBe('2');
+    expect(b.log.statuses).toEqual([]);
+    b.surface.setDistance('near');   // the last change took 400 ms: deferred
+    expect(b.log.statuses.at(-1)).toEqual([COPY.resizing, {key: 'chart-resize'}]);
+    expect(b.chart.state.scale).toBe(1.6);
+    // Release (the Distance menu closing) applies it at once instead of after 400 ms.
+    b.surface.commitSize();
+    expect(b.chart.state.scale).toBe(1.1);
+    expect(b.chart.state.floors.barNumber).toBeCloseTo(11.2, 9);
+    vi.advanceTimersByTime(1000);
+    expect(b.calls('setScale').map((c) => c[1])).toEqual([1.6, 1.1]);
+  });
+
+  test('a dense layout switch is one size change, and its follow line moves once, at the new layout', async () => {
+    const b = await bed({layout: 'rail'});
+    const before = b.chart.raw.revision;
+    const followCalls = b.calls('setFollowStyle').length;
+    // The Stage updates its layout (and so its follow style) before it calls setLayout.
+    b.stage.sig.layout.value = 'band';
+    b.stage.sig.followStyle.value = 'page';
+    expect(b.calls('setFollowStyle')).toHaveLength(followCalls);   // not with the rail's 0.33
+    b.surface.setLayout('band');
+    expect(b.calls('setFollowStyle').slice(followCalls)).toEqual([['setFollowStyle', 'page', 0.28]]);
+    expect(b.chart.state.barsPerRow).toBe(2);
+    expect(b.chart.state.scale).toBe(1.2);
+    expect(b.chart.raw.revision - before).toBe(2);   // bars per system, then the scale (one call once chart.js takes both)
+    expect(b.root.dataset.relayouts).toBe('2');
+    expect(b.root.dataset.relayoutMs).toBe('80');
+  });
+
+  test('a layout or Distance change made while the chart module loads is applied when the chart is created', async () => {
+    prefs.set('chart.pinchScale', 0.9);
+    const b = await bed({layout: 'band', distance: 'kit', surfaceOpts: {layout: 'rail', distance: 'stand'}});
+    expect(b.chart.options.scale).toBe(1.5);
+    expect(b.chart.options.followAnchor).toBe(0.28);
+    expect(b.chart.options.display.barsPerRow).toBe(2);
+    expect(b.chart.options.fonts.barNumber).toBeCloseTo(18.2, 9);
+    expect(prefs.get('chart.pinchScale')).toBeNull();
   });
 
   test('the Display (Together · Hands & feet) and Follow style are this device\'s, from the Stage', async () => {

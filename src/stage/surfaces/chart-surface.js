@@ -6,8 +6,11 @@
 //   band 1.0/1.2/1.5) unless this device pinched or stepped it (prefs.chart.pinchScale, which a
 //   Distance change clears). The label floors are 14 × d and 20 × d px. Dense parts (more than
 //   DENSE_HITS hits per notated bar) are engraved 2 bars per system on the band and 4 on the rail.
-// - D54 (R1): while the last two relayouts took ≤ 300 ms a Distance change or a =/− step relayouts
-//   at once; otherwise it applies once, 400 ms after the last step, with the status "Resizing…".
+// - D54 (R1): while the last two size changes took ≤ 300 ms a Distance change or a =/− step relayouts
+//   at once; otherwise it applies once, on release (commitSize(), e.g. the Distance menu closing) or
+//   400 ms after the last step, with the status "Resizing…". A size change is judged as a whole: the
+//   relayouts one change starts are summed into one sample (until chart.js can take scale, floors
+//   and bars per system in one relayout, a Distance change or a dense layout switch costs two).
 // - Pinch (src/stage/pinch.js, 80–200 %): a CSS preview while the fingers move, one relayout on
 //   release. ⌘/Ctrl-wheel is the same gesture for a trackpad or mouse, refused while playing
 //   (glass.pressPolicy 'pinch').
@@ -28,12 +31,13 @@
 //   again, and the chart's own empty states (owner: Find a chart · Import a file · Write one;
 //   shared: "No drum chart was shared.").
 //
-//   createChartSurface(host, opts) → Promise<Surface & {setLayout(l), setDistance(d)}>
+//   createChartSurface(host, opts) → Promise<Surface & {setLayout(l), setDistance(d), commitSize()}>
 //     opts: {session, stage, layout, distance, onActivate, onLoopEdit, onFollowChange, status,
 //            registry?, router?, prefs?}   (registry, router and prefs default to the app's)
 //   The chart's scroller is the surface's [data-scroller] (stage.scrollUp/Down/Top use it).
 //   Root attributes for tests: data-state (opening | error | chart), data-following, data-relayout-ms
-//   (the last relayout's cost in ms, as the chart reports it for D54).
+//   (the last size change's cost in ms, the sum of the chart's timings of its relayouts, as D54
+//   samples it) and data-relayouts (how many relayouts that change took).
 
 import '../../styles/views/stage/surface-chart.css';
 import {registry as appRegistry} from '../../app/commands.js';
@@ -54,6 +58,8 @@ export const IDLE_RESUME_MS = 8000;
 /** D54: the live-relayout budget and the settle delay of a deferred size change. */
 export const LIVE_RELAYOUT_MS = 300;
 export const SETTLE_MS = 400;
+/** A size change whose relayouts have not all reported is closed this long after its last report. */
+const BATCH_IDLE_MS = 1000;
 /** A part is dense above this many hits per notated bar (maps/notation.md §11.1). */
 export const DENSE_HITS = 8;
 /** Bars per system for dense parts (spec §4.4A): 2 on the band (iPad portrait), 4 on the rail. */
@@ -126,7 +132,7 @@ export function scaleFor({distance, layout, pinch}) {
 }
 
 /**
- * D54's adaptive gate. `record(ms)` takes each relayout's time; `request(apply)` runs `apply` at
+ * D54's adaptive gate. `record(ms)` takes each size change's time; `request(apply)` runs `apply` at
  * once while the last two relayouts took ≤ limitMs (or fewer than two were measured, and those
  * were fast), else once, settleMs after the last request, and returns 'now' or 'deferred'.
  */
@@ -147,10 +153,18 @@ export function createRelayoutGate({limitMs = LIVE_RELAYOUT_MS, settleMs = SETTL
     request(apply) {
       if (this.live) { cancel(); apply(); return 'now'; }
       cancel();
-      const entry = {id: null};
+      const entry = {id: null, apply};
       entry.id = setTimer(() => { if (pending === entry) pending = null; apply(); }, settleMs);
       pending = entry;
       return 'deferred';
+    },
+    /** Release (D54: the menu closed): a deferred change applies now; true when one did. */
+    flush() {
+      if (!pending) return false;
+      const {apply} = pending;
+      cancel();
+      apply();
+      return true;
     },
     cancel,
   };
@@ -183,6 +197,7 @@ export async function createChartSurface(host, opts = {}) {
   let pinch = null;
   let retryButton = null;
   let retrying = false;
+  let onPill = noop;
   const offs = [];
   const cleanup = (fn) => { if (typeof fn === 'function') offs.push(fn); };
 
@@ -200,410 +215,476 @@ export async function createChartSurface(host, opts = {}) {
     attrs: {'aria-label': COPY.bars, 'aria-activedescendant': option.id, 'data-scope': 'stage.bars', 'data-consume-keys': BAR_KEYS},
   }, option, barsCard);
   const pill = Button({label: COPY.followResume, icon: 'arrow-down-to-line', variant: 'primary', kbd: 'KeyF',
-    className: 'chart-surface-follow-pill', onClick: () => resumeFollow()});
+    className: 'chart-surface-follow-pill', onClick: () => onPill()});
   const pillHost = h('div', {class: 'chart-surface-follow', hidden: true}, pill.el);
   const root = h('div', {class: 'chart-surface', dataset: {state: 'opening', following: ''}}, chartHost, note, pillHost);
   host.append(root);
-
-  // ---------------- the part, as the chart reads it ----------------
-  // The notation session opens the part lazily; the chart sees one stable object whose subscribers
-  // hear the part changing, the part opening and the notation flag flipping.
-  const partListeners = new Set();
-  let partOff = null, partSeen = null;
-  const notifyPart = () => {
-    updateDensity();
-    for (const fn of [...partListeners]) { try { fn(); } catch (err) { console.error('[chart-surface] part listener failed', err); } }
-  };
-  function watchPart() {
-    const part = notation?.part ?? null;
-    if (part === partSeen) return;
-    partOff?.();
-    partOff = null;
-    partSeen = part;
-    if (part && typeof part.subscribe === 'function') partOff = part.subscribe(() => notifyPart());
-  }
-  cleanup(() => partOff?.());
-  const partView = {
-    get score() { return notation?.part?.score ?? null; },
-    get hasNotation() { return !!notation?.part?.hasNotation; },
-    get readOnly() { return !!session.readOnly || !!notation?.part?.readOnly; },
-    subscribe(fn) { partListeners.add(fn); return () => partListeners.delete(fn); },
-  };
-
-  // ---------------- size ----------------
-  const pinchPref = () => { const v = Number(prefs.get('chart.pinchScale')); return Number.isFinite(v) && v > 0 ? v : null; };
-  const targetScale = () => scaleFor({distance, layout, pinch: pinchPref()});
-  let dense = isDense(partView.score);
-  const gate = createRelayoutGate();
-
-  const chartModule = await loadChartModule();
-  chart = chartModule.createChart({
-    host: chartHost, part: partView, engine: session.engine,
-    scale: targetScale(),
-    display: {barsPerRow: barsPerSystem({dense, layout})},
-    followStyle: followStyleNow(),
-    followAnchor: followAnchorFor(layout),
-    glass: isPlaying(),
-    fonts: fontsFor(distance),
-    onBarActivate: (e) => activate(e),
-    onLoopEdit: (e) => loopEdit(e),
-    onFollowChange: (on) => followChanged(on),
-    onStatus: (text) => status(text),
-    onRelayout: ({ms}) => {
-      gate.record(ms);
-      // The last relayout's cost (D54), for the R1 probe: like data-rendered, a test-visible fact.
-      if (finite(ms)) root.dataset.relayoutMs = String(Math.round(ms * 10) / 10);
-    },
-    onEmpty: emptyActions(),
-  });
-  const scroller = chartHost.querySelector('.chart-scroll');
-  scroller?.setAttribute('data-scroller', '');
-  // The bar list rides at the top of the scroller (sticky), so the scrolling score has keyboard access.
-  scroller?.prepend(barList);
-  // Presses on the score are the chart's own recogniser; press.js handles everything else.
-  chartHost.querySelector('.chart-score')?.setAttribute('data-press-ignore', '');
-
-  function followStyleNow() {
-    const style = peek(stage?.followStyle);
-    return style === 'scroll' || style === 'page' ? style : layout === 'rail' ? 'scroll' : 'page';
+  try {
+    return await build();
+  } catch (err) {
+    // The Stage shows its own fallback in this layer: nothing half-built may stay in front of it.
+    destroyed = true;
+    for (const off of offs.splice(0).reverse()) { try { off(); } catch { /* best effort */ } }
+    try { chart?.destroy(); } catch { /* best effort */ }
+    pill.destroy();
+    root.remove();
+    throw err;
   }
 
-  function updateDensity() {
-    const next = isDense(partView.score);
-    if (next === dense) return;
-    dense = next;
-    chart?.setDisplay?.({barsPerRow: barsPerSystem({dense, layout})});
-  }
-
-  /** Applies the current target size: the label floors, then the scale (each a relayout only when it changes). */
-  function applySize() {
-    if (destroyed) return;
-    const fonts = fontsFor(distance);
-    const {floors} = chart.state;
-    if (Math.abs(floors.barNumber - fonts.barNumber) > 1e-9 || Math.abs(floors.marker - fonts.marker) > 1e-9) chart.setFonts(fonts);
-    const scale = targetScale();
-    if (Math.abs(chart.state.scale - scale) > 1e-9) chart.setScale(scale);
-    pinch?.setBase(chart.state.scale);
-  }
-  /** A stepped or menu size change (Distance, =/−): live or on release, per D54. */
-  function requestSize() {
-    if (gate.request(applySize) === 'deferred') status(COPY.resizing, {key: 'chart-resize'});
-  }
-
-  // ---------------- transport state ----------------
-  function isPlaying() {
-    const phase = transport?.snapshot?.peek?.()?.phase;
-    return phase === 'playing' || phase === 'counting';
-  }
-  const positionNow = () => { const p = Number(transport?.position?.()); return Number.isFinite(p) ? p : 0; };
-  function loopNow() {
-    const loop = transport?.snapshot?.peek?.()?.loop;
-    return loop?.on && finite(loop.a) && finite(loop.b) && loop.b > loop.a ? {a: loop.a, b: loop.b} : null;
-  }
-  // While stopped the frame bus idles: cue changes still move the playhead.
-  if (transport?.snapshot?.subscribe) {
-    cleanup(transport.snapshot.subscribe((snap) => {
-      if (snap?.phase !== 'playing' && snap?.phase !== 'counting') chart.tick(positionNow());
-    }));
-  }
-  // Play and Again (any source: keys, pedals, the dock) bring Follow back.
-  if (typeof transport?.on === 'function') cleanup(transport.on('gesture', () => { if (!following) resumeFollow(); }));
-
-  // ---------------- glass: the chart's gestures ----------------
-  function barAt(t) {
-    if (!map?.isReal || !map.bars?.length) return null;
-    return map.bars[map.barIndexAt(t)] ?? null;
-  }
-  function activate(e) {
-    if (!e || !finite(e.time)) return;
-    onActivate({kind: e.kind, t: e.time, bar: barAt(e.time)?.display ?? undefined, beatTime: e.beatTime, index: e.index,
-      pointerType: e.pointerType, clientX: e.clientX, clientY: e.clientY});
-  }
-  function loopEdit(e) {
-    onLoopEdit(e);
-    if (e?.phase !== 'commit') return;
-    // Answer every commit with the transport's loop (the chart reverts after 1 s otherwise).
-    queueMicrotask(() => { if (!destroyed) chart.setLoopRange(loopNow()); });
-  }
-
-  // Keyboard menus (Shift+F10, ContextMenu): the focused bar of the bar list, else the playing bar.
-  const offPress = createPressRecognizer(root, {
-    haptic: noop, touchAction: null,
-    onLongStart: () => false,
-    onMenu: (e) => {
-      if (!e.keyboard) return;   // pointer menus on the score are the chart's ('context', 'long')
-      const index = barList.contains(e.target) && roving >= 0 ? roving : barIndexAt(positionNow());
-      const bar = bars()[index];
-      const t = bar ? bar.t0 : positionNow();
-      onActivate({kind: 'context', t, bar: bar?.display ?? undefined, beatTime: t, index, pointerType: 'mouse',
-        clientX: e.clientX, clientY: e.clientY, keyboard: true});
-    },
-  });
-  cleanup(offPress);
-
-  // ---------------- pinch (spec §4.9: 80–200 %, one relayout on release) ----------------
-  pinch = createPinch(root, {
-    base: chart.state.scale, min: PINCH_MIN, max: PINCH_MAX,
-    shouldStart: ({source}) => pressPolicy({pointerType: source === 'wheel' ? 'mouse' : 'touch', playing: isPlaying(), gesture: 'pinch'}) === 'zoom',
-    onPreview: (g) => chart.previewScale(g.factor, {clientX: g.cx, clientY: g.cy}),
-    onCommit: (g) => {
-      chart.previewScale(null);
-      gate.cancel();
-      const value = Math.round(g.value * 100) / 100;
-      prefs.set('chart.pinchScale', value);
-      chart.setScale(value);
-      pinch.setBase(chart.state.scale);
-    },
-    onCancel: () => chart.previewScale(null),
-  });
-  cleanup(() => pinch.destroy());
-  // A refused ⌘/Ctrl-wheel (a mouse while playing) does nothing, rather than zooming the page.
-  const onWheel = (e) => {
-    if ((e.ctrlKey || e.metaKey) && !pinch.active && pressPolicy({pointerType: 'mouse', playing: isPlaying(), gesture: 'pinch'}) === 'none') e.preventDefault();
-  };
-  root.addEventListener('wheel', onWheel, {passive: false});
-  cleanup(() => root.removeEventListener('wheel', onWheel));
-
-  // ---------------- follow ----------------
-  function clearIdle() { if (idleTimer != null) { clearTimeout(idleTimer); idleTimer = null; } }
-  function armIdle() {
-    clearIdle();
-    if (following || destroyed || !isPlaying()) return;
-    idleTimer = setTimeout(() => { idleTimer = null; if (!following && isPlaying()) resumeFollow(); }, IDLE_RESUME_MS);
-  }
-  function followChanged(on) {
-    following = !!on;
-    if (following) root.dataset.following = ''; else delete root.dataset.following;
-    pillHost.hidden = following || !partView.hasNotation;
-    if (following) clearIdle(); else armIdle();
-    onFollowChange(following);
-  }
-  function resumeFollow() {
-    chart.setFollow(true);
-    if (!following) followChanged(true);
-  }
-  // Touching the music restarts the idle wait.
-  const onActivity = () => { if (!following) armIdle(); };
-  for (const type of ['wheel', 'pointerdown', 'touchmove', 'keydown']) root.addEventListener(type, onActivity, {passive: true});
-  scroller?.addEventListener('scroll', onActivity, {passive: true});
-  cleanup(() => {
-    for (const type of ['wheel', 'pointerdown', 'touchmove', 'keydown']) root.removeEventListener(type, onActivity);
-    scroller?.removeEventListener('scroll', onActivity);
-    clearIdle();
-  });
-
-  // ---------------- the bar list (stage.bars, D45) ----------------
-  let roving = -1;
-  let offFocused = null;
-  const bars = () => (map?.isReal ? map.bars ?? [] : []);
-  function barIndexAt(t) { return map?.isReal && bars().length ? map.barIndexAt(t) : 0; }
-  function sectionOf(bar) { return map?.hasSections ? map.sectionAt(bar.t0)?.name ?? null : null; }
-  function focusedItem() {
-    const bar = bars()[roving];
-    if (roving < 0 || !bar) return null;
-    return {kind: 'bar', t0: bar.t0, t1: bar.t1, label: COPY.barName(bar.display), bar: bar.display ?? undefined, index: roving};
-  }
-  function renderRoving() {
-    const list = bars();
-    const bar = list[roving];
-    if (!bar) { option.textContent = ''; barsCard.firstChild.textContent = ''; return; }
-    const text = COPY.barOption({display: bar.display, section: sectionOf(bar)});
-    option.textContent = text;
-    option.setAttribute('aria-posinset', String(roving + 1));
-    option.setAttribute('aria-setsize', String(list.length));
-    barsCard.firstChild.textContent = text;
-  }
-  function moveRoving(index, {reveal: show = true} = {}) {
-    const list = bars();
-    if (!list.length) return;
-    roving = Math.max(0, Math.min(list.length - 1, index));
-    renderRoving();
-    if (show) {
-      // The reader is looking elsewhere: Follow pauses, as for a manual scroll.
-      chart.setFollow(false);
-      if (following) followChanged(false);
-      chart.reveal(list[roving].t0, {smooth: true});
+  async function build() {
+    // ---------------- the part, as the chart reads it ----------------
+    // The notation session opens the part lazily; the chart sees one stable object whose subscribers
+    // hear the part changing, the part opening and the notation flag flipping.
+    const partListeners = new Set();
+    let partOff = null, partSeen = null;
+    const notifyPart = () => {
+      updateDensity();
+      for (const fn of [...partListeners]) { try { fn(); } catch (err) { console.error('[chart-surface] part listener failed', err); } }
+    };
+    function watchPart() {
+      const part = notation?.part ?? null;
+      if (part === partSeen) return;
+      partOff?.();
+      partOff = null;
+      partSeen = part;
+      if (part && typeof part.subscribe === 'function') partOff = part.subscribe(() => notifyPart());
     }
-    registry.invalidate?.();
-  }
-  const onBarsFocus = () => {
-    // Each visit starts at the playing bar (or the cue), like the strip.
-    moveRoving(barIndexAt(positionNow()), {reveal: false});
-    if (!offFocused) offFocused = registry.provide('focused', () => focusedItem());
-  };
-  const onBarsBlur = () => {
-    offFocused?.();
-    offFocused = null;
-    registry.invalidate?.();
-  };
-  const onBarsKey = (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const last = bars().length - 1;
-    let next = null;
-    if (e.key === 'ArrowRight') next = roving + 1;
-    else if (e.key === 'ArrowLeft') next = roving - 1;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = last;
-    if (next === null || last < 0) return;
-    e.preventDefault();
-    moveRoving(next);
-  };
-  barList.addEventListener('focus', onBarsFocus);
-  barList.addEventListener('blur', onBarsBlur);
-  barList.addEventListener('keydown', onBarsKey);
-  cleanup(() => {
-    barList.removeEventListener('focus', onBarsFocus);
-    barList.removeEventListener('blur', onBarsBlur);
-    barList.removeEventListener('keydown', onBarsKey);
-    offFocused?.();
-    offFocused = null;
-  });
+    cleanup(() => partOff?.());
+    const partView = {
+      get score() { return notation?.part?.score ?? null; },
+      get hasNotation() { return !!notation?.part?.hasNotation; },
+      get readOnly() { return !!session.readOnly || !!notation?.part?.readOnly; },
+      subscribe(fn) { partListeners.add(fn); return () => partListeners.delete(fn); },
+    };
 
-  // ---------------- states: opening, error, chart ----------------
-  let ready = !notation || !needsOpening();
-  function needsOpening() { return !!session.song?.peek?.()?.hasChart && !notation?.part; }
-  function renderState() {
-    if (destroyed) return;
-    watchPart();
-    const error = peek(notation?.error);
-    const kind = notation?.part ? 'chart' : retrying || !ready ? 'opening' : error ? 'error' : 'chart';
-    root.dataset.state = kind;
-    note.hidden = kind === 'chart';
-    if (kind === 'opening') root.setAttribute('aria-busy', 'true'); else root.removeAttribute('aria-busy');
-    noteActions.replaceChildren();
-    retryButton?.destroy();
-    retryButton = null;
-    if (kind === 'opening') noteText.textContent = COPY.opening;
-    if (kind === 'error') {
-      noteText.textContent = COPY.openFailed;
-      retryButton = Button({label: COPY.tryAgain, variant: 'primary', onClick: () => retryOpen()});
-      noteActions.append(retryButton.el);
+    // ---------------- size ----------------
+    const pinchPref = () => { const v = Number(prefs.get('chart.pinchScale')); return Number.isFinite(v) && v > 0 ? v : null; };
+    const targetScale = () => scaleFor({distance, layout, pinch: pinchPref()});
+    let dense = isDense(partView.score);
+    const gate = createRelayoutGate();
+
+    const chartModule = await loadChartModule();
+    // The Stage forwards layout and Distance changes only to the surface on screen: one made while
+    // the chart module loaded (an iPad rotated during the first open) is read here.
+    const liveLayout = peek(stage?.layout);
+    if (liveLayout != null) layout = liveLayout === 'rail' ? 'rail' : 'band';
+    const liveDistance = peek(stage?.distance);
+    if (liveDistance != null && distanceOf(liveDistance) !== distance) {
+      distance = distanceOf(liveDistance);
+      if (pinchPref() != null) prefs.set('chart.pinchScale', null);   // a Distance replaces any pinch
     }
-    const showChart = kind === 'chart';
-    chart.setVisible(showChart);
-    barList.hidden = !showChart || !partView.hasNotation || !bars().length;
-    // The option always names a bar, so the listbox reads well before it is first focused.
-    if (!barList.hidden && root.ownerDocument.activeElement !== barList) { roving = barIndexAt(positionNow()); renderRoving(); }
-    pillHost.hidden = following || !partView.hasNotation;
-  }
-  /** Try again after the part failed to open: "Opening…" until it settles. */
-  function retryOpen() {
-    if (retrying || !notation?.open) return;
-    retrying = true;
-    renderState();
-    Promise.resolve().then(() => notation.open()).catch(() => {}).finally(() => {
-      retrying = false;
+    chart = chartModule.createChart({
+      host: chartHost, part: partView, engine: session.engine,
+      scale: targetScale(),
+      display: {barsPerRow: barsPerSystem({dense, layout})},
+      followStyle: followStyleNow(),
+      followAnchor: followAnchorFor(layout),
+      glass: isPlaying(),
+      fonts: fontsFor(distance),
+      onBarActivate: (e) => activate(e),
+      onLoopEdit: (e) => loopEdit(e),
+      onFollowChange: (on) => followChanged(on),
+      onStatus: (text) => status(text),
+      onRelayout: ({ms}) => reportRelayout(ms),
+      onEmpty: emptyActions(),
+    });
+    const scroller = chartHost.querySelector('.chart-scroll');
+    scroller?.setAttribute('data-scroller', '');
+    // The bar list rides at the top of the scroller (sticky), so the scrolling score has keyboard access.
+    scroller?.prepend(barList);
+    // Presses on the score are the chart's own recogniser; press.js handles everything else.
+    chartHost.querySelector('.chart-score')?.setAttribute('data-press-ignore', '');
+
+    function followStyleNow() {
+      const style = peek(stage?.followStyle);
+      return style === 'scroll' || style === 'page' ? style : layout === 'rail' ? 'scroll' : 'page';
+    }
+
+    function updateDensity() {
+      const next = isDense(partView.score);
+      if (next === dense) return;
+      dense = next;
+      chart?.setDisplay?.({barsPerRow: barsPerSystem({dense, layout})});
+    }
+
+    // ---------------- D54 samples: one size change, however many relayouts it takes ----------------
+    let batch = null;   // {expected, count, sum, timer}
+    function showCost(ms, count) {
+      // Like data-rendered, test-visible facts for the R1 state: the change's cost and its relayouts.
+      root.dataset.relayoutMs = String(Math.round(ms * 10) / 10);
+      root.dataset.relayouts = String(count);
+    }
+    function closeBatch() {
+      if (!batch) return;
+      const done = batch;
+      batch = null;
+      clearTimeout(done.timer);
+      if (done.count) gate.record(done.sum);
+    }
+    function reportRelayout(ms) {
+      if (!finite(ms) || destroyed) return;
+      if (!batch) { gate.record(ms); showCost(ms, 1); return; }
+      batch.sum += ms;
+      batch.count += 1;
+      showCost(batch.sum, batch.count);
+      if (batch.count >= batch.expected) closeBatch();
+      else { clearTimeout(batch.timer); batch.timer = setTimeout(closeBatch, BATCH_IDLE_MS); }
+    }
+    cleanup(() => { if (batch) clearTimeout(batch.timer); batch = null; });
+
+    /**
+     * Applies the current target size: bars per system, the label floors and the scale (each a
+     * relayout only when it changes), sampled for D54 as one change.
+     */
+    function applySize() {
       if (destroyed) return;
+      closeBatch();
+      const st = chart.state;
+      const barsPerRow = barsPerSystem({dense, layout});
+      const fonts = fontsFor(distance);
+      const scale = targetScale();
+      const steps = {
+        display: st.barsPerRow !== barsPerRow,
+        fonts: Math.abs(st.floors.barNumber - fonts.barNumber) > 1e-9 || Math.abs(st.floors.marker - fonts.marker) > 1e-9,
+        scale: Math.abs(st.scale - scale) > 1e-9,
+      };
+      const expected = Object.values(steps).filter(Boolean).length;
+      if (expected) batch = {expected, count: 0, sum: 0, timer: null};
+      if (steps.display) chart.setDisplay({barsPerRow});
+      if (steps.fonts) chart.setFonts(fonts);
+      if (steps.scale) chart.setScale(scale);
+      // Engravings that report later (or never: no view yet) close the sample when they go quiet.
+      if (batch && batch.count < batch.expected && batch.timer == null) batch.timer = setTimeout(closeBatch, BATCH_IDLE_MS);
+      pinch?.setBase(chart.state.scale);
+    }
+    /** A stepped or menu size change (Distance, =/−): live or on release, per D54. */
+    function requestSize() {
+      if (gate.request(applySize) === 'deferred') status(COPY.resizing, {key: 'chart-resize'});
+    }
+
+    // ---------------- transport state ----------------
+    function isPlaying() {
+      const phase = transport?.snapshot?.peek?.()?.phase;
+      return phase === 'playing' || phase === 'counting';
+    }
+    const positionNow = () => { const p = Number(transport?.position?.()); return Number.isFinite(p) ? p : 0; };
+    function loopNow() {
+      const loop = transport?.snapshot?.peek?.()?.loop;
+      return loop?.on && finite(loop.a) && finite(loop.b) && loop.b > loop.a ? {a: loop.a, b: loop.b} : null;
+    }
+    // While stopped the frame bus idles: cue changes still move the playhead.
+    if (transport?.snapshot?.subscribe) {
+      cleanup(transport.snapshot.subscribe((snap) => {
+        if (snap?.phase !== 'playing' && snap?.phase !== 'counting') chart.tick(positionNow());
+      }));
+    }
+    // Play and Again (any source: keys, pedals, the dock) bring Follow back.
+    if (typeof transport?.on === 'function') cleanup(transport.on('gesture', () => { if (!following) resumeFollow(); }));
+
+    // ---------------- glass: the chart's gestures ----------------
+    function barAt(t) {
+      if (!map?.isReal || !map.bars?.length) return null;
+      return map.bars[map.barIndexAt(t)] ?? null;
+    }
+    function activate(e) {
+      if (!e || !finite(e.time)) return;
+      onActivate({kind: e.kind, t: e.time, bar: barAt(e.time)?.display ?? undefined, beatTime: e.beatTime, index: e.index,
+        pointerType: e.pointerType, clientX: e.clientX, clientY: e.clientY});
+    }
+    function loopEdit(e) {
+      onLoopEdit(e);
+      if (e?.phase !== 'commit') return;
+      // Answer every commit with the transport's loop (the chart reverts after 1 s otherwise).
+      queueMicrotask(() => { if (!destroyed) chart.setLoopRange(loopNow()); });
+    }
+
+    // Keyboard menus (Shift+F10, ContextMenu): the focused bar of the bar list, else the playing bar.
+    const offPress = createPressRecognizer(root, {
+      haptic: noop, touchAction: null,
+      onLongStart: () => false,
+      onMenu: (e) => {
+        if (!e.keyboard) return;   // pointer menus on the score are the chart's ('context', 'long')
+        // The menu keys on the surface's own buttons (Try again, the empty-state actions, the pill) are not a bar's.
+        if (!barList.contains(e.target) && e.target?.closest?.('button, a[href], input, select, textarea, [role=button], .chart-empty, .chart-surface-note, .chart-surface-follow')) return;
+        const index = barList.contains(e.target) && roving >= 0 ? roving : barIndexAt(positionNow());
+        const bar = bars()[index];
+        const t = bar ? bar.t0 : positionNow();
+        onActivate({kind: 'context', t, bar: bar?.display ?? undefined, beatTime: t, index, pointerType: 'mouse',
+          clientX: e.clientX, clientY: e.clientY, keyboard: true});
+      },
+    });
+    cleanup(offPress);
+
+    // ---------------- pinch (spec §4.9: 80–200 %, one relayout on release) ----------------
+    pinch = createPinch(root, {
+      base: chart.state.scale, min: PINCH_MIN, max: PINCH_MAX,
+      shouldStart: ({source}) => pressPolicy({pointerType: source === 'wheel' ? 'mouse' : 'touch', playing: isPlaying(), gesture: 'pinch'}) === 'zoom',
+      onPreview: (g) => chart.previewScale(g.factor, {clientX: g.cx, clientY: g.cy}),
+      onCommit: (g) => {
+        chart.previewScale(null);
+        prefs.set('chart.pinchScale', Math.round(g.value * 100) / 100);
+        // The pinch replaces a deferred step, but not the Distance's label floors that step held.
+        gate.cancel();
+        applySize();
+      },
+      onCancel: () => chart.previewScale(null),
+    });
+    cleanup(() => pinch.destroy());
+    // A refused ⌘/Ctrl-wheel (a mouse while playing) does nothing, rather than zooming the page.
+    const onWheel = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !pinch.active && pressPolicy({pointerType: 'mouse', playing: isPlaying(), gesture: 'pinch'}) === 'none') e.preventDefault();
+    };
+    root.addEventListener('wheel', onWheel, {passive: false});
+    cleanup(() => root.removeEventListener('wheel', onWheel));
+
+    // ---------------- follow ----------------
+    function clearIdle() { if (idleTimer != null) { clearTimeout(idleTimer); idleTimer = null; } }
+    function armIdle() {
+      clearIdle();
+      if (following || destroyed || !isPlaying()) return;
+      idleTimer = setTimeout(() => { idleTimer = null; if (!following && isPlaying()) resumeFollow(); }, IDLE_RESUME_MS);
+    }
+    function followChanged(on) {
+      following = !!on;
+      if (following) root.dataset.following = ''; else delete root.dataset.following;
+      pillHost.hidden = following || !partView.hasNotation;
+      if (following) clearIdle(); else armIdle();
+      onFollowChange(following);
+    }
+    function resumeFollow() {
+      chart.setFollow(true);
+      if (!following) followChanged(true);
+    }
+    onPill = resumeFollow;
+    // Touching the music restarts the idle wait.
+    const onActivity = () => { if (!following) armIdle(); };
+    for (const type of ['wheel', 'pointerdown', 'touchmove', 'keydown']) root.addEventListener(type, onActivity, {passive: true});
+    scroller?.addEventListener('scroll', onActivity, {passive: true});
+    cleanup(() => {
+      for (const type of ['wheel', 'pointerdown', 'touchmove', 'keydown']) root.removeEventListener(type, onActivity);
+      scroller?.removeEventListener('scroll', onActivity);
+      clearIdle();
+    });
+
+    // ---------------- the bar list (stage.bars, D45) ----------------
+    let roving = -1;
+    let offFocused = null;
+    const bars = () => (map?.isReal ? map.bars ?? [] : []);
+    function barIndexAt(t) { return map?.isReal && bars().length ? map.barIndexAt(t) : 0; }
+    function sectionOf(bar) { return map?.hasSections ? map.sectionAt(bar.t0)?.name ?? null : null; }
+    function focusedItem() {
+      const bar = bars()[roving];
+      if (roving < 0 || !bar) return null;
+      return {kind: 'bar', t0: bar.t0, t1: bar.t1, label: COPY.barName(bar.display), bar: bar.display ?? undefined, index: roving};
+    }
+    function renderRoving() {
+      const list = bars();
+      const bar = list[roving];
+      if (!bar) { option.textContent = ''; barsCard.firstChild.textContent = ''; return; }
+      const text = COPY.barOption({display: bar.display, section: sectionOf(bar)});
+      option.textContent = text;
+      option.setAttribute('aria-posinset', String(roving + 1));
+      option.setAttribute('aria-setsize', String(list.length));
+      barsCard.firstChild.textContent = text;
+    }
+    function moveRoving(index, {reveal: show = true} = {}) {
+      const list = bars();
+      if (!list.length) return;
+      roving = Math.max(0, Math.min(list.length - 1, index));
+      renderRoving();
+      if (show) {
+        // The reader is looking elsewhere: Follow pauses, as for a manual scroll.
+        chart.setFollow(false);
+        if (following) followChanged(false);
+        chart.reveal(list[roving].t0, {smooth: true});
+      }
+      registry.invalidate?.();
+    }
+    const onBarsFocus = () => {
+      // Each visit starts at the playing bar (or the cue), like the strip.
+      moveRoving(barIndexAt(positionNow()), {reveal: false});
+      if (!offFocused) offFocused = registry.provide('focused', () => focusedItem());
+    };
+    const onBarsBlur = () => {
+      offFocused?.();
+      offFocused = null;
+      registry.invalidate?.();
+    };
+    const onBarsKey = (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const last = bars().length - 1;
+      let next = null;
+      if (e.key === 'ArrowRight') next = roving + 1;
+      else if (e.key === 'ArrowLeft') next = roving - 1;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = last;
+      if (next === null || last < 0) return;
+      e.preventDefault();
+      moveRoving(next);
+    };
+    barList.addEventListener('focus', onBarsFocus);
+    barList.addEventListener('blur', onBarsBlur);
+    barList.addEventListener('keydown', onBarsKey);
+    cleanup(() => {
+      barList.removeEventListener('focus', onBarsFocus);
+      barList.removeEventListener('blur', onBarsBlur);
+      barList.removeEventListener('keydown', onBarsKey);
+      offFocused?.();
+      offFocused = null;
+    });
+
+    // ---------------- states: opening, error, chart ----------------
+    let ready = !notation || !needsOpening();
+    function needsOpening() { return !!session.song?.peek?.()?.hasChart && !notation?.part; }
+    function renderState() {
+      if (destroyed) return;
+      watchPart();
+      const error = peek(notation?.error);
+      const kind = notation?.part ? 'chart' : retrying || !ready ? 'opening' : error ? 'error' : 'chart';
+      root.dataset.state = kind;
+      note.hidden = kind === 'chart';
+      if (kind === 'opening') root.setAttribute('aria-busy', 'true'); else root.removeAttribute('aria-busy');
+      noteActions.replaceChildren();
+      retryButton?.destroy();
+      retryButton = null;
+      if (kind === 'opening') noteText.textContent = COPY.opening;
+      if (kind === 'error') {
+        noteText.textContent = COPY.openFailed;
+        retryButton = Button({label: COPY.tryAgain, variant: 'primary', onClick: () => retryOpen()});
+        noteActions.append(retryButton.el);
+      }
+      const showChart = kind === 'chart';
+      chart.setVisible(showChart);
+      barList.hidden = !showChart || !partView.hasNotation || !bars().length;
+      // The option always names a bar, so the listbox reads well before it is first focused.
+      if (!barList.hidden && root.ownerDocument.activeElement !== barList) { roving = barIndexAt(positionNow()); renderRoving(); }
+      pillHost.hidden = following || !partView.hasNotation;
+    }
+    /** Try again after the part failed to open: "Opening…" until it settles. */
+    function retryOpen() {
+      if (retrying || !notation?.open) return;
+      retrying = true;
+      renderState();
+      Promise.resolve().then(() => notation.open()).catch(() => {}).finally(() => {
+        retrying = false;
+        if (destroyed) return;
+        renderState();
+        notifyPart();
+      });
+    }
+    cleanup(() => retryButton?.destroy());
+    if (notation?.hasNotation?.subscribe) cleanup(notation.hasNotation.subscribe(() => { renderState(); notifyPart(); }));
+    if (notation?.error?.subscribe) cleanup(notation.error.subscribe(() => renderState()));
+    Promise.resolve(notation?.ready).then(() => {
+      if (destroyed) return;
+      ready = true;
       renderState();
       notifyPart();
-    });
-  }
-  cleanup(() => retryButton?.destroy());
-  if (notation?.hasNotation?.subscribe) cleanup(notation.hasNotation.subscribe(() => { renderState(); notifyPart(); }));
-  if (notation?.error?.subscribe) cleanup(notation.error.subscribe(() => renderState()));
-  Promise.resolve(notation?.ready).then(() => {
-    if (destroyed) return;
-    ready = true;
-    renderState();
-    notifyPart();
-  }, () => { if (!destroyed) { ready = true; renderState(); } });
+    }, () => { if (!destroyed) { ready = true; renderState(); } });
 
-  // ---------------- device prefs from the Stage: Display and Follow style ----------------
-  if (stage?.display?.subscribe) cleanup(stage.display.subscribe((value) => chart.setDisplay({layout: value ?? null})));
-  if (stage?.followStyle?.subscribe) {
-    cleanup(stage.followStyle.subscribe(() => chart.setFollowStyle(followStyleNow(), {anchor: followAnchorFor(layout)})));
-  }
-
-  // ---------------- empty-state actions (spec §5.4) ----------------
-  function emptyActions() {
-    if (session.readOnly) return {};
-    const actions = {};
-    const run = (id) => () => { registry.run(id, {source: 'pointer'}); };
-    if (registry.get?.('map.find')) actions.findChart = run('map.find');
-    const router = opts.router ?? registry.context?.()?.router ?? null;
-    if (router?.navigate) {
-      actions.importFile = () => router.navigate(`/s/${encodeURIComponent(session.id)}/edit/map/find?import=1`);
+    // ---------------- device prefs from the Stage: Display and Follow style ----------------
+    if (stage?.display?.subscribe) cleanup(stage.display.subscribe((value) => chart.setDisplay({layout: value ?? null})));
+    if (stage?.followStyle?.subscribe) {
+      cleanup(stage.followStyle.subscribe(() => {
+        // A layout switch changes the style first (the Stage's batch); setLayout then moves the line once.
+        const live = peek(stage.layout);
+        if (live != null && (live === 'rail' ? 'rail' : 'band') !== layout) return;
+        chart.setFollowStyle(followStyleNow(), {anchor: followAnchorFor(layout)});
+      }));
     }
-    if (registry.get?.('edit.chart')) actions.write = run('edit.chart');
-    return actions;
+
+    // ---------------- empty-state actions (spec §5.4) ----------------
+    function emptyActions() {
+      if (session.readOnly) return {};
+      const actions = {};
+      const run = (id) => () => { registry.run(id, {source: 'pointer'}); };
+      if (registry.get?.('map.find')) actions.findChart = run('map.find');
+      const router = opts.router ?? registry.context?.()?.router ?? null;
+      if (router?.navigate) {
+        actions.importFile = () => router.navigate(`/s/${encodeURIComponent(session.id)}/edit/map/find?import=1`);
+      }
+      if (registry.get?.('edit.chart')) actions.write = run('edit.chart');
+      return actions;
+    }
+
+    renderState();
+    chart.setLoopRange(loopNow());
+    chart.tick(positionNow());
+
+    // ---------------- the Surface ----------------
+    const surface = {
+      el: root,
+      kind: 'chart',
+      frame(f) { if (finite(f?.position)) chart.tick(f.position); },
+      setLoop(range) {
+        chart.setLoopRange(range && finite(range.a) && finite(range.b) && range.b > range.a ? {a: range.a, b: range.b} : null);
+      },
+      setGlass(playing) {
+        chart.setGlass(!!playing);
+        // The Stage calls this on every transport change: a running idle wait is kept, not restarted.
+        if (!playing) clearIdle();
+        else if (idleTimer == null) armIdle();
+      },
+      setFollow(on) {
+        chart.setFollow(!!on);
+        if (!!on !== following) followChanged(!!on);
+      },
+      reveal(t, {smooth = false} = {}) {
+        if (!finite(t)) return;
+        lastReveal = t;
+        chart.reveal(t, {smooth});
+      },
+      anchor() {
+        if (!partView.hasNotation || !chart.state.revision) return {time: finite(lastReveal) ? lastReveal : positionNow()};
+        const index = chart.anchorBar();
+        const time = barTime(index);
+        return finite(time) ? {bar: index, time} : {time: finite(lastReveal) ? lastReveal : positionNow()};
+      },
+      zoom(dir) {
+        const step = chartModule.stepScale(targetScale(), dir < 0 ? -1 : 1);
+        prefs.set('chart.pinchScale', step);
+        requestSize();
+      },
+      setDistance(d) {
+        const next = distanceOf(d);
+        if (next === distance) return;
+        distance = next;
+        if (pinchPref() != null) prefs.set('chart.pinchScale', null);   // a Distance replaces any pinch
+        requestSize();
+      },
+      setLayout(l) {
+        const next = l === 'rail' ? 'rail' : 'band';
+        if (next === layout) return;
+        layout = next;
+        chart.setFollowStyle(followStyleNow(), {anchor: followAnchorFor(layout)});
+        gate.cancel();
+        applySize();   // bars per system, the floors of a deferred Distance and the scale, as one change
+      },
+      /** D54 release (the Distance menu closed): a deferred size change applies now. */
+      commitSize() { if (!destroyed) gate.flush(); },
+      destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        gate.cancel();
+        for (const off of offs.splice(0).reverse()) { try { off(); } catch (err) { console.error('[chart-surface] cleanup failed', err); } }
+        pill.destroy();
+        chart.destroy();
+        root.remove();
+      },
+    };
+
+    /** The start time of chart bar `index`: the map's bar when mapped, else the part's own timeline. */
+    function barTime(index) {
+      const bar = bars()[index];
+      if (bar) return bar.t0;
+      const timeline = partView.score?.timeline;
+      if (!timeline) return null;
+      const starts = musicalStarts(timeline);
+      return starts[index] != null ? toTime(timeline, number(starts[index])) : null;
+    }
+
+    return surface;
   }
-
-  renderState();
-  chart.setLoopRange(loopNow());
-  chart.tick(positionNow());
-
-  // ---------------- the Surface ----------------
-  const surface = {
-    el: root,
-    kind: 'chart',
-    frame(f) { if (finite(f?.position)) chart.tick(f.position); },
-    setLoop(range) {
-      chart.setLoopRange(range && finite(range.a) && finite(range.b) && range.b > range.a ? {a: range.a, b: range.b} : null);
-    },
-    setGlass(playing) {
-      chart.setGlass(!!playing);
-      // The Stage calls this on every transport change: a running idle wait is kept, not restarted.
-      if (!playing) clearIdle();
-      else if (idleTimer == null) armIdle();
-    },
-    setFollow(on) {
-      chart.setFollow(!!on);
-      if (!!on !== following) followChanged(!!on);
-    },
-    reveal(t, {smooth = false} = {}) {
-      if (!finite(t)) return;
-      lastReveal = t;
-      chart.reveal(t, {smooth});
-    },
-    anchor() {
-      if (!partView.hasNotation || !chart.state.revision) return {time: finite(lastReveal) ? lastReveal : positionNow()};
-      const index = chart.anchorBar();
-      const time = barTime(index);
-      return finite(time) ? {bar: index, time} : {time: finite(lastReveal) ? lastReveal : positionNow()};
-    },
-    zoom(dir) {
-      const step = chartModule.stepScale(targetScale(), dir < 0 ? -1 : 1);
-      prefs.set('chart.pinchScale', step);
-      requestSize();
-    },
-    setDistance(d) {
-      const next = distanceOf(d);
-      if (next === distance) return;
-      distance = next;
-      if (pinchPref() != null) prefs.set('chart.pinchScale', null);   // a Distance replaces any pinch
-      requestSize();
-    },
-    setLayout(l) {
-      const next = l === 'rail' ? 'rail' : 'band';
-      if (next === layout) return;
-      layout = next;
-      chart.setFollowStyle(followStyleNow(), {anchor: followAnchorFor(layout)});
-      chart.setDisplay({barsPerRow: barsPerSystem({dense, layout})});
-      gate.cancel();
-      applySize();
-    },
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      gate.cancel();
-      for (const off of offs.splice(0).reverse()) { try { off(); } catch (err) { console.error('[chart-surface] cleanup failed', err); } }
-      pill.destroy();
-      chart.destroy();
-      root.remove();
-    },
-  };
-
-  /** The start time of chart bar `index`: the map's bar when mapped, else the part's own timeline. */
-  function barTime(index) {
-    const bar = bars()[index];
-    if (bar) return bar.t0;
-    const timeline = partView.score?.timeline;
-    if (!timeline) return null;
-    const starts = musicalStarts(timeline);
-    return starts[index] != null ? toTime(timeline, number(starts[index])) : null;
-  }
-
-  return surface;
 }
 
 let idSeq = 0;
