@@ -19,6 +19,7 @@
 //   se3-save-refused          the server refuses the change: the dialog stays open with its message
 //   se3-dialog-busy           the dialog while the change runs (actions inert)
 //   se3-account-missing       an id that does not exist
+//   se3-account-bad-id        an id the server's validator refuses reads as not found
 //   se3-account-load-error    the first load fails: Retry recovers
 //   se3-account-empty         no computers, jobs or history
 //   se3-app-admin             the full app at /admin (fx-admin=1), web and desktop
@@ -294,11 +295,22 @@ module.exports = [
     },
   },
   {
+    name: 'se3-account-bad-id',
+    url: `${H}?${BASE}&page=account&id=garbage`,
+    async fn(page, t) {
+      await waitText(page, '.admin-title', 'Account not found');
+      const headings = await page.getByRole('heading').allTextContents();
+      t.expect(JSON.stringify(headings) === '["Account not found"]', `one heading (${headings})`);
+      const f = await page.evaluate(facts);
+      t.expect(f.alert === null, `no load error (${f.alert})`);
+    },
+  },
+  {
     name: 'se3-account-load-error',
     url: `${H}?${BASE}&page=account&fail=load`,
     async fn(page, t) {
       const f = await page.evaluate(facts);
-      t.expect(f.alert?.includes('Connection lost'), `alert ${f.alert}`);
+      t.expect(f.alert?.startsWith('This couldn’t be loaded. Connection lost while the query was in flight.'), `alert ${f.alert}`);
       await t.capture('error');
       await page.getByRole('button', {name: 'Retry'}).click();
       await waitText(page, '.admin-title', 'Dana Ruiz');

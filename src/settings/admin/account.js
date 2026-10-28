@@ -12,7 +12,11 @@
 // Every change opens the Reason dialog (askReason) and runs inside it; the page follows the live
 // `admin.account` subscription, and the history reloads after each change.
 //
-//   mount(el, match, ctx) → Promise<{update(match), unmount()}>   resolves once the account arrived
+// Every change is bound to the account it was opened on: update(match) to another account and unmount
+// close an open Reason dialog, and drop unsaved field text, so nothing meant for one account reaches another.
+//
+//   mount(el, match, ctx) → Promise<{update(match), unmount()}>   resolves once the account arrived, or
+//     after FIRST_DATA_MS with the skeleton showing (admin.js firstData)
 
 import '../../styles/views/settings/admin.css';
 import {h, reconcileList} from '../../ui/h.js';
@@ -29,7 +33,7 @@ import {isOnline} from '../../api/devices.js';
 import * as adminApi from '../../api/admin.js';
 import {relativeTime} from '../../library/song-labels.js';
 import {askReason} from './reason-dialog.js';
-import {AuditList, COPY as ADMIN_COPY, STATUS_LABELS, TICK_MS, formatBytes, gbText, loadError, parseGB, refreshTimes, statusLabel, timeEl} from './admin.js';
+import {AuditList, COPY as ADMIN_COPY, STATUS_LABELS, TICK_MS, firstData, formatBytes, gbText, loadError, parseGB, refreshTimes, statusLabel, timeEl} from './admin.js';
 
 export const NOTES_MAX = 4000;
 const LIVE_JOB = new Set(['queued', 'running']);
@@ -126,6 +130,14 @@ const jobLabel = j => (typeof j?.label === 'string' && j.label.trim() ? j.label.
 /** A job an administrator can still cancel (admin.cancelJob's rule). */
 export const isLiveJob = j => LIVE_JOB.has(j?.status) || (j?.status === 'error' && j?.retryAt != null);
 
+/**
+ * An id the server's v.id('users') validator refused (malformed, or another table's) reads as a missing
+ * account, just as a well-formed id of a deleted one (not_found). The refusal is uncoded: convex-test says
+ * 'Validator error: Expected ID for table "users"', a deployment 'ArgumentValidationError … v.id("users")'.
+ */
+const BAD_ID = /Expected ID for table|ArgumentValidationError|does not match (the table name in )?validator|v\.id\(/i;
+export const isMissingAccount = err => err?.code === 'not_found' || (err?.code === 'unknown' && BAD_ID.test(String(err?.message ?? '')));
+
 /** The presence line of a computer row. */
 export function deviceLine(device, now) {
   if (device?.revoked) return device.revokedBy === 'admin' ? COPY.revokedByAdmin : COPY.revokedByUser;
@@ -151,6 +163,8 @@ export async function mount(el, match, ctx = {}) {
   let tick = clockNow();
   let data = null;
   let destroyed = false;
+  // Aborted when the page leaves this account (update to another id, or unmount).
+  let scope = new AbortController();
 
   const scroller = h('div', {class: 'admin-scroller', attrs: {'data-scroller': ''}});
   const content = h('div', {class: 'app-content admin-page admin-account-page'});
@@ -225,7 +239,7 @@ export async function mount(el, match, ctx = {}) {
   const rowButtons = new Set();
   // The server text last put in each field: a field whose text differs has the administrator's edit,
   // which a live update never overwrites (the field's own commit-on-blur baseline would let it).
-  const applied = {override: '', notes: ''};
+  let applied = {override: '', notes: ''};
   function syncField(field, last, next) {
     if (field.input.value === last) { field.set({value: next}); field.input.value = next; }
     return next;
@@ -338,19 +352,24 @@ export async function mount(el, match, ctx = {}) {
 
   // ---------- changes (each behind the Reason dialog) ----------
 
-  const changeAccount = (patch, why) => adminApi.updateAccount({
-    id, status: data.status ?? 'active', byteLimit: data.byteLimit ?? null, notes: data.notes ?? '', ...patch, reason: why,
+  // The account and the values a change starts from, taken when its dialog opens: whatever the page
+  // shows by the time the reason is given, the change goes to that account.
+  const target = () => ({id, base: data, signal: scope.signal});
+  const changeAccount = ({id: targetId, base}, patch, why) => adminApi.updateAccount({
+    id: targetId, status: base.status ?? 'active', byteLimit: base.byteLimit ?? null, notes: base.notes ?? '', ...patch, reason: why,
   });
+  const stale = t => destroyed || t.signal.aborted;
   const reloadHistory = () => audit?.reload();
 
   async function changeAccess(value) {
     if (!data || value === (data.status ?? 'active')) return;
+    const t = target();
     const label = statusLabel(value);
     const reason = await askReason({
       title: COPY.accessTitle(label), body: COPY.accessHelp[value], confirmLabel: COPY.accessConfirm, danger: value !== 'active',
-      run: why => changeAccount({status: value}, why),
+      run: why => changeAccount(t, {status: value}, why), signal: t.signal,
     });
-    if (destroyed) return;
+    if (stale(t)) return;
     if (reason == null) { access.set({value: data.status ?? 'active'}); return; }
     data = {...data, status: value};
     access.set({value});
@@ -369,13 +388,14 @@ export async function mount(el, match, ctx = {}) {
     // Text left as shown keeps the stored bytes (the GB text rounds to 1 MB).
     const next = bytes !== null && current !== null && override.input.value.trim() === gbText(current) ? current : bytes;
     if (next === current) { overrideNote.el.hidden = false; return; }
+    const t = target();
     const reason = await askReason({
       title: COPY.overrideTitle,
       body: COPY.overrideBody(current == null ? COPY.planLimit : formatBytes(current), next == null ? COPY.planLimit : formatBytes(next)),
       confirmLabel: COPY.overrideConfirm,
-      run: why => changeAccount({byteLimit: next}, why),
+      run: why => changeAccount(t, {byteLimit: next}, why), signal: t.signal,
     });
-    if (destroyed || reason == null) return;
+    if (stale(t) || reason == null) return;
     data = {...data, byteLimit: next};
     applied.override = next == null ? '' : gbText(next);
     override.set({value: applied.override}); override.input.value = applied.override;
@@ -390,8 +410,10 @@ export async function mount(el, match, ctx = {}) {
     const text = notes.input.value;
     if (text.length > NOTES_MAX) { notes.set({error: COPY.notesTooLong}); notes.input.focus(); return; }
     if (text === (data.notes ?? '')) { notesNote.el.hidden = false; return; }
-    const reason = await askReason({title: COPY.notesTitle, confirmLabel: COPY.notesConfirm, run: why => changeAccount({notes: text}, why)});
-    if (destroyed || reason == null) return;
+    const t = target();
+    const reason = await askReason({title: COPY.notesTitle, confirmLabel: COPY.notesConfirm,
+      run: why => changeAccount(t, {notes: text}, why), signal: t.signal});
+    if (stale(t) || reason == null) return;
     data = {...data, notes: text};
     applied.notes = text;
     notes.set({value: text});
@@ -401,22 +423,24 @@ export async function mount(el, match, ctx = {}) {
 
   async function revokeDevice(device) {
     const name = deviceName(device);
+    const t = target();
     const reason = await askReason({
       title: COPY.revokeTitle(name), body: COPY.revokeBody, confirmLabel: COPY.revokeConfirm, danger: true,
-      run: why => adminApi.revokeDevice({id: device.id, reason: why}),
+      run: why => adminApi.revokeDevice({id: device.id, reason: why}), signal: t.signal,
     });
-    if (destroyed || reason == null) return;
+    if (stale(t) || reason == null) return;
     toast(COPY.revoked(name), {tone: 'ok'});
     reloadHistory();
   }
 
   async function cancelJob(job) {
     const label = jobLabel(job);
+    const t = target();
     const reason = await askReason({
       title: COPY.cancelTitle(label), body: COPY.cancelBody, confirmLabel: COPY.cancelConfirm, cancelLabel: COPY.keep, danger: true,
-      run: why => adminApi.cancelJob({id: job.id, reason: why}),
+      run: why => adminApi.cancelJob({id: job.id, reason: why}), signal: t.signal,
     });
-    if (destroyed || reason == null) return;
+    if (stale(t) || reason == null) return;
     toast(COPY.cancelled(label), {tone: 'ok'});
     reloadHistory();
   }
@@ -444,7 +468,7 @@ export async function mount(el, match, ctx = {}) {
       }, err => {
         if (destroyed) return;
         skeleton.el.hidden = true;
-        if (err?.code === 'not_found') showMissing();
+        if (isMissingAccount(err)) showMissing();
         else {
           loadStatus.set({text: loadError(err), action: {label: ADMIN_COPY.retry, run: () => { loadStatus.el.hidden = true; skeleton.el.hidden = false; subscribe(); }}});
           loadStatus.el.hidden = false;
@@ -461,20 +485,34 @@ export async function mount(el, match, ctx = {}) {
     if (data) reconcileList(deviceList, data.devices ?? [], {key: d => String(d.id), create: deviceRow});
   }, TICK_MS);
 
-  await subscribe();
+  await firstData(subscribe());
 
   return {
     update(next) {
       const nextId = String(next?.params?.id ?? '');
       if (nextId === id) return;
+      // Leave the previous account: its open dialog closes, its unsaved text goes.
+      scope.abort();
+      scope = new AbortController();
       id = nextId;
       data = null;
+      applied = {override: '', notes: ''};
+      for (const [field, note] of [[override, overrideNote], [notes, notesNote]]) {
+        field.set({value: '', error: undefined});
+        field.input.value = '';
+        note.el.hidden = true;
+      }
+      loadStatus.el.hidden = true;
+      missing.hidden = true;
+      title.textContent = '';
+      meta.replaceChildren();
       audit?.destroy(); audit = null;
       body.hidden = true; skeleton.el.hidden = false;
       subscribe();
     },
     unmount() {
       destroyed = true;
+      scope.abort();
       clearInterval(timer);
       off();
       audit?.destroy();

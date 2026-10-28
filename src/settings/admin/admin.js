@@ -9,7 +9,8 @@
 //   3. Audit history: every administration change, newest first, with Load more.
 // Every mutation goes through askReason (reason-dialog.js); there is no window.prompt.
 //
-//   mount(el, match, ctx) → Promise<{update(match), unmount()}>   resolves once the first data arrived
+//   mount(el, match, ctx) → Promise<{update(match), unmount()}>   resolves once the first data arrived, or
+//     after FIRST_DATA_MS with the skeletons showing: navigation never waits on a slow or offline backend.
 //
 // Also exported for account.js and the tests: COPY, CONTROLS, formatBytes, gbText, parseGB,
 // statusLabel, describeAudit and AuditList.
@@ -24,15 +25,25 @@ import {Skeleton} from '../../ui/skeleton.js';
 import {store as appStore} from '../../app/store.js';
 import {toast} from '../../app/feedback.js';
 import {now as clockNow} from '../../app/clock.js';
-import {describeError} from '../../app/error-copy.js';
 import {relativeTime} from '../../library/song-labels.js';
 import * as adminApi from '../../api/admin.js';
-import {askReason} from './reason-dialog.js';
+import {adminError, askReason} from './reason-dialog.js';
 
 const GB = 1e9;
 const MB = 1e6;
 /** How often relative times ("5 min ago") are refreshed while a page is mounted. */
 export const TICK_MS = 30_000;
+/** The longest a page's mount waits for its first data (the router's focus restore wants the rows). */
+export const FIRST_DATA_MS = 1500;
+
+/** Resolves when `promise` settles or after `ms`, whichever is first. */
+export function firstData(promise, ms = FIRST_DATA_MS) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).catch(() => {}),
+    new Promise(resolve => { timer = setTimeout(resolve, ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 export const STATUS_LABELS = Object.freeze({active: 'Active', export_only: 'Export only', suspended: 'Suspended'});
 
@@ -72,6 +83,7 @@ export const COPY = Object.freeze({
   loadMore: 'Load more',
   loading: 'Loading…',
   retry: 'Retry',
+  loadFailed: 'This couldn’t be loaded.',
   history: 'Audit history',
   noHistory: 'No administration changes yet.',
   noAccountHistory: 'No changes to this account yet.',
@@ -115,7 +127,8 @@ export const CONTROLS = Object.freeze([
 export function formatBytes(bytes) {
   const b = Number(bytes);
   if (!Number.isFinite(b) || b <= 0) return '0 MB';
-  if (b < GB) {
+  // Sizes that would round to 1000 MB read as GB.
+  if (b < GB && Math.round(b / MB) < 1000) {
     const mb = b / MB;
     return `${mb < 10 ? Number(mb.toFixed(1)) : Math.round(mb)} MB`;
   }
@@ -196,11 +209,7 @@ export function describeAudit(row, {names = {}} = {}) {
 }
 
 /** The sentence for a failed load, with the server's detail. */
-export function loadError(err) {
-  const {sentence} = describeError(err, {context: 'load'});
-  const raw = typeof err?.message === 'string' ? err.message.trim() : '';
-  return raw && raw !== sentence ? `${sentence} ${raw}` : sentence;
-}
+export const loadError = err => adminError(err, {context: 'load', fallback: COPY.loadFailed});
 
 /** A link styled as text that the app frame's router.link delegate navigates. */
 const accountLink = (id, text, className = 'admin-link') => h('a', {class: className, href: `/admin/accounts/${encodeURIComponent(id)}`}, text);
@@ -255,27 +264,32 @@ export function AuditList({targetId = null, labelledBy, names = () => ({}), self
   }
 
   function render() {
-    reconcileList(list, rows, {key: r => String(r._id ?? `${r.at}:${r.action}:${r.targetId}`), create: renderRow});
+    reconcileList(list, rows, {key: keyOf, create: renderRow});
     empty.hidden = rows.length > 0;
   }
 
+  const keyOf = r => String(r._id ?? `${r.at}:${r.action}:${r.targetId}`);
+
+  // A failed load keeps the rows and the cursor it started from; Retry repeats exactly that request.
   async function loadPage({reset = false} = {}) {
     const gen = reset ? ++generation : generation;
-    if (reset) cursor = null;
+    const from = reset ? null : cursor;
     more.set({busy: !reset ? COPY.loading : false, disabled: true});
     el.setAttribute('aria-busy', 'true');
     try {
-      const result = await adminApi.history({targetId: targetId ?? undefined, cursor});
+      const result = await adminApi.history({targetId: targetId ?? undefined, cursor: from});
       if (destroyed || gen !== generation) return;
       const page = Array.isArray(result?.page) ? result.page : [];
-      rows = reset ? page : [...rows, ...page];
+      // A page that overlaps the rows shown (a row added since) does not repeat them.
+      const seen = new Set(reset ? [] : rows.map(keyOf));
+      rows = reset ? page : [...rows, ...page.filter(r => !seen.has(keyOf(r)))];
       cursor = result?.continueCursor ?? null;
       status.el.hidden = true;
       more.el.hidden = !!result?.isDone || !cursor;
       render();
     } catch (err) {
       if (destroyed || gen !== generation) return;
-      status.set({text: loadError(err), action: {label: COPY.retry, run: () => loadPage({reset: !rows.length})}});
+      status.set({text: loadError(err), action: {label: COPY.retry, run: () => loadPage({reset})}});
       status.el.hidden = false;
     } finally {
       if (!destroyed && gen === generation) {
@@ -322,7 +336,7 @@ function OverviewCards() {
   };
 }
 
-function PolicyForm({onSaved}) {
+function PolicyForm({onSaved, signal}) {
   let overview = null;
   const user = TextField({label: COPY.userLimit, inputmode: 'decimal', autocomplete: 'off', className: 'admin-policy-field', onInput: () => validate()});
   const app = TextField({label: COPY.appLimit, inputmode: 'decimal', autocomplete: 'off', className: 'admin-policy-field', onInput: () => validate()});
@@ -366,8 +380,9 @@ function PolicyForm({onSaved}) {
       body: COPY.policyBody(formatBytes(v.userBytes), formatBytes(v.appBytes)),
       confirmLabel: 'Save policy',
       run: why => adminApi.updatePolicy({...v, reason: why}),
+      signal,
     });
-    if (reason == null) return;
+    if (reason == null || signal?.aborted) return;
     overview = {...overview, userBytes: v.userBytes, baseAppBytes: v.appBytes};
     user.set({value: gbText(v.userBytes)}); user.input.value = gbText(v.userBytes);
     app.set({value: gbText(v.appBytes)}); app.input.value = gbText(v.appBytes);
@@ -438,7 +453,8 @@ function AccountSearch({initialEmail = '', onEmail}) {
       const result = await adminApi.accounts({email: email || undefined, cursor});
       if (destroyed || gen !== generation) return;
       const page = Array.isArray(result?.page) ? result.page : [];
-      rows = reset ? page : [...rows, ...page];
+      const seen = new Set(rows.map(a => String(a.id)));
+      rows = reset ? page : [...rows, ...page.filter(a => !seen.has(String(a.id)))];
       cursor = result?.continueCursor ?? null;
       reconcileList(list, rows, {key: a => String(a.id), create: AccountRow});
       empty.textContent = rows.length ? '' : email ? COPY.noMatch(email) : COPY.noAccounts;
@@ -447,7 +463,7 @@ function AccountSearch({initialEmail = '', onEmail}) {
       more.el.hidden = !!result?.isDone || !cursor;
     } catch (err) {
       if (destroyed || gen !== generation) return;
-      status.set({text: loadError(err), action: {label: COPY.retry, run: () => load({reset: !rows.length})}});
+      status.set({text: loadError(err), action: {label: COPY.retry, run: () => load({reset})}});
       status.el.hidden = false;
     } finally {
       if (!destroyed && gen === generation) {
@@ -496,7 +512,9 @@ export async function mount(el, match, ctx = {}) {
   const cardsSkeleton = Skeleton({shape: 'text', count: 3});
   cards.el.hidden = true;
   const audit = AuditList({labelledBy: 'admin-history-title', selfId, now: () => tick});
-  const policy = PolicyForm({onSaved: () => audit.reload()});
+  // Leaving the page closes a Reason dialog it opened.
+  const leaving = new AbortController();
+  const policy = PolicyForm({onSaved: () => audit.reload(), signal: leaving.signal});
   const storageSection = h('section', {class: 'admin-section', attrs: {'aria-labelledby': 'admin-storage-title'}},
     h('h2', {class: 'admin-section-title', id: 'admin-storage-title'}, COPY.storage),
     cardsSkeleton.el, cards.el, overviewError.el, policy.el);
@@ -535,7 +553,7 @@ export async function mount(el, match, ctx = {}) {
 
   const timer = setInterval(() => { tick = clockNow(); audit.refreshTimes(); }, TICK_MS);
 
-  await Promise.all([overviewReady, search.ready, audit.ready]);
+  await firstData(Promise.all([overviewReady, search.ready, audit.ready]));
 
   return {
     update(next) {
@@ -543,6 +561,7 @@ export async function mount(el, match, ctx = {}) {
       if (email.trim() !== search.email) search.search(email);
     },
     unmount() {
+      leaving.abort();
       clearInterval(timer);
       off();
       cards.destroy(); policy.destroy(); search.destroy(); audit.destroy();

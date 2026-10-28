@@ -207,7 +207,7 @@ afterEach(async () => {
 describe('formatting', () => {
   test.each([
     [0, '0 MB'], [-5, '0 MB'], [NaN, '0 MB'], [2.5 * MB, '2.5 MB'], [412 * MB, '412 MB'], [980.4 * MB, '980 MB'],
-    [GB, '1.0 GB'], [1.25 * GB, '1.3 GB'], [61.2 * GB, '61.2 GB'], [200 * GB, '200 GB'], [1499 * GB, '1499 GB'],
+    [999.4 * MB, '999 MB'], [999.6 * MB, '1.0 GB'], [GB, '1.0 GB'], [1.25 * GB, '1.3 GB'], [61.2 * GB, '61.2 GB'], [200 * GB, '200 GB'], [1499 * GB, '1499 GB'],
   ])('formatBytes(%s) is %s', (bytes, text) => expect(admin.formatBytes(bytes)).toBe(text));
 
   test.each([
@@ -311,6 +311,28 @@ describe('askReason', () => {
     expect(reasonError(Object.assign(new Error('Notes are limited to 4000 characters.'), {code: 'invalid'})))
       .toBe('Woodshed couldn’t use that. Check it and try again. Notes are limited to 4000 characters.');
     expect(reasonError({code: 'unknown'})).toBe('Your change couldn’t be saved.');
+    expect(reasonError(Object.assign(new Error('Administrator access required.'), {code: 'not_owner'}))).toBe('Administrator access required.');
+  });
+
+  test('a load error never uses the Library’s song sentence', () => {
+    expect(admin.loadError(Object.assign(new Error('Network down'), {code: 'unknown'}))).toBe('This couldn’t be loaded. Network down');
+    expect(admin.loadError(new Error('Network down'))).toBe('This couldn’t be loaded. Network down');
+    expect(admin.loadError({code: 'unknown'})).toBe('This couldn’t be loaded.');
+    expect(admin.loadError(Object.assign(new Error('Administrator access required.'), {code: 'not_owner'}))).toBe('Administrator access required.');
+    expect(admin.loadError(Object.assign(new Error('x'), {code: 'offline'}))).toMatch(/^You’re offline\./);
+  });
+
+  test('an aborted signal closes the dialog and resolves null without running the change', async () => {
+    const run = vi.fn();
+    const leaving = new AbortController();
+    const p = askReason({title: 'Save the notes?', run, signal: leaving.signal});
+    expect(dialog()).toBeTruthy();
+    leaving.abort();
+    await expect(p).resolves.toBeNull();
+    expect(dialog()).toBeNull();
+    await expect(askReason({title: 'Again?', run, signal: leaving.signal})).resolves.toBeNull();
+    expect(dialog()).toBeNull();
+    expect(run).not.toHaveBeenCalled();
   });
 });
 
@@ -476,6 +498,76 @@ describe('/admin', () => {
     expect(rows[1].querySelector('a').getAttribute('href')).toBe('/admin/accounts/user3');
     expect(rows[0].querySelector('time').getAttribute('datetime')).toBe(new Date(NOW - DAY).toISOString());
     expect(rows[0].querySelector('time').hasAttribute('data-volatile')).toBe(true);
+  });
+
+  test('mount does not wait on a backend that never answers (navigation must not stall)', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    try {
+      adminApi.subscribeOverview.mockImplementationOnce(() => () => {});
+      adminApi.history.mockImplementationOnce(() => new Promise(() => {}));
+      adminApi.accounts.mockImplementationOnce(() => new Promise(() => {}));
+      let done = false;
+      const p = admin.mount(host, {name: 'admin', params: {}, query: {}}, {router, store}).then(v => { done = true; view = v; });
+      await vi.advanceTimersByTimeAsync(admin.FIRST_DATA_MS - 10);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(20);
+      await p;
+      expect(done).toBe(true);
+      expect(host.querySelector('.admin-audit-box').getAttribute('aria-busy')).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a history reload that fails keeps its rows; Retry repeats it without duplicating them', async () => {
+    await mountAdmin();
+    expect(host.querySelectorAll('.admin-audit-row')).toHaveLength(3);
+    adminApi.history.mockRejectedValueOnce(new Error('Network down'));
+    const [userField] = host.querySelectorAll('.admin-policy input');
+    typeInto(userField, '2');
+    submit(host.querySelector('.admin-policy'));
+    await flush();
+    await giveReason('Launch');
+    expect(adminApi.updatePolicy).toHaveBeenCalled();
+    const alert = host.querySelector('.admin-audit-box [role=alert]');
+    expect(alert.closest('[hidden]')).toBeNull();
+    expect(visibleText(alert)).toBe('This couldn’t be loaded. Network down Retry');
+    expect(host.querySelectorAll('.admin-audit-row')).toHaveLength(3);
+    adminApi.history.mockClear();
+    alert.querySelector('button').click();
+    await flush();
+    expect(adminApi.history).toHaveBeenCalledWith({targetId: undefined, cursor: null});
+    expect(host.querySelector('.admin-audit-box .admin-load-error').hidden).toBe(true);
+    expect([...host.querySelectorAll('.admin-audit-row')]).toHaveLength(3);
+  });
+
+  test('a Load more that fails retries the same page; an overlapping page does not repeat rows', async () => {
+    api.data.audit = Array.from({length: 30}, (_, i) => ({_id: `h${i}`, actorId: 'user1', targetId: 'app', action: 'policy.update', reason: `r${i}`, at: NOW - i * MIN, before: {}, after: {}}));
+    await mountAdmin();
+    expect(host.querySelectorAll('.admin-audit-row')).toHaveLength(25);
+    adminApi.history.mockRejectedValueOnce(new Error('Network down'));
+    host.querySelector('.admin-audit-box .admin-more').click();
+    await flush();
+    const alert = host.querySelector('.admin-audit-box [role=alert]');
+    // A row added meanwhile shifts the pages by one: the retried page repeats h24, shown once.
+    api.data.audit.unshift({_id: 'new', actorId: 'user1', targetId: 'app', action: 'policy.update', reason: 'new', at: NOW, before: {}, after: {}});
+    adminApi.history.mockClear();
+    alert.querySelector('button').click();
+    await flush();
+    expect(adminApi.history).toHaveBeenCalledWith({targetId: undefined, cursor: '25'});
+    expect(host.querySelectorAll('.admin-audit-row')).toHaveLength(30);
+  });
+
+  test('leaving /admin closes its open Reason dialog', async () => {
+    await mountAdmin();
+    typeInto(host.querySelectorAll('.admin-policy input')[0], '2');
+    submit(host.querySelector('.admin-policy'));
+    await flush();
+    expect(dialog()).toBeTruthy();
+    await view.unmount();
+    view = null;
+    expect(dialog()).toBeNull();
+    expect(adminApi.updatePolicy).not.toHaveBeenCalled();
   });
 
   test('a failed account list shows the error with Retry', async () => {
@@ -694,11 +786,35 @@ describe('/admin/accounts/:id', () => {
     expect(host.querySelector('.admin-account-body').hidden).toBe(true);
   });
 
+  test('an id the server’s validator refuses reads as not found, not as a load error', async () => {
+    api.data.accountErrors = [Object.assign(new Error('Validator error: Expected ID for table "users", got `garbage`'), {code: 'unknown', data: {}})];
+    await mountAccount('garbage');
+    expect(byRole('heading').map(el => `${el.tagName}:${accName(el)}`)).toEqual(['H1:Account not found']);
+    expect(host.querySelector('.admin-load-error').hidden).toBe(true);
+    expect(account.isMissingAccount({code: 'unknown', message: 'ArgumentValidationError: Value does not match validator.\nPath: .id\nValidator: v.id("users")'})).toBe(true);
+    expect(account.isMissingAccount({code: 'unknown', message: 'Connection lost.'})).toBe(false);
+  });
+
+  test('mount does not wait on an account that never arrives', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    try {
+      adminApi.subscribeAccount.mockImplementationOnce(() => () => {});
+      let done = false;
+      const p = account.mount(host, {name: 'adminAccount', params: {id: 'user2'}, query: {}}, {router, store}).then(v => { done = true; view = v; });
+      await vi.advanceTimersByTimeAsync(admin.FIRST_DATA_MS + 10);
+      await p;
+      expect(done).toBe(true);
+      expect(host.querySelector('.admin-account-body').hidden).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a failed load offers Retry, which subscribes again', async () => {
     api.data.accountErrors = [Object.assign(new Error('Connection lost.'), {code: 'unknown'})];
     await mountAccount();
     const alert = one('alert', undefined, host);
-    expect(alert.textContent).toContain('Connection lost.');
+    expect(visibleText(alert)).toBe('This couldn’t be loaded. Connection lost. Retry');
     alert.querySelector('button').click();
     await flush();
     expect(one('heading', 'Dana Ruiz')).toBeTruthy();
@@ -714,5 +830,59 @@ describe('/admin/accounts/:id', () => {
     await view.unmount();
     view = null;
     expect(api.subs.account.get('user1').size).toBe(0);
+  });
+
+  test('switching accounts drops the previous account’s unsaved text', async () => {
+    api.data.accounts.user1.notes = 'Owner.';
+    await mountAccount();
+    typeInto(one('textbox', 'Private notes'), 'Dana: refund pending');
+    typeInto(one('textbox', 'Storage override (GB)'), '9');
+    submit(one('textbox', 'Private notes').closest('form'));
+    await flush();
+    keydown({key: 'Escape', code: 'Escape'}, {target: dialog()});
+    await flush();
+    view.update({name: 'adminAccount', params: {id: 'user1'}, query: {}});
+    await flush();
+    expect(one('heading', 'Kyle Kincer')).toBeTruthy();
+    expect(one('textbox', 'Private notes').value).toBe('Owner.');
+    expect(one('textbox', 'Storage override (GB)').value).toBe('');
+    submit(one('textbox', 'Private notes').closest('form'));
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(visibleText(one('textbox', 'Private notes').closest('form'))).toContain('Nothing has changed yet.');
+    expect(adminApi.updateAccount).not.toHaveBeenCalled();
+  });
+
+  test('a Reason dialog open when the page switches accounts closes; nothing is written to either account', async () => {
+    api.data.accounts.user4 = {...structuredClone(api.data.accounts.user2), id: 'user4', name: 'Theo Park', email: 'theo@example.com', status: 'suspended', byteLimit: 5 * GB, notes: 'Theo notes'};
+    await mountAccount();
+    one('radio', 'Suspended').click();
+    await flush();
+    expect(dialog().querySelector('.ui-dialog-title').textContent).toBe('Change access to Suspended?');
+    view.update({name: 'adminAccount', params: {id: 'user4'}, query: {}});
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(one('heading', 'Theo Park')).toBeTruthy();
+    expect(one('radio', 'Suspended').getAttribute('aria-checked')).toBe('true');
+    expect(adminApi.updateAccount).not.toHaveBeenCalled();
+  });
+
+  test('a change already running when the page switches goes to the account it was opened on', async () => {
+    api.data.accounts.user4 = {...structuredClone(api.data.accounts.user2), id: 'user4', name: 'Theo Park', status: 'suspended', byteLimit: 5 * GB, notes: 'Theo notes'};
+    let release;
+    adminApi.updateAccount.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await mountAccount();
+    typeInto(one('textbox', 'Private notes'), 'Dana: refund pending');
+    submit(one('textbox', 'Private notes').closest('form'));
+    await flush();
+    await giveReason('Support call');
+    view.update({name: 'adminAccount', params: {id: 'user4'}, query: {}});
+    await flush();
+    release(null);
+    await flush();
+    expect(adminApi.updateAccount).toHaveBeenCalledTimes(1);
+    expect(adminApi.updateAccount).toHaveBeenCalledWith({id: 'user2', status: 'active', byteLimit: null, notes: 'Dana: refund pending', reason: 'Support call'});
+    expect(toastText()).toBeNull();
+    expect(one('textbox', 'Private notes').value).toBe('Theo notes');
   });
 });

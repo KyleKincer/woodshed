@@ -115,6 +115,8 @@ function backend(state, {now, fail, slow}) {
     },
     'admin:account': ({id}) => {
       loadFails('account');
+      // As v.id('users') refuses an id of the wrong shape: an uncoded error ('nobody' is a well-formed, deleted id).
+      if (!/^(user\d+|nobody)$/.test(id)) throw new Error(`Validator error: Expected ID for table "users", got \`${id}\``);
       const u = state.users.find(x => x.id === id);
       if (!u) throw coded('not_found', 'Account not found.');
       const c = control(id);
