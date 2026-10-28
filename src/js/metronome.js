@@ -68,15 +68,18 @@ export class Metronome {
     this._plans = new Map();
     this._rests = new Map();
     this.onChange = null; // notified when the map changes (for persistence and redraw)
+    // The 1.9 player's placeholder map clicks as before (deleted at I1).
+    this._placeholder = !songMap;
     this.songMap = songMap || new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1);
     this._unsubscribe = this.songMap.subscribe((reason) => this._onMap(reason));
     // A discontinuity drops every scheduled click; a plan change drops only the
     // clicks at or after the change and reschedules from there.
     this._engineOff = [
-      engine.on?.('transport', () => { this._cancelClicks(); this._transportRevision = engine.revision; this._schedUntil = this.ctx.currentTime; this._reportedUntil = -Infinity; }),
-      engine.on?.('plan', ({from}) => { this._cancelClicks(from); this._schedUntil = Math.min(this._schedUntil, from); this._reportedUntil = -Infinity; }),
-      // The metronome runs by itself while the engine plays and it has work.
-      engine.on?.('state', ({playing}) => { if (playing && this._wantsRun()) this.start(); }),
+      engine.on?.('transport', () => { this._cancelClicks(); this._transportRevision = engine.revision; this._schedUntil = this.ctx.currentTime; this._reportedUntil = -Infinity; this._wake(); }),
+      engine.on?.('plan', ({from}) => { this._cancelClicks(from); this._schedUntil = Math.min(this._schedUntil, from); this._reportedUntil = -Infinity; this._wake(); }),
+      // The metronome runs by itself while the engine plays and it has work
+      // (a loop that gains its gaps during playback brings work too).
+      engine.on?.('state', () => this._wake()),
     ].filter(Boolean);
     this.recompute();
   }
@@ -182,6 +185,12 @@ export class Metronome {
     return this.enabled || this.countIn || !!engine.countingIn || (engine.loopGap?.sec > 0 && !!engine.loop?.enabled);
   }
 
+  /** Start the timer when the engine plays and there is work (engine events call this). */
+  _wake() { if (this.engine.playing && this._wantsRun()) this.start(); }
+
+  /** Unmapped songs never click (D14: the transport uses a 2 s Lead-in instead); a count's beats report silent. */
+  _clicks() { return this._placeholder || this.songMap.isReal; }
+
   start() {
     if (this._timer) return;
     this._schedUntil = this.ctx.currentTime;
@@ -234,19 +243,19 @@ export class Metronome {
     const end = now + AHEAD;
     const start = Math.max(now, this._schedUntil);
     const limit = Math.min(end, engine.stopAtWhen ?? Infinity);
-    const countIn = engine.countIn;
+    const countIn = engine.countIn, clicks = this._clicks();
     if (countIn) {
       for (const beat of countIn.beats) {
         const when = countIn.startWhen + beat.offset / countIn.rate;
-        if (when >= start && when < limit) this._beat(when, beat, 'count', this.countInAudible);
+        if (when >= start && when < limit) this._beat(when, beat, 'count', this.countInAudible && clicks);
       }
     }
     // Every-pass count-ins and rest bars inside the gaps of a segmented loop.
     // Unmapped songs never click (the transport uses a lead-in instead).
-    if (this.songMap.isReal) {
+    if (clicks) {
       for (const gap of engine.gapsBetween?.(start, limit) ?? []) this._gapBeats(gap, start, Math.min(limit, gap.end ?? gap.until));
     }
-    if (this.enabled) {
+    if (this.enabled && clicks) {
       for (const beat of engine.beatsBetween(Math.max(start, countIn?.endWhen ?? start), end, this.beats)) {
         this._beat(beat.when, {downbeat: beat.downbeat, unit: this._unitAt(beat.time)}, 'click', true);
       }

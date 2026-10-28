@@ -423,6 +423,84 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
     expect(engine.plan.at(-1).kind).toBe('play');
   });
 
+  test('changing gapSec in a preroll gap keeps the audio it plays, or is a discontinuity when it cannot', async () => {
+    const transports = [];
+    const {L, P} = await playSegmented(rate, {gap: 'preroll'});
+    engine.on('transport', (e) => transports.push(e.revision));
+    advanceTo(L + P + 0.5);
+    const revision = engine.revision;
+    // A longer preroll: the gap carries on from the same audio and reaches a on time.
+    let cut = now() + L, at = engine.getPositionAt(cut);
+    engine.setLoop(true, 10, 14, {gapSec: 4, gap: 'preroll'});
+    expect(engine.revision).toBe(revision);
+    expect(transports).toEqual([]);
+    expect(engine.plan.find((s) => s.kind === 'gap' && s.when === cut)).toMatchObject({continued: true, offset: expect.closeTo(at, 9)});
+    expectAudibleAt(path, cut + 0.1, at + 0.1 * rate);
+    const start2 = cut + (10 - at) / rate;
+    expectAudibleAt(path, start2 + 0.1, 10 + 0.1 * rate);
+    expect(engine.nextWrapAt()).toBeCloseTo(start2 + P, 9);
+    advanceTo(start2 + 0.05);
+    expectAudibleAt(path, start2 + P + 0.1, 6 + 0.1 * rate);
+    // A shorter one than the audio still needs: the position moves (a discontinuity).
+    advanceTo(start2 + P + 0.5);
+    cut = now() + L;
+    engine.setLoop(true, 10, 14, {gapSec: 2, gap: 'preroll'});
+    expect(engine.revision).toBe(revision + 1);
+    expect(transports).toEqual([revision + 1]);
+    expectAudibleAt(path, cut + 0.1, 8 + 0.1 * rate);
+    expectAudibleAt(path, cut + 2 / rate + 0.1, 10 + 0.1 * rate);
+    // A mode change in the gap moves the position too.
+    advanceTo(cut + 0.2);
+    cut = now() + L;
+    engine.setLoop(true, 10, 14, {gapSec: 2});
+    expect(engine.revision).toBe(revision + 2);
+    expectSilentAt(cut + 0.1);
+    expect(engine.getPositionAt(cut + 0.1)).toBe(10);
+  });
+
+  test('preroll audio already inside a loop moved over it plays on as a pass', async () => {
+    const {L, P} = await playSegmented(rate, {gap: 'preroll'});
+    advanceTo(L + P + 0.5);
+    const revision = engine.revision, cut = now() + L, at = engine.getPositionAt(cut);
+    engine.setLoop(true, 8, 14, {gapSec: 2, gap: 'preroll'});
+    expect(engine.revision).toBe(revision);
+    expect(engine.plan.at(-3)).toMatchObject({kind: 'pass', when: cut, offset: expect.closeTo(at, 9)});
+    expectAudibleAt(path, cut + 0.1, at + 0.1 * rate);
+    const until = cut + (14 - at) / rate;
+    advanceTo(cut + 0.05);
+    expectAudibleAt(path, until + 0.1, 6 + 0.1 * rate);
+  });
+
+  test('cancelPending after a quantized jump has landed finds nothing pending', async () => {
+    await playSegmented(rate);
+    clock.advance(0.5);
+    const at = engine.seekAt(12, now() + 0.5);
+    expect(engine.plan.filter((s) => s.scheduled).map((s) => s.kind)).toEqual(['pass']);
+    advanceTo(at + 0.05);
+    const version = engine.planVersion, plans = [];
+    engine.on('plan', (p) => plans.push(p));
+    expect(engine.cancelPending()).toBe(false);
+    expect(engine.planVersion).toBe(version);
+    expect(plans).toEqual([]);
+  });
+
+  test('stopAt at a pass end emits its wrap and no gap; a late tick emits nothing past the stop', async () => {
+    for (const late of [false, true]) {
+      const events = [], offs = ['wrap', 'gap', 'ended'].map((type) => engine.on(type, (e) => events.push([type, e.when ?? e.reason])));
+      const {P, G} = await playSegmented(rate);
+      clock.advance(0.5);
+      const W = engine.nextWrapAt();
+      engine.stopAt(W);
+      if (late) {
+        vi.clearAllTimers();
+        engine.ctx._advanceTo(W + 3 * (P + G));
+        engine._tick();
+      } else advanceTo(W + G + 1);
+      expect(events).toEqual([['wrap', expect.closeTo(W, 9)], ['ended', 'stopAt']]);
+      for (const off of offs) off();
+    }
+  });
+
   test('a count-in before a segmented loop holds the stems until the first pass', async () => {
     engine.setLoop(true, 10, 14, {gapSec: 2});
     engine.seek(10);

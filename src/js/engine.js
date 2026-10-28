@@ -620,18 +620,45 @@ export class MultitrackEngine {
     const common = {rate, processing, scheduled, seq: ++this._seq, run: ++this._runs, gapSec: this._gap.sec, gapMode: this._gap.mode};
     if (!loop.enabled || !(this._gap.sec > 0)) return [{kind: 'play', when, offset, seekOffset, ...common, loop: {...loop}}];
     const entries = [];
-    let t = when, elapsed = null;
-    if (gapFrom && seekOffset == null) elapsed = Math.max(0, (gapFrom.elapsed ?? 0) + (when - gapFrom.when) * gapFrom.rate);
-    else if (offset >= loop.b - WRAP_EPS) elapsed = 0;
+    let t = when, elapsed = null, continued;
+    if (gapFrom && seekOffset == null) {
+      const carry = this._carry(gapFrom, when, loop);
+      // Preroll audio already inside the new loop plays on as a pass from where it is.
+      if (!carry.inLoop) elapsed = carry.elapsed;
+      continued = !!gapFrom.continued || gapFrom.when < when - 1e-9;
+    } else if (offset >= loop.b - WRAP_EPS) elapsed = 0;
     if (elapsed == null) {
       const pass = this._passEntry(t, offset, 1, false, loop, common);
       if (seekOffset != null) pass.seekOffset = seekOffset;
       entries.push(pass);
       t = pass.until;
       elapsed = 0;
+      continued = undefined;
     }
-    entries.push(...this._gapAndPass(t, elapsed, entries.length ? 2 : 1, loop, common));
+    entries.push(...this._gapAndPass(t, elapsed, entries.length ? 2 : 1, loop, common, continued));
+    // Only the change itself is scheduled: the gap and pass after it are the run's own.
+    for (let i = 1; i < entries.length; i++) entries[i].scheduled = false;
     return entries;
+  }
+
+  /**
+   * How the gap `gapFrom`, audible at `when`, carries on into `loop` with the
+   * current gap settings: `elapsed`, the media seconds of the new gap already
+   * behind. A silent gap carries on by the time it has run. A preroll gap
+   * keeps the audio it plays (the new gap reaches `loop.a` from the same
+   * media position); `inLoop` when that position is already inside the loop.
+   * `moves` when carrying on cannot keep the audible position (a mode change,
+   * or less gap left than the preroll still needs): a discontinuity.
+   */
+  _carry(gapFrom, when, loop) {
+    const {sec, mode} = this._gap, dt = Math.max(0, when - gapFrom.when);
+    const media = Math.max(0, (gapFrom.elapsed ?? 0) + dt * gapFrom.rate);
+    if (mode !== 'preroll' && gapFrom.mode !== 'preroll') return {elapsed: media, inLoop: false, moves: false};
+    if (mode !== gapFrom.mode) return {elapsed: Math.min(media, sec), inLoop: false, moves: true};
+    const position = gapFrom.offset + dt * gapFrom.rate;
+    if (position >= loop.a - 1e-9 && position < loop.b - WRAP_EPS) return {elapsed: sec, inLoop: true, moves: false};
+    const elapsed = sec - (loop.a - position);
+    return {elapsed: clamp(elapsed, 0, sec), inLoop: false, moves: elapsed < -1e-9};
   }
 
   _passEntry(when, offset, index, continuous, loop, common) {
@@ -639,11 +666,11 @@ export class MultitrackEngine {
   }
 
   /** A gap from `when` with `elapsed` media seconds of it already behind, then the pass after it. */
-  _gapAndPass(when, elapsed, index, loop, common) {
+  _gapAndPass(when, elapsed, index, loop, common, continued = elapsed > 1e-9) {
     const {rate, gapSec: sec, gapMode: mode} = common, remaining = sec - elapsed, entries = [];
     let t = when;
     if (remaining > 1e-9) {
-      const gap = {kind: 'gap', when, until: when + remaining / rate, target: loop.a, mode, sec, elapsed, continued: elapsed > 1e-9, ...common, loop: {...loop}};
+      const gap = {kind: 'gap', when, until: when + remaining / rate, target: loop.a, mode, sec, elapsed, continued, ...common, loop: {...loop}};
       gap.offset = mode === 'preroll' ? loop.a - remaining : loop.a;
       if (mode === 'preroll') {
         gap.audibleFrom = when + Math.max(0, -gap.offset) / rate;
@@ -966,7 +993,10 @@ export class MultitrackEngine {
     // A loop edit that moves the position is a discontinuity; otherwise the
     // position carries on and only the plan from `cut` changes (a gap whose
     // target is still in the loop carries on towards the new start).
-    const moves = this.loop.enabled && position >= this.loop.b - WRAP_EPS && !this._continues(base, this.loop);
+    // A preroll gap that cannot carry on at the same audio (its mode changed,
+    // or it now has less left than the audio needs) is a discontinuity too.
+    const continues = this._continues(base, this.loop);
+    const moves = continues ? this._carry(base, cut, this.loop).moves : this.loop.enabled && position >= this.loop.b - WRAP_EPS;
     if (counted || moves) this._schedule();
     else this._planChange(cut, {offset: position, rate: base.rate, loop: this.loop, seekOffset, scheduled, base});
   }
@@ -1029,7 +1059,8 @@ export class MultitrackEngine {
 
   /** Wraps (arrivals at `b`) and gap starts with `from < when ≤ to`, in time order. */
   _boundariesBetween(from, to) {
-    const out = [];
+    // Nothing plays after a due stopAt: a wrap at the stop is its last boundary.
+    const stop = this.stopAtWhen ?? Infinity, out = [];
     this.plan.forEach((seg, i) => {
       const next = this.plan[i + 1];
       if (seg.kind === 'pass') {
@@ -1043,7 +1074,7 @@ export class MultitrackEngine {
     });
     for (const wrap of this._wrapsBetween(from, to)) out.push({type: 'wrap', event: wrap});
     // At one instant the wrap (end of a pass) comes before the gap it opens.
-    return out.sort((x, y) => x.event.when - y.event.when || (x.type === 'wrap' ? -1 : 1));
+    return out.filter(({type, event}) => (type === 'gap' ? event.when < stop - 1e-9 : event.when <= stop + 1e-9)).sort((x, y) => x.event.when - y.event.when || (x.type === 'wrap' ? -1 : 1));
   }
 
   _wrapsBetween(from, to) {

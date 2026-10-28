@@ -120,6 +120,28 @@ describe.each(PATHS)('$path path', ({rate, preservePitch}) => {
     expect(beats.filter((x) => x.kind === 'rest' && !x.audible)).toHaveLength(4);
   });
 
+  test('a rest turned on during playback with count-in off starts the clicks (and the silent beats with the click off)', async () => {
+    for (const mode of ['countin', 'off']) {
+      metro.configure({countIn: false, mode});
+      engine.setLoop(true, 16, 24);
+      engine.seek(16);
+      await engine.play();
+      clock.advance(1);
+      expect(metro._timer).toBeNull();
+      const before = sounding().length;
+      beats.length = 0;
+      // The '1 bar rest' toggled on mid-pass: a plan change, not a discontinuity.
+      engine.setLoop(true, 16, 24, {gapSec: 2});
+      const gap = gapsOf()[0];
+      advanceTo(gap.until + 0.1);
+      const expected = [0, 0.5, 1, 1.5].map((o) => gap.when + o / rate);
+      expect(times(beats)).toEqual(near(expected));
+      expect(beats.map((x) => [x.kind, x.audible])).toEqual(expected.map(() => ['rest', mode !== 'off']));
+      expect(times(sounding().slice(before))).toEqual(mode === 'off' ? [] : near(expected));
+      engine.pause();
+    }
+  });
+
   test('the continuous click plays in the passes and the count in the gaps', async () => {
     await playLoop({mode: 'always'});
     const L = engine.lookahead, C = 2 / rate, P = 8 / rate;
@@ -189,6 +211,15 @@ test('an unmapped song never clicks in its lead-in gaps', async () => {
   await engine.play({countIn: {duration: 2, beats: []}, audiblePreRoll: true});
   clock.advance(14);
   expect(gapsOf().length).toBeGreaterThan(0);
+  expect(engine.ctx.oscillators).toEqual([]);
+  expect(beats).toEqual([]);
+});
+
+test('an unmapped song never sounds the continuous click', async () => {
+  await setup({rate: 1, preservePitch: false}, mapStore(unmapped), 30);
+  metro.configure({countIn: false, mode: 'always'});
+  await engine.play();
+  clock.advance(3);
   expect(engine.ctx.oscillators).toEqual([]);
   expect(beats).toEqual([]);
 });
