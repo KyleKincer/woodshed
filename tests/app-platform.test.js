@@ -206,6 +206,20 @@ describe('wake lock', () => {
     expect(other.held.value).toBe(false);
   });
 
+  test('stoppedAt: null at Stop counts the grace from the Stop, not from opening', async () => {
+    const lock = make(10);
+    lock.update({stageOpen: true, playing: false, stoppedAt: null});
+    vi.advanceTimersByTime(1000);
+    lock.update({stageOpen: true, playing: true, stoppedAt: null});
+    vi.advanceTimersByTime(20 * MIN);
+    lock.update({stageOpen: true, playing: false, stoppedAt: null});
+    await flush();
+    expect(lock.held.value).toBe(true);
+    vi.advanceTimersByTime(10 * MIN);
+    await flush();
+    expect(lock.held.value).toBe(false);
+  });
+
   test("'always' holds while the Stage is open; closing releases", async () => {
     const lock = make('always');
     lock.update({stageOpen: true, playing: false});
@@ -418,6 +432,7 @@ describe('Media Session', () => {
   });
 
   test('iOS/iPadOS keep-alive: plays inside the gesture, pauses on stop, ended and interrupted', () => {
+    vi.useFakeTimers();
     const play = vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
     const pause = vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:keepalive');
@@ -440,6 +455,8 @@ describe('Media Session', () => {
     transport.setPhase('playing');
     expect(pause).not.toHaveBeenCalled();
     transport.setPhase('stopped');
+    expect(pause).not.toHaveBeenCalled();  // debounced past Again's stop → play
+    vi.runAllTimers();
     expect(pause).toHaveBeenCalledTimes(1);
 
     transport.emit('gesture');
@@ -457,6 +474,37 @@ describe('Media Session', () => {
     expect(transport.count('gesture')).toBe(0);
     expect(transport.count('ended')).toBe(0);
     expect(transport.count('interrupted')).toBe(0);
+  });
+
+  test('iOS keep-alive survives Again with count-in and a field change before the phase event', () => {
+    vi.useFakeTimers();
+    const play = vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    const pause = vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:keepalive');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const transport = fakeTransport('stopped');
+    const off = startMediaSession({transport, session: {song}, registry: createRegistry(), platform: {isIOS: true, isIPad: true}});
+    transport.emit('gesture');
+    transport.setPhase('playing');
+    // Again while playing with count-in: gesture, then stopped → counting → playing.
+    transport.emit('gesture');
+    transport.setPhase('stopped');
+    transport.setPhase('counting');
+    transport.setPhase('playing');
+    vi.runAllTimers();
+    expect(pause).not.toHaveBeenCalled();
+    // Again whose stop and play straddle a macrotask: the element is restarted on re-entry.
+    transport.emit('gesture');
+    transport.setPhase('stopped');
+    vi.runAllTimers();
+    expect(pause).toHaveBeenCalledTimes(1);
+    const plays = play.mock.calls.length;
+    transport.setPhase('counting');
+    expect(play).toHaveBeenCalledTimes(plays + 1);
+    vi.runAllTimers();
+    expect(pause).toHaveBeenCalledTimes(1);
+    off();
+    vi.useRealTimers();
   });
 
   test('no keep-alive element off iOS', () => {

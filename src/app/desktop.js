@@ -153,17 +153,30 @@ export function createDesktop({
     inputs.statusError = false;
     recompute();
     pairPromise = (async () => {
+      let ok = false, error = null;
       try {
         const mod = await companion();
         await mod.initializeLocalDesktop();
+        ok = true;
+      } catch (err) {
+        error = err;
+      }
+      pairPromise = null;
+      if (gen !== readyGen) {
+        // The processor restarted while this attempt ran: its port/token are
+        // stale. Discard the result and pair with the new process instead.
+        if (inputs.main?.phase === 'ready') return pair({force: true});
+        recompute();
+        return processor.value;
+      }
+      if (ok) {
         inputs.pairing = 'ok';
         pairedGen = gen;
-      } catch (error) {
+      } else {
         inputs.pairing = 'failed';
         inputs.pairError = String(error?.message ?? error ?? '');
       }
       recompute();
-      pairPromise = null;
       if (inputs.pairing === 'ok') await refreshStatus();
       return processor.value;
     })();
@@ -181,7 +194,12 @@ export function createDesktop({
     recompute();
     if (inputs.main.phase === 'ready' && !wasReady) {
       readyGen++;
-      if (started) void pair();
+      if (pairPromise) {
+        // An attempt for the previous process is still running; it re-pairs
+        // when it settles. Show "Connecting…" meanwhile.
+        inputs.pairing = 'pending';
+        recompute();
+      } else if (started) void pair();
     }
   }
 

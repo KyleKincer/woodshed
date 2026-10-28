@@ -52,8 +52,8 @@ export const ROUTES = Object.freeze({
 
 /**
  * Spec §3.6, every row. `primary`/`secondary` are LABELS values; `details: true`
- * marks a row whose spec action is `Details` (the disclosure every error has),
- * so the UI opens Details as the first affordance.
+ * marks a row whose spec *primary* is `Details` (the disclosure every error has;
+ * only disk full), so the UI opens Details as the first affordance.
  * `{used}`/`{limit}` are filled from the storage numbers when known.
  */
 export const ROWS = Object.freeze({
@@ -75,7 +75,8 @@ export const ROWS = Object.freeze({
   processorOffline: {
     cause: 'Processor offline at submit (inline)',
     sentence: 'Woodshed’s processor isn’t running on this computer.',
-    primary: LABELS.restartProcessor, details: true,
+    // Spec: Primary Restart processor, Secondary Details (the disclosure every error has).
+    primary: LABELS.restartProcessor,
   },
   unreadable: {
     cause: 'Unreadable file',
@@ -145,7 +146,7 @@ export const SENTENCES = Object.freeze({
   lookupInvalid: 'That isn’t a link or a search Woodshed can use.',
   artworkExpired: 'That cover upload took too long. Upload it again.',
   codec: 'This browser can’t play Woodshed’s audio format. Use Chrome, Edge, Firefox or Safari 15 or later.',
-  offline: 'You’re offline. Woodshed will reconnect when you’re back online.',
+  offline: 'You’re offline. Songs you’ve opened recently can still play.',
 });
 
 /** The "Something went wrong" sentence per describeError context. */

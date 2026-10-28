@@ -49,7 +49,7 @@ const SPEC_ROWS = [
   {row: 'unavailable', input: () => failedJob('unavailable'),
     sentence: 'This video isn’t available. It may be private, removed or blocked in your region.', primary: 'Search for another version', secondary: 'Dismiss'},
   {row: 'processorOffline', input: () => ({code: 'processor_offline', message: 'connect ECONNREFUSED 127.0.0.1'}), context: 'add',
-    sentence: 'Woodshed’s processor isn’t running on this computer.', primary: 'Restart processor', secondary: undefined, detailsFirst: true},
+    sentence: 'Woodshed’s processor isn’t running on this computer.', primary: 'Restart processor', secondary: undefined},
   {row: 'unreadable', input: () => failedJob('unreadable', {source: {type: 'upload', value: 'notes.mp3'}}),
     sentence: 'This file couldn’t be read as audio.', primary: 'Choose another file', secondary: 'Dismiss'},
   {row: 'diskFull', input: () => failedJob('disk_full'),
@@ -250,6 +250,11 @@ describe('codec copy', () => {
     expect(codecErrorMessage).toBe('This browser can’t play Woodshed’s audio format. Use Chrome, Edge, Firefox or Safari 15 or later.');
     expect(codecErrorMessage).not.toMatch(/flac/i);
     expect(describeError({code: 'codec'}, {context: 'load'}).sentence).toBe(codecErrorMessage);
+  });
+
+  test('offline copy is the spec sentence', () => {
+    expect(SENTENCES.offline).toBe('You’re offline. Songs you’ve opened recently can still play.');
+    expect(describeError({code: 'offline'}, {context: 'load'}).sentence).toBe(SENTENCES.offline);
   });
 });
 

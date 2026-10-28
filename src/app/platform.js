@@ -250,8 +250,9 @@ export function createWakeLock({
     /** Feed the Stage's state; `stoppedAt` defaults to the moment playing turned false (or the Stage opened). */
     update({stageOpen = inputs.stageOpen, playing = inputs.playing, stoppedAt} = {}) {
       if (stageOpen && !inputs.stageOpen) { openedAt = now(); denied = false; inputs.stoppedAt = null; }
-      if (!playing && inputs.playing && stoppedAt === undefined) inputs.stoppedAt = now();
-      if (stoppedAt !== undefined) inputs.stoppedAt = stoppedAt;
+      const given = Number.isFinite(stoppedAt) ? stoppedAt : null;
+      if (given != null) inputs.stoppedAt = given;
+      else if (!playing && inputs.playing) inputs.stoppedAt = now();
       inputs.stageOpen = !!stageOpen;
       inputs.playing = !!playing;
       evaluate();
@@ -370,13 +371,38 @@ export function startMediaSession({
       el.preload = 'auto';
       el.setAttribute('playsinline', '');
       el.dataset.keepAlive = '';
-      const start = () => { safe(() => el.play()?.catch?.(() => {})); };
-      const pause = () => { safe(() => el.pause()); };
+      // `active`: the element should be playing. Safari only lets the first
+      // play() through inside a gesture; once activated, later play() calls
+      // (re-entering playing/counting) are allowed.
+      let active = false, pending = null;
+      const cancel = () => { if (pending != null) { clearTimeout(pending); pending = null; } };
+      const start = () => {
+        cancel();
+        active = true;
+        safe(() => el.play()?.catch?.(() => {}));
+      };
+      const pause = () => {
+        cancel();
+        if (!active) return;
+        active = false;
+        safe(() => el.pause());
+      };
+      const wanted = () => playing() || armedOf(transport);
       offs.push(transport.on('gesture', start));
       offs.push(transport.on('ended', pause));
       offs.push(transport.on('interrupted', pause));
       if (transport.snapshot?.subscribe) {
-        offs.push(transport.snapshot.subscribe(() => { if (!playing() && !armedOf(transport)) pause(); }));
+        let was = playing();
+        offs.push(transport.snapshot.subscribe(() => {
+          const is = playing(), entered = is && !was;
+          was = is;
+          if (is) { if (entered && !active) start(); else if (active) cancel(); return; }
+          // Leaving playing: debounce, so Again's stop → count-in → play (and a
+          // field change before the engine's state event) never stops it.
+          if (active && !wanted() && pending == null) {
+            pending = setTimeout(() => { pending = null; if (!wanted()) pause(); }, 0);
+          }
+        }));
       }
       offs.push(() => { pause(); el.removeAttribute('src'); safe(() => url.revokeObjectURL(src)); });
     }

@@ -176,6 +176,48 @@ describe('with the bridge', () => {
     expect(fixture.calls().filter(c => c.method === 'restartProcessor')).toHaveLength(1);
   });
 
+  test('restart during pending pairing re-pairs against the new processor', async () => {
+    let port = 1;
+    const paired = [];
+    let release;
+    const {desktop, fixture, companion, processor} = setup({fx: {processor: 'starting'}, init: async () => {
+      const p = port;
+      if (p === 1) await new Promise(r => { release = r; });
+      paired.push(p);
+    }});
+    await desktop.start();
+    fixture.processorState({phase: 'ready'});
+    await flush();
+    expect(companion.initializeLocalDesktop).toHaveBeenCalledTimes(1);
+    fixture.processorState({phase: 'restarting'});
+    fixture.processorState({phase: 'starting'});
+    port = 2;
+    fixture.processorState({phase: 'ready'});
+    expect(processor.value.phase).toBe('pairing');
+    release();
+    await flush(30);
+    expect(companion.initializeLocalDesktop).toHaveBeenCalledTimes(2);
+    expect(paired).toEqual([1, 2]);
+    expect(processor.value.phase).toBe('ready');
+  });
+
+  test('a stale pairing failure after a restart is discarded; the new process pairs', async () => {
+    let calls = 0, reject;
+    const {desktop, fixture, companion, processor} = setup({fx: {processor: 'starting'}, init: async () => {
+      calls++;
+      if (calls === 1) await new Promise((_, rj) => { reject = rj; });
+    }});
+    await desktop.start();
+    fixture.processorState({phase: 'ready'});
+    await flush();
+    fixture.processorState({phase: 'stopped', exitCode: 1});
+    fixture.processorState({phase: 'ready'});
+    reject(new Error('ECONNREFUSED'));
+    await flush(30);
+    expect(companion.initializeLocalDesktop).toHaveBeenCalledTimes(2);
+    expect(processor.value.phase).toBe('ready');
+  });
+
   test('a pairing failure surfaces as pair-failed; Try again re-runs it', async () => {
     let fail = true;
     const {desktop, companion, processor} = setup({init: async () => { if (fail) throw new Error('Device limit reached.'); }});
