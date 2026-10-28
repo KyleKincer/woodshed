@@ -120,6 +120,25 @@ describe('Segmented', () => {
     expect(onChange).toHaveBeenCalledTimes(calls);   // choosing the chosen option is not a change
   });
 
+  it('arrows from a focused disabled option go to its neighbour in that direction', () => {
+    const abc = [{value: 'a', label: 'A'}, {value: 'b', label: 'B', disabled: true, reason: 'Not here.'}, {value: 'c', label: 'C'}];
+    const s = mount(Segmented({label: 'Pick', options: abc, value: 'a'}));
+    radios(s)[1].click();   // a click focuses the disabled option and shows its reason
+    radios(s)[1].focus();
+    keydown('ArrowRight');
+    expect(s.value).toBe('c');
+    s.set({value: 'c'});
+    radios(s)[1].focus();
+    keydown('ArrowLeft');
+    expect(s.value).toBe('a');
+    // At an end with no enabled option that way, it wraps.
+    const ab = mount(Segmented({label: 'Pick two', options: [{value: 'a', label: 'A'}, {value: 'b', label: 'B', disabled: true}], value: 'a'}));
+    radios(ab)[1].focus();
+    keydown('ArrowRight');
+    expect(ab.value).toBe('a');
+    expect(document.activeElement).toBe(radios(ab)[0]);
+  });
+
   it('never selects a disabled option and shows its reason', () => {
     const onChange = vi.fn();
     const s = mount(Segmented({label: 'Stems', options, value: 'mute', onChange}));
@@ -441,6 +460,32 @@ describe('Slider', () => {
     expect(s.el.hasAttribute('data-dragging')).toBe(false);
   });
 
+  it('a cancelled drag puts back the value from before the press and commits nothing', () => {
+    const onInput = vi.fn(), onChange = vi.fn();
+    const s = mount(Slider({label: 'Volume', value: 0.5, onInput, onChange}));
+    setRect(s.control, {left: 0, top: 0, width: 100, height: 32});
+    pointer(s.control, 'pointerdown', {x: 90, y: 10, pointerType: 'touch'});
+    expect(s.value).toBe(0.9);
+    pointer(s.control, 'pointercancel', {x: 90, y: 10, pointerType: 'touch'});   // the browser took it for a scroll
+    expect(s.value).toBe(0.5);
+    expect(onInput).toHaveBeenLastCalledWith(0.5);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(s.dragging).toBe(false);
+    expect(s.el.hasAttribute('data-dragging')).toBe(false);
+    // Capture lost with no pointerup before it is a cancel too.
+    pointer(s.control, 'pointerdown', {x: 20, y: 10});
+    pointer(s.control, 'pointermove', {x: 30, y: 10});
+    pointer(s.control, 'lostpointercapture', {x: 30, y: 10});
+    expect(s.value).toBe(0.5);
+    expect(onChange).not.toHaveBeenCalled();
+    // A cancel without any change reports nothing.
+    onInput.mockClear();
+    pointer(s.control, 'pointerdown', {x: 50, y: 10});
+    pointer(s.control, 'pointercancel', {x: 50, y: 10});
+    expect(onInput).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('vertical sliders go up; disabled sliders ignore input', () => {
     const s = mount(Slider({label: 'Level', value: 0, orientation: 'vertical', step: 0.25}));
     setRect(s.control, {left: 0, top: 0, width: 32, height: 100});
@@ -516,6 +561,25 @@ describe('Fader', () => {
     f.reset();
     expect(f.value).toBe(1);
     expect(onChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('pad: a cancelled level drag puts the level back and commits nothing', () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    setRect(host, {left: 0, top: 0, width: 120, height: 200});
+    const onInput = vi.fn(), onChange = vi.fn();
+    const f = Fader({label: 'Bass level', variant: 'pad', host, value: 0.5, onInput, onChange});
+    host.append(f.el);
+    mounted.push(f);
+    pointer(host, 'pointerdown', {x: 60, y: 100, pointerType: 'touch'});
+    pointer(host, 'pointermove', {x: 60, y: 60, pointerType: 'touch'});
+    expect(f.value).toBe(0.7);
+    pointer(host, 'pointercancel', {x: 60, y: 60, pointerType: 'touch'});
+    expect(f.value).toBe(0.5);
+    expect(onInput).toHaveBeenLastCalledWith(0.5);
+    expect(host.style.getPropertyValue('--ui-fader-level')).toBe('0.5');
+    expect(onChange).not.toHaveBeenCalled();
+    expect(f.dragging).toBe(false);
   });
 });
 
@@ -602,6 +666,9 @@ describe('fields', () => {
     s.set({value: 2});
     expect(select.selectedIndex).toBe(0);
     expect(s.el.querySelector('label').htmlFor).toBe(select.id);
+    s.set({value: 'not an option'});
+    expect(select.selectedIndex).toBe(-1);
+    expect(s.value).toBe(undefined);   // nothing selected reads as nothing, not the first option
   });
 
   it('Textarea: commits on debounce idle, blur and flush()', () => {
@@ -629,6 +696,39 @@ describe('fields', () => {
     expect(onCommit).toHaveBeenCalledTimes(3);
     t.flush();
     expect(onCommit).toHaveBeenCalledTimes(3);
+  });
+
+  it('set({value}) keeps uncommitted typing (Textarea and TextField) and still commits it', () => {
+    vi.useFakeTimers(FAKE);
+    const onCommit = vi.fn();
+    const t = mount(Textarea({label: 'Notes', value: 'hello', debounceMs: 600, onCommit}));
+    t.input.focus();
+    t.input.value = 'hello world';
+    t.input.dispatchEvent(new Event('input', {bubbles: true}));
+    t.set({value: 'hello', status: 'saved'});   // a re-render passing the stored value
+    expect(t.input.value).toBe('hello world');
+    t.input.blur();
+    expect(onCommit).toHaveBeenCalledWith('hello world');
+    // With nothing pending the new value is taken.
+    t.set({value: 'from elsewhere'});
+    expect(t.input.value).toBe('from elsewhere');
+    // The debounce commit keeps running through a set().
+    t.input.value = 'typed';
+    t.input.dispatchEvent(new Event('input', {bubbles: true}));
+    t.set({value: 'from elsewhere', status: 'saving'});
+    vi.advanceTimersByTime(600);
+    expect(onCommit).toHaveBeenLastCalledWith('typed');
+
+    const onField = vi.fn();
+    const f = mount(TextField({label: 'Title', value: 'Song', onCommit: onField}));
+    f.input.focus();
+    f.input.value = 'Song 2';
+    f.set({value: 'Song', status: 'saved'});
+    expect(f.input.value).toBe('Song 2');
+    f.input.blur();
+    expect(onField).toHaveBeenCalledWith('Song 2');
+    f.set({value: 'Renamed'});
+    expect(f.input.value).toBe('Renamed');
   });
 
   describe('ChipInput', () => {
@@ -695,6 +795,33 @@ describe('fields', () => {
       c.set({caseInsensitive: false, values: ['Funk'], maxItems: 30});
       type('funk,');
       expect(chipLabels()).toEqual(['Funk', 'funk']);
+    });
+
+    it('keeps refused typed text in the input beside the note', () => {
+      c.set({values: ['a', 'b', 'c', 'd']});
+      c.input.focus();
+      type('important');
+      keydown('Enter');
+      expect(c.input.value).toBe('important');
+      expect(c.el.querySelector('.ui-field-note').textContent).toBe('Up to 4.');
+      c.input.blur();
+      expect(c.input.value).toBe('important');
+      c.set({values: ['a']});
+      c.input.focus();
+      keydown('Enter');
+      expect(chipLabels()).toEqual(['a', 'important']);
+      expect(c.input.value).toBe('');
+    });
+
+    it('puts no maxlength on the input, so a pasted list is never cut before the split', () => {
+      const all = mount(ChipInput({label: 'Parts', values: []}));
+      expect(all.input.hasAttribute('maxlength')).toBe(false);
+      const list = 'Guitar, Bass, Drums, Keys, Vocals, Percussion, Strings, Brass, Woodwinds, Synth';
+      expect(list.length).toBeGreaterThan(60);
+      all.input.value = `${list},`;
+      all.input.dispatchEvent(new Event('input', {bubbles: true}));
+      expect(all.value).toEqual(list.split(', '));
+      expect(all.input.value).toBe('');
     });
   });
 });

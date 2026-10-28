@@ -36,6 +36,7 @@
     font-size: var(--fs-12);
     font-weight: var(--fw-bold);
   }
+  @media (pointer: coarse) { .ui-chip-badge { font-size: var(--fs-14); } }   /* spec §8.1 coarse minimum */
   .ui-chip-remove {
     display: inline-grid;
     place-items: center;

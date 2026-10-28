@@ -5,10 +5,12 @@
 //   TextField({label, value, hint, error, placeholder, maxLength, pattern, inputmode, autocomplete,
 //              type = 'text', onInput(value), onCommit(value), status, size, disabled, …common props})
 //     onCommit runs on Enter and on blur, only when the value differs from the last committed one.
+//     set({value}) moves the committed baseline but keeps text the user has typed and not committed.
 //     status: null | 'saving' | 'saved' | {error}: inline after the field ("Saving…", "Saved", the
 //     error); "Saved" fades after SAVED_MS (2 s).
 //   Select({label, options: [{value, label, disabled?}] | [{label, options: […]}], value, onChange(value),
-//           hint, error, size, disabled, …common props})        a native <select>, styled
+//           hint, error, size, disabled, …common props})        a native <select>, styled;
+//     `value` is undefined while no option is selected
 //   Textarea({label, value, rows = 3, maxLength, debounceMs = 600, onInput(value), onCommit(value), status,
 //             hint, error, placeholder, …common props}) → {…, flush()}
 //     onCommit runs when typing has been idle for debounceMs, on blur and on flush(), only on change.
@@ -16,7 +18,8 @@
 //              hint, placeholder, …common props})
 //     A value is committed on Enter, a comma (typed or pasted) or blur; Backspace in the empty input
 //     removes the last chip; every chip has a ✕ named "Remove <value>". Duplicates (case-insensitive
-//     by default), values over maxLength and values past maxItems are refused with a polite note.
+//     by default), values over maxLength and values past maxItems are refused with a polite note;
+//     refused typed text stays in the input.
 // Every factory returns {el, input, value, set(partial), destroy()} (`input` is the native control).
 
 import '../styles/primitives/field.css';
@@ -149,8 +152,11 @@ export function TextField(props = {}) {
     set(partial = {}) {
       p = {...p, ...partial};
       if ('value' in partial) {
+        // Uncommitted typing wins over a re-render that passes the stored value: only the
+        // baseline moves, so blur or Enter still commits what the user typed.
+        const dirty = input.value !== committed;
         committed = String(partial.value ?? '');
-        if (input.value !== committed) input.value = committed;
+        if (!dirty && input.value !== committed) input.value = committed;
       }
       if ('status' in partial) f.status(partial.status);
       render();
@@ -217,7 +223,7 @@ export function Select(props = {}) {
   return {
     el: f.el,
     input: select,
-    get value() { return flat[Number(select.value)]; },
+    get value() { return select.selectedIndex < 0 ? undefined : flat[Number(select.value)]; },
     set(partial = {}) { p = {...p, ...partial}; render(); },
     destroy() { ac.abort(); f.dispose(); },
   };
@@ -277,10 +283,10 @@ export function Textarea(props = {}) {
     set(partial = {}) {
       p = {...p, ...partial};
       if ('value' in partial) {
-        clearTimeout(timer);
-        timer = null;
+        // Uncommitted typing wins (the pending commit keeps running); otherwise take the new value.
+        const dirty = area.value !== committed;
         committed = String(partial.value ?? '');
-        if (area.value !== committed) area.value = committed;
+        if (!dirty && area.value !== committed) area.value = committed;
       }
       if ('status' in partial) f.status(partial.status);
       render();
@@ -362,11 +368,13 @@ export function ChipInput(props = {}) {
     list.hidden = !values.length;
   }
 
+  /** Commits the typed text; refused text (duplicate, too long, full) stays in the input beside the note. */
   function commitInput() {
     const text = input.value;
     if (!text.trim()) { input.value = ''; return false; }
-    input.value = '';
-    return add([text]);
+    const added = add([text]);
+    if (added) input.value = '';
+    return added;
   }
 
   input.addEventListener('keydown', e => {
@@ -395,7 +403,8 @@ export function ChipInput(props = {}) {
 
   function render() {
     f.render(p);
-    setAttr(input, 'maxlength', p.maxLength);
+    // No maxlength here: the input also takes pasted lists, which the browser would cut before the
+    // comma split. add() checks each value's length instead.
     setAttr(input, 'placeholder', p.placeholder);
     setAttr(input, 'disabled', !!p.disabled);
   }

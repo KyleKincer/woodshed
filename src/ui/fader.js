@@ -115,15 +115,18 @@ export function Fader(props = {}) {
       }
       setLevel(drag.value + (dy / drag.height) * (p.max - p.min), {commit: false});
     }, hopts);
-    const end = e => {
+    // pointerup commits a level drag; pointercancel puts back the level from before it.
+    const end = (e, commit) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
-      const was = drag.active;
+      const {active, value} = drag;
       drag = null;
       host.removeAttribute('data-level-drag');
-      if (was) p.onChange?.(slider.value);
+      if (!active) return;
+      if (commit) p.onChange?.(slider.value);
+      else setLevel(value, {commit: false});
     };
-    host.addEventListener('pointerup', end, hopts);
-    host.addEventListener('pointercancel', end, hopts);
+    host.addEventListener('pointerup', e => end(e, true), hopts);
+    host.addEventListener('pointercancel', e => end(e, false), hopts);
   }
 
   bindHost();

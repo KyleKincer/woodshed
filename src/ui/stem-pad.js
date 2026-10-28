@@ -135,7 +135,8 @@ export function StemPad(props = {}) {
       fader.reset();
       return;
     }
-    clearPending();
+    // A tap too far from the pending one is not its double: the pending tap acts now, then this one waits.
+    if (pending) { clearPending(); act(); }
     pending = {x: e.clientX, y: e.clientY, timer: setTimeout(() => { pending = null; act(); }, DOUBLE_TAP_MS)};
   }, opts);
   el.addEventListener('pointercancel', e => {

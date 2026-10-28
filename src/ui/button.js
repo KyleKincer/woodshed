@@ -92,14 +92,28 @@ export function requireLabel(who, label) {
 
 const hasLabel = value => typeof value === 'string' && value.trim() !== '';
 
-// Display peers (U3: tooltip.js, kbd.js, progress.js) are loaded when present, so this module
-// builds before they exist; without them a native title and a plain <kbd> stand in.
+// Display peers (U3) by their contract paths: tooltip.js `tooltip(el, {text, kbd})` → off,
+// kbd.js `Kbd({keys})` and progress.js `ProgressRing({value, size, label})`. They load through
+// import.meta.glob (D2's mechanism) so this module builds and its harness runs before U3 merges;
+// the stand-ins below (a native title, a plain <kbd>, HoldButton's own ring) exist only until then.
+// I0B replaces the glob with static imports and deletes the stand-ins and setPeers (handoff ticket).
 const PEERS = import.meta.glob(['./tooltip.js', './kbd.js', './progress.js'], {eager: true});
-export const peers = Object.freeze({
-  tooltip: PEERS['./tooltip.js']?.tooltip ?? null,
-  Kbd: PEERS['./kbd.js']?.Kbd ?? null,
-  ProgressRing: PEERS['./progress.js']?.ProgressRing ?? null,
+const resolvePeers = (m = {}) => Object.freeze({
+  tooltip: m.tooltip ?? null,
+  Kbd: m.Kbd ?? null,
+  ProgressRing: m.ProgressRing ?? null,
 });
+export let peers = resolvePeers({
+  tooltip: PEERS['./tooltip.js']?.tooltip,
+  Kbd: PEERS['./kbd.js']?.Kbd,
+  ProgressRing: PEERS['./progress.js']?.ProgressRing,
+});
+/** Tests only: swaps the display peers ({tooltip, Kbd, ProgressRing}, contract shapes; {} for none). Returns restore. */
+export function setPeers(next) {
+  const prev = peers;
+  peers = resolvePeers(next);
+  return () => { peers = prev; };
+}
 
 /** A tooltip on hover and focus with an optional key-cap. Returns `off`. */
 export function attachTooltip(el, {text, kbd}) {

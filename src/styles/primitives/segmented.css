@@ -56,4 +56,5 @@
     color: var(--ink-3);
     white-space: normal;
   }
+  @media (pointer: coarse) { .ui-segmented-reason { font-size: var(--fs-14); } }   /* spec §8.1 coarse minimum */
 }

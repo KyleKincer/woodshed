@@ -124,13 +124,26 @@ module.exports = [
       await press(hold, 150);
       ran = await log(page);
       t.expect(ran.filter(x => x === 'hold:hint').length === 1 && ran.filter(x => x === 'hold:activate').length === 1, `playing: a short press only hints (${ran})`);
+      // The ring in use (U3's ProgressRing, or the stand-in before U3 merges): hidden at rest,
+      // shown and part-filled mid-hold. Its fill fraction is read from whichever one is there.
+      const ringState = el => {
+        const ring = el.querySelector('.ui-hold-icon > :not(.ui-icon)');
+        const stand = el.querySelector('.ui-hold-ring-fill');
+        const peer = el.querySelector('.ui-progress-ring-fill');
+        const fill = stand ? 1 - Number(stand.getAttribute('stroke-dashoffset'))
+          : peer ? Number.parseFloat(peer.getAttribute('stroke-dasharray')) / 100 : NaN;
+        return {holding: el.hasAttribute('data-holding'), ring: !!ring, visible: ring ? getComputedStyle(ring).visibility : 'none', fill};
+      };
+      const rest = await hold.evaluate(ringState);
+      t.expect(rest.ring && rest.visible === 'hidden', `no ring shows at rest (${JSON.stringify(rest)})`);
       const box = await hold.boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
       await sleep(300);
-      const midHold = await hold.evaluate(el => ({holding: el.hasAttribute('data-holding'), offset: Number(el.querySelector('.ui-hold-ring-fill')?.getAttribute('stroke-dashoffset') ?? 'NaN')}));
+      const midHold = await hold.evaluate(ringState);
       t.expect(midHold.holding, 'the button shows the hold while it runs');
-      if (!Number.isNaN(midHold.offset)) t.expect(midHold.offset > 0.2 && midHold.offset < 0.8, `the ring is part-filled mid-hold (${midHold.offset})`);
+      t.expect(midHold.visible === 'visible', `the ring shows mid-hold (${midHold.visible})`);
+      t.expect(midHold.fill > 0.2 && midHold.fill < 0.8, `the ring is part-filled mid-hold (${midHold.fill})`);
       await sleep(450);
       await page.mouse.up();
       ran = await log(page);

@@ -132,6 +132,17 @@ describe('StemPad gestures', () => {
     expect(pad.level).toBe(1);
   });
 
+  it('two quick taps far apart are two taps, not a lost one', () => {
+    make();
+    tapPad({x: 10, y: 10});
+    vi.advanceTimersByTime(150);
+    tapPad({x: 60, y: 10});   // beyond DOUBLE_TAP_SLOP: not a double tap
+    expect(calls.toggle).toBe(1);   // the first tap acts at once
+    vi.advanceTimersByTime(1000);
+    expect(calls.toggle).toBe(2);
+    expect(calls.levels).toEqual([]);
+  });
+
   it('Shift-click solos at once', () => {
     make();
     tapPad({shiftKey: true, type: 'mouse'});

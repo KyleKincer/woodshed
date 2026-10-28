@@ -2,7 +2,8 @@
 // input[type=range]. When focused it consumes the arrow keys and Home/End only
 // (data-consume-keys); Space, digits, letters and PageUp/PageDown always reach the registry, so a
 // focused slider can never swallow Play. Shift+arrow moves ten steps. Pointer drags use pointer
-// capture: onInput(v) while moving, onChange(v) on release; a key step calls both.
+// capture: onInput(v) while moving, onChange(v) on release; a cancelled drag restores the value
+// from before the press (onInput reports it) and never calls onChange. A key step calls both.
 //
 //   Slider({value, min = 0, max = 1, step = 0.01, format(v), onInput(v), onChange(v), label,
 //           showValue = true, orientation = 'horizontal' | 'vertical', disabled, pointer = true,
@@ -51,7 +52,7 @@ export function Slider(props = {}) {
   el.append(control, out);
 
   let value = clamp(p.value ?? p.min);
-  let drag = null;   // {pointerId}
+  let drag = null;   // {pointerId, start}: start is the value before the press
   let prevCommon = {};
 
   function clamp(v) { return snapValue(v, p); }
@@ -93,7 +94,7 @@ export function Slider(props = {}) {
     if (disabled() || p.pointer === false || !e.isPrimary || e.button !== 0) return;
     e.preventDefault();
     control.focus({preventScroll: true});
-    drag = {pointerId: e.pointerId};
+    drag = {pointerId: e.pointerId, start: value};
     control.setPointerCapture?.(e.pointerId);
     el.setAttribute('data-dragging', '');
     const v = fromEvent(e);
@@ -104,16 +105,21 @@ export function Slider(props = {}) {
     const v = fromEvent(e);
     if (v != null && apply(v)) p.onInput?.(value);
   }, opts);
-  const end = e => {
+  // pointerup commits. A cancelled gesture (pointercancel, or capture lost with no pointerup, e.g.
+  // the browser taking a touch for a scroll) puts back the value from before the press and
+  // commits nothing.
+  const finish = (e, commit) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
+    const {start} = drag;
     drag = null;
     el.removeAttribute('data-dragging');
-    control.releasePointerCapture?.(e.pointerId);
-    p.onChange?.(value);
+    if (control.hasPointerCapture?.(e.pointerId)) control.releasePointerCapture(e.pointerId);
+    if (commit) p.onChange?.(value);
+    else if (apply(start)) p.onInput?.(value);
   };
-  control.addEventListener('pointerup', end, opts);
-  control.addEventListener('pointercancel', end, opts);
-  control.addEventListener('lostpointercapture', end, opts);
+  control.addEventListener('pointerup', e => finish(e, true), opts);
+  control.addEventListener('pointercancel', e => finish(e, false), opts);
+  control.addEventListener('lostpointercapture', e => finish(e, false), opts);
 
   control.addEventListener('keydown', e => {
     if (disabled() || e.ctrlKey || e.metaKey || e.altKey) return;

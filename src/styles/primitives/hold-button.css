@@ -26,4 +26,10 @@
   .ui-hold-button[data-holding] .ui-hold-ring-track { stroke: var(--line-strong); }
   .ui-hold-button[data-holding] .ui-hold-ring-fill { stroke: var(--accent); }
   .ui-hold-button[data-holding] { border-color: var(--accent); }
+
+  /* At rest no ring shows, whichever ring is in use (the ProgressRing peer or the stand-in above). */
+  .ui-hold-button:not([data-holding]) .ui-hold-icon > :not(.ui-icon) { visibility: hidden; }
+  /* The fill follows the hold frame by frame; the peer's own easing would trail it. */
+  .ui-hold-icon .ui-progress-ring-fill { transition: none; }
+  .ui-hold-button[data-holding] .ui-hold-icon .ui-progress-ring-fill { stroke: var(--accent); }
 }

@@ -61,6 +61,12 @@
     font-size: var(--fs-12);
     color: var(--ink-3);
   }
+  /* Coarse-pointer chrome reads at 14 px at least (spec §8.1). */
+  @media (pointer: coarse) {
+    .ui-field-hint,
+    .ui-field-count,
+    .ui-field-note { font-size: var(--fs-14); }
+  }
   .ui-field-count { justify-self: end; font-variant-numeric: tabular-nums; }
   .ui-field-note:empty { display: none; }
   .ui-field-error {

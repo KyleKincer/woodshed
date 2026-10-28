@@ -70,7 +70,7 @@
   .ui-stem-pad-word {
     grid-column: 1 / -1;
     grid-row: 3;
-    font-size: var(--fs-14);
+    font-size: 0.9375rem;   /* 15 px, the Stage minimum (spec §8.1); controls never scale with Distance */
     font-weight: var(--fw-heavy);
     letter-spacing: .06em;
     color: var(--ink-2);
@@ -81,7 +81,7 @@
     flex: none;
     min-height: calc(var(--h-sm) + 1px);
     border-top: 1px solid var(--line);
-    font-size: var(--fs-14);
+    font-size: 0.9375rem;   /* 15 px, the Stage minimum */
   }
   .ui-stem-pad-level .ui-slider-value { color: var(--ink-2); }
 

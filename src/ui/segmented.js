@@ -111,9 +111,13 @@ export function Segmented(props = {}) {
     const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
     const rtl = getComputedStyle?.(el)?.direction === 'rtl' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
     const step = (forward ? 1 : -1) * (rtl ? -1 : 1);
-    let pos = enabled.indexOf(from);
-    if (pos < 0) pos = step > 0 ? -1 : 0;
-    const next = enabled[(pos + step + enabled.length) % enabled.length];
+    // From a disabled option (focused by a click that showed its reason) go to the nearest enabled
+    // neighbour in the direction of travel, wrapping only when there is none that way.
+    let next;
+    const pos = enabled.indexOf(from);
+    if (pos >= 0) next = enabled[(pos + step + enabled.length) % enabled.length];
+    else if (step > 0) next = enabled.find(i => i > from) ?? enabled[0];
+    else next = enabled.findLast(i => i < from) ?? enabled[enabled.length - 1];
     choose(options[next], 'key');
     buttons.get(keyOf(options[next].value))?.btn.focus();
   }, {signal: ac.signal});
