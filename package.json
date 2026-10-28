@@ -22,7 +22,8 @@
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",
     "desktop:package": "npm run build && npm run desktop:prepare && electron-builder --publish never",
-    "test:desktop": "node --test desktop/*.test.cjs"
+    "test:desktop": "node --test desktop/*.test.cjs",
+    "fixture": "vite --config tests/fixture/vite.config.mjs --port 5190"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
