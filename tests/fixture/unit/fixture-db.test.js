@@ -49,13 +49,15 @@ describe('handler modules (db/index.js)', () => {
   it('the convex/browser stub reaches the same handlers (query, mutation, onUpdate)', async () => {
     const client = new ConvexClient('https://fixture.convex.invalid');
     const seen = [];
-    const off = client.onUpdate('songs:get', {id: 'quiet'}, v => seen.push(v.title));
+    const off = client.onUpdate('songs:get', {id: 'shuffle'}, v => seen.push(`${v.title.split(' (')[0]}:${v.recordingUnconfirmed}`));
     await tick();
-    await client.mutation('songs:rename', {id: 'quiet', title: 'Quieter Hours'});
+    await client.mutation('songs:confirmRecording', {id: 'shuffle'});
     await tick(); await tick();
-    expect(seen).toEqual(['Quiet Hours', 'Quieter Hours']);
+    expect(seen).toEqual(['Sunday Shuffle:true', 'Sunday Shuffle:false']);
     off();
-    await client.mutation('songs:rename', {id: 'quiet', title: 'Ignored'});
+    // A change after unsubscribing (one the mutation's notify would otherwise report) is not seen.
+    runtime.db.songs.find(s => s.id === 'shuffle').title = 'Ignored';
+    await client.mutation('songs:confirmRecording', {id: 'shuffle'});
     await tick();
     expect(seen).toHaveLength(2);
   });
@@ -98,9 +100,10 @@ describe('persistence (sessionStorage["fx-db"])', () => {
     expect(stored.version).toBe(SEED_VERSION);
     expect(stored.key).toBe(seedKey({}));
     expect(stored.data.songs).toHaveLength(12);
-    await call('mutation', 'songs:rename', {id: 'glasshouse', title: 'Renamed'});
+    expect(stored.data.songs.find(s => s.id === 'shuffle').recordingUnconfirmed).toBe(true);
+    await call('mutation', 'songs:confirmRecording', {id: 'shuffle'});
     await tick();
-    expect(JSON.parse(store.getItem(STORAGE_KEY)).data.songs[0].title).toBe('Renamed');
+    expect(JSON.parse(store.getItem(STORAGE_KEY)).data.songs.find(s => s.id === 'shuffle')).not.toHaveProperty('recordingUnconfirmed');
   });
   it('reloads what was stored', async () => {
     await call('mutation', 'songs:remove', {id: 'quiet'});
@@ -208,18 +211,18 @@ describe('handlers adapted to seed v2', () => {
   });
   it('a beat detection is a job in db.jobs that finishes with a result', async () => {
     vi.useFakeTimers();
-    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
     expect((await call('query', 'jobs:listActive', {})).some(j => j.jobId === jobId)).toBe(true);
     vi.advanceTimersByTime(1600);
     const done = await call('query', 'jobs:get', {jobId});
     expect(done.status).toBe('done');
-    expect(done.result.beats[0]).toEqual([0, 1]);
+    expect(done.result.beats[0]).toEqual([0.22, 1]);
   });
   it('a beat detection row is complete, and one running across a reload still finishes', async () => {
     vi.useFakeTimers({now: NOW});
-    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
     const row = await call('query', 'jobs:get', {jobId});
-    expect(row).toMatchObject({kind: 'beats', status: 'running', label: 'Finding bars — Quiet Hours', deviceId: 'dev1', createdAt: NOW, updatedAt: NOW, finishAt: NOW + 1500});
+    expect(row).toMatchObject({kind: 'beats', status: 'running', label: 'Finding bars — Velvet Arc', deviceId: 'dev1', createdAt: NOW, updatedAt: NOW, finishAt: NOW + 1500});
     // The page reloads before the timer fires: a new boot from what was persisted.
     persist();
     vi.clearAllTimers();
@@ -229,7 +232,7 @@ describe('handlers adapted to seed v2', () => {
     vi.advanceTimersByTime(1100);
     expect((await call('query', 'jobs:get', {jobId})).status).toBe('done');
     // A reload after it was due finishes it on boot.
-    const second = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
+    const second = await call('mutation', 'jobs:createBeatDetection', {songId: 'glasshouse'});
     persist();
     vi.clearAllTimers();
     vi.setSystemTime(Date.now() + 5000);
@@ -239,7 +242,7 @@ describe('handlers adapted to seed v2', () => {
   });
   it('the job creep finishes a detection that is due', async () => {
     vi.useFakeTimers({now: NOW});
-    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
     vi.clearAllTimers();
     startJobCreep(1000);
     vi.advanceTimersByTime(2000);
@@ -248,11 +251,11 @@ describe('handlers adapted to seed v2', () => {
   it('fx-detect=fail and slow shape a beat detection', async () => {
     vi.useFakeTimers();
     boot({search: '?fx-detect=fail', store, now: NOW});
-    const failed = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const failed = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
     vi.advanceTimersByTime(1600);
     expect(await call('query', 'jobs:get', failed)).toMatchObject({status: 'error', errorCode: 'beats_unavailable'});
     boot({search: '?fx-detect=slow', store, now: NOW});
-    const slow = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const slow = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
     vi.advanceTimersByTime(1600);
     expect((await call('query', 'jobs:get', slow)).status).toBe('running');
     vi.advanceTimersByTime(6500);
@@ -265,8 +268,10 @@ describe('handlers adapted to seed v2', () => {
     expect(Object.keys(presets).length).toBeGreaterThan(0);
     boot({search: '?fx-account=new', store, now: NOW});
     const fresh = (await call('query', 'settings:config', {})).settings;
+    expect(runtime.db.settings).toBeNull();
     expect(fresh.preset).toBeTruthy();
-    expect(fresh.profile).toBeUndefined();
+    // §6.5: config always carries the profile default (BK4's withDefaults).
+    expect(fresh.profile).toEqual({instruments: [], primary: null, openWithMyPart: 'in'});
   });
   it('shared links resolve by token: Glasshouse’s and the demo', async () => {
     expect((await call('query', 'sharing:view', {token: SHARE_TOKEN})).title).toBe('Glasshouse');

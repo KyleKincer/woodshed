@@ -4,7 +4,8 @@
 // tables mirror the 2.0 Convex schema (§6.2) with client-side ids:
 //   user · settings (userSettings.settings, stored shape) · songs · songPractice
 //   jobs · devices · devicePresence · setlists · notation · shares · demoToken
-//   coverKeys · billing · meta
+//   coverKeys · billing · meta   (db.shareCopies and db.metadataLookups are created by
+//   db/sharing.js and db/metadata.js on first use; see the README)
 // The same switches and clock always give the same data (ids included), so
 // captures and assertions are stable.
 //
@@ -26,6 +27,11 @@
 //                                sections, import, bot_check with retryAt, failed separation_failed, re-split,
 //                                and done jobs including an unapplied user detection (nightbus)
 //   devices                      dev1 online (busy), dev2 offline;  setlists: two;  pins: three
+//
+// Song rows hold only values convex/schema.ts allows: an optional column with no value
+// (metadataStatus and the MusicBrainz ids before any lookup, artwork, source, coverKey)
+// is absent, never null; publicSong (runtime.js) reads it as null, as toClient does.
+// Fixture-only columns: id, coverUrl, and the synthesis hints bpm and offset.
 //
 // Seed-affecting switches: fx-library=empty, fx-jobs=0, fx-billing=…, fx-auth=suspended|export_only,
 // fx-devices=none|offline|online, fx-account=new (no stored account settings: first run).
@@ -131,7 +137,7 @@ function rehearsalScore(map) {
 const stemsOf = (id, names, duration) => names.map(name => ({name, key: `${id}/${name}`, bytes: Math.round(duration * 20_000), mime: 'audio/ogg; codecs=opus'}));
 const FOUR = ['drums', 'bass', 'vocals', 'other'], SIX = ['drums', 'bass', 'vocals', 'guitar', 'piano', 'other'];
 const QUALITY = {model: 'htdemucs_ft', shifts: 2, overlap: .25, format: 'opus', bitrate: 160};
-const BLANK = {albumArtist: '', year: '', genre: '', trackNumber: '', discNumber: '', musicalKey: '', tuning: '', tags: [], notes: '', metadataLocks: [], metadataStatus: 'done', metadataRecordingId: null, metadataReleaseId: null, artwork: null, coverUrl: null, uploader: '', artist: '', album: '', source: null, coverKey: null, stemMode: 'full', quality: QUALITY, tempo: null};
+const BLANK = {albumArtist: '', year: '', genre: '', trackNumber: '', discNumber: '', musicalKey: '', tuning: '', tags: [], notes: '', metadataLocks: [], coverUrl: null, uploader: '', artist: '', album: '', stemMode: 'full', quality: QUALITY, tempo: null};
 function song(s) {
   const row = {...structuredClone(BLANK), ...s, stems: s.stems || stemsOf(s.id, FOUR, s.duration)};
   row.hasChart ??= false;
@@ -212,7 +218,7 @@ export function createSeed({fx = {}, now = Date.now()} = {}) {
       practice: {rate: 1}}),
     song({id: 'nightbus', title: 'Night Bus', artist: 'Kito & the Late Shift', duration: 233, bpm: 86, offset: .4, stems: stemsOf('nightbus', ['vocals', 'no_vocals'], 233), stemMode: 'vocals', coverKey: 'covers/nightbus.png', addedAt: ago(12 * DAY),
       tempo: {...legacyClick, songMap: nbMap.songMap, source: 'detected', map: [], detected: beatList(86, .4, 233, 4, 64)}}),
-    song({id: 'jam03', title: 'untitled_jam_03.wav', duration: 148, source: {type: 'upload', value: 'local1', filename: 'untitled_jam_03.wav'}, metadataStatus: 'none', needsReview: true, originDeviceId: 'dev1', addedAt: ago(14 * DAY)}),
+    song({id: 'jam03', title: 'untitled_jam_03.wav', duration: 148, source: {type: 'upload', value: 'local1', filename: 'untitled_jam_03.wav'}, needsReview: true, originDeviceId: 'dev1', addedAt: ago(14 * DAY)}),
     song({id: 'shuffle', title: 'Sunday Shuffle (Blues Backing Track in A)', uploader: 'BluesLessonsChannel', duration: 312, genre: 'Blues', tags: ['backing track', 'warmup'], source: {type: 'search', value: 'sunday shuffle blues backing track in a'}, resolvedUrl: 'https://www.youtube.com/watch?v=fixture08', provider: 'Youtube', recordingUnconfirmed: true, addedAt: ago(20 * DAY),
       tempo: {...legacyClick, songMap: shMap.songMap, source: 'detected', map: [], detected: beatList(120, 0, 312, 4, 32)}}),
     song({id: 'velvet', title: 'Velvet Arc', artist: 'Marisol Vega', album: 'Satellites', year: '2020', duration: 244, bpm: 100, offset: .22, coverKey: 'covers/satellites.png', addedAt: ago(22 * DAY),

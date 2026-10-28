@@ -37,6 +37,17 @@ describe('lib/structure.cjs', () => {
     ];
     expect(structure.findOverlaps(t).map(o => [o.a.label, o.b.label])).toEqual([['fifth', 'sixth'], ['decoy', 'row'], ['row', 'far']]);
   });
+  it('findOverlaps skips a pair where exactly one target is inside an open overlay', () => {
+    // A menu item partly over the page button that opened it; two items of one menu; a page pair.
+    const t = [
+      {label: 'trigger', path: 'a', frame: 'fixed', rect: rect(0, 0, 120, 40), view: rect(0, 0, 120, 40), overlay: null},
+      {label: 'item', path: 'b', frame: 'fixed', rect: rect(60, 10, 120, 40), view: rect(60, 10, 120, 40), overlay: 0},
+      {label: 'item 2', path: 'c', frame: 'fixed', rect: rect(100, 20, 120, 40), view: rect(100, 20, 120, 40), overlay: 0},
+      {label: 'other menu', path: 'd', frame: 'fixed', rect: rect(150, 30, 60, 40), view: rect(150, 30, 60, 40), overlay: 1},
+      {label: 'page', path: 'e', frame: 'fixed', rect: rect(10, 5, 40, 20), view: rect(10, 5, 40, 20)},
+    ];
+    expect(structure.findOverlaps(t).map(o => [o.a.label, o.b.label])).toEqual([['trigger', 'page'], ['item', 'item 2'], ['item', 'other menu'], ['item 2', 'other menu']]);
+  });
   it('the clip check names chips and readouts, not their containers', () => {
     const token = new RegExp(structure.LABEL_CLASS);
     for (const c of ['chip', 'readout', 'stage-chip', 'hud_readout', 'chip--on', 'filter-chip--active']) expect(token.test(c), c).toBe(true);

@@ -4,6 +4,7 @@
 //   npm run fixture:capture -- [--states ID,…] [--devices laptop,ipad] [--themes light,dark]
 //                              [--filter <regex>] [--state-file <path>]… [--url <base>]
 //                              [--out <dir>] [--report <file>] [--jobs <n>] [--list]
+//                              [--strict-requires]
 //
 // It starts Vite itself (tests/fixture/vite.config.mjs) on the first free port
 // from FIXTURE_PORT (the environment, else .env.worktree, else 5190) unless
@@ -12,6 +13,12 @@
 // context, writes tests/fixture/out/<state>--<device>-<theme>.png (gitignored)
 // and out/report.json, and exits non-zero on any failed state, uncaught page
 // error, console error, failed request or structural problem.
+//
+// Contract imports (§9.0): a state whose page reaches a same-wave peer module that has
+// not merged yet lists it in opts.requires. While a listed file is missing the state is
+// skipped, not run: each of its runs is reported as `skip` (ok, `skipped: true`,
+// `missing: [paths]`), counted in report.json's `skipped`, and does not fail the exit
+// code. --strict-requires (every integration run) fails such a run instead.
 //
 // A states module exports [{name, url, fn, opts}]:
 //   name   lower-case letters, digits and dashes; unique across the loaded modules
@@ -27,8 +34,11 @@
 //           fullPage, reducedMotion ('reduce'), timeout (ms, default 60000)
 //           fixedTime                  page.clock.setFixedTime(ISO | ms) before loading
 //           installClock               page.clock.install({time}) before loading; the url must
-//                                      carry fx-audio=manual (§11.2's rule), else the state fails}
+//                                      carry fx-audio=manual (§11.2's rule), else the state fails
+//           requires                   [repo-relative path] contract files the page needs (see above)}
 // The toolkit t: {base, device, theme, name, url, ready(route), waitAttr(selector, attr, value),
+//   clockInstall ({time, before, after}: the installClock time and this process's Date.now()
+//   just before and after page.clock.install; null without installClock),
 //   loadPhase(phase = 'ready') (the Stage's data-load-phase), transportPhase(phase) (data-transport-phase),
 //   rendered() (the chart's data-rendered), peaksReady() (data-peaks-ready),
 //   idle() (window.__woodshed.idle()), advance(ms) (audio and page clock together),
@@ -57,7 +67,7 @@ const DEVICES = {
 };
 const THEMES = ['light', 'dark'];
 const STATE_NAME = /^[a-z0-9][a-z0-9-]*$/;
-const OPTION_KEYS = new Set(['devices', 'themes', 'ready', 'allow', 'structure', 'capture', 'fullPage', 'reducedMotion', 'timeout', 'fixedTime', 'installClock']);
+const OPTION_KEYS = new Set(['devices', 'themes', 'ready', 'allow', 'structure', 'capture', 'fullPage', 'reducedMotion', 'timeout', 'fixedTime', 'installClock', 'requires']);
 
 class SetupError extends Error {}
 
@@ -69,7 +79,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (!arg.startsWith('--')) throw new SetupError(`Unexpected argument ${arg}`);
     const [name, inline] = arg.slice(2).split(/=(.*)/s);
-    const flag = name === 'list';
+    const flag = name === 'list' || name === 'strict-requires';
     const value = flag ? true : inline ?? argv[++i];
     if (value === undefined) throw new SetupError(`--${name} needs a value`);
     switch (name) {
@@ -83,6 +93,7 @@ function parseArgs(argv) {
       case 'report': out.report = path.resolve(value); break;
       case 'jobs': out.jobs = Number(value); if (!Number.isInteger(out.jobs) || out.jobs < 1 || out.jobs > 4) throw new SetupError('--jobs must be 1–4'); break;
       case 'list': out.list = true; break;
+      case 'strict-requires': out.strictRequires = true; break;
       default: throw new SetupError(`Unknown option --${name}`);
     }
   }
@@ -105,8 +116,28 @@ function validateStates(states, file) {
     for (const key of Object.keys(opts)) if (!OPTION_KEYS.has(key)) throw new SetupError(`${at}: unknown option ${key}`);
     for (const d of opts.devices ?? []) if (!DEVICES[d]) throw new SetupError(`${at}: unknown device ${d}`);
     for (const t of opts.themes ?? []) if (!THEMES.includes(t)) throw new SetupError(`${at}: unknown theme ${t}`);
+    if (opts.requires !== undefined) {
+      if (!Array.isArray(opts.requires)) throw new SetupError(`${at}: requires must be an array of repo-relative paths`);
+      for (const p of opts.requires) {
+        const bad = typeof p !== 'string' || !p || p.includes('\\') || path.posix.isAbsolute(p) || path.posix.normalize(p) !== p || p.startsWith('../') || p === '..';
+        if (bad) throw new SetupError(`${at}: requires: ${JSON.stringify(p)} is not a repo-relative path (forward slashes, no ./ or ..)`);
+      }
+    }
   }
   return states;
+}
+
+/** The files in a state's opts.requires that do not exist under `root` (the repository). */
+function missingRequires(state, root = REPO) {
+  return (state.opts?.requires ?? []).filter(p => !fs.existsSync(path.join(root, p)));
+}
+
+/** The result of a run whose required files are missing: skipped, or failed with --strict-requires. */
+function requiresResult({state, device, theme}, missing, {strict = false} = {}) {
+  const base = {state: state.name, device, theme, file: path.relative(REPO, state.file), shots: [], missing, ms: 0};
+  return strict
+    ? {...base, ok: false, skipped: false, reasons: missing.map(p => `requires: ${p} is missing (--strict-requires)`)}
+    : {...base, ok: true, skipped: true, reasons: missing.map(p => `requires: ${p} is missing`)};
 }
 
 /** Load the state modules: --state-file paths, else states/<ID>.cjs for --states, else every states/*.cjs. */
@@ -250,7 +281,7 @@ async function runOne(browser, base, {state, device, theme}, {out}) {
   };
   let touch = null;
   const t = {
-    base, device, theme, name: state.name, url, page,
+    base, device, theme, name: state.name, url, page, clockInstall: null,
     ready: (route, {timeout = 30_000} = {}) => page.waitForSelector(`html[data-view-ready="${route}"]`, {state: 'attached', timeout}),
     waitAttr: (selector, attr, value, {timeout = 30_000} = {}) => page.waitForSelector(`${selector}[${attr}="${value}"]`, {state: 'attached', timeout}),
     loadPhase: (phase = 'ready', opts) => t.waitAttr('', 'data-load-phase', phase, opts),
@@ -286,7 +317,10 @@ async function runOne(browser, base, {state, device, theme}, {out}) {
       (async () => {
         if (opts.installClock !== undefined && opts.installClock !== false) {
           if (!/[?&]fx-audio=manual(&|$)/.test(url)) throw new Error('opts.installClock needs fx-audio=manual in the url (§11.2: never install the page clock with real-time audio)');
-          await page.clock.install(opts.installClock === true ? {} : {time: new Date(opts.installClock)});
+          const time = opts.installClock === true ? undefined : new Date(opts.installClock);
+          const before = Date.now();
+          await page.clock.install(time ? {time} : {});
+          t.clockInstall = {time: time ? time.getTime() : before, before, after: Date.now()};
         }
         if (opts.fixedTime !== undefined) await page.clock.setFixedTime(new Date(opts.fixedTime));
         await page.goto(url, {waitUntil: 'load'});
@@ -329,13 +363,35 @@ async function main(argv = process.argv.slice(2)) {
   const states = loadStates(args);
   const runs = plan(states, args);
   if (args.list) {
-    for (const s of states) console.log(`${s.name}\t${s.url}\t${path.relative(REPO, s.file)}`);
+    for (const s of states) {
+      const missing = missingRequires(s);
+      console.log(`${s.name}\t${s.url}\t${path.relative(REPO, s.file)}${missing.length ? `\trequires missing: ${missing.join(', ')}` : ''}`);
+    }
     return 0;
   }
   if (!runs.length) throw new SetupError('No state matched the options');
+  const out = args.out ?? DEFAULT_OUT;
+  const strict = !!args.strictRequires;
+  const results = new Array(runs.length), toRun = [];
+  for (const [i, run] of runs.entries()) {
+    const missing = missingRequires(run.state);
+    if (missing.length) results[i] = requiresResult(run, missing, {strict});
+    else toRun.push(i);
+  }
+  const say = r => console.log(`${r.skipped ? 'skip' : r.ok ? 'ok  ' : 'FAIL'} ${r.state} ${r.device}-${r.theme} (${r.ms} ms)${r.ok && !r.skipped ? '' : `\n  - ${r.reasons.join('\n  - ')}`}`);
+  const finish = base => {
+    const failed = results.filter(r => !r.ok), skipped = results.filter(r => r.skipped);
+    const report = {base, at: new Date().toISOString(), strictRequires: strict, runs: results.length, failed: failed.length, skipped: skipped.length, results};
+    fs.mkdirSync(path.dirname(args.report ?? path.join(out, 'report.json')), {recursive: true});
+    fs.writeFileSync(args.report ?? path.join(out, 'report.json'), `${JSON.stringify(report, null, 1)}\n`);
+    console.log(`${results.length - failed.length - skipped.length}/${results.length} passed${skipped.length ? `, ${skipped.length} skipped (opts.requires)` : ''}`);
+    return failed.length ? 1 : 0;
+  };
+  for (const i of runs.keys()) if (results[i]) say(results[i]);
+  // Every run skipped or failed by opts.requires: no server or browser needed.
+  if (!toRun.length) return finish(args.url ?? null);
   let chromium;
   try { ({chromium} = require('playwright')); } catch { throw new SetupError('Playwright is missing: run with NODE_PATH=/opt/node-tools/node_modules (npm run fixture:capture does)'); }
-  const out = args.out ?? DEFAULT_OUT;
   const server = args.url ? null : await startServer();
   const base = args.url ?? server.base;
   const cleanup = async () => { await server?.stop(); };
@@ -344,18 +400,13 @@ async function main(argv = process.argv.slice(2)) {
   let browser;
   try {
     browser = await chromium.launch();
-    console.log(`fixture runner: ${runs.length} run(s) on ${base}`);
-    const results = await pool(runs, args.jobs ?? 1, async run => {
-      const r = await runOne(browser, base, run, {out});
-      console.log(`${r.ok ? 'ok  ' : 'FAIL'} ${r.state} ${r.device}-${r.theme} (${r.ms} ms)${r.ok ? '' : `\n  - ${r.reasons.join('\n  - ')}`}`);
-      return r;
+    console.log(`fixture runner: ${toRun.length} run(s) on ${base}`);
+    await pool(toRun, args.jobs ?? 1, async i => {
+      const r = await runOne(browser, base, runs[i], {out});
+      say(r);
+      results[i] = r;
     });
-    const failed = results.filter(r => !r.ok);
-    const report = {base, at: new Date().toISOString(), runs: results.length, failed: failed.length, results};
-    fs.mkdirSync(path.dirname(args.report ?? path.join(out, 'report.json')), {recursive: true});
-    fs.writeFileSync(args.report ?? path.join(out, 'report.json'), `${JSON.stringify(report, null, 1)}\n`);
-    console.log(`${results.length - failed.length}/${results.length} passed`);
-    return failed.length ? 1 : 0;
+    return finish(base);
   } finally {
     await browser?.close().catch(() => {});
     await cleanup();
@@ -370,4 +421,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = {DEVICES, THEMES, SetupError, parseArgs, validateStates, loadStates, plan, stateUrl, shotName, allowed, verdict, basePort, freePortFrom, portIsFree, startServer, runOne, main};
+module.exports = {DEVICES, THEMES, SetupError, parseArgs, validateStates, loadStates, missingRequires, requiresResult, plan, stateUrl, shotName, allowed, verdict, basePort, freePortFrom, portIsFree, startServer, runOne, main};

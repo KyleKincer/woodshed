@@ -6,6 +6,7 @@ processor and the desktop bridge. Contract: `docs/ux2/architecture.md` §11.2 an
 ```
 npm run fixture                                   # http://127.0.0.1:$FIXTURE_PORT (default 5190)
 npm run fixture:capture -- --states FX1           # run states through lib/runner.cjs
+npm run fixture:capture -- --strict-requires      # integrations: a state's missing opts.requires file fails it
 npm run fixture:compare                           # scripts/compare-shots.py: out/ against baselines/2.0/
 ```
 
@@ -28,6 +29,18 @@ npm run fixture:compare                           # scripts/compare-shots.py: ou
 | `states/<ID>.cjs` | each package's states (`[{name, url, fn, opts}]`) |
 | `out/` | captures, `report.json` and diffs (gitignored) |
 
+## The database
+
+`db/seed.js` builds the tables listed at the top of that file. Song rows hold only values
+`convex/schema.ts` allows: an optional column without a value is absent, never `null`
+(`publicSong` in `db/runtime.js` reads it as `null`, as `toClient` does). Two tables are created
+by the handlers on first use and are not seeded:
+
+| Table | Shape | Written by |
+|---|---|---|
+| `db.shareCopies` | `{[songId]: copyId}` | `db/sharing.js`: the first "Add to my library" of a shared song (`<songId>-copy`) |
+| `db.metadataLookups` | `{[songId]: dueAt}` | `db/metadata.js`: `metadataLookup:retry`; a reload finishes a lookup that is due |
+
 ## Switches (query parameters)
 
 | Switch | Effect |
@@ -48,7 +61,8 @@ npm run fixture:compare                           # scripts/compare-shots.py: ou
 | `fx-account=new` | no stored account settings (first run) |
 | `fx-auth=signedout\|suspended\|export_only\|fail` · `fx-signinError=expired` | the account state |
 | `fx-billing=free\|plus\|cancel\|grace\|disabled` · `fx-admin=1` | plan and administrator |
-| `fx-media=fail\|slow` · `fx-share=missing\|saved` · `fx-detect=ok\|fail\|slow` | stem signing, shared links, beat detection |
+| `fx-media=fail\|slow` · `fx-detect=ok\|fail\|slow` | stem signing, beat detection |
+| `fx-share=missing\|saved\|copying` | every shared link is unavailable · the shared song is already in the library · a save is in progress (`sharing:saved` reports `copying`) |
 | `fx-view`, `fx-practice`, `fx-notation`, `fx-overview` | write the 1.9 `ws.*` keys (exercise the prefs migration; not with `fx-prefs`) |
 
 Seed-affecting switches (`library`, `jobs`, `billing`, `auth`, `devices`, `account`, `now`) replace a
@@ -75,6 +89,33 @@ again. `fx-now` is applied on every load. Within a flow, `fixture.reset()` resee
 `platform` · `removed` · `advance(ms)` and `audio` (`fx-audio=manual`) · `wakeLock` · `midi` · `media` ·
 `install` · `share` · `clipboard` · `companion`, `upload` and `desktop` (`fx-desktop=1`).
 Each fake documents its controls at the top of its file.
+
+## States and contract imports
+
+A states module exports `[{name, url, fn, opts}]`; every option is listed at the top of
+`lib/runner.cjs`. A package imports a same-wave peer module statically by its contract path
+(architecture §9.0), so until that peer merges, a page that reaches it cannot load. Such a state
+declares the files in `opts.requires` (repo-relative, forward slashes):
+
+```js
+{name: 'button-tooltip', url: '/__harness/button?tip=1', opts: {requires: ['src/ui/tooltip.js']}}
+```
+
+| Mode | A listed file is missing |
+|---|---|
+| default (package worktrees) | the state's runs are reported as `skip`, counted in `report.json`'s `skipped` (each result has `skipped: true` and `missing`), and do not fail the run |
+| `--strict-requires` (integrations) | each of the state's runs fails with `requires: <path> is missing (--strict-requires)` |
+
+When every file exists the state runs normally in both modes. `--list` names the missing files.
+
+## Structural checks
+
+`lib/structure.cjs` runs on every state (overflow, overlap, clip, placeholder; the rules are at
+the top of the file). An open overlay (a `[popover]` that is `:popover-open`, a `dialog[open]`,
+or a fallback layer root `[data-layer-fallback]`) covers part of the page by design: the overlap
+check skips a pair where exactly one target is inside an open overlay, and still compares two
+targets inside overlays (one menu's items with each other). States need no `ignore` for the page
+behind an open menu, popover or sheet.
 
 ## Harnesses
 
