@@ -74,6 +74,50 @@ describe('value entries', () => {
     expect(undo.canRedo.value).toBe(false);   // a new push clears redo
   });
 
+  test('only speed and level:<stem> coalesce by default; loop, markers, spots, mix, section, startOver never do', () => {
+    const undo = createPracticeUndo();
+    let markers = [];
+    const setMarkers = (to) => { const from = markers; markers = to; undo.push({key: 'markers', label: 'marker', from, to, apply: (v) => { markers = v; }}); };
+    setMarkers(['m1']);
+    vi.advanceTimersByTime(400);
+    setMarkers(['m1', 'm2']);                     // S pressed twice quickly: two steps
+    vi.advanceTimersByTime(200);
+    for (const key of ['loop', 'spots', 'mix', 'section', 'startOver']) {
+      undo.push({key, label: key, from: 1, to: 2, apply() {}});
+      vi.advanceTimersByTime(100);
+      undo.push({key, label: key, from: 2, to: 3, apply() {}});
+      vi.advanceTimersByTime(100);
+    }
+    expect(undo.size.undo).toBe(12);
+    for (let i = 0; i < 10; i++) undo.undo();
+    undo.undo();
+    expect(markers).toEqual(['m1']);
+    undo.undo();
+    expect(markers).toEqual([]);
+
+    const levels = createPracticeUndo();
+    levels.push({key: 'level:drums', label: 'drums', from: 1, to: 0.8, apply() {}});
+    vi.advanceTimersByTime(300);
+    levels.push({key: 'level:drums', label: 'drums', from: 0.8, to: 0.6, apply() {}});
+    expect(levels.size.undo).toBe(1);
+  });
+
+  test('the coalesce option overrides the default per push', () => {
+    const {undo, setRate} = harness();
+    setRate(1, 0.9);
+    vi.advanceTimersByTime(200);
+    undo.push({key: 'speed', label: 'speed', from: 0.9, to: 0.8, coalesce: false, apply() {}});   // setSpeed(r, {coalesce: false})
+    expect(undo.size.undo).toBe(2);
+    vi.advanceTimersByTime(200);
+    setRate(0.8, 0.7);                            // a coalescing push does not merge into a non-coalescing step
+    expect(undo.size.undo).toBe(3);
+    vi.advanceTimersByTime(200);
+    undo.push({key: 'loop', label: 'loop', from: 1, to: 2, coalesce: true, apply() {}});
+    vi.advanceTimersByTime(200);
+    undo.push({key: 'loop', label: 'loop', from: 2, to: 3, coalesce: true, apply() {}});
+    expect(undo.size.undo).toBe(4);
+  });
+
   test('a coalesced run that returns to its start removes the step; a no-op push adds nothing', () => {
     const {undo, setRate} = harness();
     setRate(1, 0.9);

@@ -85,6 +85,13 @@ describe('mapped (sectioned: 64 bars of 2 s, a section every 8 bars)', () => {
     expect(position.rangeLabel(33.5, 37)).toBe('Bars 17–19 (3.5 s)');
   });
 
+  test('an edge within 10 ms before a bar line counts from that bar in both labels', () => {
+    expect(position.rangeLabel(33.995, 40)).toBe('Bars 18–20 (3 bars)');
+    expect(position.loopLabel(33.995, 40)).toBe('Bars 18–20');
+    expect(position.rangeLabel(34.005, 40)).toBe('Bars 18–20 (3 bars)');
+    expect(position.rangeLabel(33.98, 40)).toBe('Bars 17–20 (6.0 s)');
+  });
+
   test('refs survive as bar ids and resolve back to times', () => {
     const ref = position.ref(33);
     expect(ref).toEqual({id: 'g16', beat: 2, frac: 0});
@@ -105,6 +112,16 @@ describe('mapped edge cases', () => {
     expect(position.rangeLabel(0.5, 3.5)).toBe('Pickup–bar 1 (2 bars)');
     expect(position.loopLabel(0.5, 1.5)).toBe('Pickup');
     expect(position.ref(0.2)).toBe(null);
+  });
+
+  test('a bare toggle in the pickup (or before it) takes the pickup in, so the loop holds t', () => {
+    const {position} = model(pickup);
+    expect(position.loopDefault(0.8)).toEqual({a: 0.5, b: 9.5, label: 'Pickup–bar 4'});
+    const before = position.loopDefault(0.2);
+    expect(before.a).toBe(0);
+    expect(before.b).toBe(9.5);
+    expect(before.a).toBeLessThanOrEqual(0.2);
+    expect(position.loopDefault(2)).toEqual({a: 1.5, b: 9.5, label: 'Bars 1–4'});
   });
 
   test('without sections: no regions, no next, and a bare toggle loops the 4-bar phrase', () => {
@@ -185,10 +202,11 @@ describe('unmapped (the 1.9 placeholder map, 30 s, with markers)', () => {
     expect(position.ref(10)).toBe(null);
   });
 
-  test('loop default is 10 s around t, kept inside the song', () => {
+  test('loop default is [t − 5, t + 5], each edge clamped to the song (transport rule 13)', () => {
     expect(position.loopDefault(10)).toEqual({a: 5, b: 15, label: '0:05.0–0:15.0'});
-    expect(position.loopDefault(1)).toMatchObject({a: 0, b: 10});
-    expect(position.loopDefault(29)).toMatchObject({a: 20, b: 30});
+    expect(position.loopDefault(1)).toMatchObject({a: 0, b: 6});
+    expect(position.loopDefault(29)).toMatchObject({a: 24, b: 30});
+    expect(position.loopDefault(40)).toMatchObject({a: 25, b: 30});
     expect(position.rangeLabel(11.24, 21)).toBe('0:11.2–0:21.0 (9.8 s)');
     expect(position.loopLabel(31.2, 41)).toBe('0:31.2–0:41.0');
   });

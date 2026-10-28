@@ -125,6 +125,43 @@ describe('save cadence', () => {
     expect(saves).toHaveLength(1);
   });
 
+  test('dispose() after a non-final save finished still sends the final save (summary, D52)', async () => {
+    const {practice, saves} = setup();
+    practice.patch({rate: 0.8});
+    vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    await settle();
+    expect(saves.map((s) => s.final)).toEqual([false]);
+    practice.dispose();
+    await settle();
+    expect(saves.map((s) => s.final)).toEqual([false, true]);
+    expect(saves[1].p.rate).toBe(0.8);
+  });
+
+  test('dispose() while a non-final save is in flight queues the final save behind it', async () => {
+    let release;
+    const finals = [];
+    const persist = vi.fn((p, {final}) => {
+      finals.push(final);
+      return finals.length === 1 ? new Promise((r) => { release = r; }) : Promise.resolve();
+    });
+    const {practice} = setup({persist});
+    practice.patch({rate: 0.8});
+    vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    await settle();
+    expect(finals).toEqual([false]);
+    practice.dispose();
+    release();
+    await settle();
+    expect(finals).toEqual([false, true]);
+  });
+
+  test('dispose() with nothing saved this session sends nothing', async () => {
+    const {practice, saves} = setup();
+    practice.dispose();
+    await settle();
+    expect(saves).toHaveLength(0);
+  });
+
   test('patch accepts a draft function; spots and markers come out sanitised', async () => {
     const {practice, value} = setup();
     practice.patch((p) => { p.loop = {...p.loop, on: true, a: 40, b: 32}; p.rate = 9; });
@@ -166,14 +203,71 @@ describe('merge before save', () => {
 
   test('our own save is not undone by a stale server value, and later foreign changes apply again', async () => {
     const raw = emptyPractice();
-    const {practice, server, value} = setup({raw});
+    let release;
+    const persist = vi.fn(() => new Promise((r) => { release = r; }));
+    const {practice, server, value} = setup({raw, persist});
     practice.patch({rate: 0.9});
-    await practice.flush();
+    const saving = practice.flush();
     server.value = {...raw, rate: 1, cue: 1};           // a result from before our save landed
     expect(value()).toMatchObject({rate: 0.9, cue: 1});
-    server.value = {...raw, rate: 0.9, cue: 1};         // our echo
+    server.value = {...raw, rate: 0.9, cue: 1};         // our echo (before the mutation resolves)
+    release();
+    await saving;
     server.value = {...raw, rate: 0.7, cue: 1};         // another device, later
     expect(value().rate).toBe(0.7);
+  });
+
+  test('a save that sends what the server already holds pins nothing: a later foreign change is adopted and kept', async () => {
+    const raw = emptyPractice();                         // rate 1
+    const {practice, server, saves, value} = setup({raw});
+    practice.patch({rate: 0.8});
+    practice.patch({rate: 1});                           // back within the debounce
+    practice.patch({cue: 4});
+    await practice.flush();
+    expect(saves[0].p.rate).toBe(1);
+    server.value = {...raw, cue: 4, rate: 0.7};          // another device; no echo of ours ever comes
+    expect(value().rate).toBe(0.7);
+    practice.patch({cue: 5});
+    await practice.flush();
+    expect(saves[1].p).toMatchObject({cue: 5, rate: 0.7});
+  });
+
+  test('a foreign write that lands after ours is adopted even when our echo is skipped', async () => {
+    const raw = emptyPractice();
+    let release;
+    const persist = vi.fn(() => new Promise((r) => { release = r; }));
+    const {practice, server, value} = setup({raw, persist});
+    practice.patch({rate: 0.9});
+    const saving = practice.flush();
+    server.value = {...raw, rate: 0.6};                  // the other device wrote right after us
+    expect(value().rate).toBe(0.6);
+    release();
+    await saving;
+    expect(value().rate).toBe(0.6);
+  });
+
+  test('when the write resolves and the server already shows a newer foreign value, that value is taken', async () => {
+    const raw = emptyPractice();
+    let release;
+    const persist = vi.fn(() => new Promise((r) => { release = r; }));
+    const server = signal(structuredClone(raw));
+    const practice = createPracticeState({songId: 's', raw, duration: 128, persist, server: {peek: () => server.peek()}});
+    practice.patch({rate: 0.9});
+    const saving = practice.flush();
+    server.value = {...raw, rate: 0.6};                  // seen only through peek (no subscription)
+    release();
+    await saving;
+    expect(practice.value.value.rate).toBe(0.6);
+  });
+
+  test('a key whose echo has not arrived when the write resolves ends on the next server value', async () => {
+    const raw = emptyPractice();
+    const {practice, server, value} = setup({raw});
+    practice.patch({rate: 0.9});
+    await practice.flush();                              // the server signal still shows rate 1
+    expect(value().rate).toBe(0.9);
+    server.value = {...raw, rate: 0.5};                  // the next result: another device
+    expect(value().rate).toBe(0.5);
   });
 
   test('a removed spot is a tombstone, so the merge never resurrects it', async () => {
@@ -386,6 +480,27 @@ describe('read-only (shared) songs', () => {
 
     const second = createPracticeState({songId: 'song-1', raw: snapshot, duration: 120, readOnly: true, persist, local: {token: 'tok123'}});
     expect(second.value.value.rate).toBe(0.6);
+  });
+
+  test('with a token the sharer’s snapshot signal never overrides the viewer’s own copy', async () => {
+    installStorage();
+    const persist = vi.fn();
+    const snapshot = {...emptyPractice(), rate: 1};
+    const open = () => createPracticeState({songId: 'song-1', raw: snapshot, duration: 120, readOnly: true, persist,
+      server: signal(structuredClone(snapshot)), local: {token: 'tok9'}});
+    const first = open();
+    first.patch({rate: 0.7});
+    await first.flush({final: true});
+    first.dispose();
+
+    const second = open();
+    expect(second.value.value.rate).toBe(0.7);
+    second.patch({minusMe: true});
+    second.addMarker({t: 5, label: 'Here'});
+    await second.flush({final: true});
+    expect(second.value.value.rate).toBe(0.7);
+    expect(deviceStore('share').get('tok9')).toMatchObject({rate: 0.7, minusMe: true});
+    expect(persist).not.toHaveBeenCalled();
   });
 
   test('read-only without a token never persists', async () => {

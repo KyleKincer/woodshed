@@ -111,6 +111,36 @@ describe('createFrameBus', () => {
     expect(thirty).toHaveBeenCalledTimes(30);
   });
 
+  test('callback jitter does not drop frames: 16/20/13/17 ms gaps reach a 60 Hz subscriber every time', () => {
+    const queue = [];
+    let t = 0;
+    const {session} = fakeSession();
+    const b = createFrameBus({session, raf: (fn) => queue.push(fn), caf: () => {}, now: () => t, isHidden: () => false, visibility: null});
+    const fast = vi.fn(), text = vi.fn();
+    b.subscribe(fast);
+    b.subscribe(text, {hz: 30});
+    b.start();
+    for (const gap of [16, 20, 13, 17, 16, 17]) { t += gap; queue.shift()(t); }
+    expect(fast).toHaveBeenCalledTimes(6);
+    expect(text).toHaveBeenCalledTimes(3);
+  });
+
+  test('a wall clock stepping backwards does not starve subscribers', () => {
+    const f = frames();
+    let shift = 0;
+    const {session} = fakeSession();
+    const b = createFrameBus({session, raf: f.raf, caf: f.caf, now: () => f.now() + shift, isHidden: () => false, visibility: null});
+    const fast = vi.fn(), text = vi.fn();
+    b.subscribe(fast);
+    b.subscribe(text, {hz: 30});
+    b.start();
+    f.step(2);
+    shift = -60_000;                       // the system clock was set back a minute
+    f.step(100);
+    expect(fast).toHaveBeenCalledTimes(102);
+    expect(text.mock.calls.length).toBeGreaterThanOrEqual(50);
+  });
+
   test('off() removes a subscriber; with none left the loop idles', () => {
     const {f, b} = bus();
     const fn = vi.fn();

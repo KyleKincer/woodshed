@@ -14,8 +14,16 @@
 //   tests drive frames by hand.
 import {now as clockNow} from '../app/clock.js';
 
-/** Slack for throttling, so a 30 Hz subscriber fires on every second 60 Hz frame despite timer jitter. */
-const SLACK_MS = 2;
+/**
+ * A subscriber is due when its interval has passed, give or take half a frame (the gap
+ * since the previous tick): a 60 Hz canvas gets every 60 Hz frame despite callback jitter
+ * (a 13 ms gap still counts) and every second frame at 120 Hz; a 30 Hz readout gets every
+ * second 60 Hz frame and every fourth at 120 Hz.
+ */
+const isDue = (sub, t, gap) => sub.last === null || t < sub.last || t - sub.last >= sub.interval - gap / 2;
+
+/** A gap of 0–50 ms; a backwards clock or a long pause (stop, hidden) gives no tolerance. */
+const clampGap = (gap) => (gap > 0 && gap <= 50 ? gap : 0);
 
 const defaultRaf = (fn) => globalThis.requestAnimationFrame(fn);
 const defaultCaf = (id) => globalThis.cancelAnimationFrame(id);
@@ -50,6 +58,7 @@ export function createFrameBus({session, raf = defaultRaf, caf = defaultCaf, now
   const subscribers = new Set();
   let running = false;
   let handle = null;
+  let lastTick = null;   // wall time of the previous tick (for the half-frame tolerance)
 
   const wanted = () => running && subscribers.size > 0 && !isHidden();
 
@@ -68,10 +77,13 @@ export function createFrameBus({session, raf = defaultRaf, caf = defaultCaf, now
     handle = null;
     if (!wanted()) return;
     const t = now();
+    const gap = lastTick === null ? 0 : clampGap(t - lastTick);
+    lastTick = t;
     let frame = null;
     for (const sub of [...subscribers]) {
       if (!subscribers.has(sub)) continue;   // removed by an earlier subscriber this frame
-      if (sub.last !== null && t - sub.last < sub.interval - SLACK_MS) continue;
+      // A wall clock that stepped backwards makes the subscriber due (it never starves on a clock change).
+      if (!isDue(sub, t, gap)) continue;
       sub.last = t;
       frame ??= Object.freeze(readFrame(session));
       try { sub.fn(frame); } catch (err) { report(err); }

@@ -8,15 +8,21 @@
 //   (stop, unmount, pagehide, hidden, share, desktop flush) saves at once; only final saves
 //   update the Library summary (D52), so a final flush also runs when the last save was not final.
 // - Before each save: next = prunePractice(mergePractice(local, server.value, dirty)).
-//   `dirty` holds the top-level keys this device changed and has not seen echoed by the server
-//   yet; every other key takes the server's value (another device's change wins). When pruning
+//   `dirty` holds the top-level keys this device changed and whose save has not landed yet;
+//   every other key takes the server's value (another device's change wins). When pruning
 //   dropped markers or trimmed notes: status('Some old markers were removed to make room.').
+// - A key a save sent stays "in flight" (kept like a dirty key) only while the server still
+//   shows the value it had when the save started: a pre-save result must not revert the save.
+//   It ends on the first server value that differs from that base (our echo or a newer foreign
+//   write), on the first server value after the write resolved (Convex resolves a mutation only
+//   once its queries reflect it), or at once when the server already holds the sent value.
 // - One save runs at a time; a request during a save runs after it.
 // - Errors: a failed save retries once after 5 s; after that the change stays local (and dirty)
 //   until the next save.
 // - Read-only songs opened from a share token (`local: {token}`) persist to this device only:
 //   deviceStore('share').set(token, p). They read that copy back on open, so a viewer's spots,
-//   markers, speed and mix survive a reload (spec §4.13).
+//   markers, speed and mix survive a reload (spec §4.13). The device copy is the source of truth
+//   there, so `server` is ignored (no subscription, no merge).
 //
 // Spots and markers merge by id (newest `updatedAt` wins, tombstones win ties), so removals are
 // tombstones: a patch that drops an item from `spots`/`markers` tombstones it, and one that brings
@@ -53,6 +59,7 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
   clock = appClock, status = null, legacyTempo, defaults} = {}) {
   const token = local?.token ?? null;
   const shareStore = token ? deviceStore('share') : null;
+  const source = shareStore ? null : server;   // a share viewer's device copy is never merged with the snapshot
   const span = Number.isFinite(duration) && duration > 0 ? duration : undefined;
   const upgrade = (value) => upgradePractice(value, {duration: span, legacyTempo, defaults});
 
@@ -62,7 +69,7 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
   const activeSpotId = signal(null);
 
   const dirty = new Set();          // keys changed here since the last save started
-  const inflight = new Map();       // key → json of the value a save sent, until the server echoes it
+  const inflight = new Map();       // key → {sent, base, settled}: a save's value until the server shows it (see header)
   let unsaved = false;              // anything changed since the last save started (lists included)
   let unsummarized = false;         // a non-final save succeeded since the last final one
   let played = false;
@@ -252,19 +259,20 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
 
   /* ---------- server ---------- */
 
-  const serverValue = () => (server ? (typeof server.peek === 'function' ? server.peek() : server.value) : null);
+  const serverValue = () => (source ? (typeof source.peek === 'function' ? source.peek() : source.value) : null);
 
   /** Another device's change (or our own echo) arrived: take it for every key we have not changed. */
   function adopt(rawServer) {
     if (rawServer === null || rawServer === undefined) return;
     const upgraded = upgrade(rawServer);
-    for (const [key, sent] of inflight) if (json(upgraded[key]) === sent) inflight.delete(key);
+    // Only a value still equal to the pre-save base (a result from before our save landed) keeps a key in flight.
+    for (const [key, entry] of inflight) if (entry.settled || json(upgraded[key]) !== entry.base) inflight.delete(key);
     const merged = mergePractice(state.peek(), upgraded, new Set([...dirty, ...inflight.keys()]));
     const clean = upgrade(merged);
     if (json(clean) !== json(state.peek())) state.value = clean;
   }
 
-  const offServer = server && typeof server.subscribe === 'function' ? server.subscribe((value) => adopt(value)) : null;
+  const offServer = source && typeof source.subscribe === 'function' ? source.subscribe((value) => adopt(value)) : null;
 
   /* ---------- saving ---------- */
 
@@ -287,21 +295,31 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
     if (!unsaved && !(final && unsummarized)) return;
     if (!isRetry) { clearTimeout(retryTimer); retryTimer = null; }
     const keys = [...dirty];
-    const merged = mergePractice(state.peek(), serverValue(), new Set([...keys, ...inflight.keys()]));
+    const before = serverValue();
+    const merged = mergePractice(state.peek(), before, new Set([...keys, ...inflight.keys()]));
     const {value, pruned} = prunePractice(upgrade(merged), PRACTICE_CAP, now());
     if (json(value) !== json(state.peek())) state.value = value;
     if (pruned > 0) status?.(COPY.pruned);
-    const sentAll = new Map(keys.map((key) => [key, json(value[key])]));
+    const base = before === null || before === undefined ? null : upgrade(before);
+    const mine = new Map();   // key → the inflight entry this save created
+    for (const key of keys) {
+      const sent = json(value[key]);
+      // No echo to wait for without a server, or when the server already holds the sent value.
+      if (!base || json(base[key]) === sent) { inflight.delete(key); continue; }
+      const entry = {sent, base: json(base[key]), settled: false};
+      inflight.set(key, entry);
+      mine.set(key, entry);
+    }
     dirty.clear();
     unsaved = false;
-    for (const [key, sent] of sentAll) inflight.set(key, sent);
     try {
       await write(value, final);
       if (final) unsummarized = false;
       else unsummarized = true;
+      settle(mine);
     } catch (err) {
       // Keep the change: the next save sends it again.
-      for (const key of keys) { dirty.add(key); if (inflight.get(key) === sentAll.get(key)) inflight.delete(key); }
+      for (const key of keys) { dirty.add(key); if (mine.has(key) && inflight.get(key) === mine.get(key)) inflight.delete(key); }
       unsaved = true;
       // One retry after 5 s (it still runs after dispose, so a failed save on leave gets its second try).
       if (!isRetry) {
@@ -310,6 +328,23 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
       }
       console.warn(`Practice save failed for ${songId ?? 'this song'}; keeping the change on this device.`, err);
     }
+  }
+
+  /**
+   * The write resolved: a key whose server value already moved off the pre-save base is done
+   * (adopting whatever newer value is there); the rest end on the next server value.
+   */
+  function settle(mine) {
+    if (!mine.size) return;
+    const current = serverValue();
+    const upgraded = current === null || current === undefined ? null : upgrade(current);
+    let moved = false;
+    for (const [key, entry] of mine) {
+      if (inflight.get(key) !== entry) continue;   // a later save took the key over
+      if (!upgraded || json(upgraded[key]) !== entry.base) { inflight.delete(key); moved = true; }
+      else entry.settled = true;
+    }
+    if (moved && upgraded && !disposed) adopt(current);
   }
 
   function requestSave(final, isRetry = false) {
@@ -343,7 +378,9 @@ export function createPracticeState({songId, raw, duration, readOnly = false, pe
 
   function dispose() {
     if (disposed) return;
-    const pending = unsaved;
+    // A final save on leave whenever the Library summary may be behind: unsaved changes, a
+    // non-final save that finished, or one still running (the final one queues behind it).
+    const pending = unsaved || unsummarized || running !== null;
     disposed = true;
     clearTimeout(debounce);
     debounce = null;

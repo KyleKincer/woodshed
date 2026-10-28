@@ -1,10 +1,13 @@
 // Practice undo (architecture §2.14.6, spec §4.14): one stack per song session,
 // 50 steps, with value changes of the same kind coalescing within 1 s.
 //
-//   push({key, label, describe, from, to, apply})  a value entry (practice patches):
-//       undo → apply(from), redo → apply(to). A push with the same `key` within
-//       `coalesceMs` of the previous push merges into it, keeping the first `from`
-//       (a speed drag is one step). A merge that lands back on `from` removes the step.
+//   push({key, label, describe, from, to, apply, coalesce})  a value entry (practice patches):
+//       undo → apply(from), redo → apply(to). Only coalescing keys merge (transport
+//       rule 19: `speed` and `level:<stem>` by default; `coalesce` overrides per push):
+//       a coalescing push with the same `key` within `coalesceMs` of the previous
+//       coalescing push merges into it, keeping the first `from` (a speed drag is one
+//       step). A merge that lands back on `from` removes the step. `loop`, `mix`,
+//       `markers`, `spots`, `section` and `startOver` pushes are always their own step.
 //   pushAction({key, label, describe, undo, redo})  a compound entry (map snapshots,
 //       D23); action entries never coalesce.
 //   amend(entry, {label, undo, redo})  wraps an entry so one Undo also reverts a
@@ -22,6 +25,9 @@ import {clock as appClock} from '../app/clock.js';
 
 export const UNDO_LIMIT = 50;
 export const COALESCE_MS = 1000;
+
+/** Keys whose value pushes coalesce unless the push says otherwise (transport rule 19, spec §4.14). */
+export const coalescesByDefault = (key) => typeof key === 'string' && (key === 'speed' || key.startsWith('level:'));
 
 const same = (a, b) => {
   if (Object.is(a, b)) return true;
@@ -74,12 +80,14 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
     return entry;
   }
 
-  function push({key, label, describe, from, to, apply} = {}) {
+  function push({key, label, describe, from, to, apply, coalesce} = {}) {
     if (applying) return null;
     if (typeof apply !== 'function') throw new TypeError('undo.push: apply(value) is required');
     const t = clock.now();
+    const merges = coalesce === undefined ? coalescesByDefault(key) : !!coalesce;
     const top = undoStack[undoStack.length - 1];
-    if (top && top === last && top.kind === 'value' && !top.amended && top.key === key && t - lastAt <= coalesceMs) {
+    if (merges && top && top === last && top.kind === 'value' && top.coalesce && !top.amended && top.key === key
+      && t - lastAt <= coalesceMs) {
       top.to = to;
       lastAt = t;
       if (same(top.from, top.to)) {     // back where the run started: nothing left to undo
@@ -93,6 +101,7 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
     if (same(from, to)) return null;
     const entry = makeEntry({kind: 'value', key, label, describe, from, to,
       undo: () => apply(entry.from), redo: () => apply(entry.to)});
+    entry.coalesce = merges;
     return add(entry);
   }
 

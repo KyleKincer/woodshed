@@ -130,7 +130,8 @@ export function createPositionModel({map, practice}) {
   /** {first, last, display: [x, y]} of the bars a range [a, b) touches. */
   function barSpan(a, b) {
     const bars = map.bars;
-    const first = barAt(a + EPS);
+    // The same 10 ms tolerance as wholeBars: an edge just before a bar line starts at that bar.
+    const first = barAt(a + EDGE_EPS);
     const last = Math.max(first, barAt(Math.max(a + EPS, b - EDGE_EPS)));
     const x = first < 0 ? null : bars[first].display;
     const y = last < 0 ? null : bars[last].display;
@@ -233,7 +234,8 @@ export function createPositionModel({map, practice}) {
 
   /**
    * The loop a bare toggle makes (transport rule 13): the current section; else the
-   * current 4-bar phrase; unmapped, 10 s around t (shifted to stay inside the song).
+   * current 4-bar phrase (taking in the pickup, or the lead-in before the first bar, when t
+   * sits there, so the loop holds t); unmapped, [t − 5, t + 5] clamped to the song.
    */
   function loopDefault(t) {
     const end = duration();
@@ -242,12 +244,14 @@ export function createPositionModel({map, practice}) {
       const section = map.hasSections ? map.sectionAt(t) : null;
       if (section) return {a: section.t0, b: section.t1, label: section.name};
       const {startBar, endBar} = map.phraseAt(t);
-      const a = bars[startBar].t0, b = bars[endBar].t1;
+      let a = bars[startBar].t0;
+      const b = bars[endBar].t1;
+      if (t < a - EPS) a = t >= bars[0].t0 - EPS ? bars[Math.max(0, barAt(t))].t0 : 0;
       return {a, b, label: loopLabel(a, b)};
     }
-    const span = Math.min(2 * UNMAPPED_LOOP_HALF, end);
-    const a = clamp(t - UNMAPPED_LOOP_HALF, 0, Math.max(0, end - span));
-    const b = Math.min(end, a + span);
+    const at = end > 0 ? clamp(t, 0, end) : Math.max(0, t);
+    const a = Math.max(0, at - UNMAPPED_LOOP_HALF);
+    const b = end > 0 ? Math.min(end, at + UNMAPPED_LOOP_HALF) : at + UNMAPPED_LOOP_HALF;
     return {a, b, label: loopLabel(a, b)};
   }
 
