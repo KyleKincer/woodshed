@@ -1,6 +1,7 @@
 // Account settings client (architecture §2.4, BK4): src/api/settings.js, src/app/account.js
 // and the fixture's settings handlers (tests/fixture/db/settings.js).
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
+import {readFileSync} from 'node:fs';
 
 vi.hoisted(() => {
   globalThis.__FX_DB_MANUAL_BOOT__ = true;
@@ -17,6 +18,9 @@ const fake = vi.hoisted(() => ({auth: null}));
 // src/app/auth.js arrives with AU1 (wave 0B); Vitest matches the mock by the importer's raw specifier until then.
 vi.mock('../src/app/auth.js', () => ({client: () => fake.auth}));
 vi.mock('../app/auth.js', () => ({client: () => fake.auth}));
+// account.js imports toast from feedback.js statically (§9.0 contract imports; ticket I1-5).
+const feedback = vi.hoisted(() => ({toast: null}));
+vi.mock('../src/app/feedback.js', () => ({toast: (...args) => feedback.toast(...args)}));
 
 import {ConvexError} from 'convex/values';
 import {signal, effect} from '../src/app/store.js';
@@ -229,6 +233,20 @@ describe('togglePin and markOnboarding', () => {
     const unpin = acc.togglePin('s3');
     expect(api.calls).toEqual([{pins: full.filter(id => id !== 's3')}]);
     await api.resolve(); await unpin;
+  });
+
+  test('without an injected toast, the pins-full notice goes through feedback.js toast (static import, I1-5)', async () => {
+    feedback.toast = vi.fn();
+    const own = fakeStore(), ownApi = fakeApi();
+    const plain = createAccount({store: own, api: ownApi});
+    plain.start();
+    ownApi.push({settings: {...withDefaults(null), pins: Array.from({length: MAX_PINS}, (_, i) => `s${i}`)}, ...CATALOGUE});
+    await plain.togglePin('extra');
+    expect(feedback.toast).toHaveBeenCalledWith(PINS_FULL, {key: 'pins-full'});
+    expect(ownApi.calls).toEqual([]);
+    const source = readFileSync(new URL('../src/app/account.js', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/import\.meta\.glob|import\(/);
+    expect(source).toMatch(/^import \{toast as feedbackToast\} from '\.\/feedback\.js';$/m);
   });
 
   test('the server’s pins_full (another device filled the last slot) also toasts; other errors throw', async () => {

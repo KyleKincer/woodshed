@@ -16,18 +16,10 @@ import {batch, computed, signal, store as appStore} from './store.js';
 import {ApiError, toApiError} from '../api/client.js';
 import * as settingsApi from '../api/settings.js';
 import {MAX_PINS, STOP_MODES, mergeSettings, withDefaults} from '../../convex/lib/presets.ts';
+import {toast as feedbackToast} from './feedback.js';
 
 export const PINS_FULL = `Up to ${MAX_PINS} pins`;
 export const ONBOARDING_KEYS = Object.freeze(['whatDoYouPlay', 'coach', 'desktopFirstRun']);
-
-// feedback.js arrives in wave 1a (S2); resolving it by glob keeps this module buildable before then.
-const FEEDBACK = import.meta.glob('./feedback.js');
-
-async function feedbackToast(message, options) {
-  const load = FEEDBACK['./feedback.js'];
-  if (!load) return;
-  try { (await load()).toast(message, options); } catch (err) { console.error(err); }
-}
 
 const json = value => JSON.stringify(value ?? null);
 const sameJson = (a, b) => json(a) === json(b);
