@@ -339,19 +339,6 @@ test('matching is conservative about recordings and album identity', () => {
   expect(searchText('Song" OR *:*', 'Artist')).not.toContain('" OR');
 });
 
-test('update cancellation is scoped to the device and preserves completed jobs', async () => {
-  const {t,alice,bob} = await setup();
-  const token = 'b'.repeat(64), otherToken = 'c'.repeat(64);
-  const deviceId = await alice.mutation(api.devices.pair,{tokenHash:await hashToken(token),name:'Desktop'});
-  await bob.mutation(api.devices.pair,{tokenHash:await hashToken(otherToken),name:'Other desktop'});
-  const jobId = await t.run(ctx=>ctx.db.insert('jobs',{userId:'alice',deviceId,kind:'separate',label:'Song',status:'running',stage:'separate',percent:50,createdAt:1,updatedAt:1}));
-  expect(await t.mutation(api.worker.cancelForUpdate,{token:otherToken,jobId})).toBe(false);
-  expect(await t.mutation(api.worker.cancelForUpdate,{token,jobId})).toBe(true);
-  expect(await t.query(api.worker.next,{token})).toBeNull();
-  await t.run(ctx=>ctx.db.patch(jobId,{status:'done'}));
-  expect(await t.mutation(api.worker.cancelForUpdate,{token,jobId})).toBe(false);
-});
-
 // ---- 2.0 metadata additions (§6.9, D6) ---------------------------------------------
 
 const REC = '11111111-1111-4111-8111-111111111111',

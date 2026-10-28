@@ -4,12 +4,12 @@ import { v } from 'convex/values';
 import { query, mutation, internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { requireDevice } from './devices';
+import { hashToken, requireDevice } from './devices';
 import { assertAccountAccess } from './lib/auth';
 import { resolveQuality, withDefaults } from './lib/presets';
 import { retireKey } from './storage';
 import { qualityValidator, stemValidator } from './schema';
-import { fail, isJobErrorCode } from './lib/errors';
+import { codeOf, fail, isJobErrorCode } from './lib/errors';
 import { jobMetaValidator, presenceStateValidator, suggestedSectionValidator, SECTION_SUGGESTIONS_MAX } from './lib/validators';
 import { barsOf, fromBeats, hasRealMap, mapSummaryOf, sectionsOf, songMapFromTempo, validateSongMap } from '../shared/song-map';
 import { PRACTICE_CAP, prunePractice, summarize, upgradePractice } from '../shared/practice';
@@ -165,6 +165,25 @@ export const claim = mutation({
   },
 });
 
+/**
+ * The device behind a `progress` call. A failure report still gets through on
+ * a paused account (§10.2 `account_paused`): a job the companion claimed
+ * before the pause then ends as an error instead of sitting `running`. Every
+ * other call on a paused account is refused as before.
+ */
+async function progressDevice(ctx: MutationCtx, token: string, failed: boolean) {
+  try {
+    return { device: await requireDevice(ctx, token), paused: false };
+  } catch (error) {
+    const code = codeOf(error);
+    if (!failed || (code !== 'account_suspended' && code !== 'account_export_only')) throw error;
+    const hash = await hashToken(token);
+    const device = await ctx.db.query('devices').withIndex('by_token', q => q.eq('tokenHash', hash)).unique();
+    if (!device || device.revoked) throw error;
+    return { device, paused: true };
+  }
+}
+
 export const progress = mutation({
   args: {
     token: v.string(), jobId: v.id('jobs'), stage: v.string(), percent: v.number(),
@@ -173,15 +192,16 @@ export const progress = mutation({
   },
   returns: v.boolean(),
   handler: async (ctx, a) => {
-    const d = await requireDevice(ctx, a.token);
+    const failed = a.error !== undefined || a.stage === 'error';
+    const { device: d, paused } = await progressDevice(ctx, a.token, failed);
     const j = await ctx.db.get('jobs', a.jobId);
     // false tells the companion to stop: the job was canceled, dismissed or moved.
     if (!j || j.deviceId !== d._id || j.userId !== d.userId || (j.status !== 'queued' && j.status !== 'running')) return false;
     const now = Date.now();
-    const failed = a.error !== undefined || a.stage === 'error';
     const errorCode = failed ? (isJobErrorCode(a.errorCode) ? a.errorCode : a.errorCode === undefined ? undefined : 'unknown') : undefined;
     const attempts = j.attempts ?? 0;
-    const retry = errorCode === 'bot_check' && attempts < BOT_CHECK_ATTEMPTS;
+    // A paused account could not claim the job again, so it is never auto-retried.
+    const retry = !paused && errorCode === 'bot_check' && attempts < BOT_CHECK_ATTEMPTS;
     const retryAt = retry ? now + BOT_CHECK_BACKOFF_MS * 2 ** Math.max(0, attempts - 1) : undefined;
     const meta = a.meta ? cleanMeta(a.meta) : null;
     await ctx.db.patch('jobs', j._id, {
@@ -467,18 +487,5 @@ export const importSong = mutation({
     const now = Date.now();
     const jobId = await ctx.db.insert('jobs', { userId: d.userId, deviceId: d._id, kind: 'import', label: a.title, importMeta: { id: a.legacyId, tempo, practice }, status: 'queued', stage: 'queued', percent: 0, attempts: 0, createdAt: now, updatedAt: now });
     return { jobId, songId: null };
-  },
-});
-
-/** An updating desktop cancels only its own in-flight job. Deleted with its callers in CPB (D12). */
-export const cancelForUpdate = mutation({
-  args: { token: v.string(), jobId: v.id('jobs') },
-  returns: v.boolean(),
-  handler: async (ctx, { token, jobId }) => {
-    const device = await requireDevice(ctx, token);
-    const job = await ctx.db.get('jobs', jobId);
-    if (!job || job.userId !== device.userId || job.deviceId !== device._id || ['done', 'canceled'].includes(job.status)) return false;
-    await ctx.db.patch('jobs', jobId, { status: 'canceled', updatedAt: Date.now() });
-    return true;
   },
 });
