@@ -278,8 +278,12 @@ export function mountHud(el, {
     back.el,
     h('div', {class: 'hud-cover-box'}, cover.el),
     h('div', {class: 'hud-titles'}, title, artist),
-    h('div', {class: 'hud-meta'}, keyChip.el, tuningChip.el, sharedLine, actionSlot),
-    h('div', {class: 'hud-tools'}, notes.el, wakeIcon, pedalIcon, readyChip.el),
+    // One chip row (ORCH-1): key, tuning, the shared line and action slot, Notes, ☼, ⎍, `1 ready`. The band
+    // lays the two groups out inline (.hud-chips is display: contents there); the rail wraps them as one
+    // row under the title block (hud.css).
+    h('div', {class: 'hud-chips'},
+      h('div', {class: 'hud-meta'}, keyChip.el, tuningChip.el, sharedLine, actionSlot),
+      h('div', {class: 'hud-tools'}, notes.el, wakeIcon, pedalIcon, readyChip.el)),
     more.el,
     setLine,
   );
