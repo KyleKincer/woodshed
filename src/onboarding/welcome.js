@@ -11,7 +11,8 @@
 // least one instrument (its visible reason says so) and waits for the save: a failure keeps the
 // screen with "Couldn't save · [Retry]". Skip → account.markOnboarding('whatDoYouPlay', 'skipped') →
 // replace('/') at once (the write is optimistic; if it fails, boot asks again next time). Skip never
-// downgrades an answer already given ('done').
+// downgrades an answer already given ('done'): before the account has loaded it waits for the
+// settings, then writes only if the flag is still unset. Retry keeps keyboard focus on Continue.
 // Until the user touches the picker it follows the account's profile (another device may have set
 // it), so an existing profile is pre-chosen.
 
@@ -80,6 +81,9 @@ export function mount(el, match, ctx = {}) {
   async function save() {
     if (saving || left || !profile.instruments.length) return;
     saving = true;
+    // Retry lives in the status, which hides now: keep focus on the screen (Continue stays
+    // focusable while busy, through aria-disabled).
+    if (status.el.contains(doc.activeElement)) continueButton.el.focus({preventScroll: true});
     hideFailure();
     renderActions();
     try {
@@ -96,11 +100,25 @@ export function mount(el, match, ctx = {}) {
     leave();
   }
 
+  // Writes 'skipped' only over an unanswered flag, and only once the account's settings are known:
+  // before settings.config arrives, account.value is the defaults, and the server merges onboarding
+  // key by key, so writing then could replace a 'done' given on another device.
+  function markSkipped() {
+    if (account.value.peek()?.onboarding?.whatDoYouPlay) return;
+    account.markOnboarding('whatDoYouPlay', 'skipped')
+      .catch(err => console.warn('[welcome] "skipped" was not saved; first run will ask again:', err?.message ?? err));
+  }
+
   function skip() {
     if (saving || left) return;
-    if (!account.value.peek()?.onboarding?.whatDoYouPlay) {
-      account.markOnboarding('whatDoYouPlay', 'skipped')
-        .catch(err => console.warn('[welcome] "skipped" was not saved; first run will ask again:', err?.message ?? err));
+    if (account.loaded.peek()) markSkipped();
+    else {
+      // Leave now; write once the settings arrive (the account module outlives this view).
+      const off = account.loaded.subscribe(isLoaded => {
+        if (!isLoaded) return;
+        off();
+        markSkipped();
+      });
     }
     leave();
   }

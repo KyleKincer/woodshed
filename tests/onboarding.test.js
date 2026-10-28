@@ -47,6 +47,8 @@ const button = (root, name) => {
 const chip = (root, instrument) => root.querySelectorAll('.onboarding-instruments-chips .ui-chip-main')[INSTRUMENTS.indexOf(instrument)];
 const tap = el => el.click();
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+// happy-dom's PageTransitionEvent ignores `persisted`, so it is set by hand.
+const pageshow = persisted => Object.defineProperty(new Event('pageshow'), 'persisted', {value: persisted});
 const alertOf = root => [...root.querySelectorAll('[role=alert]')].find(el => !isHidden(el)) ?? null;
 
 function host() {
@@ -243,7 +245,7 @@ describe('renderSignIn (§2.19, spec §6.6.1)', () => {
     expect(signInMessage(undefined)).toBeNull();
   });
 
-  test('Continue with Google runs signIn with "Opening Google…" and stays put on success', async () => {
+  test('Continue with Google runs signIn with "Opening Google…" and stays busy after a started sign-in', async () => {
     let finish;
     const signIn = vi.fn(() => new Promise(resolve => { finish = resolve; }));
     const el = host();
@@ -259,10 +261,70 @@ describe('renderSignIn (§2.19, spec §6.6.1)', () => {
     expect(signIn).toHaveBeenCalledTimes(1);   // no second start while busy
     finish();
     await flush();
+    // Resolved = the page is being sent to Google: still busy, and a second press starts nothing.
+    expect(b.getAttribute('aria-busy')).toBe('true');
+    expect(b.getAttribute('aria-disabled')).toBe('true');
+    expect(b.textContent).toContain('Opening Google…');
+    tap(b);
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(alertOf(el)).toBeNull();
+    // Focus coming back does nothing on the web (only desktop re-arms that way).
+    window.dispatchEvent(new Event('blur'));
+    window.dispatchEvent(new Event('focus'));
+    expect(b.getAttribute('aria-disabled')).toBe('true');
+    // A plain pageshow (not from the bfcache) does nothing either.
+    window.dispatchEvent(pageshow(false));
+    expect(b.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  test('back from Google without finishing (bfcache pageshow), Continue with Google is back', async () => {
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    const el = host();
+    renderSignIn(el, {signIn});
+    const b = button(el, 'Continue with Google');
+    tap(b);
+    await flush();
+    expect(b.getAttribute('aria-busy')).toBe('true');
+    window.dispatchEvent(pageshow(true));
     expect(b.getAttribute('aria-busy')).toBeNull();
     expect(b.getAttribute('aria-disabled')).toBeNull();
     expect(accName(b)).toBe('Continue with Google');
-    expect(alertOf(el)).toBeNull();
+    tap(b);
+    expect(signIn).toHaveBeenCalledTimes(2);
+  });
+
+  test('desktop: the button re-arms when the window regains focus after the system browser took it', async () => {
+    window.woodshedDesktop = {};
+    try {
+      const signIn = vi.fn().mockResolvedValue(undefined);
+      const el = host();
+      renderSignIn(el, {signIn});
+      const b = button(el, 'Continue with Google');
+      tap(b);
+      await flush();
+      expect(b.getAttribute('aria-disabled')).toBe('true');
+      window.dispatchEvent(new Event('blur'));   // the system browser opens
+      expect(b.getAttribute('aria-disabled')).toBe('true');
+      window.dispatchEvent(new Event('focus'));  // the user comes back without finishing
+      expect(b.getAttribute('aria-busy')).toBeNull();
+      expect(b.getAttribute('aria-disabled')).toBeNull();
+      tap(b);
+      expect(signIn).toHaveBeenCalledTimes(2);
+    } finally {
+      delete window.woodshedDesktop;
+    }
+  });
+
+  test('destroy() after a started sign-in stops listening for the return', async () => {
+    const el = host();
+    const view = renderSignIn(el, {signIn: vi.fn().mockResolvedValue(undefined)});
+    const b = button(el, 'Continue with Google');
+    tap(b);
+    await flush();
+    const remove = vi.spyOn(window, 'removeEventListener');
+    view.destroy();
+    expect(remove.mock.calls.map(c => c[0])).toContain('pageshow');
+    remove.mockRestore();
   });
 
   test('a failed start shows its mapped message; a non-AuthError means sign-in could not start', async () => {
@@ -537,6 +599,21 @@ describe('/welcome', () => {
     expect(alertOf(el)).toBeNull();
   });
 
+  test('Retry keeps keyboard focus on the screen (Continue), and a second failure leaves it there', async () => {
+    const {el, api} = welcome({fail: 2});
+    tap(chip(el, 'keys'));
+    tap(button(el, 'Continue'));
+    await vi.waitFor(() => expect(alertOf(el)).not.toBeNull());
+    const retry = button(el, 'Retry');
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    tap(retry);
+    expect(document.activeElement).toBe(el.querySelector('.onboarding-welcome-continue'));
+    await vi.waitFor(() => expect(alertOf(el)).not.toBeNull());
+    expect(api.patch).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(el.querySelector('.onboarding-welcome-continue'));
+  });
+
   test('Skip marks "skipped" and leaves at once', async () => {
     const {el, patches, router, account} = welcome();
     tap(chip(el, 'drums'));
@@ -556,6 +633,36 @@ describe('/welcome', () => {
     await flush();
     expect(account.value.peek().onboarding.whatDoYouPlay).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+  });
+
+  test('Skip before the account has loaded leaves at once, then writes only if the loaded flag is unset', async () => {
+    // Loads with 'done' (answered on another device): nothing is written.
+    const done = fakeAccount();
+    done.store.account.value = null;
+    const router = fakeRouter();
+    const el = host();
+    mountWelcome(el, WELCOME_MATCH, {router, account: done.account});
+    tap(button(el, 'Skip'));
+    expect(router.navigate).toHaveBeenCalledWith('/', {replace: true});
+    await flush();
+    expect(done.api.patch).not.toHaveBeenCalled();
+    done.store.account.value = withDefaults({onboarding: {whatDoYouPlay: 'done'}});
+    await flush();
+    expect(done.api.patch).not.toHaveBeenCalled();
+    expect(done.account.value.peek().onboarding.whatDoYouPlay).toBe('done');
+
+    // Loads unanswered: 'skipped' is written then.
+    document.body.replaceChildren();
+    const fresh = fakeAccount();
+    fresh.store.account.value = null;
+    const el2 = host();
+    const view = mountWelcome(el2, WELCOME_MATCH, {router: fakeRouter(), account: fresh.account});
+    tap(button(el2, 'Skip'));
+    view.unmount();   // the router leaves; the write still follows the load
+    await flush();
+    expect(fresh.api.patch).not.toHaveBeenCalled();
+    fresh.store.account.value = withDefaults({});
+    await vi.waitFor(() => expect(fresh.patches).toEqual([{onboarding: {whatDoYouPlay: 'skipped'}}]));
   });
 
   test('Skip never downgrades an answer already given', async () => {

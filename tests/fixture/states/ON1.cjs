@@ -5,6 +5,8 @@
 //   on1-signin            the sign-in card: 400 px card, title, three lines with 20 px icons, the 48 px
 //                         button (56 on coarse pointers), no theme picker, no alert; targets and focus
 //   on1-signin-opening    Continue with Google → "Opening Google…" (busy, disabled)
+//   on1-signin-started    a start that resolves stays "Opening Google…" (no second flow); a bfcache
+//                         return re-enables it
 //   on1-signin-failed     a sign-in that cannot start: today's "Could not start Google sign-in…" alert
 //   on1-signin-error      each OAuth error code shows today's message (expired is captured)
 //   on1-welcome           first run: 56 px chips, the first tapped is primary, the open-with choice,
@@ -140,6 +142,26 @@ module.exports = [
     },
   },
   {
+    name: 'on1-signin-started',
+    url: `${BASE}?part=signin`,
+    opts: {capture: false, themes: ['light']},
+    async fn(page, t) {
+      // The default signIn resolves at once, as the real one does once it has sent the page to Google.
+      await page.getByRole('button', {name: 'Continue with Google'}).click();
+      await page.waitForFunction(() => window.__onboarding.log.length === 1);
+      await page.waitForTimeout(100);
+      const b = page.locator('.onboarding-signin-button');
+      t.expect(await b.getAttribute('aria-busy') === 'true', 'still busy after a started sign-in');
+      t.expect(await b.getAttribute('aria-disabled') === 'true', 'still disabled after a started sign-in');
+      t.expect((await b.textContent()).includes('Opening Google…'), 'still "Opening Google…"');
+      await b.click({force: true});
+      t.expect(JSON.stringify(await page.evaluate(() => window.__onboarding.log)) === '["signIn"]', 'no second start');
+      // Back from Google without finishing (the page restored from the bfcache): Continue is back.
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true})));
+      t.expect(await b.getAttribute('aria-disabled') === null, 'Continue is back after a bfcache return');
+    },
+  },
+  {
     name: 'on1-signin-failed',
     url: `${BASE}?part=signin&signin=fail`,
     opts: {themes: ['light']},
@@ -268,8 +290,12 @@ module.exports = [
       t.expect((await onboarding(page)).navigations.length === 0, 'stays on the screen');
       await expectTargets(t, page, 'failed');
       await t.capture('failed');
-      await page.getByRole('button', {name: 'Retry'}).click();
+      // Retry by keyboard: the status hides as the save starts, so focus moves to Continue.
+      await page.getByRole('button', {name: 'Retry'}).focus();
+      await page.keyboard.press('Enter');
       await page.waitForFunction(() => window.__onboarding.navigations.length === 1);
+      const focused = await page.evaluate(() => document.activeElement?.className ?? '');
+      t.expect(focused.includes('onboarding-welcome-continue'), `focus stays on the screen (${focused})`);
       const o = await onboarding(page);
       t.expect(o.patches.length === 2 && o.settings.onboarding.whatDoYouPlay === 'done', `retried ${JSON.stringify(o.patches)}`);
     },

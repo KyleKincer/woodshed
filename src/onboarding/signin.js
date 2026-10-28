@@ -6,7 +6,10 @@
 //     error    the AuthError main.js caught (kind 'oauth': expired, access_denied, invalid_flow,
 //              oauth_error, rejected, unverified), or null; shown as an alert above the button
 //     signIn   starts Google OAuth (main.js passes auth.signIn; default: src/app/auth.js signIn).
-//              While it runs the button reads "Opening Google…"; a failure shows its message.
+//              While it runs the button reads "Opening Google…"; a failure shows its message and
+//              re-enables it. A successful start keeps it busy (the page is leaving for Google)
+//              until the user comes back unfinished: a bfcache pageshow on the web, or the
+//              desktop window regaining focus (desktop opens Google in the system browser).
 //   signInMessage(error) → string|null
 //     the sentence for an error, in today's sign-in copy (auth.js OAUTH_MESSAGES): a known OAuth
 //     code maps to its message; 'rejected' carries the backend's own message; anything else shows
@@ -51,7 +54,38 @@ export function renderSignIn(el, {error = null, signIn = authSignIn} = {}) {
   };
   showError(signInMessage(error));
 
-  let busy = false, destroyed = false;
+  let busy = false, destroyed = false, offReturn = null;
+  const view = doc.defaultView;
+  const rearm = () => {
+    offReturn?.();
+    offReturn = null;
+    busy = false;
+    if (!destroyed) button.set({busy: false, disabled: false});
+  };
+  // A started sign-in resolves as soon as the browser is sent to Google, while this page is still
+  // loaded, so the button stays "Opening Google…" (a second press would start a second flow and
+  // overwrite the one the first needs). It comes back only when the user returns without having
+  // finished: on the web, a back navigation that restores this page from the bfcache; in the
+  // desktop app (which opens Google in the system browser and keeps this page), the window
+  // regaining focus after it lost it.
+  const awaitReturn = () => {
+    if (!view) return;
+    const desktop = !!view.woodshedDesktop;
+    let away = !doc.hasFocus();
+    const onPageShow = e => { if (e.persisted) rearm(); };
+    const onBlur = () => { away = true; };
+    const onFocus = () => { if (away) rearm(); };
+    view.addEventListener('pageshow', onPageShow);
+    if (desktop) {
+      view.addEventListener('blur', onBlur);
+      view.addEventListener('focus', onFocus);
+    }
+    offReturn = () => {
+      view.removeEventListener('pageshow', onPageShow);
+      view.removeEventListener('blur', onBlur);
+      view.removeEventListener('focus', onFocus);
+    };
+  };
   const button = Button({
     label: COPY.signin.continue,
     variant: 'primary',
@@ -66,10 +100,10 @@ export function renderSignIn(el, {error = null, signIn = authSignIn} = {}) {
         await signIn();
       } catch (err) {
         if (!destroyed) showError(failureMessage(err));
-      } finally {
-        busy = false;
-        if (!destroyed) button.set({busy: false, disabled: false});
+        rearm();
+        return;
       }
+      if (!destroyed) awaitReturn();
     },
   });
 
@@ -95,6 +129,8 @@ export function renderSignIn(el, {error = null, signIn = authSignIn} = {}) {
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      offReturn?.();
+      offReturn = null;
       button.destroy();
       status.destroy();
       wrap.remove();
