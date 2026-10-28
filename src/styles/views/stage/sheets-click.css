@@ -1,0 +1,94 @@
+/* The Click sheet (src/stage/sheets/click.js; spec §4.7): count-in, every pass, click mode,
+ * accent, volume, pre-roll, the visual click, the read-only "At the cue" line and the Edit map
+ * footer; unmapped: the Lead-in and "Needs a bar grid". Fits the 360 px rail popover and the
+ * band's bottom sheet. */
+@layer views {
+  .sheet-click {
+    display: grid;
+    gap: var(--s4);
+    padding-block: var(--s1) var(--s2);
+  }
+
+  .sheet-click-section {
+    display: grid;
+    gap: var(--s3);
+    min-width: 0;
+  }
+  .sheet-click-section + .sheet-click-section {
+    padding-block-start: var(--s3);
+    border-block-start: 1px solid var(--line);
+  }
+  .sheet-click-heading {
+    margin: 0;
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: var(--fw-bold);
+  }
+
+  .sheet-click-count-in.ui-segmented,
+  .sheet-click-mode.ui-segmented { min-width: 0; }
+  .sheet-click-count-in .ui-segmented-options,
+  .sheet-click-mode .ui-segmented-options { flex-wrap: wrap; }
+
+  .sheet-click-custom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .sheet-click-row,
+  .sheet-click-controls,
+  .sheet-click-field,
+  .sheet-click-needs-grid {
+    display: grid;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .sheet-click-controls { gap: var(--s3); }
+  .sheet-click-toggle.ui-button { justify-self: start; max-width: 100%; }
+  .sheet-click-field-label {
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+  }
+  .sheet-click-volume.ui-slider { width: 100%; }
+
+  .sheet-click-hint,
+  .sheet-click-note {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+  }
+  .sheet-click-note { color: var(--ink-2); }
+
+  .sheet-click-needs-grid-title {
+    margin: 0;
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: var(--fw-semibold);
+  }
+  .sheet-click-grid-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+
+  .sheet-click-at-cue {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sheet-click-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    padding-block-start: var(--s3);
+    border-block-start: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+  }
+}
