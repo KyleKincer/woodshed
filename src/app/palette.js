@@ -22,7 +22,9 @@
 //                  whose `when` fails is hidden; one with a disabledReason is listed, disabled, with the reason visible.
 //   Songs          library titles (prefix > word-start > fuzzy) and artists; Enter opens the Stage, ⌘Enter Details.
 //   Navigation     nav.library, nav.settings(.<section>), nav.plan, nav.admin and library.add from the registry.
-//   A bare number < 400 offers both Speed N% and Go to bar N; the bar comes first when mapped, the speed otherwise.
+//   A bare number < 400 offers both Speed N% and Go to bar N; the bar comes first when mapped, the speed otherwise. One
+//   that is out of range (no such bar or time, a speed outside 25–150%) is still listed, disabled, with the reason.
+//   `mute <stem>` mutes and `unmute <stem>` unmutes; a stem already in that state is a disabled row.
 // Ranking: group order (In this song, Commands, Songs, Navigation; the unmapped bare-number case leads with Commands),
 // then the match tier (parsed rows first, then exact, prefix, word start, substring, fuzzy), then frecency
 // score = n × 0.5^(ageDays / 14) from prefs.palette.frecency ({[itemId]: {n, at}}, at most FRECENCY_CAP entries; the
@@ -32,7 +34,7 @@ import {formatClock} from '../../shared/practice.ts';
 import {now} from './clock.js';
 import {registry as appRegistry} from './commands.js';
 import {pushOverlay} from './dispatch.js';
-import {announce} from './feedback.js';
+import {announce, cancelAnnounce} from './feedback.js';
 import {isMacLike} from './keys.js';
 import {FRECENCY_CAP, prefs} from './prefs.js';
 import {store as appStore} from './store.js';
@@ -240,9 +242,20 @@ function songOf(ctx) {
   };
 }
 
+/** 'bars 9–16' (display numbers) for a section, or undefined. */
+function sectionBars(song, section) {
+  const first = song.bars[section.startBar]?.display, last = song.bars[section.endBar]?.display;
+  return first != null && last != null ? `bars ${first}–${last}` : undefined;
+}
 const lastDisplay = song => song.bars.reduce((n, b) => (b.display != null ? Math.max(n, b.display) : n), 0);
 const barByDisplay = (song, n) => song.bars.find(b => b.display === n) ?? null;
-const tenths = s => (Number.isInteger(s) ? formatClock(s) : `${formatClock(s)}.${Math.round((s % 1) * 10) % 10}`);
+/** m:ss, or m:ss.t when the time has a fraction: rounded to tenths first, so 12.96 s reads 0:13.0 (not 0:12.0). */
+export function tenths(s) {
+  if (Number.isInteger(s)) return formatClock(s);
+  const r = Math.round(s * 10) / 10;
+  const whole = Math.floor(r);
+  return `${formatClock(whole)}.${Math.round((r - whole) * 10)}`;
+}
 
 function transportOf(ctx) {
   const t = ctx.transport ?? ctx.session?.transport ?? null;
@@ -319,14 +332,14 @@ function songSearch(reg) {
           out.push(goTo(bar.t0, `Go to bar ${parsed.bar}`, {
             rowId: 'q:bar', subtitle: bar.label || undefined, loop: t => t?.loopBars(bar.t0, 1),
           }));
-        } else if (!(parsed.bare != null && parsed.bare >= SPEED_MIN && parsed.bare <= SPEED_MAX)) {
-          // A bare number that is also a valid speed offers only the speed when the bar does not exist.
+        } else {
+          // A missing bar is listed, disabled, with the reason (a bare number also offers Speed N%).
           const row = goTo(0, `Go to bar ${parsed.bar}`, {rowId: 'q:bar'});
           if (row) out.push({...row, disabled: `This song has ${plural(lastDisplay(song), 'bar')}.`});
         }
       } else if (parsed.bar <= song.duration) {
         out.push(goTo(parsed.bar, `Go to ${formatClock(parsed.bar)}`, {rowId: 'q:bar'}));
-      } else if (!(parsed.bare != null && parsed.bare >= SPEED_MIN && parsed.bare <= SPEED_MAX)) {
+      } else {
         const row = goTo(0, `Go to ${formatClock(parsed.bar)}`, {rowId: 'q:bar'});
         if (row) out.push({...row, disabled: `This song is ${formatClock(song.duration)} long.`});
       }
@@ -345,10 +358,10 @@ function songSearch(reg) {
       for (const section of song.sections) {
         const tier = bestTier([section.name, section.label], text);
         if (tier == null) continue;
-        const first = song.bars[section.startBar]?.display, last = song.bars[section.endBar]?.display;
+        const bars = sectionBars(song, section);
         const row = goTo(section.t0, section.name, {
           rowId: `section:${song.session.id ?? ''}:${section.name}`,
-          subtitle: first != null && last != null ? `Section · bars ${first}–${last}` : 'Section',
+          subtitle: bars ? `Section · ${bars}` : 'Section',
           loop: loopRange(section.t0, section.t1, section.name),
         });
         if (row) out.push({...row, tier, frecency: true, icon: 'flag'});
@@ -386,24 +399,25 @@ function commandSearch(reg) {
     if (parsed.speed != null) {
       const n = parsed.speed;
       const inRange = n >= SPEED_MIN && n <= SPEED_MAX;
-      if (inRange || parsed.speedExplicit) {
-        const rate = Math.round(n) / 100;
-        const row = commandRow(reg, ctx, 'speed.set', {args: {rate}, title: `Speed ${Math.round(n)}%`, rowId: 'q:speed', icon: 'gauge',
-          lead: parsed.bare != null && !song?.mapped});
-        if (row) out.push(inRange ? row : {...row, disabled: `Speed goes from ${SPEED_MIN}% to ${SPEED_MAX}%.`});
-      }
+      // Out of range (an explicit `N%`, or a bare number < 400, which also offers the bar) is a disabled row.
+      const rate = Math.round(n) / 100;
+      const row = commandRow(reg, ctx, 'speed.set', {args: {rate}, title: `Speed ${Math.round(n)}%`, rowId: 'q:speed', icon: 'gauge',
+        lead: parsed.bare != null && !song?.mapped});
+      if (row) out.push(inRange ? row : {...row, disabled: `Speed goes from ${SPEED_MIN}% to ${SPEED_MAX}%.`});
     }
     // loop 41-48 / loop 1:10-1:20 / loop chorus
     if (parsed.loop && song) {
       const loop = parsed.loop;
       if (loop.name != null) {
         const regions = song.mapped
-          ? song.sections.map(s => ({name: s.name, label: s.label, t0: s.t0, t1: s.t1}))
-          : song.markers.map((m, i) => ({name: m.label, t0: m.t, t1: song.markers[i + 1]?.t ?? song.duration}));
+          ? song.sections.map((s, i) => ({key: `section:${i}`, name: s.name, label: s.label, t0: s.t0, t1: s.t1,
+            subtitle: sectionBars(song, s)}))
+          : song.markers.map((m, i) => ({key: `marker:${m.id ?? i}`, name: m.label, t0: m.t, t1: song.markers[i + 1]?.t ?? song.duration}));
         for (const region of regions) {
           const tier = bestTier([region.name, region.label], loop.name);
           if (tier == null || !(region.t1 > region.t0)) continue;
-          const row = transportRow(ctx, {id: `q:loop:${region.name}`, title: `Loop ${region.name}`, icon: 'repeat', tier: TIER.parsed + tier / 10,
+          const row = transportRow(ctx, {id: `q:loop:${region.key}`, title: `Loop ${region.name}`, icon: 'repeat', tier: TIER.parsed + tier / 10,
+            subtitle: region.subtitle ?? `${formatClock(region.t0)}–${formatClock(region.t1)}`,
             run: t => t.loopRange(region.t0, region.t1, {label: region.name, snap: song.mapped ? 'bar' : 'none'})});
           if (row) out.push(row);
         }
@@ -471,8 +485,11 @@ function commandSearch(reg) {
     }
     if (parsed.mute) {
       for (const {track, tier} of stemsMatching(tracks, parsed.mute.name)) {
-        const on = parsed.mute.on ? !track.muted : false;
-        const row = transportRow(ctx, {id: `q:mute:${track.name}`, title: `${on ? 'Mute' : 'Unmute'} ${stemLabel(track.name)}`,
+        // `mute` mutes and `unmute` unmutes (never a toggle); a stem already in that state is a disabled row.
+        const on = parsed.mute.on;
+        const label = stemLabel(track.name);
+        const already = !!track.muted === on ? (on ? `${label} is already muted.` : `${label} is not muted.`) : undefined;
+        const row = transportRow(ctx, {id: `q:mute:${track.name}`, title: `${on ? 'Mute' : 'Unmute'} ${label}`, disabled: already,
           icon: on ? 'volume-x' : 'volume-2', tier: TIER.parsed + tier / 10, run: t => t.setMuted(track.name, on)});
         if (row) out.push(row);
       }
@@ -633,10 +650,19 @@ export function openPalette({query = '', registry = appRegistry} = {}) {
   });
   const list = h('div', {id: ids.list, class: 'app-palette-list', role: 'listbox', 'aria-label': 'Results'});
   const empty = h('p', {class: 'app-palette-empty', hidden: true});
+  // Every Kbd holds a matchMedia listener until destroy(): footer caps live until close, row caps until the next render.
+  const footerCaps = [];
+  const rowCaps = [];
+  const cap = (list, props) => {
+    const k = Kbd(props);
+    list.push(k);
+    return k.el;
+  };
+  const destroyCaps = list => { for (const k of list.splice(0)) k.destroy(); };
   const footer = h('div', {class: 'app-palette-footer', 'aria-hidden': 'true'},
-    h('span', {}, Kbd({keys: 'Enter'}).el, ' Run'),
-    h('span', {}, Kbd({keys: 'Mod+Enter'}).el, ' Loop or open details'),
-    h('span', {}, Kbd({keys: 'Escape'}).el, ' Close'));
+    h('span', {}, cap(footerCaps, {keys: 'Enter'}), ' Run'),
+    h('span', {}, cap(footerCaps, {keys: 'Mod+Enter'}), ' Loop or open details'),
+    h('span', {}, cap(footerCaps, {keys: 'Escape'}), ' Close'));
   const box = h('div', {class: 'app-palette-box'},
     h('div', {class: 'app-palette-field'}, icon('search'), input), list, empty, footer);
   const el = h('dialog', {class: 'app-palette', 'aria-label': 'Command palette', dataset: {layout}}, box);
@@ -674,8 +700,8 @@ export function openPalette({query = '', registry = appRegistry} = {}) {
       h('span', {class: 'app-palette-title'}, item.title),
       item.subtitle ? h('span', {class: 'app-palette-sub'}, item.subtitle) : null,
       item.disabled ? h('span', {class: 'app-palette-reason', id: reasonId}, item.disabled) : null),
-    item.modLabel && !item.disabled ? h('span', {class: 'app-palette-mod', 'aria-hidden': 'true'}, Kbd({keys: 'Mod+Enter'}).el, ` ${item.modLabel}`) : null,
-    item.keys ? Kbd({keys: item.keys, className: 'app-palette-key'}).el : null);
+    item.modLabel && !item.disabled ? h('span', {class: 'app-palette-mod', 'aria-hidden': 'true'}, cap(rowCaps, {keys: 'Mod+Enter'}), ` ${item.modLabel}`) : null,
+    item.keys ? cap(rowCaps, {keys: item.keys, className: 'app-palette-key'}) : null);
     if (item.disabled) {
       row.setAttribute('aria-disabled', 'true');
       row.setAttribute('aria-describedby', reasonId);
@@ -692,6 +718,7 @@ export function openPalette({query = '', registry = appRegistry} = {}) {
       console.error(err);
       items = [];
     }
+    destroyCaps(rowCaps);
     const groups = [];
     items.forEach((item, index) => {
       let g = groups[groups.length - 1];
@@ -705,6 +732,7 @@ export function openPalette({query = '', registry = appRegistry} = {}) {
         ...g.rows);
     }));
     list.hidden = !items.length;
+    input.setAttribute('aria-expanded', String(items.length > 0));
     empty.hidden = !!items.length;
     empty.textContent = items.length ? '' : q.trim() ? `No matches for “${q.trim()}”` : 'Nothing to show yet.';
     // A re-render while the query is unchanged (a registry or state change) keeps the active row.
@@ -718,6 +746,10 @@ export function openPalette({query = '', registry = appRegistry} = {}) {
     if (!open) return;
     open = false;
     for (const fn of cleanups.splice(0).reverse()) fn();
+    // A result count still waiting on its throttle would speak for a palette that is gone (over the command's own).
+    cancelAnnounce('palette-results');
+    destroyCaps(rowCaps);
+    destroyCaps(footerCaps);
     if (el.open) el.close();
     el.remove();
     restoreFocus(previous, el);

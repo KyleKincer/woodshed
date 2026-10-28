@@ -202,6 +202,54 @@ describe('the overlay', () => {
     handle.close();
   });
 
+  test('a registry or state change while open rebuilds the rows and keeps the filter', async () => {
+    const handle = openShortcuts({registry: reg, chain: ['stage', 'global']});
+    const filter = handle.el.querySelector('.app-shortcuts-filter');
+    const visibleIds = () => [...handle.el.querySelectorAll('[data-section=here] .app-shortcuts-row')]
+      .filter(r => !r.hidden && !r.closest('[hidden]')).map(r => r.dataset.commandId);
+    filter.value = 'mute';
+    filter.dispatchEvent(new window.Event('input', {bubbles: true}));
+    expect(visibleIds()).toEqual(['mix.mute.1']);
+    // A surface registers a binding while the sheet is open.
+    reg.register(def('mix.mute.2', 'Mute bass', 'Mix', ['Digit2'], ['stage']));
+    expect(visibleIds()).toEqual(['mix.mute.1', 'mix.mute.2']);
+    expect(handle.model.here.groups.flatMap(g => g.rows).some(r => r.id === 'mix.mute.2')).toBe(true);
+    expect(filter.value).toBe('mute');
+    // A `when` stops passing (the song closes): the row goes once the registry recomputes.
+    session = null;
+    reg.invalidate();   // (provide() in beforeEach may already have one pending, on real timers)
+    await new Promise(resolve => setTimeout(resolve, 120));
+    expect(visibleIds()).toEqual(['mix.mute.2']);
+    handle.close();
+    // Closed: later changes are ignored.
+    reg.register(def('mix.mute.3', 'Mute vocals', 'Mix', ['Digit3'], ['stage']));
+    expect(handle.el.querySelector('[data-command-id="mix.mute.3"]')).toBe(null);
+  });
+
+  test('every key-cap it makes is destroyed on re-render and on close (no matchMedia listener leak)', () => {
+    const real = globalThis.matchMedia;
+    let added = 0, removed = 0;
+    globalThis.matchMedia = query => {
+      const mql = real ? real.call(globalThis, query) : {matches: false, addEventListener() {}, removeEventListener() {}};
+      return {
+        get matches() { return mql.matches; },
+        addEventListener: (type, fn) => { added++; mql.addEventListener?.(type, fn); },
+        removeEventListener: (type, fn) => { removed++; mql.removeEventListener?.(type, fn); },
+      };
+    };
+    try {
+      const handle = openShortcuts({registry: reg, chain: ['stage', 'global']});
+      expect(added).toBeGreaterThan(5);
+      reg.register(def('mix.mute.2', 'Mute bass', 'Mix', ['Digit2'], ['stage']));
+      const live = handle.el.querySelectorAll('kbd.ui-kbd').length;
+      expect(added - removed).toBe(live);
+      handle.close();
+      expect(removed).toBe(added);
+    } finally {
+      globalThis.matchMedia = real;
+    }
+  });
+
   test('a chain with nothing bound says so', () => {
     const empty = createRegistry();
     const handle = openShortcuts({registry: empty, chain: ['settings', 'global']});

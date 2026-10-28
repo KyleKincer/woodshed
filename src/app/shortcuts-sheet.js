@@ -8,7 +8,8 @@
 //     out), grouped by command group in SHEET_GROUPS order; "Elsewhere" lists the other scopes' bindings, one block per
 //     scope. A key an inner scope of the chain takes first is marked on the outer command as shadowed ("here: <inner
 //     command>"), and a key a stop scope in the chain blocks (D45) is marked "not while <scope>". Labels come from
-//     keys.label() through Kbd. Esc, ✕, a tap on the backdrop or `?` close it; the filter field narrows the rows.
+//     keys.label() through Kbd. Esc, ✕, a tap on the backdrop or `?` close it; the filter field narrows the rows. While
+//     it is open a registry or state change (registry.onChange) rebuilds the rows for the same chain, keeping the filter.
 //   shortcutModel({registry, chain, ctx}) → {chain, here: {label, groups}, elsewhere: [{scope, label, groups}]}   (pure over the registry)
 //     groups: [{group, rows: [{id, title, group, scope, keys: KeyString[], shadowed: [{key, by: {id, title, scope}}],
 //                              blocked: [{key, scope}]}]}]
@@ -152,17 +153,24 @@ function keyText(keys) {
   return keys.map(k => keyLabel(k)).join(' ');
 }
 
-function renderRow(row) {
+// Every Kbd holds a matchMedia listener until destroy(), so the caps a render makes are collected in `made`.
+function capEl(made, key) {
+  const k = Kbd({keys: key, force: true});
+  made.push(k);
+  return k.el;
+}
+
+function renderRow(row, made) {
   const caps = [];
-  for (const key of row.keys) caps.push(h('span', {class: 'app-shortcuts-key'}, Kbd({keys: key, force: true}).el));
+  for (const key of row.keys) caps.push(h('span', {class: 'app-shortcuts-key'}, capEl(made, key)));
   for (const {key, by} of row.shadowed) {
     caps.push(h('span', {class: 'app-shortcuts-key', dataset: {shadowed: ''}},
-      h('span', {class: 'sr-only'}, 'Shadowed: '), Kbd({keys: key, force: true}).el,
+      h('span', {class: 'sr-only'}, 'Shadowed: '), capEl(made, key),
       h('span', {class: 'app-shortcuts-note'}, `here: ${by.title}`)));
   }
   for (const {key, scope} of row.blocked) {
     caps.push(h('span', {class: 'app-shortcuts-key', dataset: {blocked: ''}},
-      h('span', {class: 'sr-only'}, 'Unavailable: '), Kbd({keys: key, force: true}).el,
+      h('span', {class: 'sr-only'}, 'Unavailable: '), capEl(made, key),
       h('span', {class: 'app-shortcuts-note'}, `not while ${scopeLabel(scope).replace(/ \(focused\)$/, '').toLowerCase()} has focus`)));
   }
   const allKeys = [...row.keys, ...row.shadowed.map(s => s.key), ...row.blocked.map(b => b.key)];
@@ -175,12 +183,12 @@ function renderRow(row) {
   h('span', {class: 'app-shortcuts-keys'}, ...caps));
 }
 
-function renderGroups(groups, idPrefix) {
+function renderGroups(groups, idPrefix, made) {
   return h('div', {class: 'app-shortcuts-groups'}, ...groups.map(({group, rows}) => {
     const id = `${idPrefix}-${group.toLowerCase()}`;
     return h('section', {class: 'app-shortcuts-group', 'aria-labelledby': id, dataset: {group}},
       h('h4', {class: 'app-shortcuts-group-title', id}, group),
-      h('ul', {class: 'app-shortcuts-rows'}, ...rows.map(renderRow)));
+      h('ul', {class: 'app-shortcuts-rows'}, ...rows.map(row => renderRow(row, made))));
   }));
 }
 
@@ -190,7 +198,8 @@ export function openShortcuts({registry = appRegistry, chain} = {}) {
   const doc = globalThis.document;
   const seq = ++sheetSeq;
   const previous = doc.activeElement;
-  const model = shortcutModel({registry, chain: chain ?? activeScopeChain()});
+  const scopeChain = chain ?? activeScopeChain();
+  let model = shortcutModel({registry, chain: scopeChain});
   const stageLayout = appStore.stage.peek()?.layout ?? doc.querySelector('[data-stage-layout]')?.getAttribute('data-stage-layout') ?? null;
   const layout = sheetLayout({stageLayout, width: doc.defaultView?.innerWidth ?? Infinity});
   const ids = {title: `app-shortcuts-${seq}-title`, here: `app-shortcuts-${seq}-here`, filter: `app-shortcuts-${seq}-filter`};
@@ -199,24 +208,32 @@ export function openShortcuts({registry = appRegistry, chain} = {}) {
   const filter = h('input', {id: ids.filter, class: 'app-shortcuts-filter', type: 'search', autocomplete: 'off', spellcheck: false,
     placeholder: 'Filter shortcuts'});
   const empty = h('p', {class: 'app-shortcuts-empty', hidden: true}, 'No shortcuts match.');
-  const hereSection = h('section', {class: 'app-shortcuts-section', 'aria-labelledby': ids.here, dataset: {section: 'here'}},
-    h('h3', {class: 'app-shortcuts-section-title', id: ids.here}, `Here: ${model.here.label}`),
-    model.here.groups.length ? renderGroups(model.here.groups, `app-shortcuts-${seq}-here`)
-      : h('p', {class: 'app-shortcuts-none'}, 'No keyboard shortcuts here.'));
-  const elsewhere = model.elsewhere.map((block, i) => {
-    const id = `app-shortcuts-${seq}-s${i}`;
-    return h('section', {class: 'app-shortcuts-section', 'aria-labelledby': id, dataset: {section: 'elsewhere', scope: block.scope}},
-      h('h3', {class: 'app-shortcuts-section-title', id}, block.label),
-      renderGroups(block.groups, id));
-  });
-  const body = h('div', {class: 'app-shortcuts-body', tabIndex: 0, role: 'region', 'aria-labelledby': ids.title},
-    hereSection,
-    elsewhere.length ? h('h3', {class: 'app-shortcuts-elsewhere'}, 'Elsewhere') : null,
-    ...elsewhere, empty);
+  const body = h('div', {class: 'app-shortcuts-body', tabIndex: 0, role: 'region', 'aria-labelledby': ids.title});
+  const sub = h('p', {class: 'app-shortcuts-sub'});
+  let caps = [];
+  // (Re)builds the Here and Elsewhere sections from `model`, destroying the previous render's key-caps.
+  const renderBody = () => {
+    const made = [];
+    const hereSection = h('section', {class: 'app-shortcuts-section', 'aria-labelledby': ids.here, dataset: {section: 'here'}},
+      h('h3', {class: 'app-shortcuts-section-title', id: ids.here}, `Here: ${model.here.label}`),
+      model.here.groups.length ? renderGroups(model.here.groups, `app-shortcuts-${seq}-here`, made)
+        : h('p', {class: 'app-shortcuts-none'}, 'No keyboard shortcuts here.'));
+    const elsewhere = model.elsewhere.map((block, i) => {
+      const id = `app-shortcuts-${seq}-s${i}`;
+      return h('section', {class: 'app-shortcuts-section', 'aria-labelledby': id, dataset: {section: 'elsewhere', scope: block.scope}},
+        h('h3', {class: 'app-shortcuts-section-title', id}, block.label),
+        renderGroups(block.groups, id, made));
+    });
+    for (const k of caps) k.destroy();
+    caps = made;
+    body.replaceChildren(hereSection,
+      ...(elsewhere.length ? [h('h3', {class: 'app-shortcuts-elsewhere'}, 'Elsewhere')] : []),
+      ...elsewhere, empty);
+    sub.textContent = `${model.here.label} first`;
+  };
   const header = h('header', {class: 'app-shortcuts-header'},
     h('div', {class: 'app-shortcuts-heading'},
-      h('h2', {class: 'app-shortcuts-title', id: ids.title}, 'Keyboard shortcuts'),
-      h('p', {class: 'app-shortcuts-sub'}, `${model.here.label} first`)),
+      h('h2', {class: 'app-shortcuts-title', id: ids.title}, 'Keyboard shortcuts'), sub),
     closeButton);
   const filterRow = h('div', {class: 'app-shortcuts-filter-row'},
     h('label', {class: 'sr-only', for: ids.filter}, 'Filter shortcuts'), icon('search', {size: 20}), filter);
@@ -230,6 +247,7 @@ export function openShortcuts({registry = appRegistry, chain} = {}) {
     if (!open) return;
     open = false;
     for (const fn of cleanups.splice(0).reverse()) fn();
+    for (const k of caps.splice(0)) k.destroy();
     if (el.open) el.close();
     el.remove();
     restoreFocus(previous, el);
@@ -272,7 +290,8 @@ export function openShortcuts({registry = appRegistry, chain} = {}) {
   el.addEventListener('cancel', e => { e.preventDefault(); close('escape'); });
   el.addEventListener('click', e => { if (e.target === el) close('outside'); });
 
-  const handle = {el, model, get open() { return open; }, close: () => close('close')};
+  renderBody();
+  const handle = {el, get model() { return model; }, get open() { return open; }, close: () => close('close')};
   openHandle = handle;
 
   closeAllMenus('dialog');
@@ -280,6 +299,14 @@ export function openShortcuts({registry = appRegistry, chain} = {}) {
   el.showModal();
   cleanups.push(pushModalHost(el), trackLayer(el), trapTab(el));
   cleanups.push(pushOverlay({el, modal: true, scope: 'shortcuts', onEscape: () => close('escape')}));
+  // Registry or enablement changes (a song finishes loading, a surface registers its bindings) re-render the rows for
+  // the same scope chain, keeping the filter.
+  cleanups.push(registry.onChange(change => {
+    if (!open || (change?.type !== 'registry' && change?.type !== 'state')) return;
+    model = shortcutModel({registry, chain: scopeChain});
+    renderBody();
+    applyFilter();
+  }));
   el.__uiClose = reason => close(reason);
   body.focus({preventScroll: true});
   return handle;

@@ -7,11 +7,11 @@ import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import * as clock from '../src/app/clock.js';
 import {createRegistry} from '../src/app/commands.js';
 import {openOverlays, startDispatcher} from '../src/app/dispatch.js';
-import {resetFeedback} from '../src/app/feedback.js';
+import {LIVE_SETTLE_MS, resetFeedback} from '../src/app/feedback.js';
 import {setPlatform} from '../src/app/keys.js';
 import {
   BUILTIN_PROVIDERS, GROUPS, GROUP_LABELS, TIER, bumpFrecency, configurePalette, frecencyScore, matchTier, normalizeText,
-  openPalette, paletteItems, paletteLayout, parseQuery, rankItems, recordUse, registerProvider,
+  openPalette, paletteItems, tenths, paletteLayout, parseQuery, rankItems, recordUse, registerProvider,
 } from '../src/app/palette.js';
 import {FRECENCY_CAP, prefs} from '../src/app/prefs.js';
 import {signal, store} from '../src/app/store.js';
@@ -204,8 +204,36 @@ describe('In this song', () => {
     expect(missing.disabled).toBe('This song has 64 bars.');
     expect(titles('450')).toEqual(['Go to bar 450']);
     expect(find('450', 'Go to bar 450').disabled).toBe('This song has 64 bars.');
-    // A bare number that is a valid speed but no bar offers only the speed.
-    expect(titles('99')).toEqual(['Speed 99%']);
+    // A bare number < 400 always offers both: a missing bar is listed disabled (the bar first when mapped).
+    expect(titles('99')).toEqual(['Go to bar 99', 'Speed 99%']);
+    expect(find('99', 'Go to bar 99').disabled).toBe('This song has 64 bars.');
+    expect(find('99', 'Speed 99%').disabled).toBeUndefined();
+  });
+
+  test('a bare number < 400 offers both rows even when one is out of range; the invalid one is disabled', () => {
+    // Mapped (64 bars): 10 is a bar but not a speed; 200 is neither.
+    expect(titles('10')).toEqual(['Go to bar 10', 'Speed 10%']);
+    expect(find('10', 'Speed 10%').disabled).toBe('Speed goes from 25% to 150%.');
+    expect(find('10', 'Go to bar 10').disabled).toBeUndefined();
+    expect(titles('200')).toEqual(['Go to bar 200', 'Speed 200%']);
+    expect(find('200', 'Go to bar 200').disabled).toBe('This song has 64 bars.');
+    expect(find('200', 'Speed 200%').disabled).toBe('Speed goes from 25% to 150%.');
+    // Unmapped (0:30): the speed first; a time past the end is disabled.
+    session = makeSession(unmapped);
+    expect(titles('57')).toEqual(['Speed 57%', 'Go to 0:57']);
+    expect(find('57', 'Go to 0:57').disabled).toBe('This song is 0:30 long.');
+    expect(find('57', 'Speed 57%').disabled).toBeUndefined();
+  });
+
+  test('times with a fraction round to tenths before formatting (12.96 s reads 0:13.0)', () => {
+    expect(tenths(12.96)).toBe('0:13.0');
+    expect(tenths(12.94)).toBe('0:12.9');
+    expect(tenths(59.97)).toBe('1:00.0');
+    expect(tenths(12)).toBe('0:12');
+    session = makeSession(unmapped);
+    expect(titles('0:12.96')).toEqual(['Go to 0:13.0']);
+    run(find('loop 0:10.96-0:12.96', 'Loop 0:11.0–0:13.0'));
+    expect(transport.calls).toEqual([['loopRange', 10.96, 12.96, {label: '0:11.0–0:13.0', snap: 'none'}]]);
   });
 
   test('display bar numbers skip a pickup', () => {
@@ -257,7 +285,7 @@ describe('Commands', () => {
     expect(ran).toEqual([['speed.set', {rate: 0.75}]]);
     expect(titles('75%')).toEqual(['Speed 75%']);
     expect(find('200%', 'Speed 200%').disabled).toBe('Speed goes from 25% to 150%.');
-    expect(titles('10').includes('Speed 10%')).toBe(false);
+    expect(find('10', 'Speed 10%').disabled).toBe('Speed goes from 25% to 150%.');
   });
 
   test('loop 41-48 loops bars on a mapped song and seconds on an unmapped one', () => {
@@ -278,6 +306,19 @@ describe('Commands', () => {
     expect(list.map(i => i.title)).toEqual(['Loop Chorus', 'Loop Chorus 2', 'Loop Chorus 3']);
     run(list[2]);
     expect(transport.calls).toEqual([['loopRange', 96, 112, {label: 'Chorus 3', snap: 'bar'}]]);
+  });
+
+  test('loop <name> keeps one row per region when markers share a label, told apart by their times', () => {
+    session = makeSession(unmapped, {markers: [
+      {id: 'a', t: 2, label: 'Verse', updatedAt: NOW}, {id: 'b', t: 10, label: 'Verse', updatedAt: NOW},
+      {id: 'c', t: 20, label: 'End', updatedAt: NOW}]});
+    const list = items('loop verse').filter(i => i.title === 'Loop Verse');
+    expect(list.map(i => [i.id, i.subtitle])).toEqual([['q:loop:marker:a', '0:02–0:10'], ['q:loop:marker:b', '0:10–0:20']]);
+    run(list[1]);
+    expect(transport.calls).toEqual([['loopRange', 10, 20, {label: 'Verse', snap: 'none'}]]);
+    expect(items('loop chorus').find(i => i.title === 'Loop Chorus')).toBe(undefined);
+    session = makeSession(sectioned);
+    expect(find('loop chorus', 'Loop Chorus')).toMatchObject({id: 'q:loop:section:2', subtitle: 'bars 17–24'});
   });
 
   test('count 2 bars / beats sets the count-in; out of range is disabled', () => {
@@ -306,10 +347,12 @@ describe('Commands', () => {
     transport.calls.length = 0;
     run(find('minus bass', 'Mute Bass'));
     run(find('mute drums', 'Mute Drums'));
-    run(find('mute vocals', 'Unmute Vocals'));
     run(find('unmute vocals', 'Unmute Vocals'));
-    expect(transport.calls).toEqual([
-      ['setMuted', 'bass', true], ['setMuted', 'drums', true], ['setMuted', 'vocals', false], ['setMuted', 'vocals', false]]);
+    expect(transport.calls).toEqual([['setMuted', 'bass', true], ['setMuted', 'drums', true], ['setMuted', 'vocals', false]]);
+    // `mute` never toggles: a stem already muted is a disabled Mute row (and `unmute` of an unmuted one likewise).
+    expect(titles('mute vocals')).toEqual(['Mute Vocals']);
+    expect(find('mute vocals', 'Mute Vocals').disabled).toBe('Vocals is already muted.');
+    expect(find('unmute drums', 'Unmute Drums').disabled).toBe('Drums is not muted.');
     expect(titles('only me')[0]).toBe('Only me');
     expect(titles('minus')[0]).toBe('Minus me');
     expect(titles('only keys')).toEqual([]);
@@ -505,6 +548,64 @@ describe('the overlay', () => {
     expect(transport.calls).toEqual([['loopRange', 32, 48, {label: 'Chorus', snap: 'bar'}]]);
   });
 
+  test('aria-expanded follows whether the listbox has rows', () => {
+    const handle = openPalette({registry: reg});
+    expect(input(handle).getAttribute('aria-expanded')).toBe('true');
+    input(handle).value = 'zzzz';
+    input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));
+    expect(handle.el.querySelector('[role=listbox]').hidden).toBe(true);
+    expect(input(handle).getAttribute('aria-expanded')).toBe('false');
+    input(handle).value = 'chorus';
+    input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));
+    expect(input(handle).getAttribute('aria-expanded')).toBe('true');
+    handle.close();
+  });
+
+  test('a result count still waiting on its throttle is dropped when the palette closes', () => {
+    const handle = openPalette({registry: reg});
+    const polite = () => document.querySelector('[data-live=polite]');
+    input(handle).value = 'a';
+    input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    const first = polite().textContent;
+    expect(first).toMatch(/results?$/);
+    input(handle).value = 'chorus 2';
+    input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));   // within 800 ms: waits
+    keydown({key: 'Enter', code: 'Enter'});
+    expect(handle.open).toBe(false);
+    vi.advanceTimersByTime(2000);
+    // The region is still mounted (it moved out of the palette before it closed) and says nothing stale.
+    expect(polite().isConnected).toBe(true);
+    expect(polite().parentElement.parentElement).toBe(document.body);
+    expect(polite().textContent).toBe(first);
+  });
+
+  test('every key-cap a render makes is destroyed by the next render and on close (no matchMedia listener leak)', () => {
+    const real = globalThis.matchMedia;
+    let added = 0, removed = 0;
+    globalThis.matchMedia = query => {
+      const mql = real ? real.call(globalThis, query) : {matches: false, addEventListener() {}, removeEventListener() {}};
+      return {
+        get matches() { return mql.matches; },
+        addEventListener: (type, fn) => { added++; mql.addEventListener?.(type, fn); },
+        removeEventListener: (type, fn) => { removed++; mql.removeEventListener?.(type, fn); },
+      };
+    };
+    try {
+      const handle = openPalette({query: 'loop', registry: reg});
+      for (const q of ['m', 'mi', 'minus', 'chorus', '57', 'loop chorus', '']) {
+        input(handle).value = q;
+        input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));
+        expect(added - removed).toBe(handle.el.querySelectorAll('kbd.ui-kbd').length);
+      }
+      expect(added).toBeGreaterThan(3);
+      handle.close();
+      expect(removed).toBe(added);
+    } finally {
+      globalThis.matchMedia = real;
+    }
+  });
+
   test('typing re-ranks; a disabled row shows its reason, is skipped as the default and does not run', () => {
     const handle = openPalette({registry: reg});
     input(handle).value = 're-split';
@@ -517,6 +618,7 @@ describe('the overlay', () => {
     row.dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
     expect(handle.open).toBe(true);
     expect(ran).toEqual([]);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);   // the live region moved into the palette, so it settles first
     expect(document.querySelector('[data-live=polite]').textContent).toBe('Re-split from Woodshed for desktop.');
     input(handle).value = 'zzzz';
     input(handle).dispatchEvent(new window.Event('input', {bubbles: true}));

@@ -20,10 +20,12 @@
 //     error inline (at the field named by `err.field`, else under the fields); it resolves with the values once onSubmit
 //     resolves, or null on Cancel/Esc.
 //   announce(text, {politeness = 'polite', throttleMs = 2000, key}) → void
-//     Screen-reader only (two visually hidden live regions, kept inside the topmost modal dialog so they are not
-//     inert). Announcements with the same `key` (default: the text itself) are throttled: the first speaks at once; one
-//     made within throttleMs of the last spoken one waits, replaces any other waiting text, and speaks when the window
-//     ends unless it equals the text last spoken for that key.
+//     Screen-reader only (two visually hidden live regions, kept mounted and moved into the topmost modal dialog with
+//     followLayerHost so they are not inert). Announcements with the same `key` (default: the text itself) are
+//     throttled: the first speaks at once; one made within throttleMs of the last spoken one waits, replaces any other
+//     waiting text, and speaks when the window ends unless it equals the text last spoken for that key. Text for a
+//     region that was just created or moved is written LIVE_SETTLE_MS later (assistive tech ignores changes to a region
+//     that is new to the tree). cancelAnnounce(key) drops what is still waiting for a key.
 //
 // Also: `feedback` (all of the above, for ctx.feedback), `statusLine` (ReadonlySignal<StatusEntry|null>),
 // `attachStatusLine() → off`, `dismissStatus(key?)`, `toastState()` (for tests and the dev handle) and `resetFeedback()`.
@@ -33,13 +35,14 @@ import {now} from './clock.js';
 import {effect, readonly, signal, store, untracked} from './store.js';
 import {Dialog} from '../ui/dialog.js';
 import {h} from '../ui/h.js';
-import {followLayerHost, layerHost} from '../ui/popover.js';
+import {followLayerHost} from '../ui/popover.js';
 import {TONES, Toast} from '../ui/toast.js';
 import '../styles/views/app/toast.css';
 
 export const TOAST_MS = 5000;
 export const STATUS_MS = 2500;
 export const ANNOUNCE_THROTTLE_MS = 2000;
+export const LIVE_SETTLE_MS = 100;   // a new or moved live region waits this long before its first text
 const POLITENESS = new Set(['polite', 'assertive']);
 
 const hasDocument = () => typeof document !== 'undefined' && !!document.body;
@@ -319,29 +322,75 @@ export function form({title, body, fields, submitLabel = 'Save', cancelLabel = '
 // Announcements
 
 const liveRegions = {polite: null, assertive: null};
+let liveHost = null;          // .app-live-host: both regions, kept mounted and moved with the topmost modal host
+let offLive = null;
+let liveParent = null;        // where liveHost sat when it last settled (null: just created)
 const spoken = new Map();     // key → {at, text}
 const waiting = new Map();    // key → {text, politeness, timer}
+const settling = new Map();   // politeness → {key, text, timer}: text held back until a new or moved region settles
 
-function liveRegion(politeness) {
-  let el = liveRegions[politeness];
-  if (!el) {
-    el = h('div', {
-      class: 'sr-only app-live', 'aria-live': politeness, 'aria-atomic': 'true',
-      role: politeness === 'assertive' ? 'alert' : 'status', dataset: {live: politeness},
-    });
-    liveRegions[politeness] = el;
-  }
-  // Outside an open modal dialog everything is inert, so the region follows the topmost modal host.
-  const host = layerHost(document);
-  if (el.parentNode !== host) host.append(el);
-  return el;
+function ensureLive() {
+  if (liveHost?.isConnected) return liveHost;
+  offLive?.();
+  const region = politeness => h('div', {
+    class: 'sr-only app-live', 'aria-live': politeness, 'aria-atomic': 'true',
+    role: politeness === 'assertive' ? 'alert' : 'status', dataset: {live: politeness},
+  });
+  liveRegions.polite = region('polite');
+  liveRegions.assertive = region('assertive');
+  liveHost = h('div', {class: 'sr-only app-live-host'}, liveRegions.polite, liveRegions.assertive);
+  // Outside an open modal dialog everything is inert, so the regions follow the topmost modal host the way the toast
+  // region does: moved in when a dialog opens and back out before it closes (never removed along with it).
+  offLive = followLayerHost(liveHost, 'live');
+  liveParent = null;
+  return liveHost;
+}
+
+function write(politeness, text) {
+  // A new node (rather than new text in the old one) makes repeated announcements speak again.
+  liveRegions[politeness]?.replaceChildren(h('span', {}, text));
 }
 
 function speak(key, text, politeness) {
   spoken.set(key, {at: now(), text});
   if (!hasDocument()) return;
-  // A new node (rather than new text in the old one) makes repeated announcements speak again.
-  liveRegion(politeness).replaceChildren(h('span', {}, text));
+  const host = ensureLive();
+  const parent = host.parentNode;
+  const pending = settling.get(politeness);
+  if (pending) {
+    // Still settling: the newest text replaces the held one.
+    Object.assign(pending, {key, text});
+    return;
+  }
+  if (parent === liveParent) { write(politeness, text); return; }
+  // Screen readers announce changes only in a live region that was already in the tree, so text for a region that was
+  // just created or moved is written on a later task.
+  const entry = {key, text, timer: null};
+  const settle = (atHost, at) => {
+    entry.timer = setTimeout(() => {
+      const nowHost = ensureLive();
+      const here = nowHost.parentNode;
+      if (nowHost !== atHost || here !== at) { settle(nowHost, here); return; }   // moved or replaced meanwhile
+      settling.delete(politeness);
+      liveParent = here;
+      write(politeness, entry.text);
+    }, LIVE_SETTLE_MS);
+  };
+  settle(host, parent);
+  settling.set(politeness, entry);
+}
+
+/** Drops an announcement still waiting for `key` (on its throttle, or for a moved region to settle). */
+export function cancelAnnounce(key) {
+  const pending = waiting.get(key);
+  if (pending) { clearTimeout(pending.timer); waiting.delete(key); }
+  for (const [politeness, entry] of settling) {
+    if (entry.key !== key) continue;
+    clearTimeout(entry.timer);
+    settling.delete(politeness);
+    // It never reached the region, so it neither throttles nor de-duplicates the key's next text.
+    if (spoken.get(key)?.text === entry.text) spoken.delete(key);
+  }
 }
 
 /** Speaks to screen readers. See the header. */
@@ -376,7 +425,7 @@ export function announce(text, {politeness = 'polite', throttleMs = ANNOUNCE_THR
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The feedback API as one object (ctx.feedback). */
-export const feedback = Object.freeze({toast, status, confirm, form, announce, attachStatusLine, dismissStatus, statusLine});
+export const feedback = Object.freeze({toast, status, confirm, form, announce, cancelAnnounce, attachStatusLine, dismissStatus, statusLine});
 
 /** Drops every toast, the status line and pending announcements, and removes the regions (tests, the fixture). */
 export function resetFeedback() {
@@ -393,6 +442,13 @@ export function resetFeedback() {
   dismissStatus();
   for (const pending of waiting.values()) clearTimeout(pending.timer);
   waiting.clear();
+  for (const entry of settling.values()) clearTimeout(entry.timer);
+  settling.clear();
   spoken.clear();
-  for (const name of Object.keys(liveRegions)) { liveRegions[name]?.remove(); liveRegions[name] = null; }
+  offLive?.();
+  offLive = null;
+  liveHost?.remove();
+  liveHost = null;
+  liveParent = null;
+  for (const name of Object.keys(liveRegions)) liveRegions[name] = null;
 }

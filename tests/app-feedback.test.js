@@ -5,7 +5,7 @@
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import * as clock from '../src/app/clock.js';
 import {
-  announce, attachStatusLine, confirm, dismissStatus, feedback, form, resetFeedback, status, statusLine, toast, toastDuration,
+  LIVE_SETTLE_MS, announce, attachStatusLine, cancelAnnounce, confirm, dismissStatus, feedback, form, resetFeedback, status, statusLine, toast, toastDuration,
   toastState, TOAST_MS, STATUS_MS,
 } from '../src/app/feedback.js';
 import {store} from '../src/app/store.js';
@@ -264,7 +264,7 @@ describe('status', () => {
 
   test('feedback bundles the API for ctx.feedback', () => {
     expect(Object.keys(feedback).sort()).toEqual(
-      ['announce', 'attachStatusLine', 'confirm', 'dismissStatus', 'form', 'status', 'statusLine', 'toast'].sort());
+      ['announce', 'attachStatusLine', 'cancelAnnounce', 'confirm', 'dismissStatus', 'form', 'status', 'statusLine', 'toast'].sort());
   });
 });
 
@@ -349,6 +349,10 @@ describe('announce', () => {
     announce('Chorus');
     expect(polite().getAttribute('aria-live')).toBe('polite');
     expect(polite().classList.contains('sr-only')).toBe(true);
+    // Both regions are mounted together; the first text waits for the new region to settle.
+    expect(assertive()).not.toBe(null);
+    expect(polite().textContent).toBe('');
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
     const first = polite().firstChild;
     expect(polite().textContent).toBe('Chorus');
     vi.advanceTimersByTime(2000);
@@ -362,7 +366,8 @@ describe('announce', () => {
 
   test('the same key within throttleMs waits; the latest text speaks when the window ends', () => {
     announce('Verse', {key: 'section'});
-    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    vi.advanceTimersByTime(500 - LIVE_SETTLE_MS);
     announce('Chorus', {key: 'section'});
     announce('Bridge', {key: 'section'});
     expect(polite().textContent).toBe('Verse');
@@ -374,8 +379,9 @@ describe('announce', () => {
 
   test('a repeat of the text last spoken for its key is dropped; other keys are independent; throttleMs 0 never waits', () => {
     announce('Saved');
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
     const node = polite().firstChild;
-    vi.advanceTimersByTime(300);
+    vi.advanceTimersByTime(200);
     announce('Saved');
     vi.advanceTimersByTime(5000);
     expect(polite().firstChild).toBe(node);
@@ -388,7 +394,51 @@ describe('announce', () => {
   test('announcements made while a modal dialog is open land inside it (not inert)', () => {
     const d = Dialog({title: 'Edit'});
     announce('3 results');
-    expect(polite().parentElement).toBe(d.el);
+    expect(polite().closest('dialog')).toBe(d.el);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(polite().textContent).toBe('3 results');
     d.close();
+  });
+
+  test('the regions stay mounted: they move out of a closing dialog, and text after a move waits to settle', () => {
+    announce('Ready');
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    const region = polite();
+    expect(region.parentElement.parentElement).toBe(document.body);
+    // Settled and unmoved: the next text is written at once.
+    announce('Loop on', {key: 'loop'});
+    expect(region.textContent).toBe('Loop on');
+    const d = Dialog({title: 'Edit'});
+    expect(region.closest('dialog')).toBe(d.el);              // moved in when the dialog opened
+    announce('Saved', {key: 'save'});
+    expect(region.textContent).toBe('Loop on');               // held: the region just moved
+    announce('Saved twice', {key: 'save2'});                  // the newest held text wins
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(region.textContent).toBe('Saved twice');
+    d.close();
+    expect(region.isConnected).toBe(true);                    // not removed along with the dialog
+    expect(polite()).toBe(region);
+    expect(region.closest('dialog')).toBe(null);
+    announce('Closed', {key: 'closed'});
+    expect(region.textContent).toBe('Saved twice');
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(region.textContent).toBe('Closed');
+  });
+
+  test('cancelAnnounce drops text waiting on its throttle or on a settling region', () => {
+    announce('1 result', {key: 'count', throttleMs: 800});
+    cancelAnnounce('count');                                   // still settling (new region)
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(polite().textContent).toBe('');
+    announce('Other', {key: 'other'});
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(polite().textContent).toBe('Other');
+    announce('2 results', {key: 'count', throttleMs: 800});   // speaks (the key's last text never reached the region)
+    expect(polite().textContent).toBe('2 results');
+    vi.advanceTimersByTime(100);
+    announce('3 results', {key: 'count', throttleMs: 800});   // waits on the throttle
+    cancelAnnounce('count');
+    vi.advanceTimersByTime(2000);
+    expect(polite().textContent).toBe('2 results');
   });
 });
