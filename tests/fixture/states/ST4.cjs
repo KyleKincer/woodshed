@@ -15,7 +15,8 @@
 //   st4-frame-loading        interactive loading: live controls, data-load-phase not ready
 //   st4-frame-error          the storage error in the music area; the controls aria-disabled with the reason
 //   st4-frame-error-missing  missing stems: the stems named, [Try again] [Re-split]
-//   st4-frame-review         "Is this the right recording?" above the music
+//   st4-frame-review         "Is this the right recording?" floating over the music; Play hides it and
+//                            the music box stays exactly where it was (spec §4.10)
 //   st4-frame-offer          "Bars found while you were away [Use them] [Not now]" in the status line
 //   st4-frame-markers        the markers offer after the song becomes mapped
 //   st4-frame-unmapped       an unmapped song (the Wave page placeholder)
@@ -24,7 +25,8 @@
 // The app on the fixture database:
 //   st4-app-stage            /s/glasshouse reaches load and transport phases with the dark Stage theme
 //   st4-app-back             Library → card → Stage → Back: the Library again, the card focused, history idx − 1
-//   st4-app-transition       the second Library → Stage open runs document.startViewTransition (Chromium);
+//   st4-app-transition       the first and the second Library → Stage opens of a page load each run
+//                            document.startViewTransition (Chromium);
 //                            with fx-nofeature=viewtransition it does not, and the Stage still opens
 //   st4-app-review           /s/shuffle (an unconfirmed search) shows the recording banner
 //   st4-app-setlist          /s/lowtide?set=set-friday: Alt+↓ replaces the entry with the next song in the set
@@ -216,7 +218,23 @@ module.exports = [
         t.expect(await page.getByRole('button', {name, exact: true}).isVisible(), `[${name}]`);
       }
       const f = await page.evaluate(frameFacts);
-      t.expect(f.music.y > f.main.y, 'the banner sits above the music, in flow');
+      const banner = await page.evaluate(() => {
+        const r = document.querySelector('.stage-review')?.getBoundingClientRect();
+        return r ? {y: Math.round(r.y), bottom: Math.round(r.bottom)} : null;
+      });
+      t.expect(f.music.y === f.main.y && banner && banner.y >= f.music.y && banner.bottom <= f.music.y + f.music.h,
+        `the banner floats over the music, out of its flow (${JSON.stringify({music: f.music, main: f.main, banner})})`);
+      await page.evaluate(() => window.__frame.run('transport.playStop'));
+      await t.transportPhase('playing');
+      const during = await page.evaluate(frameFacts);
+      t.expect(JSON.stringify(during.music) === JSON.stringify(f.music) && JSON.stringify(during.strip) === JSON.stringify(f.strip),
+        `Play moves nothing (${JSON.stringify({stopped: f.music, playing: during.music})})`);
+      t.expect(await page.evaluate(() => document.querySelector('.stage-review')?.hidden === true), 'the banner hides while playing');
+      await page.evaluate(() => window.__frame.run('transport.stop'));
+      await t.transportPhase('stopped');
+      const after = await page.evaluate(frameFacts);
+      t.expect(JSON.stringify(after.music) === JSON.stringify(f.music), 'Stop moves nothing either');
+      t.expect(await page.evaluate(() => document.querySelector('.stage-review')?.hidden === false), 'the banner is back when stopped');
     },
   },
   {
@@ -329,17 +347,19 @@ module.exports = [
         await t.ready('stage');
         await loaded(t);
       };
-      await open();
-      await page.evaluate(() => window.__woodshed.commands.run('stage.leave'));
-      await t.ready('library');
       await page.evaluate(() => {
         window.__transitions = 0;
         const start = document.startViewTransition?.bind(document);
         if (start) document.startViewTransition = (fn) => { window.__transitions++; return start(fn); };
       });
       await open();
+      const first = await page.evaluate(() => window.__transitions);
+      t.expect(first === 1, `the first open of the page load runs one View Transition (${first})`);
+      await page.evaluate(() => window.__woodshed.commands.run('stage.leave'));
+      await t.ready('library');
+      await open();
       const n = await page.evaluate(() => window.__transitions);
-      t.expect(n === 1, `the second open runs one View Transition (${n})`);
+      t.expect(n === 2, `the second open runs one more (${n})`);
       t.expect(await page.evaluate(() => !document.querySelector('.stage-entry-ghost')), 'the ghost cover is gone');
       await page.goto(`${t.base}${app('/', 'fx-nofeature=viewtransition')}`);
       await t.ready('library');

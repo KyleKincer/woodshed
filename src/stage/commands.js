@@ -104,7 +104,7 @@ export function addMarkerHere(c) {
     if (!bar) return null;
     if (existing) { status(COPY.alreadyStarts(bar.display, existing.name), {key: 'marker'}); return null; }
     const label = `Section ${map.sections.length + 1}`;
-    const result = session.mapChange(C.addSection, (m) => m.edit((d) => { d.measures[index].label = label; }, 'label'));
+    const result = session.mapChange(`add ${label}`, (m) => m.edit((d) => { d.measures[index].label = label; }, 'label'));
     if (!result) return null;
     status(COPY.sectionAdded(label), {key: 'marker', action: {label: COPY.rename, run: () => renameSection(c, session, index, label)}});
     return {kind: 'section', index, label};
@@ -153,7 +153,7 @@ export function saveSpotHere(c) {
   const live = practice.value.peek().spots.filter((s) => !s.deleted);
   if (live.length >= 24) { statusOf(c)(COPY.spotsFull, {key: 'spot'}); return null; }
   let a, b, name;
-  if (loop && loop.b - loop.a > 1e-6) { a = loop.a; b = loop.b; name = loop.label; }
+  if (loop?.on && loop.b - loop.a > 1e-6) { a = loop.a; b = loop.b; name = loop.label; }
   else ({a, b, label: name} = session.position.loopDefault(hereOf(session)));
   const rate = snap?.rate ?? 1;
   const refs = {aBar: session.position.ref(a) ?? undefined, bBar: session.position.ref(b) ?? undefined};
@@ -177,10 +177,44 @@ export function openSpot(c, id) {
   const t = session.transport;
   const a = (spot.aBar && session.position.resolve(spot.aBar)) ?? spot.a;
   const b = (spot.bBar && session.position.resolve(spot.bBar)) ?? spot.b;
-  t.loopRange(a, b, {label: spot.name, snap: 'none'});
-  if (Number.isFinite(spot.rate)) t.setSpeed(spot.rate, {coalesce: false});
-  session.practice.activeSpotId.value = spot.id;
+  const practice = session.practice;
+  const undo = session.undo;
+  const prevActive = practice.activeSpotId.peek?.() ?? null;
+  // The loop and the speed are one step (spec §4.14): the transport pushes one entry for each, so
+  // when both changed they are taken back off and replaced by one entry over both values. In the
+  // Stage's signal batch, so the engine only ever sees the final loop and speed.
+  const batch = typeof stageOf(c)?.batch === 'function' ? stageOf(c).batch : (fn) => fn();
+  batch(() => {
+    const before = spotState(practice);
+    const looped = t.loopRange(a, b, {label: spot.name, snap: 'none'});
+    const sped = Number.isFinite(spot.rate) ? t.setSpeed(spot.rate, {coalesce: false}) : false;
+    if (looped && sped && undo?.pushAction) {
+      const after = spotState(practice);
+      undo.undo();
+      undo.undo();
+      undo.pushAction({key: 'spot', label: 'spot', describe: () => `open ${spot.name}`,
+        undo: () => { applySpotState(practice, before); practice.activeSpotId.value = prevActive; },
+        redo: () => { applySpotState(practice, after); practice.activeSpotId.value = spot.id; }});
+      applySpotState(practice, after);
+    }
+    practice.activeSpotId.value = spot.id;
+  });
   return true;
+}
+
+/** The transport values a spot sets: the loop, the cue and the speed. */
+function spotState(practice) {
+  const p = practice.value.peek();
+  return {loop: clone(p.loop), cue: p.cue, rate: p.rate, lastRate: p.lastRate ?? null};
+}
+
+function applySpotState(practice, v) {
+  practice.patch((draft) => {
+    draft.loop = clone(v.loop);
+    draft.cue = v.cue;
+    draft.rate = v.rate;
+    if (v.lastRate == null) delete draft.lastRate; else draft.lastRate = v.lastRate;
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -506,3 +540,103 @@ export const RADIO_GROUPS = Object.freeze({
 export const sameValue = (a, b) => json(a) === json(b);
 
 defineStageCommands();
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Library → Stage View Transition (§2.14.10). The router unmounts the Library before the Stage
+// mounts, so the opened card's cover is kept as a fixed "ghost" when the navigation starts; the
+// Stage (stage.js) then runs document.startViewTransition from it, and the ghost's
+// view-transition-name (cover-<songId>, set by LB1a) morphs into the identity cover. This lives
+// here, not in the lazily loaded stage.js, because this module loads at boot: the router is hooked
+// before the first open of a page load starts.
+
+/** The longest the entry transition waits for the Stage to draw. */
+export const ENTRY_WAIT_MS = 4000;
+const ENTRY_FROM = new Set(['library', 'setlist']);
+const armed = new WeakMap();   // router → off
+let ghost = null;              // {el, songId, timer, from}
+
+const identOf = (id) => String(id ?? '').replace(/[^A-Za-z0-9_-]/g, '_');
+
+/** The page can run the entry transition (support, not turned off, no reduced motion). */
+export function canEntryTransition(doc, platform) {
+  return typeof doc?.startViewTransition === 'function' && platform?.features?.viewTransition !== false
+    && !peek(platform?.reducedMotion);
+}
+
+/** The ghost kept for `songId`'s open, or null. */
+export function entryGhost(songId) {
+  return ghost && ghost.songId === songId ? ghost : null;
+}
+
+export function dropEntryGhost() {
+  if (!ghost) return;
+  clearTimeout(ghost.timer);
+  ghost.el.remove();
+  ghost = null;
+}
+
+function makeGhost(songId, doc) {
+  dropEntryGhost();
+  const name = `cover-${identOf(songId)}`;
+  const cover = [...doc.querySelectorAll('[data-cover-named]')].find((el) => el.style.getPropertyValue('view-transition-name') === name)
+    ?? null;
+  const entry = {el: null, songId, timer: null, from: !!cover};
+  if (cover) {
+    const r = cover.getBoundingClientRect();
+    const el = cover.cloneNode(true);
+    el.removeAttribute('id');
+    el.removeAttribute('data-cover-named');
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true;
+    el.classList.add('stage-entry-ghost');
+    // Placed inline as well: on the first open stage.css (its z-index) has not loaded yet; appended
+    // last to the body, the ghost is on top without it.
+    Object.assign(el.style, {position: 'fixed', margin: '0', pointerEvents: 'none', overflow: 'hidden',
+      left: `${Math.round(r.left)}px`, top: `${Math.round(r.top)}px`, width: `${Math.round(r.width)}px`, height: `${Math.round(r.height)}px`});
+    el.style.setProperty('view-transition-name', name);
+    // Only one element may carry a name: the card leaves with the Library anyway.
+    cover.style.removeProperty('view-transition-name');
+    doc.body.append(el);
+    entry.el = el;
+  } else {
+    entry.el = doc.createElement('span');
+    entry.el.hidden = true;
+  }
+  entry.timer = setTimeout(dropEntryGhost, ENTRY_WAIT_MS);
+  ghost = entry;
+}
+
+/**
+ * Hooks the router so a Library → Stage navigation can morph the card cover (see above). Idempotent.
+ * `platform` defaults to the app's (read when a navigation starts).
+ */
+export function armStageEntry(router, {platform, document: doc = globalThis.document} = {}) {
+  if (!router?.onLeave || armed.has(router)) return armed.get(router) ?? (() => {});
+  const off = router.onLeave((from, to) => {
+    const plat = platform ?? appRegistry.context().platform;
+    if (to?.name === 'stage' && ENTRY_FROM.has(from?.name) && canEntryTransition(doc, plat)) makeGhost(to.params?.songId, doc);
+    else if (to) dropEntryGhost();
+  });
+  const disarm = () => { off(); armed.delete(router); };
+  armed.set(router, disarm);
+  return disarm;
+}
+
+/**
+ * main.js provides the router after this module loads (boot step 7) and the first open needs the
+ * hook before it starts, so the hook is armed on the page's first input, which comes before any
+ * open: the capture phase runs ahead of the router's link handler.
+ */
+function armOnFirstInput(doc = globalThis.document) {
+  if (!doc?.addEventListener) return;
+  const kinds = ['pointerdown', 'keydown', 'click'];
+  const onInput = () => {
+    let router = null;
+    try { router = appRegistry.context().router; } catch { /* no context yet */ }
+    if (!router?.onLeave) return;
+    armStageEntry(router, {document: doc});
+    for (const kind of kinds) doc.removeEventListener(kind, onInput, true);
+  };
+  for (const kind of kinds) doc.addEventListener(kind, onInput, true);
+}
+armOnFirstInput();

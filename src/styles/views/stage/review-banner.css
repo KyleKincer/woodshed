@@ -1,5 +1,6 @@
 /* "Is this the right recording?" (src/stage/review-banner.js; D43, spec §3.5): the one-time banner
- * in flow above the music, hidden while playing. The Banner primitive draws the card. */
+ * in the status line area, floating over the bottom of the music (.stage-float, status.css), hidden
+ * while playing, so Play and Stop never move the music. The Banner primitive draws the card. */
 @layer views {
   .stage-review { min-width: 0; }
   .stage-review[hidden] { display: none; }

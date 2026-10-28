@@ -13,11 +13,12 @@ import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {afterEach, beforeAll, beforeEach, describe, expect, test, vi} from 'vitest';
 
-const hoisted = vi.hoisted(() => ({huds: [], controls: [], strips: [], decode: {codec: false}}));
+const hoisted = vi.hoisted(() => ({huds: [], controls: [], strips: [], decode: {codec: false}, hudThrows: null}));
 vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/fake-audio.js')).fakeSignalsmith}));
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: (e) => !!e?.codecError}));
 vi.mock('../src/stage/hud.js', () => ({
   mountHud: (el, opts) => {
+    if (hoisted.hudThrows) throw hoisted.hudThrows;
     const cover = document.createElement('span');
     cover.className = 'test-hud-cover';
     cover.dataset.stageCover = '';
@@ -52,7 +53,7 @@ vi.mock('../src/stage/strip.js', () => ({
   },
 }));
 
-import {createRegistry} from '../src/app/commands.js';
+import {createRegistry, registry as appRegistry} from '../src/app/commands.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {signal, store} from '../src/app/store.js';
 import {prefs} from '../src/app/prefs.js';
@@ -61,8 +62,9 @@ import {defineGlobalCommands} from '../src/app/global-commands.js';
 import {ApiError} from '../src/api/client.js';
 import {defineTransportCommands} from '../src/stage/transport-commands.js';
 import {
-  DISPLAY_LAYOUTS, STAGE_COMMAND_IDS, addMarkerHere, defineStageCommands, openSpot, saveSpotHere, undoStep,
+  DISPLAY_LAYOUTS, STAGE_COMMAND_IDS, addMarkerHere, defineStageCommands, entryGhost, openSpot, saveSpotHere, undoStep,
 } from '../src/stage/commands.js';
+import {batch} from '../src/app/store.js';
 import {POPOVER_WIDTH, SHEETS, closeSheets, openSheet, openSheetName, setSheetModules} from '../src/stage/sheets/host.js';
 import {COPY, CONTROLS, loadingLabel, mixWord, resumeText} from '../src/stage/stage.copy.js';
 import {SongMapStore} from '../src/js/song-map.js';
@@ -228,8 +230,11 @@ describe('the Stage commands (§3.2)', () => {
     expect(ts.map.sections.map((s) => s.name)).toContain('Section 1');
     expect(ts.map.bars[2].label).toBe('Section 1');
     expect(feedback.toastState().visible?.message).toBe('Section 1 added');
-    ts.undo.undo();
+    const undone = undoStep({session: ts.session, feedback}, 'undo');
     expect(ts.map.bars[2].label).toBe('');
+    expect(undone.describe()).toBe('add Section 1');
+    const toasts = [feedback.toastState().visible, ...feedback.toastState().queued].map((x) => x?.message);
+    expect(toasts).toContain('Undid: add Section 1');
   });
 
   test('S on a bar that already starts a section changes nothing and says so', async () => {
@@ -261,6 +266,74 @@ describe('the Stage commands (§3.2)', () => {
     expect(ts.snapshot.cue).toBe(CHORUS.t0);
     expect(ts.practice.activeSpotId.peek()).toBe(id);
     expect(openSpot({session: ts.session, feedback}, 'gone')).toBe(false);
+  });
+
+  test('spot.open is one undo step: one Undo restores the loop and the speed (spec §4.14)', async () => {
+    for (const withBatch of [true, false]) {
+      const ts = await session();
+      const stage = withBatch ? {batch: vi.fn(batch)} : undefined;
+      const b = commandsBed(ts, {stage});
+      ts.transport.loopRange(CHORUS.t0, CHORUS.t1, {snap: 'bar'});
+      ts.transport.setSpeed(0.8, {coalesce: false});
+      const id = saveSpotHere({session: ts.session, feedback});
+      ts.transport.clearLoop();
+      ts.transport.setSpeed(1, {coalesce: false});
+      const steps = ts.undo.size.undo;
+      expect(b.run('spot.open', {id})).toBe(true);
+      if (withBatch) expect(stage.batch).toHaveBeenCalledTimes(1);
+      expect(ts.undo.size.undo).toBe(steps + 1);
+      expect(ts.snapshot.loop).toMatchObject({on: true, a: CHORUS.t0, b: CHORUS.t1});
+      expect(ts.snapshot.rate).toBe(0.8);
+      const entry = undoStep({session: ts.session, feedback}, 'undo');
+      expect(entry.describe()).toBe('open Chorus');
+      expect(ts.snapshot.loop.on).toBe(false);
+      expect(ts.snapshot.rate).toBe(1);
+      expect(ts.practice.activeSpotId.peek()).toBeNull();
+      undoStep({session: ts.session, feedback}, 'redo');
+      expect(ts.snapshot.loop).toMatchObject({on: true, a: CHORUS.t0, b: CHORUS.t1});
+      expect(ts.snapshot.rate).toBe(0.8);
+      expect(ts.practice.activeSpotId.peek()).toBe(id);
+    }
+  });
+
+  test('B with the loop switched off saves the region around the playhead, not the old loop', async () => {
+    const ts = await session();
+    ts.transport.loopRange(CHORUS.t0, CHORUS.t1, {snap: 'bar'});
+    ts.transport.toggleLoop();
+    expect(ts.snapshot.loop.on).toBe(false);
+    const verse = SECTIONS.find((x) => x.t1 <= CHORUS.t0 && x.t0 < x.t1 && x.name !== 'Chorus' && x.t1 - x.t0 > 2);
+    ts.transport.cue(verse.t0 + 1);
+    const id = saveSpotHere({session: ts.session, feedback});
+    const spot = ts.value.spots.find((x) => x.id === id);
+    expect(spot.name).not.toBe('Chorus');
+    expect(spot.a).toBeLessThanOrEqual(verse.t0 + 1);
+    expect(spot.b).toBeGreaterThan(verse.t0 + 1);
+    expect(spot.b).toBeLessThanOrEqual(CHORUS.t0 + 1e-6);
+  });
+
+  test('the Library → Stage hook is armed on the first input after boot provides the router (the first open morphs)', () => {
+    let hook = null;
+    const router = {onLeave: vi.fn((fn) => { hook = fn; return () => {}; })};
+    document.body.dispatchEvent(new Event('pointerdown', {bubbles: true}));   // no router yet: nothing armed
+    const off = appRegistry.provide('router', () => router);
+    try {
+      document.body.dispatchEvent(new Event('pointerdown', {bubbles: true}));
+      expect(router.onLeave).toHaveBeenCalledTimes(1);
+      document.body.dispatchEvent(new Event('keydown', {bubbles: true}));
+      expect(router.onLeave).toHaveBeenCalledTimes(1);   // once
+      const start = document.startViewTransition;
+      document.startViewTransition = (fn) => { fn(); return {}; };
+      try {
+        hook({name: 'library'}, {name: 'stage', params: {songId: 'first-open'}});
+        expect(entryGhost('first-open')).toBeTruthy();
+        hook({name: 'stage'}, {name: 'library'});
+        expect(entryGhost('first-open')).toBeNull();
+      } finally {
+        if (start) document.startViewTransition = start; else delete document.startViewTransition;
+      }
+    } finally {
+      off();
+    }
   });
 
   test('B without a loop saves the region around the playhead (the section)', async () => {
@@ -572,10 +645,10 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     ]);
   }
 
-  async function mountStage({ts, sessionOptions = {}, query = {}, vw = 1440, vh = 900, later, platform: platformOver = {}, router: routerOver, sessionError} = {}) {
+  async function mountStage({ts, sessionOptions = {}, query = {}, vw = 1440, vh = 900, later, platform: platformOver = {}, router: routerOver, sessionError, registryOver} = {}) {
     setViewport(vw, vh);
     ts ??= await session(sessionOptions);
-    const registry = createRegistry();
+    const registry = registryOver ?? createRegistry();
     defineStageCommands({registry, later: {}});
     defineTransportCommands({registry, sheets: {}});
     const platform = {isIPad: false, isIOS: false, features: {viewTransition: false}, reducedMotion: signal(false), coarse: signal(false), ...platformOver};
@@ -800,8 +873,63 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     expect(b.el.textContent).toContain(COPY.notFound);
     const link = b.el.querySelector('a[href="/"]');
     expect(link.textContent).toBe(COPY.leave);
-    expect(b.router.link).toHaveBeenCalled();
     expect(document.documentElement.dataset.loadPhase).toBe('error');
+    // Back like the Stage's ‹ (VF1 flow-back: the card refocused, history idx − 1), never a push.
+    link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, button: 0}));
+    expect(b.router.back).toHaveBeenCalledWith({fallback: '/'});
+    expect(b.router.navigate).not.toHaveBeenCalled();
+    // A modified click (a new tab) is left to the browser.
+    const ctrl = new MouseEvent('click', {bubbles: true, cancelable: true, button: 0, ctrlKey: true});
+    link.dispatchEvent(ctrl);
+    expect(ctrl.defaultPrevented).toBe(false);
+    expect(b.router.back).toHaveBeenCalledTimes(1);
+  });
+
+  test('a mount that throws part way tears down what it set up (providers, store.stage, services, root attributes)', async () => {
+    const ts = await session();
+    hoisted.hudThrows = new Error('hud boom');
+    const registry = createRegistry();
+    const media = vi.fn();
+    const deps = {createWakeLock: () => ({held: signal(false), update() {}, destroy: vi.fn()}), watchInterruptions: () => () => {},
+      startMediaSession: () => media, startGestureAudio: () => () => {}, setlists: {subscribeGet: () => () => {}}, later: {}, prefs, Menu: {open() {}}};
+    const el = document.body.appendChild(document.createElement('div'));
+    try {
+      await expect(stage.mount(el, {name: 'stage', params: {songId: ts.id}, query: {}},
+        {router: null, store, registry, feedback, platform: {features: {viewTransition: false}, reducedMotion: signal(false)}, session: ts.session, stageDeps: deps}))
+        .rejects.toThrow('hud boom');
+    } finally {
+      hoisted.hudThrows = null;
+    }
+    const c = registry.context();
+    expect(c.stage ?? null).toBeNull();
+    expect(c.session ?? null).toBeNull();
+    expect(c.transport ?? null).toBeNull();
+    expect(store.stage.peek()).toBeNull();
+    expect(media).toHaveBeenCalledTimes(1);
+    expect(document.documentElement.dataset.loadPhase).toBeUndefined();
+    expect(document.documentElement.dataset.transportPhase).toBeUndefined();
+    expect(el.querySelector('.stage')).toBeNull();
+    el.remove();
+  });
+
+  test('the error panel’s buttons are released on every re-render and on unmount (no live registry listeners)', async () => {
+    const media = {signKeys: vi.fn(async () => ({}))};
+    const ts = await session({media});
+    const b0 = {count: 0};
+    const registry = createRegistry();
+    const onChange = registry.onChange;
+    registry.onChange = (fn) => { b0.count++; const off = onChange(fn); return () => { b0.count--; off(); }; };
+    const b = await mountStage({ts, registryOver: registry});
+    expect(b.el.querySelector('.stage-error').textContent).toContain(COPY.resplit);
+    const live = b0.count;
+    await b.ts.session.retry();
+    await settle();
+    await b.ts.session.retry();
+    await settle();
+    expect(b.el.querySelectorAll('.stage-error button').length).toBeGreaterThan(0);
+    expect(b0.count).toBe(live);
+    await b.unmount();
+    expect(b0.count).toBe(0);
   });
 
   test('resume: the saved surface and anchor, then "Back at **Chorus loop** · 75% · Drums out [Start over]" for 4 s', async () => {
@@ -1094,6 +1222,37 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     expect(b.statusText()).toBe('');
   });
 
+  test('a status line’s action that posts its own line keeps it: [Undo] on "Bars found" shows "Undid: …"', async () => {
+    const b = await mountStage({sessionOptions: {mapped: false}});
+    b.ts.session.mapChange('Bars found', (m) => m.adopt(structuredClone(sectioned.tempo.songMap)), {status: {text: 'Bars found', undoLabel: COPY.undo}});
+    expect(b.statusText()).toContain('Bars found');
+    b.statusButton(COPY.undo).click();
+    expect(b.ts.undo.canUndo.peek()).toBe(false);
+    expect(b.statusText()).toMatch(/^Undid: /);
+    // A plain action line still clears itself.
+    const run = vi.fn();
+    feedback.status('Saved', {action: {label: 'Open', run}});
+    b.statusButton('Open').click();
+    expect(run).toHaveBeenCalled();
+    expect(b.statusText()).toBe('');
+  });
+
+  test('surface switches: asking again for the shown surface drops a switch still loading; V twice goes two steps', async () => {
+    const b = await mountStage();
+    expect(b.surface.el.dataset.testSurface).toBe('roadmap');
+    b.api.setSurface('stems');
+    b.api.setSurface('roadmap');
+    await settle();
+    expect(b.api.surface.peek()).toBe('roadmap');
+    expect(b.ts.session.practice.value.peek().surface).toBe('roadmap');
+    expect(b.el.querySelectorAll('[data-test-surface="stems"]').length).toBe(0);
+    b.run('view.cycle');
+    b.run('view.cycle');
+    await settle();
+    expect(b.api.surface.peek()).toBe('chart');
+    expect(b.ts.session.practice.value.peek().surface).toBe('chart');
+  });
+
   test('the markers offer (not real → real) renders in the status line with its action', async () => {
     const practice = {v: 2, cue: 0, rate: 1, loop: {on: false, a: 0, b: 0, eachPassCount: true, playTimes: 0, between: 'none'}, tracks: [], minusMe: false, trainer: null, spots: [],
       markers: [{id: 'm1', t: 16, label: 'Verse', updatedAt: 1}, {id: 'm2', t: 32, label: 'Chorus', updatedAt: 1}]};
@@ -1103,11 +1262,21 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     expect(b.statusButton('Turn into sections')).toBeTruthy();
   });
 
-  test('the recording banner shows once per session, above the music', async () => {
+  test('the recording banner shows once per session, unanswered or not', async () => {
     const ts = await session({recordingUnconfirmed: true, song: {provider: 'YouTube', source: {type: 'search', value: 'q'}}});
     const first = await mountStage({ts});
-    const banner = first.el.querySelector('.stage-banners .stage-review');
+    expect(first.el.querySelector('.stage-review')).toBeTruthy();
+    await first.unmount();   // Stage → Edit → Stage without touching it
+    const second = await mountStage({ts});
+    expect(second.el.querySelector('.stage-review')).toBeNull();
+  });
+
+  test('the recording banner shows once per session, floating with the status line (never in the music’s flow)', async () => {
+    const ts = await session({recordingUnconfirmed: true, song: {provider: 'YouTube', source: {type: 'search', value: 'q'}}});
+    const first = await mountStage({ts});
+    const banner = first.el.querySelector('.stage-float .stage-banners .stage-review');
     expect(banner).toBeTruthy();
+    expect(first.el.querySelector('.stage-main .stage-review')).toBeNull();
     expect(banner.textContent).toContain('Is this the right recording?');
     [...banner.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === COPY.reviewDismiss).click();
     await first.unmount();

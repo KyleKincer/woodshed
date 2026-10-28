@@ -30,7 +30,7 @@
 //    setSurface(kind), cycleSurface(), toggleFocus(), setDistance(d), zoom(dir), resumeFollow(),
 //    setDisplay(layout), setFollowStyle(style), openSheet(name, {anchor}), closeSheets(),
 //    openMenu(kind, {anchor, t, bar, region}), share(), startOver(), leave(), close(), leaveHint(),
-//    goSetlist(dir), scrollBy(screens), scrollTop(), statusLine, anchors, plateHost (the music area: the count-in plate)}
+//    goSetlist(dir), scrollBy(screens), scrollTop(), batch(fn), statusLine, anchors, plateHost (the music area: the count-in plate)}
 // `anchors` is a Map: explicit entries (anchors.set(name, el)) first, then the Stage's
 // `[data-stage-anchor=<name>]` element (HUD, controls and strip mark theirs), then the controls area.
 //
@@ -58,7 +58,7 @@ import {mountStrip} from './strip.js';
 import {mountReviewBanner, shouldReview} from './review-banner.js';
 import {closeSheets as hostCloseSheets, openSheet as hostOpenSheet} from './sheets/host.js';
 import {applyStageAttributes, createLayoutWatcher, distanceOf, isNarrow, stageLayout, FRAME} from './layout.js';
-import {openSpot, SURFACE_ORDER} from './commands.js';
+import {armStageEntry, canEntryTransition, dropEntryGhost, entryGhost, ENTRY_WAIT_MS, openSpot, SURFACE_ORDER} from './commands.js';
 import {COPY, loadingLabel, mixWord, resumeText} from './stage.copy.js';
 
 // Later-wave modules, by contract path (D2; Appendix C item 58).
@@ -78,10 +78,7 @@ export const SURFACE_FADE_MS = 260;
 export const RESUME_MS = 4000;
 /** The glass pill's life (spec §4.9). */
 export const PILL_MS = 3000;
-/** The longest the entry transition waits for the Stage to draw. */
-export const ENTRY_WAIT_MS = 4000;
 const PLAYING = new Set(['playing', 'counting']);
-const ENTRY_FROM = new Set(['library', 'setlist']);
 
 // Per session (not per mount): the resume chip and the recording check show once per session,
 // across Stage ↔ Edit remounts (spec §3.5, §4.12).
@@ -106,70 +103,12 @@ export function surfaceDefault(song, hasNotation) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The Library → Stage View Transition (§2.14.10). The router unmounts the Library before the Stage
-// mounts, so the opened card's cover is kept as a fixed "ghost" when the navigation starts; the
-// Stage then runs document.startViewTransition from it, and the ghost's view-transition-name
-// (cover-<songId>, set by LB1a) morphs into the identity cover.
+// The Library → Stage View Transition (§2.14.10): the router hook and the cover ghost live in
+// commands.js (loaded at boot, so the first open of a page load morphs too); mount runs the transition.
 
-const armed = new WeakMap();   // router → off
-let ghost = null;              // {el, songId, timer}
+export {armStageEntry, ENTRY_WAIT_MS};
 
-function canTransition(doc, platform) {
-  return typeof doc?.startViewTransition === 'function' && platform?.features?.viewTransition !== false
-    && !peek(platform?.reducedMotion);
-}
-
-function dropGhost() {
-  if (!ghost) return;
-  clearTimeout(ghost.timer);
-  ghost.el.remove();
-  ghost = null;
-}
-
-function makeGhost(songId, doc) {
-  dropGhost();
-  const name = `cover-${safeIdent(songId)}`;
-  const cover = [...doc.querySelectorAll('[data-cover-named]')].find((el) => el.style.getPropertyValue('view-transition-name') === name)
-    ?? null;
-  const entry = {el: null, songId, timer: null, from: !!cover};
-  if (cover) {
-    const r = cover.getBoundingClientRect();
-    const el = cover.cloneNode(true);
-    el.removeAttribute('id');
-    el.removeAttribute('data-cover-named');
-    el.setAttribute('aria-hidden', 'true');
-    el.inert = true;
-    el.classList.add('stage-entry-ghost');
-    el.style.left = `${Math.round(r.left)}px`;
-    el.style.top = `${Math.round(r.top)}px`;
-    el.style.width = `${Math.round(r.width)}px`;
-    el.style.height = `${Math.round(r.height)}px`;
-    el.style.setProperty('view-transition-name', name);
-    // Only one element may carry a name: the card leaves with the Library anyway.
-    cover.style.removeProperty('view-transition-name');
-    doc.body.append(el);
-    entry.el = el;
-  } else {
-    entry.el = doc.createElement('span');
-    entry.el.hidden = true;
-  }
-  entry.timer = setTimeout(dropGhost, ENTRY_WAIT_MS);
-  ghost = entry;
-}
-
-/** Hooks the router so a Library → Stage navigation can morph the card cover (see above). Idempotent. */
-export function armStageEntry(router, {platform = appPlatform, document: doc = globalThis.document} = {}) {
-  if (!router?.onLeave || armed.has(router)) return armed.get(router) ?? (() => {});
-  const off = router.onLeave((from, to) => {
-    if (to?.name === 'stage' && ENTRY_FROM.has(from?.name) && canTransition(doc, platform)) makeGhost(to.params?.songId, doc);
-    else if (to) dropGhost();
-  });
-  const disarm = () => { off(); armed.delete(router); };
-  armed.set(router, disarm);
-  return disarm;
-}
-
-// The app's router exists before stage.js loads (main.js provides it): arm at once.
+// The app's router exists when stage.js loads (main.js provides it): make sure it is armed.
 try {
   const router = appRegistry.context().router;
   if (router?.onLeave) armStageEntry(router);
@@ -206,13 +145,23 @@ function mountMissing(el, {error, router}) {
       h('p', {class: 'stage-missing-body'}, notFound ? COPY.notFound : String(error?.message ?? '')),
       h('a', {class: 'stage-missing-link', href: '/'}, COPY.leave)));
   el.replaceChildren(root);
-  const offLink = router?.link?.(root);
+  // Back to Library goes back in history like the Stage's ‹ (the Library refocuses the card, idx − 1);
+  // the href stays for a middle click or a new tab.
+  const link = root.querySelector('.stage-missing-link');
+  const onLink = (e) => {
+    if (!router || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    if (router.back) void router.back({fallback: '/'});
+    else router.navigate?.('/');
+  };
+  link.addEventListener('click', onLink);
+  const offLink = () => link.removeEventListener('click', onLink);
   const html = el.ownerDocument.documentElement;
   html.dataset.loadPhase = 'error';
   return {
     update() {},
     unmount() {
-      offLink?.();
+      offLink();
       delete html.dataset.loadPhase;
       root.remove();
     },
@@ -228,6 +177,18 @@ const DEPS = Object.freeze({
 });
 
 export async function mount(el, match, ctx = {}) {
+  // A mount that throws part way (a peer's mount, the view transition, a surface) leaves nothing
+  // behind: the router gets no handle to unmount, so the frame tears down what it set up, then rethrows.
+  const guard = {teardown: null};
+  try {
+    return await mountStage(el, match, ctx, guard);
+  } catch (err) {
+    try { guard.teardown?.(); } catch (cleanupErr) { console.error('[stage] cleanup after a failed mount failed', cleanupErr); }
+    throw err;
+  }
+}
+
+async function mountStage(el, match, ctx, guard) {
   const deps = {...DEPS, ...(ctx.stageDeps ?? {})};
   const registry = ctx.registry ?? appRegistry;
   const store = ctx.store ?? appStore;
@@ -241,16 +202,18 @@ export async function mount(el, match, ctx = {}) {
   if (router) armStageEntry(router, {platform, document: doc});
 
   const session = ctx.session;
-  if (!session || ctx.sessionError) { dropGhost(); return mountMissing(el, {error: ctx.sessionError ?? null, router}); }
+  if (!session || ctx.sessionError) { dropEntryGhost(); return mountMissing(el, {error: ctx.sessionError ?? null, router}); }
 
   const transport = session.transport;
   const songId = session.id;
   const offs = [];
   let hud = null, strip = null, banner = null, controls = null, controlsKind = null;
   let current = null;       // the surface shown: {kind, requested, layer, instance}
+  let requested = null;     // the surface asked for last (shown, or still loading)
   let surfaceSeq = 0;
   const cleanup = (fn) => { if (typeof fn === 'function') offs.push(fn); return fn; };
   let unmounted = false;
+  let torndown = false;
 
   // ---------------- state ----------------
   const measure = () => ({vw: win?.innerWidth ?? 0, vh: win?.innerHeight ?? 0});
@@ -283,13 +246,16 @@ export async function mount(el, match, ctx = {}) {
   const pillLayer = h('div', {class: 'stage-pill-layer'});
   const music = h('div', {class: 'stage-music', attrs: {role: 'region', 'aria-label': COPY.music}}, surfaces, errorPanel, notesHost, pillLayer);
   const stripHost = h('div', {class: 'stage-strip', attrs: {'data-stage-anchor': 'strip'}});
-  const main = h('div', {class: 'stage-main'}, banners, music, stripHost);
+  const main = h('div', {class: 'stage-main'}, music, stripHost);
   const controlsHost = h('div', {class: 'stage-controls', attrs: {'data-stage-anchor': 'controls'}});
   const statusText = h('span', {class: 'stage-status-text'});
   const statusActions = h('span', {class: 'stage-status-actions'});
   const statusEl = h('div', {class: 'stage-status', attrs: {role: 'status', 'aria-live': 'polite', 'aria-label': COPY.status}}, statusText, statusActions);
   const revealZone = h('div', {class: 'stage-reveal', attrs: {'aria-hidden': 'true'}});
-  const root = h('div', {class: 'stage', dataset: {songId}}, hudHost, main, controlsHost, statusEl, revealZone);
+  // The recording banner and the status line float over the bottom of the music, so either coming or
+  // going (the banner hides while playing) never moves or resizes the music (spec §3.5, §4.10).
+  const floatEl = h('div', {class: 'stage-float'}, banners, statusEl);
+  const root = h('div', {class: 'stage', dataset: {songId}}, hudHost, main, controlsHost, floatEl, revealZone);
 
   const anchors = new (class AnchorMap extends Map {
     get(name) {
@@ -331,7 +297,10 @@ export async function mount(el, match, ctx = {}) {
     goSetlist,
     scrollBy: (screens) => scrollMusic(screens),
     scrollTop: () => scrollMusic(null),
+    /** The signal batch (commands.js imports no store): one spot open reaches the engine once. */
+    batch,
   };
+  guard.teardown = teardown;
 
   // ---------------- layout, Focus, Distance ----------------
   function attributes() {
@@ -468,8 +437,11 @@ export async function mount(el, match, ctx = {}) {
       chosen = true;
       if (session.practice.value.peek().surface !== kind) session.practice.patch({surface: kind});
     }
-    if (current?.requested === kind) return;
+    if (requested === kind) return;
+    requested = kind;
     const seq = ++surfaceSeq;
+    // Asking again for the surface on screen drops a switch that is still loading.
+    if (current?.requested === kind) { registry.invalidate(); return; }
     const old = current;
     const anchor = old?.instance?.anchor?.() ?? null;
     const p = session.practice.value.peek();
@@ -508,7 +480,7 @@ export async function mount(el, match, ctx = {}) {
   }
 
   function cycleSurface() {
-    const at = SURFACE_ORDER.indexOf(current?.requested ?? 'roadmap');
+    const at = SURFACE_ORDER.indexOf(requested ?? 'roadmap');
     void showSurface(SURFACE_ORDER[(at + 1) % SURFACE_ORDER.length], {explicit: true});
   }
 
@@ -687,7 +659,7 @@ export async function mount(el, match, ctx = {}) {
     const q = query ?? {};
     const changed = (k) => q[k] !== undefined && q[k] !== lastQuery[k];
     if (changed('spot')) {
-      openSpot({session, feedback}, String(q.spot));
+      openSpot({session, feedback, stage: api}, String(q.spot));
       router?.setQuery?.({spot: null});
     } else if (changed('bar') && session.map.isReal) {
       const n = Number(q.bar);
@@ -703,17 +675,29 @@ export async function mount(el, match, ctx = {}) {
 
   // ---------------- the status line ----------------
   const detect = session.detect;
+  let statusButtons = [];
+  const dropButtons = (list) => { for (const b of list) { try { b.destroy?.(); } catch { /* already gone */ } } };
+  cleanup(() => { dropButtons(statusButtons); statusButtons = []; });
   function renderStatus() {
     const entry = peek(feedback.statusLine);
     const chip = resume.peek();
+    dropButtons(statusButtons);
+    statusButtons = [];
     statusActions.replaceChildren();
-    const button = (label, run, variant = 'quiet') => Button({label, variant, size: 'sm', onClick: run, className: 'stage-status-action'}).el;
+    const button = (label, run, variant = 'quiet') => {
+      const b = Button({label, variant, size: 'sm', onClick: run, className: 'stage-status-action'});
+      statusButtons.push(b);
+      return b.el;
+    };
     if (entry) {
       statusText.textContent = entry.text ?? '';
       statusEl.dataset.tone = entry.tone ?? 'info';
       if (entry.action?.label) {
         statusActions.append(button(entry.action.label, () => {
-          try { entry.action.run?.(); } finally { feedback.dismissStatus?.(entry.key ?? undefined); }
+          // Clear the clicked line only: an action that posts its own line ("Undid: …") keeps it.
+          try { entry.action.run?.(); } finally {
+            if (peek(feedback.statusLine)?.id === entry.id) feedback.dismissStatus?.(entry.key ?? undefined);
+          }
         }));
       }
       if (entry.key === 'detect-offer' && peek(detect?.offer)) {
@@ -758,7 +742,12 @@ export async function mount(el, match, ctx = {}) {
 
   // ---------------- load and errors (spec §4.12) ----------------
   const errorId = `stage-error-${safeIdent(songId)}`;
+  let errorButtons = [];   // Button handles: a command Button holds a registry listener until destroyed
+  cleanup(() => { dropButtons(errorButtons); errorButtons = []; });
   function renderError(load) {
+    dropButtons(errorButtons);
+    errorButtons = [];
+    const make = (props) => { const b = Button(props); errorButtons.push(b); return b.el; };
     const error = load?.error ?? {};
     const kind = error.kind ?? 'unknown';
     const lines = [];
@@ -767,17 +756,17 @@ export async function mount(el, match, ctx = {}) {
     else lines.push(COPY.loadFailed);
     if (kind === 'missing' && error.missing?.length) lines.push(COPY.missing(error.missing));
     const actions = [];
-    if (kind !== 'codec') actions.push(Button({label: COPY.tryAgain, variant: 'primary', onClick: () => { void session.retry(); }}).el);
+    if (kind !== 'codec') actions.push(make({label: COPY.tryAgain, variant: 'primary', onClick: () => { void session.retry(); }}));
     if (kind === 'missing' && !session.readOnly) {
-      actions.push(Button({command: 'song.resplit', registry, label: COPY.resplit, variant: 'secondary'}).el);
+      actions.push(make({command: 'song.resplit', registry, label: COPY.resplit, variant: 'secondary'}));
     }
     const details = error.message ? h('details', {class: 'stage-error-details'},
       h('summary', {}, COPY.details),
       h('pre', {class: 'stage-error-raw selectable'}, String(error.message)),
-      Button({label: COPY.copyDetails, variant: 'quiet', size: 'sm', onClick: (e) => {
+      make({label: COPY.copyDetails, variant: 'quiet', size: 'sm', onClick: (e) => {
         const btn = e?.currentTarget;
         Promise.resolve(win?.navigator?.clipboard?.writeText?.(String(error.message))).then(() => { if (btn) btn.dataset.copied = ''; }, () => {});
-      }}).el) : null;
+      }})) : null;
     errorPanel.replaceChildren(h('div', {class: 'stage-error-card', id: errorId, attrs: {role: 'alert'}},
       ...lines.map((text, i) => h('p', {class: i ? 'stage-error-sub' : 'stage-error-title'}, text)),
       h('div', {class: 'stage-error-actions'}, ...actions),
@@ -790,6 +779,7 @@ export async function mount(el, match, ctx = {}) {
     html.dataset.loadPhase = load.phase;
     const isError = load.phase === 'error';
     if (isError) renderError(load);
+    else if (errorButtons.length) { dropButtons(errorButtons); errorButtons = []; errorPanel.replaceChildren(); }
     errorPanel.hidden = !isError;
     surfaces.hidden = isError;
     if (isError) {
@@ -885,21 +875,22 @@ export async function mount(el, match, ctx = {}) {
       onViewport: (v) => { const vp = current?.instance?.viewport; if (vp && 'value' in vp) vp.value = v; },
     });
     if (!reviewed.has(session) && shouldReview(session)) {
-      banner = mountReviewBanner(banners, {session, router, feedback, onDone: () => reviewed.add(session)});
+      reviewed.add(session);   // once per session: shown is enough, answered or not (ST4 row)
+      banner = mountReviewBanner(banners, {session, router, feedback});
     }
     renderStatus();
   }
 
   // The identity cover carries the entry transition's name (the HUD marks it data-stage-cover).
   const coverEl = () => hudHost.querySelector('[data-stage-cover]') ?? hudHost.querySelector('[class*="cover"]');
-  const entry = ghost && ghost.songId === songId && canTransition(doc, platform) ? ghost : null;
+  const entry = entryGhost(songId) && canEntryTransition(doc, platform) ? entryGhost(songId) : null;
   if (entry) {
     const named = `cover-${safeIdent(songId)}`;
     let transition = null;
     let namedHere = null;   // the HUD names its own cover (ST5); otherwise the frame names it for the transition
     try {
       transition = doc.startViewTransition(() => {
-        dropGhost();
+        dropEntryGhost();
         build();
         const cover = coverEl();
         if (cover && !cover.style.getPropertyValue('view-transition-name')) {
@@ -914,11 +905,11 @@ export async function mount(el, match, ctx = {}) {
       await transition.updateCallbackDone;
       Promise.resolve(transition.finished).catch(() => {}).then(() => { namedHere?.style.removeProperty('view-transition-name'); });
     } else {
-      dropGhost();
+      dropEntryGhost();
       build();
     }
   } else {
-    dropGhost();
+    dropEntryGhost();
     build();
   }
 
@@ -936,7 +927,7 @@ export async function mount(el, match, ctx = {}) {
   Promise.resolve(session.notation?.ready).then(() => {
     if (unmounted || chosen || session.practice.value.peek().surface) return;
     const want = surfaceDefault(session.song.peek(), peek(session.notation?.hasNotation));
-    if (want !== current?.requested) void showSurface(want);
+    if (want !== requested) void showSurface(want);
   }, () => {});
 
   if (!resumed.has(session)) {
@@ -956,23 +947,31 @@ export async function mount(el, match, ctx = {}) {
     unmount() {
       if (unmounted) return;
       saveAnchor();
-      unmounted = true;
-      surfaceSeq++;
-      hostCloseSheets();
       clearPill();
-      for (const off of offs.splice(0).reverse()) { try { off(); } catch (err) { console.error('[stage] cleanup failed', err); } }
-      try { banner?.destroy(); } catch (err) { console.error('[stage] banner cleanup failed', err); }
-      try { strip?.destroy?.(); } catch (err) { console.error('[stage] strip cleanup failed', err); }
-      try { controls?.destroy?.(); } catch (err) { console.error('[stage] controls cleanup failed', err); }
-      try { hud?.destroy?.(); } catch (err) { console.error('[stage] HUD cleanup failed', err); }
-      if (current) retire(current);
-      for (const layer of [...surfaces.children]) layer.remove();
-      current = null;
-      delete html.dataset.loadPhase;
-      delete html.dataset.transportPhase;
-      registry.invalidate();
+      teardown();
       if (!session.disposed) void session.flush({final: true});
-      root.remove();
     },
   };
+
+  /** Everything mount set up, in reverse: unmount, and a mount that threw part way. */
+  function teardown() {
+    if (torndown) return;
+    torndown = true;
+    unmounted = true;
+    surfaceSeq++;
+    try { hostCloseSheets(); } catch (err) { console.error('[stage] sheet cleanup failed', err); }
+    for (const off of offs.splice(0).reverse()) { try { off(); } catch (err) { console.error('[stage] cleanup failed', err); } }
+    try { banner?.destroy(); } catch (err) { console.error('[stage] banner cleanup failed', err); }
+    try { strip?.destroy?.(); } catch (err) { console.error('[stage] strip cleanup failed', err); }
+    try { controls?.destroy?.(); } catch (err) { console.error('[stage] controls cleanup failed', err); }
+    try { hud?.destroy?.(); } catch (err) { console.error('[stage] HUD cleanup failed', err); }
+    banner = strip = controls = hud = null;
+    if (current) retire(current);
+    for (const layer of [...surfaces.children]) layer.remove();
+    current = null;
+    delete html.dataset.loadPhase;
+    delete html.dataset.transportPhase;
+    registry.invalidate();
+    root.remove();
+  }
 }

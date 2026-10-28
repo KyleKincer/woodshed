@@ -2,9 +2,9 @@
  *
  *   .stage[data-stage-layout][data-distance][data-focus][data-playing][data-rail-narrow]
  *     .stage-hud        HUD (identity row + readouts; src/stage/hud.js)
- *     .stage-main       banners · music (surfaces, error, Notes card, glass pill) · song strip
+ *     .stage-main       music (surfaces, error, Notes card, glass pill) · song strip
  *     .stage-controls   the band dock, the rail grid or the Focus mini rail (src/stage/controls.js)
- *     .stage-status     the status line (status.css)
+ *     .stage-float      the recording banner and the status line, floating over the music (status.css)
  *     .stage-reveal     the band Focus reveal zone (focus.css)
  *
  * Band (iPad portrait): HUD on top, the music in the middle, strip and dock at the bottom; the
@@ -71,10 +71,10 @@
   .stage[data-stage-layout=rail] .stage-main { padding-inline-start: var(--safe-left); }
 
   .stage-banners {
-    flex: none;
     display: grid;
     gap: var(--s2);
-    padding: var(--s2) var(--s4) 0;
+    align-self: stretch;
+    max-width: 760px;
   }
   .stage-banners:not(:has(> :not([hidden]))) { display: none; }
 
