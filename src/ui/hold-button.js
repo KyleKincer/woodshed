@@ -9,51 +9,19 @@
 //               iconOnly, variant, size, …common props}) → {el, set(partial), destroy()}
 //
 // Leaving the button or cancelling the pointer mid-hold cancels silently. The button carries
-// data-holding while a hold runs; the ring is decorative (the hint carries the meaning).
+// data-holding while a hold runs; the ring (U3's ProgressRing) is decorative (the hint carries the meaning).
 
 import '../styles/primitives/hold-button.css';
 import {now} from '../app/clock.js';
-import {Button, peers, requireLabel} from './button.js';
+import {Button, requireLabel} from './button.js';
 import {icon as makeIcon} from './icon.js';
+import {ProgressRing} from './progress.js';
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** The fallback ring when the ProgressRing primitive is not present: {el, set({value})}. */
-function plainRing(px) {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('class', 'ui-hold-ring-svg');
-  svg.setAttribute('viewBox', '0 0 36 36');
-  svg.setAttribute('width', String(px));
-  svg.setAttribute('height', String(px));
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  const track = document.createElementNS(SVG_NS, 'circle');
-  const fill = document.createElementNS(SVG_NS, 'circle');
-  for (const c of [track, fill]) {
-    c.setAttribute('cx', '18');
-    c.setAttribute('cy', '18');
-    c.setAttribute('r', '16');
-    c.setAttribute('pathLength', '1');
-  }
-  track.setAttribute('class', 'ui-hold-ring-track');
-  fill.setAttribute('class', 'ui-hold-ring-fill');
-  fill.setAttribute('stroke-dasharray', '1 1');
-  fill.setAttribute('stroke-dashoffset', '1');
-  svg.append(track, fill);
-  return {
-    el: svg,
-    set({value}) { fill.setAttribute('stroke-dashoffset', String(1 - Math.max(0, Math.min(1, value)))); },
-    destroy() { svg.remove(); },
-  };
-}
-
+/** U3's ProgressRing, decorative (the hint carries the meaning). */
 function makeRing(px, label) {
-  if (peers.ProgressRing) {
-    const r = peers.ProgressRing({value: 0, size: px, label});
-    r.el.setAttribute('aria-hidden', 'true');
-    return r;
-  }
-  return plainRing(px);
+  const r = ProgressRing({value: 0, size: px, label});
+  r.el.setAttribute('aria-hidden', 'true');
+  return r;
 }
 
 export function HoldButton(props = {}) {
@@ -162,7 +130,7 @@ export function HoldButton(props = {}) {
       if (resize) {
         const next = makeRing(ringPx(), p.label);
         ring.el.replaceWith(next.el);
-        ring.destroy?.();
+        ring.destroy();
         ring = next;
         iconName = undefined;
       }
@@ -171,7 +139,7 @@ export function HoldButton(props = {}) {
     destroy() {
       stop();
       ac.abort();
-      ring.destroy?.();
+      ring.destroy();
       button.destroy();
     },
   };
