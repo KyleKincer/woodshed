@@ -9,6 +9,9 @@
 //   fx1-waits           the runner's readiness waits and idle()
 //   fx1-clock           fx-audio=manual with Playwright's page clock: t.advance and fixture.advance
 //   fx1-app-boot        the app boots on the fixture database
+//   fx1-app-admin       the full app's /admin routes on the stateful admin handlers (db/account.js):
+//                       the account the url names, a missing and a malformed id, the exact email
+//                       search, a revoke that reaches the page and the history, "by you" (users:me id)
 'use strict';
 
 const {walkFocus} = require('../probes/probe-focus.cjs');
@@ -382,6 +385,39 @@ module.exports = [
       await page.waitForSelector('html[data-startup="ready"], html[data-view-ready]', {state: 'attached', timeout: 30_000});
       const fixture = await page.evaluate(() => ({fixture: window.__FIXTURE__, songs: window.fixture.db().songs.length}));
       t.expect(fixture.fixture === true && fixture.songs === 12, 'the app booted on the fixture database');
+    },
+  },
+  {
+    name: 'fx1-app-admin',
+    url: '/admin/accounts/user3?fx-reset=1&fx-admin=1',
+    opts: {devices: ['laptop'], themes: ['light'], capture: false, structure: false, ready: 'adminAccount'},
+    async fn(page, t) {
+      const text = sel => page.evaluate(s => document.querySelector(s)?.textContent.replace(/\s+/g, ' ').trim() ?? null, sel);
+      t.expect(await text('.admin-title') === 'sam.l@example.com', `the url's account, not Dana (${await text('.admin-title')})`);
+      for (const id of ['nobody', 'not-an-id']) {
+        await page.goto(`${t.base}/admin/accounts/${id}?fx-admin=1`);
+        await t.ready('adminAccount');
+        await page.waitForFunction(() => document.querySelector('.admin-title')?.textContent === 'Account not found', null, {timeout: 5000}).catch(() => {});
+        t.expect(await text('.admin-title') === 'Account not found', `${id} reads as a missing account (${await text('.admin-title')})`);
+      }
+      await page.goto(`${t.base}/admin?fx-admin=1&email=dana@example.com`);
+      await t.ready('admin');
+      await page.waitForFunction(() => document.querySelectorAll('.admin-account-link').length === 1, null, {timeout: 5000}).catch(() => {});
+      const links = await page.evaluate(() => [...document.querySelectorAll('.admin-account-link')].map(a => a.dataset.focusKey));
+      t.expect(links.join() === 'account:user2', `the exact email search (${links})`);
+
+      await page.goto(`${t.base}/admin/accounts/user2?fx-admin=1`);
+      await t.ready('adminAccount');
+      await page.getByRole('button', {name: 'Revoke Dana’s MacBook Pro'}).click();
+      const dialog = page.locator('dialog.admin-reason-dialog[open]');
+      await dialog.locator('input[name=reason]').fill('Lost in the move');
+      await dialog.locator('button[type=submit]').click();
+      await dialog.waitFor({state: 'detached', timeout: 5000}).catch(() => {});
+      const saved = await page.evaluate(() => window.fixture.db().admin.devices.find(d => d.id === 'd1'));
+      t.expect(saved.revoked === true && saved.revokedBy === 'admin', `the revoke is stored (${JSON.stringify(saved)})`);
+      await page.waitForFunction(() => document.body.textContent.includes('Lost in the move'), null, {timeout: 5000}).catch(() => {});
+      const reasons = await page.evaluate(() => [...document.querySelectorAll('.admin-audit-row .admin-audit-reason')].map(n => n.textContent.replace(/\s+/g, ' ').trim()));
+      t.expect(reasons[0]?.includes('Lost in the move') && reasons[0].endsWith('by you'), `the account's history shows the revoke by you (${reasons[0]})`);
     },
   },
 ];

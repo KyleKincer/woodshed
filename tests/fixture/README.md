@@ -33,13 +33,14 @@ npm run fixture:compare                           # scripts/compare-shots.py: ou
 
 `db/seed.js` builds the tables listed at the top of that file. Song rows hold only values
 `convex/schema.ts` allows: an optional column without a value is absent, never `null`
-(`publicSong` in `db/runtime.js` reads it as `null`, as `toClient` does). Two tables are created
+(`publicSong` in `db/runtime.js` reads it as `null`, as `toClient` does). Three tables are created
 by the handlers on first use and are not seeded:
 
 | Table | Shape | Written by |
 |---|---|---|
 | `db.shareCopies` | `{[songId]: copyId}` | `db/sharing.js`: the first "Add to my library" of a shared song (`<songId>-copy`) |
 | `db.metadataLookups` | `{[songId]: dueAt}` | `db/metadata.js`: `metadataLookup:retry`; a reload finishes a lookup that is due |
+| `db.admin` | `{users, controls, devices, jobs, audit, policy, fundedBytes, appUsed, seq}` | `db/account.js`: the other accounts Administration manages (`seedAdmin`), created on the first admin call; every admin mutation writes `audit` |
 
 ## Switches (query parameters)
 
@@ -60,7 +61,7 @@ by the handlers on first use and are not seeded:
 | `fx-devices=none\|offline\|online` | the paired computers (default: one online, one offline) |
 | `fx-account=new` | no stored account settings (first run) |
 | `fx-auth=signedout\|suspended\|export_only\|fail` · `fx-signinError=expired` | the account state |
-| `fx-billing=free\|plus\|cancel\|grace\|disabled` · `fx-admin=1` | plan and administrator |
+| `fx-billing=free\|plus\|cancel\|grace\|disabled` · `fx-admin=1` | plan and administrator (without `fx-admin=1` every admin call but `admin:access` is refused, `not_owner`) |
 | `fx-media=fail\|slow` · `fx-detect=ok\|fail\|slow` | stem signing, beat detection |
 | `fx-share=missing\|saved\|copying` | every shared link is unavailable · the shared song is already in the library · a save is in progress (`sharing:saved` reports `copying`) |
 | `fx-view`, `fx-practice`, `fx-notation`, `fx-overview` | write the 1.9 `ws.*` keys (exercise the prefs migration; not with `fx-prefs`) |
