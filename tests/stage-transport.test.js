@@ -198,6 +198,50 @@ describe.each(PATHS)('play, stop and the cue on the $name path', ({name, rate}) 
   });
 });
 
+describe.each(PATHS)('a start that waits on AudioContext.resume() on the $name path (D13)', ({name, rate}) => {
+  afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
+
+  /** A suspended context whose resume() resolves when the test says so. */
+  function suspend(tb) {
+    const ctx = tb.engine.ctx;
+    let release;
+    ctx.state = 'suspended';
+    ctx.resume = () => new Promise((resolve) => { release = () => { ctx.state = 'running'; resolve(); }; });
+    return () => release();
+  }
+
+  test('Stop before the context resumes cancels the start; the transport rests at the cue', async () => {
+    const tb = await bed({rate, raw: {cue: 10}});
+    const release = suspend(tb);
+    const started = tb.transport.play();
+    expect(tb.engine.playing).toBe(false);
+    tb.transport.stop();
+    release();
+    await started;
+    expect(tb.engine.playing).toBe(false);
+    expect(tb.snap.phase).toBe('stopped');
+    expect(tb.transport.position()).toBe(10);
+  });
+
+  test('Pause before the context resumes cancels it too; a second Play waits on the same start', async () => {
+    const tb = await bed({rate, raw: {cue: 10}});
+    let release = suspend(tb);
+    let started = tb.transport.play();
+    await tb.transport.pause();
+    release();
+    await started;
+    expect(tb.engine.playing).toBe(false);
+    release = suspend(tb);
+    started = tb.transport.play();
+    const again = tb.transport.play();
+    release();
+    await Promise.all([started, again]);
+    expect(tb.snap.phase).toBe('playing');
+    tb.advance(1);
+    expect(tb.transport.position()).toBeCloseTo(10 + (1 - tb.engine.lookahead) * rate, 2);
+  });
+});
+
 describe.each(PATHS)('Again on the $name path (rule 6)', ({name, rate}) => {
   afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
 
@@ -270,10 +314,12 @@ describe.each(PATHS)('Again on the $name path (rule 6)', ({name, rate}) => {
   });
 });
 
-describe('during a count-in (rule 21 table, phase from engine events)', () => {
+describe.each(PATHS)('during a count-in on the $name path (rule 21 table, phase from engine events)', ({name, rate}) => {
+  afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
+
   /** Counting at cue 32 (bar 17), 0.5 s in. */
   async function counting(extra = {}) {
-    const tb = await bed({raw: {cue: 32, click: CLICK_ON, ...extra}});
+    const tb = await bed({rate, raw: {cue: 32, click: CLICK_ON, ...extra}});
     await tb.transport.play();
     tb.advance(0.5);
     expect(tb.snap.phase).toBe('counting');
@@ -322,7 +368,7 @@ describe('during a count-in (rule 21 table, phase from engine events)', () => {
     tb.transport.loopRange(32, 36);              // starts at the target: the count continues
     expect(tb.engine.countIn.startWhen).toBe(before);
     expect(tb.engine.loop.enabled).toBe(false);  // applied when the count ends
-    tb.advance(2);
+    tb.advance(2 / rate);
     expect(tb.snap.phase).toBe('playing');
     expect(tb.engine.loop).toMatchObject({enabled: true, a: 32, b: 36});
     tb.transport.stop();
@@ -332,6 +378,33 @@ describe('during a count-in (rule 21 table, phase from engine events)', () => {
     tb.transport.loopRange(40, 44);              // a new start: count again there
     expect(restarted(tb, second)).toBe(true);
     expect(tb.engine.countIn.target).toBe(40);
+  });
+
+  test('a loop edit that leaves a Play-from target inside the loop lets the count continue there', async () => {
+    const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 40), click: CLICK_ON}});
+    await tb.transport.playFrom(36);
+    tb.advance(0.5);
+    const before = tb.engine.countIn.startWhen;
+    expect(tb.engine.countIn.target).toBe(36);
+    tb.transport.nudgeLoopEdge('b', 1, 'bar');
+    expect(tb.snap.phase).toBe('counting');
+    expect(tb.engine.countIn).toMatchObject({target: 36, startWhen: before});
+    tb.transport.setLoopOptions({between: 'rest'});
+    expect(tb.engine.countIn).toMatchObject({target: 36, startWhen: before});
+    tb.advance(2 / rate);
+    expect(tb.snap.phase).toBe('playing');
+    expect(tb.engine.loop).toMatchObject({enabled: true, a: 32, b: 42});
+    expect(tb.engine.loopGap.sec).toBeGreaterThan(0);
+  });
+
+  test('moving a while the count is at the loop start restarts it at the new a', async () => {
+    const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 40), click: CLICK_ON}});
+    await tb.transport.play();
+    tb.advance(0.5);
+    const before = tb.engine.countIn.startWhen;
+    tb.transport.nudgeLoopEdge('a', -1, 'bar');
+    expect(restarted(tb, before)).toBe(true);
+    expect(tb.engine.countIn.target).toBe(30);
   });
 
   test('a seek or tap cue cancels the count and cues there', async () => {
@@ -356,7 +429,7 @@ describe('during a count-in (rule 21 table, phase from engine events)', () => {
     expect(tb.snap.countIn.on).toBe(false);
     expect(tb.engine.countIn).toBe(null);
     tb.advance(0.2);
-    expect(tb.transport.position()).toBeCloseTo(32 + 0.2 - tb.engine.lookahead, 2);
+    expect(tb.transport.position()).toBeCloseTo(32 + (0.2 - tb.engine.lookahead) * rate, 2);
   });
 
   test('click mode, accent and volume apply to the remaining clicks; the count continues', async () => {
@@ -367,7 +440,7 @@ describe('during a count-in (rule 21 table, phase from engine events)', () => {
     tb.transport.setClickVolume(0.3);
     expect(tb.engine.countIn.startWhen).toBe(before);
     expect(tb.metronome.settings()).toMatchObject({mode: 'always', accent: false, volume: 0.3});
-    tb.advance(2);
+    tb.advance(2 / rate);
     expect(tb.snap.phase).toBe('playing');
   });
 
@@ -393,7 +466,7 @@ describe('during a count-in (rule 21 table, phase from engine events)', () => {
 
   test('the phase follows the engine: a count that ends turns into playing with no transport call', async () => {
     const tb = await counting();
-    tb.advance(1.6);
+    tb.advance(2 / rate - 0.4);
     expect(tb.snap.phase).toBe('playing');
     expect(tb.phases).toEqual(['stopped', 'counting', 'playing']);
   });
@@ -467,44 +540,46 @@ describe.each(PATHS)('count in every pass and between passes on the $name path (
   });
 });
 
-describe('unmapped songs', () => {
+describe.each(PATHS)('unmapped songs on the $name path', ({name, rate}) => {
+  afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
+
   test('a count-in is the 2 s audible lead-in, with no clicks at all (rule 2)', async () => {
-    const tb = await bed({fixture: unmapped, raw: {cue: 10, click: {...CLICK_ON, mode: 'always'}}, stems: ['drums', 'bass']});
+    const tb = await bed({rate, fixture: unmapped, raw: {cue: 10, click: {...CLICK_ON, mode: 'always'}}, stems: ['drums', 'bass']});
     expect(tb.map.isReal).toBe(false);
     const from = tb.now;
     await tb.transport.play();
     expect(tb.snap.phase).toBe('counting');
     expect(tb.engine.countIn).toMatchObject({duration: LEAD_IN_SEC, beats: [], audible: true});
     expect(tb.snap.countdown).toEqual({current: 2, of: 2, label: 'Lead-in · 0:10'});
-    tb.advance(1.2);
+    tb.advance(1.2 / rate);
     expect(tb.snap.countdown.current).toBe(1);
-    expect(tb.transport.position()).toBeCloseTo(10 - 2 + (1.2 - tb.engine.lookahead), 2);
-    tb.advance(2);
+    expect(tb.transport.position()).toBeCloseTo(10 - 2 + (1.2 / rate - tb.engine.lookahead) * rate, 2);
+    tb.advance(2 / rate);
     expect(tb.snap.phase).toBe('playing');
     expect(tb.clicksFrom(from)).toHaveLength(0);
   });
 
   test('every-pass count is a 2 s preroll gap; rest adds 2 s more', async () => {
-    const tb = await bed({fixture: unmapped, raw: {cue: 10, loop: loopAt(10, 14), click: CLICK_ON}, stems: ['drums', 'bass']});
+    const tb = await bed({rate, fixture: unmapped, raw: {cue: 10, loop: loopAt(10, 14), click: CLICK_ON}, stems: ['drums', 'bass']});
     expect(tb.engine.loopGap).toEqual({sec: 2, mode: 'preroll'});
     tb.transport.setLoopOptions({between: 'rest'});
     expect(tb.engine.loopGap).toEqual({sec: 4, mode: 'preroll'});
   });
 
   test('a playing jump is immediate; no text says "bar"', async () => {
-    const tb = await bed({fixture: unmapped, raw: {cue: 5}, stems: ['drums', 'bass']});
+    const tb = await bed({rate, fixture: unmapped, raw: {cue: 5}, stems: ['drums', 'bass']});
     await tb.transport.play();
     tb.advance(0.5);
     tb.transport.jump(20, {label: 'Marker 2'});
     expect(tb.snap.pendingJump).toBe(null);
     expect(tb.of('jumped')).toEqual([{type: 'jumped', t: 20}]);
     tb.advance(0.2);
-    expect(tb.transport.position()).toBeCloseTo(20 + 0.2 - tb.engine.lookahead, 2);
+    expect(tb.transport.position()).toBeCloseTo(20 + (0.2 - tb.engine.lookahead) * rate, 2);
     tb.transport.toggleLoop();
     const texts = [];
     const walk = (v) => { if (typeof v === 'string') texts.push(v); else if (v && typeof v === 'object') Object.values(v).forEach(walk); };
     walk(tb.snap);
-    expect(texts).toContain('0:15.2–0:25.2');
+    expect(texts.some((t) => /^0:15\.\d–0:25\.\d$/.test(t))).toBe(true);   // ±5 s around the playhead
     for (const text of texts) expect(text).not.toMatch(/\bbar\b|Bar/);
   });
 });
@@ -526,6 +601,22 @@ describe.each(PATHS)('passes on the $name path (rule 7)', ({name, rate}) => {
     expect(tb.snap.pass).toBe(0);
     tb.advance(4 / rate);
     expect(tb.snap.pass).toBe(1);
+  });
+
+  test('a seek while paused resets the count: the fragment after the continue is not a pass', async () => {
+    const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 36)}});
+    await tb.transport.play();
+    tb.advance(4 / rate + 0.5);
+    expect(tb.snap.pass).toBe(1);
+    await tb.transport.pause();
+    tb.transport.seek(35);
+    expect(tb.snap.pass).toBe(0);
+    await tb.transport.pause();                  // continue at 35
+    tb.advance(1.2 / rate);
+    expect(tb.of('pass').map((e) => e.pass)).toEqual([1]);
+    expect(tb.snap.pass).toBe(0);
+    tb.advance(4 / rate);
+    expect(tb.of('pass').map((e) => e.pass)).toEqual([1, 1]);
   });
 
   test('stop, a manual speed change, a loop edit and a jump reset the count', async () => {
@@ -595,6 +686,32 @@ describe.each(PATHS)('Play N times on the $name path (rule 8)', ({name, rate}) =
     expect(tb.snap.cue).toBe(32);
   });
 
+  test('N picked mid-run arms the stop at once: exactly N passes play', async () => {
+    const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 34)}});
+    await tb.transport.play();
+    tb.advance(2 / rate + 0.5);
+    expect(tb.snap.pass).toBe(1);
+    tb.transport.setLoopOptions({playTimes: 2});
+    expect(tb.engine.stopAtWhen).toBeCloseTo(tb.engine.nextWrapAt(), 6);
+    tb.advance(2 / rate);
+    expect(tb.snap.phase).toBe('stopped');
+    expect(tb.of('pass').map((e) => e.pass)).toEqual([1, 2]);
+    expect(tb.statuses.map((s) => s.text)).toEqual(['Played 2 times']);
+  });
+
+  test('undoing the option cancels the armed stop', async () => {
+    const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 34)}});
+    await tb.transport.play();
+    tb.advance(2 / rate + 0.5);
+    tb.transport.setLoopOptions({playTimes: 2});
+    expect(tb.engine.stopAtWhen).not.toBe(null);
+    tb.undo.undo();
+    expect(tb.snap.loop.playTimes).toBe(0);
+    expect(tb.engine.stopAtWhen).toBe(null);
+    tb.advance(4 / rate);
+    expect(tb.snap.phase).toBe('playing');
+  });
+
   test('a loop edit after the stop was scheduled cancels it', async () => {
     const tb = await bed({rate, raw: {cue: 32, loop: loopAt(32, 34, {playTimes: 2})}});
     await tb.transport.play();
@@ -607,9 +724,11 @@ describe.each(PATHS)('Play N times on the $name path (rule 8)', ({name, rate}) =
   });
 });
 
-describe('trainer (rule 11)', () => {
+// The trainer's rates are below 100%: keep pitch on runs Signalsmith, keep pitch off the native path.
+describe.each([{name: 'native', keepPitch: false}, {name: 'signalsmith', keepPitch: true}])('trainer on the $name path (rule 11)', ({name, keepPitch}) => {
+  afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
   test('advances exactly at the wrap after `passes` passes, completes, and keeps looping at the end rate', async () => {
-    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34)}});
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34), keepPitch}});
     const {transport, engine} = tb;
     transport.startTrainer({start: 0.7, end: 0.8, step: 0.05, passes: 2});
     expect(tb.snap.trainer).toMatchObject({stepIndex: 0, steps: 3, rate: 0.7, done: false});
@@ -634,11 +753,11 @@ describe('trainer (rule 11)', () => {
     tb.advance(pass(0.8) * 2);
     expect(engine.rate).toBe(0.8);
     expect(tb.snap.phase).toBe('playing');
-    expectCutRule(engine);
+    expect(engine.preservePitch).toBe(keepPitch);
   });
 
   test('passes = 1 schedules right after each step starts', async () => {
-    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34)}});
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34), keepPitch}});
     tb.transport.startTrainer({start: 0.7, end: 0.8, step: 0.05, passes: 1});
     await tb.transport.play();
     expect(tb.engine.plan.some((s) => s.scheduled && s.rate === 0.75)).toBe(true);
@@ -648,7 +767,7 @@ describe('trainer (rule 11)', () => {
   });
 
   test('a manual speed change stops it ("Trainer stopped"); Stop keeps it and Play resumes the step', async () => {
-    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34)}});
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34), keepPitch}});
     tb.transport.startTrainer({start: 0.7, end: 1, step: 0.1, passes: 1});
     await tb.transport.play();
     tb.advance(2 / 0.7 + 0.1);
@@ -665,14 +784,59 @@ describe('trainer (rule 11)', () => {
   });
 
   test('with no loop it first loops the current section, as one undo step (D28)', async () => {
-    const tb = await bed({raw: {cue: 20}});
+    const tb = await bed({raw: {cue: 20, keepPitch}});
     tb.transport.startTrainer();
     expect(tb.snap.loop).toMatchObject({on: true, a: 16, b: 32, label: 'Verse'});
     expect(tb.snap.trainer).toMatchObject({start: 0.7, end: 1, step: 0.05, passes: 2, steps: 7});
+    expect(tb.snap.rate).toBe(0.7);
     expect(tb.undo.size.undo).toBe(1);
     tb.undo.undo();
     expect(tb.snap.loop.on).toBe(false);
     expect(tb.snap.trainer).toBe(null);
+    expect(tb.snap.rate).toBe(1);                // the starting rate is part of the step
+    expect(tb.engine.rate).toBe(1);
+    expect(tb.snap.cue).toBe(20);
+    expect(tb.statuses).toHaveLength(0);         // Undo stops it silently
+    tb.undo.redo();
+    expect(tb.snap.loop).toMatchObject({on: true, a: 16, b: 32});
+    expect(tb.snap.trainer).toMatchObject({stepIndex: 0, rate: 0.7});
+    expect(tb.engine.rate).toBe(0.7);
+  });
+
+  test('with the loop on, starting it is one undo step that restores the rate', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34), keepPitch}});
+    tb.transport.startTrainer();
+    expect(tb.undo.size.undo).toBe(1);
+    expect(tb.snap.rate).toBe(0.7);
+    tb.undo.undo();
+    expect(tb.snap).toMatchObject({rate: 1, trainer: null});
+    expect(tb.snap.loop).toMatchObject({on: true, a: 32, b: 34});
+  });
+
+  test('a jump during the count-in stops it ("Trainer stopped")', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 36), click: CLICK_ON, keepPitch}});
+    tb.transport.startTrainer({start: 0.7, end: 1, step: 0.1, passes: 1});
+    await tb.transport.play();
+    tb.advance(0.5);
+    expect(tb.snap.phase).toBe('counting');
+    tb.transport.jump(33);
+    expect(tb.snap.trainer).toBe(null);
+    expect(tb.statuses.map((s) => s.text)).toContain(COPY.trainerStopped);
+    expect(tb.snap.phase).toBe('counting');
+  });
+
+  test('` returns to the trainer\'s rate after it stops', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 34), keepPitch}});
+    tb.transport.setSpeed(0.6, {coalesce: false});
+    tb.transport.startTrainer({start: 0.7, end: 0.8, step: 0.1, passes: 1});
+    await tb.transport.play();
+    tb.advance(2 / 0.7 + 0.1);                   // the step to 0.8 lands
+    expect(tb.snap.rate).toBe(0.8);
+    tb.transport.stopTrainer();
+    tb.transport.toggleSpeed100();
+    expect(tb.snap.rate).toBe(1);
+    tb.transport.toggleSpeed100();
+    expect(tb.snap.rate).toBe(0.8);
   });
 });
 
@@ -853,6 +1017,16 @@ describe('loops (rules 1, 13–16)', () => {
     expect(tb.snap.loop).toMatchObject({a: 40, b: 40.2});
   });
 
+  test('I at the song end and O at the start put the other edge on the side that fits', async () => {
+    const tb = await bed({raw: {cue: 127.5}});
+    expect(tb.transport.loopIn()).toBe(true);
+    expect(tb.snap.loop).toMatchObject({on: true, a: 126, b: 128});
+    tb.transport.cue(0.3);
+    tb.transport.clearLoop();
+    expect(tb.transport.loopOut()).toBe(true);
+    expect(tb.snap.loop).toMatchObject({on: true, a: 0, b: 2});
+  });
+
   test('I and O on an unmapped song: 0.1 s snapping, the other edge 4 s away', async () => {
     const tb = await bed({fixture: unmapped, raw: {cue: 12.34}, stems: ['drums', 'bass']});
     tb.transport.loopOut();
@@ -943,6 +1117,18 @@ describe('speed (rule 17)', () => {
     expect(tb.snap.rate).toBe(0.75);
     tb.transport.nudgeSpeed(1);
     expect(tb.snap.rate).toBe(0.76);
+  });
+
+  test('` from a saved rate with no lastRate (a v1/v2 save) returns to that rate', async () => {
+    const tb = await bed({raw: {rate: 0.8}});
+    expect(tb.snap.lastRate).toBe(null);
+    expect(tb.transport.toggleSpeed100()).toBe(true);
+    expect(tb.snap).toMatchObject({rate: 1, lastRate: 0.8});
+    expect(tb.transport.toggleSpeed100()).toBe(true);
+    expect(tb.snap.rate).toBe(0.8);
+    tb.undo.undo();
+    tb.undo.undo();
+    expect(tb.snap).toMatchObject({rate: 0.8, lastRate: null});
   });
 
   test('changes within 1 s coalesce into one undo step; undo restores the engine rate', async () => {
@@ -1136,15 +1322,50 @@ describe('spot counters (§2.14.1, session wiring as ST1b builds it)', () => {
   });
 });
 
-describe('seeks, cues and navigation (rules 3, 20, 23)', () => {
+describe('the active spot ends on every loop change the transport makes (§2.14.1)', () => {
+  const spot = {id: 'spot-1', name: 'Riff', a: 32, b: 36, rate: 1, passes: 0, updatedAt: 1};
+
+  test('a quantized jump outside the loop', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 36), spots: [spot]}});
+    tb.practice.activeSpotId.value = 'spot-1';
+    await tb.transport.play();
+    tb.advance(tb.engine.lookahead + 1.3);
+    const pending = tb.transport.jump(50);
+    tb.advance(pending.when - tb.now + 0.1);
+    expect(tb.snap.loop.on).toBe(false);
+    expect(tb.practice.activeSpotId.peek()).toBe(null);
+  });
+
+  test('Start over', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 36), spots: [spot]}});
+    tb.practice.activeSpotId.value = 'spot-1';
+    tb.transport.startOver();
+    expect(tb.practice.activeSpotId.peek()).toBe(null);
+  });
+
+  test('Undo and Redo of a loop edit', async () => {
+    const tb = await bed({raw: {cue: 32, loop: loopAt(32, 36), spots: [spot]}});
+    tb.transport.loopRange(40, 44);
+    tb.practice.activeSpotId.value = 'spot-1';
+    tb.undo.undo();
+    expect(tb.snap.loop).toMatchObject({a: 32, b: 36});
+    expect(tb.practice.activeSpotId.peek()).toBe(null);
+    tb.practice.activeSpotId.value = 'spot-1';
+    tb.undo.redo();
+    expect(tb.practice.activeSpotId.peek()).toBe(null);
+  });
+});
+
+describe.each(PATHS)('seeks, cues and navigation on the $name path (rules 3, 20, 23)', ({name, rate}) => {
+  afterEach(() => { if (name === 'signalsmith' && current?.engine.stretch) expectCutRule(current.engine); });
   test('seeks never move the cue; a mouse seek while playing is immediate', async () => {
-    const tb = await bed({raw: {cue: 10}});
+    const tb = await bed({rate, raw: {cue: 10}});
     await tb.transport.play();
     tb.advance(0.5);
     tb.transport.seek(60);
     expect(tb.snap.cue).toBe(10);
     tb.advance(0.2);
-    expect(tb.transport.position()).toBeCloseTo(60 + 0.2 - tb.engine.lookahead, 2);
+    expect(tb.transport.position()).toBeCloseTo(60 + (0.2 - tb.engine.lookahead) * rate, 2);
     tb.transport.seek(70, {cue: true});
     expect(tb.snap.cue).toBe(70);
     tb.transport.step('bar', 1);
@@ -1154,7 +1375,7 @@ describe('seeks, cues and navigation (rules 3, 20, 23)', () => {
   });
 
   test('stopped: steps, nudges, Home and End move the cue', async () => {
-    const tb = await bed({raw: {cue: 33}});
+    const tb = await bed({rate, raw: {cue: 33}});
     tb.transport.step('bar', 1);
     expect(tb.snap.cue).toBe(34);
     tb.transport.step('beat', -1);
@@ -1175,7 +1396,7 @@ describe('seeks, cues and navigation (rules 3, 20, 23)', () => {
   });
 
   test('Space during a count cancels; Space while playing stops; otherwise plays', async () => {
-    const tb = await bed({raw: {cue: 32, click: CLICK_ON}});
+    const tb = await bed({rate, raw: {cue: 32, click: CLICK_ON}});
     await tb.transport.playStop();
     expect(tb.snap.phase).toBe('counting');
     await tb.transport.playStop();
@@ -1188,7 +1409,7 @@ describe('seeks, cues and navigation (rules 3, 20, 23)', () => {
   });
 
   test('an interruption pauses, keeps the position as the cue, says so and never resumes by itself', async () => {
-    const tb = await bed({raw: {cue: 10}});
+    const tb = await bed({rate, raw: {cue: 10}});
     await tb.transport.play();
     tb.advance(1);
     tb.engine.ctx.setState('interrupted');       // the engine pauses itself; PL1 then calls interrupt()
@@ -1204,9 +1425,9 @@ describe('seeks, cues and navigation (rules 3, 20, 23)', () => {
   });
 
   test('the song ending stops at the cue and reports ended', async () => {
-    const tb = await bed({raw: {cue: 127}});
+    const tb = await bed({rate, raw: {cue: 127}});
     await tb.transport.play();
-    tb.advance(1.2);
+    tb.advance(1.2 / rate);
     expect(tb.snap.phase).toBe('stopped');
     expect(tb.transport.position()).toBe(127);
     expect(tb.of('ended')).toEqual([{type: 'ended', reason: 'end'}]);

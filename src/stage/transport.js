@@ -143,6 +143,8 @@ export function createTransport({engine, metronome, map, position, practice, und
   let depth = 0;                       // inside a compound operation: snapshot refreshes wait
   let dirty = false;
   let syncing = false;
+  let startToken = 0;                  // bumped by every start, stop, pause and interrupt
+  let starting = null;                 // the engine.play() promise while the context resumes (D13)
   const listeners = new Map();
   const snap = signal(null, {equals: (a, b) => json(a) === json(b)});
 
@@ -259,6 +261,7 @@ export function createTransport({engine, metronome, map, position, practice, und
         const want = wantedPlan(p);
         if (engine.countingIn) syncDuringCount(want);
         else applyPlan(want);
+        syncPlayTimes(p);
       });
     } finally {
       syncing = false;
@@ -297,6 +300,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (applied.loop !== key) {
       const first = applied.loop === undefined;
       applied.loop = key;
+      applied.loopValue = {...want.loop};
       engine.setLoop(want.loop.on, want.loop.a, want.loop.b, {gapSec: want.gap.sec, gap: want.gap.mode});
       loopChanged = !first;
     }
@@ -308,14 +312,35 @@ export function createTransport({engine, metronome, map, position, practice, und
     }
   }
 
-  /** Rule 21 for practice changes that arrive while counting. */
+  /**
+   * Rule 21 for practice changes that arrive while counting. A loop change restarts the
+   * count only when the start target changes: the target leaves the new loop, or the count
+   * was at the old loop start and `a` moved. Otherwise it applies when the count ends.
+   */
   function syncDuringCount(want) {
     const target = engine.countIn.target;
     const rateChanged = applied.rate !== want.rate || applied.keepPitch !== want.keepPitch;
     const loopChanged = applied.loop !== loopKey(want);
-    const nextTarget = loopChanged && want.loop.on ? want.loop.a : target;
+    let nextTarget = target;
+    if (loopChanged && want.loop.on) {
+      const old = applied.loopValue;
+      const outside = target < want.loop.a - EPS || target >= want.loop.b - EPS;
+      const atOldA = !!old?.on && Math.abs(old.a - target) <= EPS;
+      if (outside || atOldA) nextTarget = want.loop.a;
+    }
     if (rateChanged || Math.abs(nextTarget - target) > EPS) restartCount(nextTarget);
     else if (loopChanged) pendingSync = true;
+  }
+
+  /** Rule 8: a changed Play N times (an option, an undo) re-arms or cancels the stop now. */
+  function syncPlayTimes(p) {
+    const n = p.loop.on ? p.loop.playTimes : 0;
+    if (applied.playTimes === n) return;
+    const first = applied.playTimes === undefined;
+    applied.playTimes = n;
+    if (first) return;
+    clearStopAt();
+    playTimesArm();
   }
 
   function trainerOwnsRate(rate) {
@@ -333,11 +358,23 @@ export function createTransport({engine, metronome, map, position, practice, und
         ? {countIn: metronome.countInPlanAt(target), audiblePreRoll: click.preRoll}
         : {countIn: {duration: LEAD_IN_SEC, beats: []}, audiblePreRoll: true};
     }
+    const token = ++startToken;
     const started = engine.play(options);
     // The engine starts synchronously unless the context has to resume first.
-    if (engine.playing) { afterStart(keepPasses); await started; return; }
+    if (engine.playing) { starting = null; afterStart(keepPasses); await started; return; }
+    starting = started;
     await started;
+    if (token !== startToken) return;     // stopped, paused or restarted while the context resumed
+    starting = null;
     if (engine.playing && !destroyed) afterStart(keepPasses);
+  }
+
+  /** Forget a start that waits on AudioContext.resume(); `true` when one was pending. */
+  function dropStart() {
+    startToken++;
+    const had = !!starting;
+    starting = null;
+    return had;
   }
 
   /**
@@ -379,7 +416,8 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (!stopAtPending) return;
     stopAtPending = false;
     // A discontinuity clears it in the engine; a plan change (a loop edit that keeps the position) does not.
-    if (engine.stopAtWhen != null) engine._clearStopAt?.();
+    // TODO(F4b): engine.cancelStopAt() once it is public; no `?.` so a rename fails loudly.
+    if (engine.stopAtWhen != null) engine._clearStopAt();
   }
 
   /** Rule 7: any seek, stop, manual speed change, loop edit or jump starts the pass count again. */
@@ -441,7 +479,8 @@ export function createTransport({engine, metronome, map, position, practice, und
         trainer.passInStep = 0;
         trainer.done = index >= trainer.rates.length - 1;
         applied.rate = rate;
-        if (pv().rate !== rate) practice.patch({rate});
+        // An automatic step: no undo entry, but ` returns to it (rule 17).
+        if (pv().rate !== rate) practice.patch(rate !== 1 ? {rate, lastRate: rate} : {rate});
         emit('trainer', {stepIndex: index, rate, done: trainer.done});
         if (trainer.done) sayStatus(COPY.trainerDone(rate));
       }
@@ -572,6 +611,8 @@ export function createTransport({engine, metronome, map, position, practice, und
         const p = pv();
         const from = {loop: p.loop, cue: p.cue}, loop = {...p.loop, on: false};
         applied.loop = 'off';
+        applied.loopValue = {on: false, a: loop.a, b: loop.b};
+        clearActiveSpot();
         practice.patch({loop});
         pushUndo({key: 'loop', label: 'loop', describe: () => `loop ${loopWord(from.loop)} → off`, from, to: {loop, cue: p.cue}, apply: applyLoopValue});
       }
@@ -629,6 +670,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (engine.countingIn) {
       // Rule 21: cancel the count, cue at the target, then count in afresh there.
       hold(() => {
+        if (trainer) stopTrainer({reason: 'manual'});
         stopEngine();
         countdown = null;
         if (outside) commitLoop({on: false}, {setCue: false});
@@ -700,6 +742,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (destroyed) return Promise.resolve();
     if (!ready) { armed = true; refresh(); return Promise.resolve(); }
     if (engine.playing) return Promise.resolve();
+    if (starting) return starting;
     return hold(() => {
       armed = false;
       const p = pv(), loop = p.loop;
@@ -721,7 +764,12 @@ export function createTransport({engine, metronome, map, position, practice, und
   function stop() {
     if (destroyed) return;
     if (!ready) { if (armed) { armed = false; refresh(); } return; }
-    if (!engine.playing && !engine.paused) return;
+    if (!engine.playing && !engine.paused) {
+      // Play is waiting on AudioContext.resume() (D13): cancel it; the engine rests at the cue.
+      if (dropStart()) hold(() => { stopEngine(); dirty = true; });
+      return;
+    }
+    dropStart();
     hold(() => {
       const counting = engine.countingIn;
       const stay = !counting && accountPractice().stop === 'stay';
@@ -752,9 +800,10 @@ export function createTransport({engine, metronome, map, position, practice, und
 
   function pause() {
     if (!ready) return play();
-    if (engine.countingIn) { stop(); return Promise.resolve(); }
+    if (engine.countingIn || starting) { stop(); return Promise.resolve(); }
     if (engine.playing) {
       hold(() => {
+        dropStart();
         engine.pause();
         stopAtPending = false;
         if (trainer) trainer.pending = null;
@@ -810,6 +859,7 @@ export function createTransport({engine, metronome, map, position, practice, und
   function interrupt(reason = 'audio') {
     if (!ready || (!engine.playing && !engine.paused)) return false;
     hold(() => {
+      dropStart();
       engine.pause();
       const at = engine.pausedAt;
       if (Number.isFinite(at) && at !== pv().cue) practice.patch({cue: at});
@@ -867,7 +917,7 @@ export function createTransport({engine, metronome, map, position, practice, und
         const loop = pv().loop;
         engine.pausedAt = loop.on && at >= loop.b ? loop.a : at;
         if (moveCue) practice.patch({cue: at});
-        pass = 0;
+        resetPasses(engine.pausedAt);
       } else if (moveCue) {
         cue(at);
       } else {
@@ -894,8 +944,31 @@ export function createTransport({engine, metronome, map, position, practice, und
     return loop.on && loop.b - loop.a >= MIN_LOOP ? position.loopLabel(loop.a, loop.b) : 'off';
   }
 
+  /** Any loop edit or clear the transport makes, Undo and Redo included, ends the active spot (§2.14.1). */
+  function clearActiveSpot() {
+    if (practice.activeSpotId && practice.activeSpotId.peek?.() != null) practice.activeSpotId.value = null;
+  }
+
   function applyLoopValue(value) {
+    if (json(value.loop) !== json(pv().loop)) clearActiveSpot();
     practice.patch({loop: value.loop, cue: value.cue});
+  }
+
+  /** The loop and cue `next` gives (normalized, with bar refs), or null when it is invalid. */
+  function loopChange(next, {setCue = true} = {}) {
+    const p = pv(), end = duration();
+    const loop = {...p.loop, ...next};
+    let a = clamp(Number.isFinite(loop.a) ? loop.a : 0, 0, end || Infinity), b = clamp(Number.isFinite(loop.b) ? loop.b : 0, 0, end || Infinity);
+    if (b < a) [a, b] = [b, a];
+    loop.a = a; loop.b = b;
+    if (loop.on && b - a < MIN_LOOP) return null;
+    delete loop.aBar; delete loop.bBar;
+    if (b - a >= MIN_LOOP && mapped()) {
+      const ra = position.ref(a), rb = position.ref(b);
+      if (ra) loop.aBar = ra;
+      if (rb) loop.bBar = rb;
+    }
+    return {loop, cue: loop.on && setCue ? a : p.cue};
   }
 
   /**
@@ -903,24 +976,14 @@ export function createTransport({engine, metronome, map, position, practice, und
    * bar refs are taken on mapped songs. One undo step (key 'loop').
    */
   function commitLoop(next, {label = 'loop', setCue = true, undoable = true} = {}) {
-    const p = pv(), end = duration();
-    const loop = {...p.loop, ...next};
-    let a = clamp(Number.isFinite(loop.a) ? loop.a : 0, 0, end || Infinity), b = clamp(Number.isFinite(loop.b) ? loop.b : 0, 0, end || Infinity);
-    if (b < a) [a, b] = [b, a];
-    loop.a = a; loop.b = b;
-    if (loop.on && b - a < MIN_LOOP) return false;
-    delete loop.aBar; delete loop.bBar;
-    if (b - a >= MIN_LOOP && mapped()) {
-      const ra = position.ref(a), rb = position.ref(b);
-      if (ra) loop.aBar = ra;
-      if (rb) loop.bBar = rb;
-    }
-    const cueAt = loop.on && setCue ? a : p.cue;
+    const p = pv(), change = loopChange(next, {setCue});
+    if (!change) return false;
+    const {loop, cue: cueAt} = change;
     const from = {loop: p.loop, cue: p.cue}, to = {loop, cue: cueAt};
     if (json(from) === json(to)) return false;
     hold(() => {
       if (trainer) stopTrainer({reason: 'manual'});
-      if (practice.activeSpotId && practice.activeSpotId.peek?.() != null) practice.activeSpotId.value = null;
+      clearActiveSpot();
       practice.patch({loop, cue: cueAt});
       if (undoable) pushUndo({key: 'loop', label, describe: () => `loop ${loopWord(from.loop)} → ${loopWord(loop)}`, from, to, apply: applyLoopValue});
       resetPasses();
@@ -975,16 +1038,22 @@ export function createTransport({engine, metronome, map, position, practice, und
   }
 
   function loopIn({exact = false} = {}) {
-    const loop = pv().loop, a = edgeTime(exact);
+    const loop = pv().loop;
+    let a = edgeTime(exact);
     let b = loop.b;
     if (!hasRange(loop) || b <= a + MIN_LOOP) b = edgeAway(a, 1);
+    // At the song end the away edge collapses onto a: put the loop on the other side (rule 14).
+    if (b - a < MIN_LOOP) { b = a; a = edgeAway(b, -1); }
     return commitLoop({on: true, a, b}, {label: 'loop in'});
   }
 
   function loopOut({exact = false} = {}) {
-    const loop = pv().loop, b = edgeTime(exact);
+    const loop = pv().loop;
+    let b = edgeTime(exact);
     let a = loop.a;
     if (!hasRange(loop) || a >= b - MIN_LOOP) a = edgeAway(b, -1);
+    // At the song start the away edge collapses onto b: put the loop on the other side (rule 14).
+    if (b - a < MIN_LOOP) { a = b; b = edgeAway(a, 1); }
     return commitLoop({on: true, a, b}, {label: 'loop out'});
   }
 
@@ -1042,7 +1111,7 @@ export function createTransport({engine, metronome, map, position, practice, und
     hold(() => {
       practice.patch({loop});
       pushUndo({key: 'loop', label: 'loop options', describe: () => 'loop options', from, to, apply: applyLoopValue});
-      if (next.playTimes !== undefined) clearStopAt();
+      // Play N times re-arms (or cancels) through sync → syncPlayTimes.
       if (engine.playing) crRestart();
       dirty = true;
     });
@@ -1064,7 +1133,9 @@ export function createTransport({engine, metronome, map, position, practice, und
     if (!Number.isFinite(rate)) return false;
     const next = roundRate(rate), p = pv();
     if (next === p.rate) return false;
-    const from = speedValue(p), to = {rate: next, lastRate: next !== 1 ? next : from.lastRate};
+    // ` returns to the rate being left, whoever set it (a trainer step, a v1 save without lastRate).
+    const to = {rate: next, lastRate: next !== 1 ? next : (p.rate !== 1 ? p.rate : p.lastRate ?? null)};
+    const from = speedValue(p);
     hold(() => {
       if (trainer) stopTrainer({reason: 'manual'});
       applySpeedValue(to);
@@ -1103,25 +1174,56 @@ export function createTransport({engine, metronome, map, position, practice, und
   }
 
   // ---- trainer (rule 11) --------------------------------------------------------------------------------
+  /**
+   * Start the trainer (rule 11) as one undo step: the starting rate, the config and, with no
+   * loop, the target range as the loop (D28). Undo restores the loop, the cue and the rate and
+   * stops the trainer silently; Redo starts it again.
+   */
   function startTrainer(cfg) {
     const p = pv();
     const c = normalTrainer(cfg ?? p.trainer ?? TRAINER_DEFAULT);
-    const rates = trainerRates(c);
+    const rate = trainerRates(c)[0];
+    let loop = p.loop, cueAt = p.cue;
+    if (!p.loop.on) {
+      // D28: the trainer's target range becomes the loop first.
+      const t = position_();
+      const section = mapped() && map.hasSections ? map.sectionAt(t) : null;
+      const range = section ? [section.t0, section.t1] : [0, duration()];
+      const change = loopChange({on: true, a: range[0], b: range[1]});
+      if (change) ({loop, cue: cueAt} = change);
+    }
+    const from = {loop: p.loop, cue: p.cue, rate: p.rate, lastRate: p.lastRate ?? null, trainer: p.trainer ?? null, running: false};
+    const to = {loop, cue: cueAt, rate, lastRate: rate !== 1 ? rate : (p.rate !== 1 ? p.rate : p.lastRate ?? null), trainer: c, running: true};
     return hold(() => {
-      if (trainer) stopTrainer({reason: 'restart'});
-      if (!p.loop.on) {
-        // D28: the trainer's target range becomes the loop first, as one undo step.
-        const t = position_();
-        const section = mapped() && map.hasSections ? map.sectionAt(t) : null;
-        const range = section ? [section.t0, section.t1] : [0, duration()];
-        commitLoop({on: true, a: range[0], b: range[1]}, {label: 'trainer loop'});
-      }
-      trainer = {cfg: c, rates, stepIndex: 0, passInStep: 0, done: rates.length <= 1, pending: null};
-      practice.patch({trainer: c, rate: rates[0]});
-      emit('trainer', {stepIndex: 0, rate: rates[0], done: trainer.done});
-      if (engine.playing && !engine.countingIn) { trainer.passInStep = 0; trainerArm(); }
-      dirty = true;
+      applyTrainerValue(to);
+      const loopSet = json(from.loop) !== json(to.loop);
+      pushUndo({key: 'trainer', label: 'trainer',
+        describe: () => `trainer ${percent(rate)}% → ${percent(c.end)}%${loopSet ? ` · loop ${loopWord(to.loop)}` : ''}`,
+        from, to, apply: applyTrainerValue});
       return true;
+    });
+  }
+
+  function applyTrainerValue(value) {
+    hold(() => {
+      // Undo stops the trainer silently; a fresh start replaces a running one.
+      if (trainer) stopTrainer({reason: value.running ? 'restart' : 'undo'});
+      if (json(value.loop) !== json(pv().loop)) clearActiveSpot();
+      practice.patch((draft) => {
+        draft.loop = value.loop;
+        draft.cue = value.cue;
+        draft.rate = value.rate;
+        if (value.lastRate == null) delete draft.lastRate;
+        else draft.lastRate = value.lastRate;
+        draft.trainer = value.trainer ?? null;
+      });
+      if (value.running) {
+        const rates = trainerRates(value.trainer);
+        trainer = {cfg: value.trainer, rates, stepIndex: 0, passInStep: 0, done: rates.length <= 1, pending: null};
+        emit('trainer', {stepIndex: 0, rate: rates[0], done: trainer.done});
+        if (engine.playing && !engine.countingIn) trainerArm();
+      }
+      dirty = true;
     });
   }
 
@@ -1388,10 +1490,19 @@ export function createTransport({engine, metronome, map, position, practice, und
   /** "Start over" (spec §4.12): cue 0, loop off, 100%, as one undo step. */
   function startOver() {
     const p = pv();
-    const from = {cue: p.cue, loop: p.loop, rate: p.rate};
-    const to = {cue: 0, loop: {...p.loop, on: false}, rate: 1};
+    const from = {cue: p.cue, loop: p.loop, rate: p.rate, lastRate: p.lastRate ?? null};
+    const to = {cue: 0, loop: {...p.loop, on: false}, rate: 1, lastRate: p.rate !== 1 ? p.rate : p.lastRate ?? null};
     if (json(from) === json(to)) return false;
-    const apply = (value) => practice.patch({cue: value.cue, loop: value.loop, rate: value.rate});
+    const apply = (value) => {
+      if (json(value.loop) !== json(pv().loop)) clearActiveSpot();
+      practice.patch((draft) => {
+        draft.cue = value.cue;
+        draft.loop = value.loop;
+        draft.rate = value.rate;
+        if (value.lastRate == null) delete draft.lastRate;
+        else draft.lastRate = value.lastRate;
+      });
+    };
     hold(() => {
       if (trainer) stopTrainer({reason: 'user'});
       if (ready && (engine.playing || engine.paused)) stop();
