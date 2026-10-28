@@ -96,6 +96,10 @@ export function publicClient() {
     async query(name, args = {}) {
       try { return await c.query(name, args ?? {}); } catch (err) { throw toApiError(err); }
     },
+    /** Runs an action with no account (`shareAudio:playback` for /share/:token visitors, §2.18). */
+    async action(name, args = {}) {
+      try { return await c.action(name, args ?? {}); } catch (err) { throw toApiError(err); }
+    },
     subscribe(name, args, onValue, onError) { return subscribeOn(c, name, args, onValue, onError); },
     async close() {
       if (shared?.client === c) shared = null;

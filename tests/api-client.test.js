@@ -128,6 +128,30 @@ describe('publicClient', () => {
     await d.close();
   });
 
+  test('action runs on the unauthenticated client and normalises errors like query (§2.1)', async () => {
+    vi.stubEnv('VITE_CONVEX_URL', 'https://example.convex.cloud');
+    fake.signedIn = false;
+    const pub = publicClient();
+    expect(Object.keys(pub).sort()).toEqual(['action', 'close', 'query', 'subscribe']);
+    const c = fake.publicClients[0];
+    expect(await pub.action('shareAudio:playback', {token: 't'})).toBe('a');
+    expect(c.action).toHaveBeenCalledWith('shareAudio:playback', {token: 't'});
+    await pub.action('shareAudio:playback');
+    expect(c.action).toHaveBeenLastCalledWith('shareAudio:playback', {});
+    expect(fake.auth.action).not.toHaveBeenCalled();
+    c.action.mockRejectedValueOnce(new ConvexError({code: 'not_found', message: 'This share link is unavailable.'}));
+    const coded = await pub.action('shareAudio:playback', {token: 't'}).catch(e => e);
+    expect(coded).toBeInstanceOf(ApiError);
+    expect(coded.code).toBe('not_found');
+    expect(coded.message).toBe('This share link is unavailable.');
+    c.action.mockRejectedValueOnce(new Error('Connection lost'));
+    const other = await pub.action('shareAudio:playback', {token: 't'}).catch(e => e);
+    expect(other).toBeInstanceOf(ApiError);
+    expect(other.code).toBe('unknown');
+    expect(other.message).toMatch(/Connection lost/);
+    await pub.close();
+  });
+
   test('a missing VITE_CONVEX_URL is a clear error', () => {
     vi.stubEnv('VITE_CONVEX_URL', '');
     expect(() => publicClient()).toThrow(/VITE_CONVEX_URL/);

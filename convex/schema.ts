@@ -43,6 +43,8 @@ export default defineSchema({
   notationBars: defineTable({partId:v.id('notationParts'),bar:barValidator}).index('by_partId',['partId']),
   songShares: defineTable({
     songId:v.id('songs'), userId:v.string(), token:v.string(), active:v.boolean(), createdAt:v.number(),includeNotation:v.optional(v.boolean()),
+    // Absent means true (1.9 links always carried the map); spec §6.1 'Sections and tempo map', architecture §6.7.
+    includeMap:v.optional(v.boolean()),
   }).index('by_songId',['songId']).index('by_token',['token']),
   shareImports: defineTable({
     userId:v.string(), sourceSongId:v.id('songs'), token:v.string(), attempt:v.string(),

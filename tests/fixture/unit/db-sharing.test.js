@@ -78,14 +78,19 @@ describe('sharing:view', () => {
 
 describe('owner calls', () => {
   it('status/create/revoke behave like the server: reuse the active link, a stopped link is never revived', async () => {
-    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: SHARE_TOKEN, includeNotation: true});
+    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: SHARE_TOKEN, includeNotation: true, includeMap: true});
     expect(await call('mutation', 'sharing:create', {id: 'glasshouse', includeNotation: false})).toEqual({token: SHARE_TOKEN});
-    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: SHARE_TOKEN, includeNotation: false});
+    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: SHARE_TOKEN, includeNotation: false, includeMap: true});
+    expect(await call('mutation', 'sharing:create', {id: 'glasshouse', includeMap: false})).toEqual({token: SHARE_TOKEN});
+    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: SHARE_TOKEN, includeNotation: false, includeMap: false});
     await call('mutation', 'sharing:revoke', {id: 'glasshouse'});
     const {token} = await call('mutation', 'sharing:create', {id: 'glasshouse'});
     expect(token).toMatch(/^[a-f0-9]{64}$/);
     expect(token).not.toBe(SHARE_TOKEN);
-    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token, includeNotation: true});
+    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token, includeNotation: true, includeMap: true});
+    await call('mutation', 'sharing:revoke', {id: 'glasshouse'});
+    const unmapped = (await call('mutation', 'sharing:create', {id: 'glasshouse', includeMap: false})).token;
+    expect(await call('query', 'sharing:status', {id: 'glasshouse'})).toEqual({token: unmapped, includeNotation: true, includeMap: false});
     expect(await codeOf(call('mutation', 'sharing:create', {id: 'nope'}))).toBe('not_found');
     start('?fx-auth=export_only');
     expect(await codeOf(call('mutation', 'sharing:create', {id: 'quiet'}))).toBe('account_export_only');
@@ -111,6 +116,23 @@ describe('Add to my library', () => {
     await vi.advanceTimersByTimeAsync(800);
     expect(await again).toBe(id);
     expect(runtime.db.songs.filter(s => s.id === id)).toHaveLength(1);
+  });
+
+  it('a link without "Sections and tempo map" carries no tempo and its copy is unmapped (includeMap false)', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout']});
+    // The demo link (no drum part) is mapped until its owner turns the map off.
+    const mapped = await call('query', 'sharing:view', {token: DEMO_TOKEN});
+    expect(mapped.tempo.songMap).toBeTruthy();
+    await call('mutation', 'sharing:create', {id: 'lanterns', includeMap: false});
+    const view = await call('query', 'sharing:view', {token: DEMO_TOKEN});
+    expect(view).not.toHaveProperty('tempo');
+    expect(view.practice).toEqual(mapped.practice);
+    const pending = call('action', 'shareAudio:save', {token: DEMO_TOKEN});
+    await vi.advanceTimersByTimeAsync(800);
+    const id = await pending;
+    const copy = runtime.db.songs.find(s => s.id === id);
+    expect(copy).toMatchObject({tempo: null, hasChart: false, tempoRev: 0, mapSummary: {real: false, sections: []}});
+    expect(runtime.db.songs.find(s => s.id === 'lanterns').tempo.songMap).toBeTruthy();
   });
 
   it('a link without the drum part copies no chart; switches report saved and copying; export-only cannot save', async () => {

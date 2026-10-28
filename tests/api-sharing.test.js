@@ -11,6 +11,7 @@ const fake = vi.hoisted(() => {
 vi.mock('convex/browser', () => ({ConvexClient: class {
   constructor(url) { this.url = url; }
   async query() { return 'real-q'; }
+  async action(name, args) { return {name, args}; }
   onUpdate() { return () => {}; }
   async close() {}
 }}));
@@ -47,6 +48,10 @@ describe('owner calls (signed-in client)', () => {
     expect(client.mutation).toHaveBeenLastCalledWith('sharing:create', {id: 's1', includeNotation: false});
     await sharing.create({id: 's1', includeNotation: true, extra: 'dropped'});
     expect(client.mutation).toHaveBeenLastCalledWith('sharing:create', {id: 's1', includeNotation: true});
+    await sharing.create({id: 's1', includeMap: false});
+    expect(client.mutation).toHaveBeenLastCalledWith('sharing:create', {id: 's1', includeMap: false});
+    await sharing.create({id: 's1', includeNotation: false, includeMap: true});
+    expect(client.mutation).toHaveBeenLastCalledWith('sharing:create', {id: 's1', includeNotation: false, includeMap: true});
     expect(await sharing.revoke({id: 's1', other: 1})).toBe('m');
     expect(client.mutation).toHaveBeenLastCalledWith('sharing:revoke', {id: 's1'});
   });
@@ -84,15 +89,14 @@ describe('visitor calls (public client)', () => {
 });
 
 describe('against the real publicClient (architecture §2.1)', () => {
-  test('playback rejects with an ApiError, not a TypeError, while publicClient() has no action', async () => {
+  test('signed-out playback runs shareAudio:playback on the real public client (I0B-8)', async () => {
     vi.stubEnv('VITE_CONVEX_URL', 'https://example.convex.cloud');
     fake.real = true;
     const pub = client.realPublicClient();
-    expect(Object.keys(pub).sort()).toEqual(['close', 'query', 'subscribe']); // flips when F2 adds action: drop the guard then
+    expect(Object.keys(pub).sort()).toEqual(['action', 'close', 'query', 'subscribe']);
     expect(await sharing.view({token: TOKEN})).toBe('real-q');
-    const error = await sharing.playback({token: TOKEN}).catch(e => e);
-    expect(error).toBeInstanceOf(client.ApiError);
-    expect(error.code).toBe('unknown');
+    expect(await sharing.playback({token: TOKEN})).toEqual({name: 'shareAudio:playback', args: {token: TOKEN}});
+    expect(client.action).not.toHaveBeenCalled();
     await pub.close();
   });
   test('with no backend configured, view and playback reject (never throw) and subscribeView reports onError', async () => {

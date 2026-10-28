@@ -4,8 +4,10 @@
 // return `off()`.
 //
 // Owner (authenticated client):
-//   status({id})                    → {token, includeNotation} | null   the song's active link
-//   create({id, includeNotation?})  → {token}   reuses the active link (updating includeNotation); a stopped link is never revived
+//   status({id})                    → {token, includeNotation, includeMap} | null   the song's active link
+//   create({id, includeNotation?, includeMap?}) → {token}   reuses the active link (updating the choices it is given);
+//                                     a stopped link is never revived. includeMap false: the link carries no
+//                                     sections or tempo map (spec §6.1 '☑ Sections and tempo map')
 //   revoke({id})                    → null      Stop sharing
 // Visitor of /share/:token (the public client, so no account is needed):
 //   view({token})                   → SharedSong | null   subscribeView({token}, onValue, onError) → off
@@ -22,17 +24,17 @@
 // practice: a v2 practice blob with nothing personal (shared/practice.ts#sanitizeForShare)}.
 //
 // `view` and `playback` are async, so a failure inside publicClient() (no backend configured) is a
-// rejection, never a synchronous throw. `playback` needs `publicClient().action`, which §2.1 does
-// not list yet (the F2 amendment from BK5's handoff); until client.js adds it, playback rejects with
-// an ApiError ('unknown') instead of a TypeError.
-import {ApiError, action, mutation, publicClient, query, subscribe} from './client.js';
+// rejection, never a synchronous throw. `playback` runs on `publicClient().action` (§2.1).
+import {action, mutation, publicClient, query, subscribe} from './client.js';
 
 /** The shape of a share token (64 lowercase hex characters); anything else is never sent. */
 export const TOKEN_RE = /^[a-f0-9]{64}$/;
 export const isShareToken = token => typeof token === 'string' && TOKEN_RE.test(token);
 
 export const status = ({id}) => query('sharing:status', {id});
-export const create = ({id, includeNotation}) => mutation('sharing:create', includeNotation === undefined ? {id} : {id, includeNotation});
+export const create = ({id, includeNotation, includeMap}) => mutation('sharing:create', {
+  id, ...(includeNotation === undefined ? {} : {includeNotation}), ...(includeMap === undefined ? {} : {includeMap}),
+});
 export const revoke = ({id}) => mutation('sharing:revoke', {id});
 
 export const view = async ({token}) => publicClient().query('sharing:view', {token});
@@ -41,11 +43,7 @@ export const subscribeView = ({token}, onValue, onError) => {
   try { pub = publicClient(); } catch (err) { onError?.(err); return () => {}; }
   return pub.subscribe('sharing:view', {token}, onValue, onError);
 };
-export const playback = async ({token}) => {
-  const pub = publicClient();
-  if (typeof pub.action !== 'function') throw new ApiError({message: 'Shared playback needs publicClient().action (architecture §2.1).'});
-  return pub.action('shareAudio:playback', {token});
-};
+export const playback = async ({token}) => publicClient().action('shareAudio:playback', {token});
 
 export const saved = ({token}) => query('sharing:saved', {token});
 export const subscribeSaved = ({token}, onValue, onError) => subscribe('sharing:saved', {token}, onValue, onError);
