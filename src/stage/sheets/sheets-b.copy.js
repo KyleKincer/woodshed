@@ -56,6 +56,8 @@ export const COPY = Object.freeze({
     describeRename: (from, to) => `rename spot ${from} → ${to}`,
     describeUpdate: (name) => `update spot ${name}`,
     describeDelete: (name) => `delete spot ${name}`,
+    describeRestore: (name) => `restore spot ${name}`,
+    restored: (name) => `Restored spot ${name}`,
     readOnly: 'Spots you change here stay on this device.',
   }),
 
@@ -88,7 +90,6 @@ export const COPY = Object.freeze({
     openEditor: 'Open map editor',
     label: 'Tap the beat',
     applied: (bpm) => `Bars from your taps · ${bpm} bpm`,
-    unchanged: 'The song already has this bar grid.',
     refused: 'Couldn’t use these bars right now.',
     undo: 'Undo',
   }),
@@ -116,7 +117,9 @@ export const COPY = Object.freeze({
 
 /**
  * The sheets' own controls. `when` names the state the row needs: 'spot' (a spot exists),
- * 'owner' (a writable song), 'result' (a finished tap), 'web' (no desktop, no paired computer).
+ * 'owner' (a writable song), 'result' (a finished tap), 'web' (no desktop, no paired computer),
+ * 'menu' (a row's ⋯ menu open), 'tray' (a row's swipe tray open), 'rename' (a row being renamed),
+ * 'failed' (a detection that failed).
  */
 export const CONTROLS = Object.freeze([
   {sheet: 'spots', role: 'list', name: COPY.spots.list, when: 'spot'},
@@ -126,6 +129,10 @@ export const CONTROLS = Object.freeze([
   {sheet: 'spots', role: 'menuitem', name: COPY.spots.rename, when: 'menu'},
   {sheet: 'spots', role: 'menuitem', name: COPY.spots.update, when: 'menu'},
   {sheet: 'spots', role: 'menuitem', name: COPY.spots.delete, when: 'menu'},
+  {sheet: 'spots', role: 'button', name: COPY.spots.rename, when: 'tray'},
+  {sheet: 'spots', role: 'button', name: COPY.spots.update, when: 'tray'},
+  {sheet: 'spots', role: 'button', name: COPY.spots.delete, when: 'tray'},
+  {sheet: 'spots', role: 'textbox', name: COPY.spots.nameLabel, when: 'rename'},
   {sheet: 'notes', role: 'region', name: COPY.notes.region},
   {sheet: 'notes', role: 'button', name: COPY.notes.edit, command: 'edit.details', when: 'owner'},
   {sheet: 'tapBeat', role: 'button', name: COPY.tap.padLabel},
@@ -137,4 +144,5 @@ export const CONTROLS = Object.freeze([
   {sheet: 'getBars', role: 'button', name: COPY.getBars.detect, command: 'map.detect'},
   {sheet: 'getBars', role: 'button', name: COPY.getBars.find, command: 'map.find'},
   {sheet: 'getBars', role: 'link', name: COPY.getBars.getDesktop, when: 'web'},
+  {sheet: 'getBars', role: 'button', name: COPY.getBars.retry, when: 'failed'},
 ]);

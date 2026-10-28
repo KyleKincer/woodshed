@@ -129,7 +129,9 @@ export function render(container, {session, close = () => {}, registry = appRegi
       return false;
     }
     if (!changed) {
-      error = session.map?.isReal && JSON.stringify(session.map.data) === JSON.stringify(data) ? COPY.unchanged : COPY.refused;
+      // mapChange refuses only a read-only, closed or auditioning session: fromTaps gives every
+      // result a fresh measure id, so a tapped grid is never "the same" as the song's.
+      error = COPY.refused;
       paint();
       return false;
     }
@@ -145,7 +147,10 @@ export function render(container, {session, close = () => {}, registry = appRegi
   h('span', {class: 'tap-pad-word', attrs: {'aria-hidden': 'true'}}, COPY.pad),
   h('span', {class: 'tap-pad-hint', attrs: {'aria-hidden': 'true'}}, COPY.padHint));
   const live = h('p', {class: 'tap-live', id: liveId});
-  const play = Button({command: 'transport.playStop', registry, icon: 'play', size: 'md', variant: 'secondary', className: 'tap-play'});
+  // After Play/Stop the focus goes back to the pad, so T and Space keep tapping (Space would
+  // otherwise stop the song from the Play button).
+  const play = Button({command: 'transport.playStop', registry, icon: 'play', size: 'md', variant: 'secondary', className: 'tap-play',
+    onClick: () => { if (!destroyed && pad.isConnected) pad.focus({preventScroll: true}); }});
   const resultLine = h('p', {class: 'tap-result-line'});
   const replaces = h('p', {class: 'tap-replaces'}, COPY.replaces);
   const status = InlineStatus({tone: 'error', text: ''});

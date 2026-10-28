@@ -25,6 +25,7 @@ import * as tapSheet from '../src/stage/sheets/tap-beat.js';
 import * as getBarsSheet from '../src/stage/sheets/get-bars.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
+import {legacySongMap} from './fixtures/maps.js';
 import {installPopoverShim, keydown, pointer, restoreDomShims} from './helpers/dom.js';
 
 const NOW = Date.parse('2026-10-28T12:00:00Z');
@@ -77,7 +78,8 @@ function nameOf(el) {
   };
   return walk(el).replace(/\s+/g, ' ').trim();
 }
-const ROLE = {button: 'button, [role=button]', link: 'a[href]', list: 'ul, ol, [role=list]', region: '[role=region]', menuitem: '[role=menuitem]'};
+const ROLE = {button: 'button, [role=button]', link: 'a[href]', list: 'ul, ol, [role=list]', region: '[role=region]', menuitem: '[role=menuitem]',
+  textbox: 'input[type=text], textarea, [role=textbox]'};
 const visible = (el) => !el.closest('[hidden]');
 const byRole = (root, role, name) => [...root.querySelectorAll(ROLE[role])].filter(visible).find((el) => nameOf(el) === name) ?? null;
 const allByRole = (root, role) => [...root.querySelectorAll(ROLE[role])].filter(visible);
@@ -175,9 +177,30 @@ describe('CONTROLS (spec §4.7, §5.1.3, §4.4C): every row renders with its rol
 
   async function sheetFor(row) {
     const b = await bed({practice: practiceOf({spots: [BRIDGE]}), mapped: row.sheet !== 'getBars',
+      ...(row.when === 'failed' ? {devices: 'online'} : {}),
       song: {notes: 'Watch the flam into the chorus.', musicalKey: 'A minor', tuning: 'Standard', tags: ['drums']}});
     const m = mountSheet(MODULES[row.sheet], b);
     await flush();
+    if (row.when === 'tray') {
+      const main = m.container.querySelector('.spots-main');
+      const touch = {pointerType: 'touch', pointerId: 5, isPrimary: true};
+      pointer(main, 'pointerdown', {...touch, x: 260, y: 30});
+      for (const x of [240, 200, 180]) pointer(main, 'pointermove', {...touch, x, y: 31});
+      pointer(main, 'pointerup', {...touch, x: 180, y: 31});
+      await flush();
+      return {b, root: m.container.querySelector('.spots-tray')};
+    }
+    if (row.when === 'rename') {
+      m.handle.actions.startRename(BRIDGE.id);
+      return {b, root: m.container};
+    }
+    if (row.when === 'failed') {
+      byRole(m.container, 'button', COPY.getBars.detect).click();
+      await flush();
+      b.ts.server.failJob(b.ts.server.jobRows.at(-1).jobId, 'unknown', 'Detection failed.');
+      await flush();
+      return {b, root: m.container.querySelector('[role=alert]')};
+    }
     if (row.when === 'menu') {
       byRole(m.container, 'button', COPY.spots.more(BRIDGE.name)).click();
       await flush();
@@ -344,12 +367,136 @@ describe('Spots list', () => {
     const toast = b.toasts.at(-1);
     expect(toast.text).toBe(COPY.spots.deleted(BRIDGE.name));
     expect(toast.action.label).toBe(COPY.spots.undo);
+    expect(toast.durationMs).toBe(spotsSheet.DELETE_TOAST_MS);
+    expect(spotsSheet.DELETE_TOAST_MS).toBe(8000);
     toast.action.run();
     await flush();
     expect(b.ts.value.spots.find((s) => s.id === BRIDGE.id).deleted).toBeUndefined();
     expect(container.querySelector('[data-spot-id="spot-bridge"]')).not.toBeNull();
     // Undo ran through practice.undo, which reports "Undid: delete spot …" with Redo.
     expect(b.toasts.at(-1).text).toBe(`Undid: ${COPY.spots.describeDelete(BRIDGE.name)}`);
+  });
+
+  test('the Delete toast’s Undo undoes that delete even after a later step (and leaves the later step)', async () => {
+    const b = await bed({practice: practiceOf({spots: [BRIDGE, FILL]})});
+    const {container, handle} = mountSheet(spotsSheet, b);
+    handle.actions.remove(BRIDGE.id);
+    await flush();
+    b.session.transport.setSpeed(0.7, {coalesce: false});
+    await flush();
+    expect(b.ts.snapshot.rate).toBe(0.7);
+    const before = b.session.undo.size.undo;
+    b.toasts.find((t) => t.key === 'spot-delete').action.run();
+    await flush();
+    expect(b.ts.value.spots.find((s) => s.id === BRIDGE.id).deleted).toBeUndefined();
+    expect(container.querySelector('[data-spot-id="spot-bridge"]')).not.toBeNull();
+    expect(b.ts.snapshot.rate).toBe(0.7);                 // the speed change is not what got undone
+    expect(b.statuses.at(-1).text).toBe(COPY.spots.restored(BRIDGE.name));
+    expect(b.session.undo.size.undo).toBe(before + 1);    // the restore is a step of its own
+    // Cmd+Z now takes the restore back, then the speed change.
+    expect(b.session.undo.undo().describe()).toBe(COPY.spots.describeRestore(BRIDGE.name));
+    expect(b.ts.value.spots.find((s) => s.id === BRIDGE.id).deleted).toBe(true);
+    b.session.undo.undo();
+    await flush();
+    expect(b.ts.snapshot.rate).toBe(1);
+  });
+
+  test('the Delete toast’s Undo does nothing when Cmd+Z already brought the spot back', async () => {
+    const b = await bed({practice: practiceOf({spots: [BRIDGE]})});
+    const {handle} = mountSheet(spotsSheet, b);
+    handle.actions.remove(BRIDGE.id);
+    b.session.undo.undo();
+    await flush();
+    expect(b.ts.value.spots[0].deleted).toBeUndefined();
+    const size = b.session.undo.size;
+    b.toasts.find((t) => t.key === 'spot-delete').action.run();
+    await flush();
+    expect(b.session.undo.size).toEqual(size);
+    expect(b.ts.value.spots[0].deleted).toBeUndefined();
+  });
+
+  test('undoing a rename keeps passes earned since; other spots are untouched', async () => {
+    const spot = {...BRIDGE, a: 80, b: 84, rate: 1};
+    const b = await bed({practice: practiceOf({spots: [spot, FILL]})});
+    const {handle} = mountSheet(spotsSheet, b);
+    handle.actions.rename(spot.id, 'Bridge 2');
+    handle.actions.open(spot.id);
+    await flush();
+    await b.ts.play();
+    await b.ts.advance(4 * 3 + 0.2);
+    await flush();
+    expect(b.ts.value.spots.find((s) => s.id === spot.id).passes).toBe(17);
+    b.session.undo.undo();   // the open
+    b.session.undo.undo();   // the rename
+    await flush();
+    const after = b.ts.value.spots.find((s) => s.id === spot.id);
+    expect(after.name).toBe(BRIDGE.name);
+    expect(after.passes).toBe(17);
+    expect(after.lastAt).toBeGreaterThan(NOW);
+    b.session.undo.redo();   // the rename again
+    expect(b.ts.value.spots.find((s) => s.id === spot.id)).toMatchObject({name: 'Bridge 2', passes: 17});
+  });
+
+  test('undoing Update from current puts back only the range and speed', async () => {
+    const b = await bed({practice: practiceOf({spots: [BRIDGE]})});
+    const {handle} = mountSheet(spotsSheet, b);
+    b.session.transport.loopRange(20, 28, {snap: 'none'});
+    await flush();
+    handle.actions.updateFromCurrent(BRIDGE.id);
+    b.session.practice.touchSpot(BRIDGE.id, {passes: 2});
+    b.session.undo.undo();
+    const after = b.ts.value.spots[0];
+    expect(after).toMatchObject({a: 80, b: 96, rate: 0.85, passes: 16});
+    expect(after.aBar).toBeUndefined();
+  });
+
+  test('undoing the delete of the active spot makes it active again, so its passes count', async () => {
+    const spot = {...BRIDGE, a: 80, b: 84, rate: 1};
+    const b = await bed({practice: practiceOf({spots: [spot]})});
+    const {handle} = mountSheet(spotsSheet, b);
+    handle.actions.open(spot.id);
+    await flush();
+    expect(b.session.practice.activeSpotId.peek()).toBe(spot.id);
+    handle.actions.remove(spot.id);
+    expect(b.session.practice.activeSpotId.peek()).toBeNull();
+    b.toasts.find((t) => t.key === 'spot-delete').action.run();
+    await flush();
+    expect(b.session.practice.activeSpotId.peek()).toBe(spot.id);
+    await b.ts.play();
+    await b.ts.advance(4 * 2 + 0.2);
+    await flush();
+    expect(b.ts.value.spots[0].passes).toBe(16);
+  });
+
+  test('a spot starting in the lead-in before bar 1 reads pickup, as the loop label does', async () => {
+    const b = await bed({tempo: legacySongMap.tempo, duration: legacySongMap.duration,
+      practice: practiceOf({spots: [{...FILL, a: 0.2, b: 5}]})});
+    const {container} = mountSheet(spotsSheet, b);
+    expect(textOf(container.querySelector('.spots-range'))).toBe('pickup–bar 2');
+    expect(b.session.position.loopLabel(0.2, 5)).toBe('Pickup–bar 2');
+  });
+
+  test.each([['Shift+F10', {key: 'F10', code: 'F10', shiftKey: true}], ['ContextMenu', {key: 'ContextMenu', code: 'ContextMenu'}]])(
+    '%s on a focused row opens Rename / Update from current / Delete', async (_n, spec) => {
+      const b = await bed({practice: practiceOf({spots: [BRIDGE]})});
+      const {container} = mountSheet(spotsSheet, b);
+      const open = byRole(container, 'button', BRIDGE.name);
+      open.focus();
+      keydown(spec, {target: open});
+      await flush();
+      expect(allByRole(document.body, 'menuitem').map(nameOf)).toEqual([COPY.spots.rename, COPY.spots.update, COPY.spots.delete]);
+    });
+
+  test('after a rename the context menu is labelled with the new name', async () => {
+    const b = await bed({practice: practiceOf({spots: [BRIDGE]})});
+    const {container, handle} = mountSheet(spotsSheet, b);
+    handle.actions.rename(BRIDGE.id, 'Bridge fill');
+    await flush();
+    const open = byRole(container, 'button', 'Bridge fill');
+    keydown({key: 'F10', code: 'F10', shiftKey: true}, {target: open});
+    await flush();
+    const menu = document.querySelector('[role=menu]');
+    expect(menu.getAttribute('aria-label')).toBe(COPY.spots.actions('Bridge fill'));
   });
 
   test('a sideways swipe on touch opens the row’s action tray; its Delete removes the spot', async () => {
@@ -681,6 +828,22 @@ describe('Tap the beat', () => {
     const alert = t.container.querySelector('[role=alert]');
     expect(textOf(alert)).toContain('This drum chart’s bars no longer fit.');
   });
+
+  test('after the sheet’s own Play, T and Space on the focused element tap (the focus returns to the pad)', async () => {
+    const t = await tapBed();
+    const play = byRole(t.container, 'button', 'Play');
+    play.focus();
+    play.click();
+    await settle();
+    expect(t.ts.snapshot.phase).toBe('playing');
+    expect(document.activeElement).toBe(t.pad);
+    await t.ts.advance(0.5);
+    keydown({code: 'KeyT', key: 't'});
+    await t.ts.advance(0.5);
+    keydown({code: 'Space', key: ' '});
+    expect(t.handle.taps).toHaveLength(2);
+    expect(t.ts.snapshot.phase).toBe('playing');
+  });
 });
 
 /* ---------- Get bars ---------- */
@@ -725,11 +888,33 @@ describe('Get bars popover', () => {
   });
 
   test('desktop with a ready processor: Detect is enabled and runs on this computer', async () => {
-    const b = await bed({mapped: false, desktop: true});
-    const {container} = mountSheet(getBarsSheet, b, {desktop: {available: true}, devices: signal([])});
+    // This computer's companion is one of the paired devices too (its /status deviceId).
+    const desktop = {available: true, processor: signal({phase: 'ready', deviceId: 'device-local'})};
+    const b = await bed({mapped: false, desktop, devices: [{deviceId: 'device-local', name: 'This Mac', state: 'idle', lastSeenAt: NOW}]});
+    const {container} = mountSheet(getBarsSheet, b, {desktop});
+    expect(b.session.detect.canDetect.peek()).toEqual({ok: true, deviceId: 'device-local'});
     await flush();
     expect(byRole(container, 'button', COPY.getBars.detect).getAttribute('aria-disabled')).toBeNull();
     expect(textOf(container.querySelector('.getbars-option:nth-child(2) .getbars-body'))).toBe(COPY.getBars.detectBody);
+    expect(byRole(container, 'link', COPY.getBars.getDesktop)).toBeNull();
+  });
+
+  test('desktop whose processor is not running: Detect disabled with the processor reason, no download link', async () => {
+    const desktop = {available: true, processor: signal({phase: 'stopped'})};
+    const b = await bed({mapped: false, desktop});
+    const {container} = mountSheet(getBarsSheet, b, {desktop});
+    await flush();
+    const detect = byRole(container, 'button', COPY.getBars.detect);
+    expect(detect.getAttribute('aria-disabled')).toBe('true');
+    expect(textOf(detect.querySelector('.ui-button-reason'))).toBe(DETECT_COPY.processorOffline);
+    expect(byRole(container, 'link', COPY.getBars.getDesktop)).toBeNull();
+  });
+
+  test('a paused (export-only) account on the web gets no download link', async () => {
+    const b = await bed({mapped: false, accountStatus: 'export_only'});
+    const {container} = mountSheet(getBarsSheet, b);
+    await flush();
+    expect(b.session.detect.canDetect.peek()).toMatchObject({ok: false, reason: DETECT_COPY.exportOnly});
     expect(byRole(container, 'link', COPY.getBars.getDesktop)).toBeNull();
   });
 
@@ -773,7 +958,10 @@ describe('Get bars popover', () => {
     const devices = [{deviceId: 'd1', name: 'Studio Mac'}, {deviceId: 'd2', name: ''}];
     expect(getBarsSheet.detectDescription({ok: true, deviceId: 'd1'}, {devices})).toBe(COPY.getBars.detectRemote('Studio Mac'));
     expect(getBarsSheet.detectDescription({ok: true, deviceId: 'd2'}, {devices})).toBe(COPY.getBars.detectRemoteUnnamed);
-    expect(getBarsSheet.detectDescription({ok: true, deviceId: 'local'}, {devices, desktopAvailable: true})).toBe(COPY.getBars.detectBody);
+    expect(getBarsSheet.detectDescription({ok: true}, {devices, desktopAvailable: true})).toBe(COPY.getBars.detectBody);
+    // This computer's own companion is listed among the paired devices: still "this computer".
+    expect(getBarsSheet.detectDescription({ok: true, deviceId: 'd1'}, {devices, desktopAvailable: true, localDeviceId: 'd1'})).toBe(COPY.getBars.detectBody);
+    expect(getBarsSheet.detectDescription({ok: true, deviceId: 'd1'}, {devices, desktopAvailable: true, localDeviceId: 'd9'})).toBe(COPY.getBars.detectRemote('Studio Mac'));
     expect(getBarsSheet.detectDescription({ok: false, reason: 'x'}, {devices})).toBe(COPY.getBars.detectGeneric);
   });
 });

@@ -9,8 +9,11 @@
 // - A row's actions: Rename (inline), Update from current (the current loop and speed) and Delete
 //   (undo toast). They open from the row's ⋯ button, a right-click, Shift+F10 or the ContextMenu
 //   key (a menu), or a horizontal swipe on touch (an action tray in the row).
-// - Each change is one practice-undo step on the `spots` key (from/to are the whole lists,
-//   tombstones included; practice-state turns a dropped spot into a tombstone).
+// - Each change is one practice-undo step on the `spots` key that puts back only the fields it
+//   touched (rename: `name`; update: the range and speed; delete: that one spot, revived from its
+//   tombstone), so passes and lastAt earned afterwards, on that spot or any other, survive an undo.
+// - The Delete toast's Undo (8 s, spec §7.8) undoes that delete: through practice.undo while the
+//   delete is still the newest step, else by reviving the spot as a step of its own.
 // - The footer's Save spot (B) saves the current loop.
 //
 //   export function render(container, {session, close, registry?, feedback?, now?}) → {destroy}
@@ -28,6 +31,7 @@ import {Menu, bindContextMenu} from '../../ui/menu.js';
 import {relativeTime} from '../../library/song-labels.js';
 import {formatTenths} from '../position.js';
 import {openSpot} from '../commands.js';
+import {UNDO_LIMIT} from '../undo.js';
 import {COPY as ALL} from './sheets-b.copy.js';
 
 const COPY = ALL.spots;
@@ -37,7 +41,10 @@ export const SWIPE_PX = 48;
 export const SWIPE_SLOP = 10;
 /** The relative times ("practised 5 min ago") are re-read this often while the list is open. */
 export const REFRESH_MS = 60_000;
+/** The Delete-spot Undo toast stays this long (spec §7.8: "spot delete: 8 s Undo toast"). */
+export const DELETE_TOAST_MS = 8000;
 const EDGE_EPS = 0.01;
+const EPS = 1e-6;
 
 const peek = (v) => (v && typeof v === 'object' && typeof v.peek === 'function' ? v.peek() : v);
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -48,8 +55,10 @@ function rangeText(session, a, b) {
   const map = session.map;
   const mapped = peek(session.position?.mapped) ?? !!map?.isReal;
   if (!mapped || !map?.isReal || !map.bars?.length) return `${formatTenths(a)}–${formatTenths(b)}`;
-  const first = map.barIndexAt(a + EDGE_EPS);
-  const last = Math.max(first, map.barIndexAt(Math.max(a + 1e-6, b - EDGE_EPS)));
+  // Before bar 1 (the lead-in) is the pickup, as position.js barAt reads it (-1).
+  const barAt = (t) => (t < map.bars[0].t0 - EPS ? -1 : map.barIndexAt(t));
+  const first = barAt(a + EDGE_EPS);
+  const last = Math.max(first, barAt(Math.max(a + EPS, b - EDGE_EPS)));
   const display = (i) => (i < 0 ? null : map.bars[i]?.display ?? null);
   return COPY.bars(display(first), display(last));
 }
@@ -73,6 +82,9 @@ export function spotDetails(session, spot, now) {
   };
 }
 
+/** The fields Update from current changes (and its undo puts back). */
+const RANGE_KEYS = ['a', 'b', 'rate', 'aBar', 'bBar'];
+
 const liveSpots = (practice) => (practice.value.peek().spots ?? []).filter((s) => !s.deleted);
 
 export function render(container, {session, close = () => {}, registry = appRegistry, feedback = appFeedback, now = clockNow} = {}) {
@@ -87,16 +99,34 @@ export function render(container, {session, close = () => {}, registry = appRegi
 
   /* ---------- the changes (one practice-undo step each) ---------- */
 
-  function step(describe, change) {
-    const before = clone(practice.value.peek().spots);
-    change();
-    const after = clone(practice.value.peek().spots);
-    if (JSON.stringify(before) === JSON.stringify(after)) return null;
-    return session.undo.push({key: 'spots', label: 'spot', describe: () => describe, from: before, to: after,
-      apply: (v) => practice.patch({spots: clone(v)})});
+  const spotById = (spotId) => liveSpots(practice).find((s) => s.id === spotId) ?? null;
+  const pick = (spot, keys) => Object.fromEntries(keys.map((k) => [k, clone(spot?.[k]) ?? null]));
+  const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+
+  /**
+   * One practice-undo step whose undo and redo run `undo()`/`redo()` (field-level changes, never a
+   * whole-list restore). Returns a handle {entry, state: 'done' | 'undone', depth}: `state` follows
+   * the entry's own undo and redo, `depth` is the stack size right after the push.
+   */
+  function step(describe, {undo, redo}) {
+    const handle = {entry: null, state: 'done', depth: 0};
+    handle.entry = session.undo.pushAction({key: 'spots', label: 'spot', describe: () => describe,
+      undo: () => { handle.state = 'undone'; undo(); },
+      redo: () => { handle.state = 'done'; redo(); }});
+    if (!handle.entry) return null;
+    handle.depth = session.undo.size.undo;
+    return handle;
   }
 
-  const spotById = (spotId) => liveSpots(practice).find((s) => s.id === spotId) ?? null;
+  /**
+   * Whether a step is still the newest one on the stack. The stack only grows and shrinks at the
+   * top, so while the step stays done (never undone since) and the stack is back at the size it had
+   * right after the push, nothing sits above it. Near the stack limit (where old steps fall off the
+   * bottom and the size stops telling) it answers false, and callers take the safe path.
+   */
+  function isNewest(handle) {
+    return !!handle && handle.state === 'done' && handle.depth < UNDO_LIMIT && session.undo.size.undo === handle.depth;
+  }
 
   function open(spot) {
     const ran = registry.run('spot.open', {source: 'pointer', args: {id: spot.id}});
@@ -108,8 +138,15 @@ export function render(container, {session, close = () => {}, registry = appRegi
     const spot = spotById(spotId);
     const next = String(name ?? '').trim();
     if (!spot || !next || next === spot.name) return false;
-    const entry = step(COPY.describeRename(spot.name, next), () => practice.updateSpot(spotId, {name: next}));
-    if (entry) feedback.status?.(COPY.renamed(spot.name, spotById(spotId)?.name ?? next), {key: 'spot'});
+    const before = {name: spot.name};
+    practice.updateSpot(spotId, {name: next});
+    const after = {name: spotById(spotId)?.name ?? next};
+    if (same(before, after)) return false;
+    const entry = step(COPY.describeRename(before.name, after.name), {
+      undo: () => practice.updateSpot(spotId, before),
+      redo: () => practice.updateSpot(spotId, after),
+    });
+    if (entry) feedback.status?.(COPY.renamed(before.name, after.name), {key: 'spot'});
     return !!entry;
   }
 
@@ -125,24 +162,80 @@ export function render(container, {session, close = () => {}, registry = appRegi
     if (!loop) { feedback.status?.(COPY.needsLoop, {key: 'spot'}); return false; }
     const rate = peek(session.transport.snapshot)?.rate ?? spot.rate ?? 1;
     const fields = {a: loop.a, b: loop.b, rate, aBar: session.position?.ref?.(loop.a) ?? null, bBar: session.position?.ref?.(loop.b) ?? null};
-    const entry = step(COPY.describeUpdate(spot.name), () => practice.updateSpot(spotId, fields));
+    const before = pick(spot, RANGE_KEYS);
+    const activeBefore = practice.activeSpotId.peek();
+    practice.updateSpot(spotId, fields);
+    const after = pick(spotById(spotId), RANGE_KEYS);
     // The loop is this spot now, so its passes count from here (§2.14.1).
     practice.activeSpotId.value = spotId;
+    if (same(before, after)) return false;
+    const entry = step(COPY.describeUpdate(spot.name), {
+      undo: () => {
+        practice.updateSpot(spotId, before);
+        if (practice.activeSpotId.peek() === spotId) practice.activeSpotId.value = activeBefore;
+      },
+      redo: () => {
+        practice.updateSpot(spotId, after);
+        if (spotById(spotId)) practice.activeSpotId.value = spotId;
+      },
+    });
     if (entry) feedback.status?.(COPY.updated(spot.name, rate), {key: 'spot'});
     return !!entry;
   }
 
-  function undoLast() {
-    if (registry.run('practice.undo', {source: 'pointer'})) return;
-    session.undo.undo();
+  /** Brings a deleted spot back from its tombstone (its passes and lastAt as they are), with `saved`'s note. */
+  function revive(saved) {
+    practice.patch((p) => {
+      const i = p.spots.findIndex((s) => s.id === saved.id);
+      if (i >= 0 && !p.spots[i].deleted) return;
+      const {deleted: _d, ...base} = i >= 0 ? p.spots[i] : saved;
+      const spot = {...base};
+      if (saved.note) spot.note = saved.note;
+      if (i >= 0) p.spots[i] = spot;
+      else p.spots.push({...spot, updatedAt: Math.max(now(), (saved.updatedAt ?? 0) + 1)});
+    });
   }
 
   function remove(spotId) {
     const spot = spotById(spotId);
     if (!spot) return false;
-    const entry = step(COPY.describeDelete(spot.name), () => practice.deleteSpot(spotId));
-    if (!entry) return false;
-    feedback.toast?.(COPY.deleted(spot.name), {action: {label: COPY.undo, run: undoLast}, key: 'spot-delete'});
+    const saved = clone(spot);
+    const wasActive = practice.activeSpotId.peek() === spotId;
+    practice.deleteSpot(spotId);
+    if (spotById(spotId)) return false;
+    const handle = step(COPY.describeDelete(spot.name), {
+      undo: () => {
+        revive(saved);
+        if (wasActive && practice.activeSpotId.peek() == null && spotById(spotId)) practice.activeSpotId.value = spotId;
+      },
+      redo: () => practice.deleteSpot(spotId),
+    });
+    if (!handle) return false;
+    feedback.toast?.(COPY.deleted(spot.name), {action: {label: COPY.undo, run: () => undoDelete(handle, saved, wasActive)},
+      key: 'spot-delete', durationMs: DELETE_TOAST_MS});
+    return true;
+  }
+
+  /**
+   * The Delete toast's Undo: it undoes that delete, whatever happened since. While the delete is the
+   * newest step it is the plain practice undo ("Undid: delete spot …" with Redo); after a later step
+   * (a speed change, another spot opened) the spot comes back as a step of its own, and the later
+   * step stays. A spot already back (Cmd+Z got there first) is left alone.
+   */
+  function undoDelete(handle, saved, wasActive) {
+    if (spotById(saved.id)) return false;
+    if (isNewest(handle)) {
+      if (registry.run('practice.undo', {source: 'pointer'})) return true;
+      if (session.undo.undo()) return true;
+    }
+    revive(saved);
+    if (!spotById(saved.id)) return false;
+    if (wasActive && practice.activeSpotId.peek() == null) practice.activeSpotId.value = saved.id;
+    step(COPY.describeRestore(saved.name), {
+      undo: () => practice.deleteSpot(saved.id),
+      redo: () => { revive(saved); },
+    });
+    feedback.status?.(COPY.restored(saved.name), {key: 'spot'});
     return true;
   }
 
@@ -265,8 +358,15 @@ export function render(container, {session, close = () => {}, registry = appRegi
     main.addEventListener('pointerup', endSwipe);
     main.addEventListener('pointercancel', endSwipe);
 
-    const offMenu = bindContextMenu(el, () => (renaming === current.id ? null : menuItems(current)),
-      {label: COPY.actions(spot.name), registry});
+    // The menu's label names the spot, so the binding is renewed when the name changes.
+    let menuName = null, offMenu = null;
+    const bindMenu = (spotName) => {
+      if (menuName === spotName) return;
+      offMenu?.();
+      menuName = spotName;
+      offMenu = bindContextMenu(el, () => (renaming === current.id ? null : menuItems(current)),
+        {label: COPY.actions(spotName), registry});
+    };
 
     function update(next) {
       current = next;
@@ -282,6 +382,7 @@ export function render(container, {session, close = () => {}, registry = appRegi
       el.toggleAttribute('data-active', d.active);
       openButton.setAttribute('aria-current', d.active ? 'true' : 'false');
       more.set({label: COPY.more(next.name)});
+      bindMenu(next.name);
       tray.setAttribute('aria-label', COPY.actions(next.name));
       const isRenaming = renaming === next.id;
       const isRevealed = revealed === next.id && !isRenaming;
@@ -298,7 +399,7 @@ export function render(container, {session, close = () => {}, registry = appRegi
     update(spot);
     return {
       el, update,
-      destroy() { offMenu(); more.destroy(); renameButton.destroy(); updateButton.destroy(); deleteButton.destroy(); },
+      destroy() { offMenu?.(); more.destroy(); renameButton.destroy(); updateButton.destroy(); deleteButton.destroy(); },
     };
   }
 

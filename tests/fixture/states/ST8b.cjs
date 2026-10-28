@@ -158,7 +158,8 @@ module.exports = [
       t.expect(focused, 'the pad has focus');
       await page.locator('[data-sheet-body="tapBeat"]').getByRole('button', {name: 'Play', exact: true}).click();
       await t.transportPhase('playing');
-      await page.locator('.tap-pad').focus();
+      // The sheet's Play hands the focus back to the pad, so the keys below tap (no manual focus).
+      t.expect(await page.evaluate(() => document.activeElement?.classList.contains('tap-pad')), 'the pad has focus after Play');
       await t.advance(1000);
       for (let i = 0; i < 6; i++) {
         if (i) await t.advance(500);

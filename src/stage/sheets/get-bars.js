@@ -6,8 +6,12 @@
 // - Detect beats (`map.detect`): enabled on desktop with a ready processor, and on the web with an
 //   online paired computer (`detect.canDetect`); otherwise disabled with the reason shown. While a
 //   detection runs, its line ("Finding bars · 30%") and a progress rail replace the description; a
-//   failure shows describeError's sentence with [Try again] (`detect.retry`). Web without a
-//   computer also gets a "Get Woodshed for desktop" link.
+//   failure shows describeError's sentence with [Try again] (`detect.retry`). The web without a
+//   paired computer (the needs-desktop reason) also gets a "Get Woodshed for desktop" link; a paused
+//   account or a desktop whose processor is down does not, since installing would not help.
+// - The description names where a detection runs: "About 30 s on this computer." for this
+//   computer's processor (its companion is also one of the paired devices, so the verdict's
+//   deviceId is compared with the local processor's), else "Runs on <computer>.".
 // - Find a chart… (`map.find`): Edit · Map's Find panel.
 //
 //   export function render(container, {session, close, registry?, devices?, desktop?}) → {destroy}
@@ -20,6 +24,7 @@ import {Button} from '../../ui/button.js';
 import {h} from '../../ui/h.js';
 import {ProgressRail} from '../../ui/progress.js';
 import {InlineStatus} from '../../ui/status.js';
+import {COPY as DETECT_COPY} from '../detect.js';
 import {COPY as ALL} from './sheets-b.copy.js';
 
 const COPY = ALL.getBars;
@@ -29,9 +34,9 @@ export const DOWNLOAD_PATH = '/download';
 const peek = (v) => (v && typeof v === 'object' && typeof v.peek === 'function' ? v.peek() : v);
 
 /** The Detect row's description for a canDetect verdict. */
-export function detectDescription(verdict, {devices = [], desktopAvailable = false} = {}) {
+export function detectDescription(verdict, {devices = [], desktopAvailable = false, localDeviceId = null} = {}) {
   if (!verdict?.ok) return COPY.detectGeneric;
-  const localProcessor = desktopAvailable && (!verdict.deviceId || !devices.some((d) => d.deviceId === verdict.deviceId));
+  const localProcessor = desktopAvailable && (!verdict.deviceId || verdict.deviceId === localDeviceId);
   if (localProcessor) return COPY.detectBody;
   const device = devices.find((d) => d.deviceId === verdict.deviceId);
   const name = typeof device?.name === 'string' ? device.name.trim() : '';
@@ -83,7 +88,8 @@ export function render(container, {session, close = () => {}, registry = appRegi
     const state = peek(detect?.state) ?? {phase: 'idle'};
     const list = peek(devices) ?? [];
     const running = state.phase === 'starting' || state.phase === 'running';
-    detectBody.textContent = detectDescription(verdict, {devices: list, desktopAvailable: !!desktop?.available});
+    const localDeviceId = peek(desktop?.processor)?.deviceId ?? null;
+    detectBody.textContent = detectDescription(verdict, {devices: list, desktopAvailable: !!desktop?.available, localDeviceId});
     detectBody.hidden = running;
     progress.hidden = !running;
     root.toggleAttribute('data-detecting', running);
@@ -95,7 +101,7 @@ export function render(container, {session, close = () => {}, registry = appRegi
     const failed = state.phase === 'error';
     failure.el.hidden = !failed;
     if (failed) failure.set({text: state.error?.sentence ?? String(state.error ?? ''), action: failureAction(state.error)});
-    download.hidden = !!desktop?.available || !verdict || verdict.ok || session.readOnly;
+    download.hidden = !!desktop?.available || session.readOnly || !(verdict && !verdict.ok && verdict.reason === DETECT_COPY.needsDesktop);
   }
 
   if (detect) {
@@ -103,6 +109,7 @@ export function render(container, {session, close = () => {}, registry = appRegi
       detect.canDetect?.value;
       detect.state?.value;
       devices?.value;
+      desktop?.processor?.value;
       session.position?.mapped?.value;
       paint();
       // The buttons read the commands' enabled state and reasons through the registry.
