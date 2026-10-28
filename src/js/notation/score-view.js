@@ -57,10 +57,14 @@ function pickFonts(fonts) {
  * @param options.scale engraving scale (1 = alphaTab default)
  * @param options.barsPerRow -1 for automatic by width
  * @param options.fonts {barNumber, marker} label sizes in engraving px (default DEFAULT_FONTS)
+ * @param options.resizeSettleMs 0: a width change re-engraves at once (alphaTab's own 10 ms
+ *   throttle). Above 0 it waits this long after the last width change and re-engraves only if no
+ *   relayout or render since took the new width, so a size change that comes with the width
+ *   change (configure + relayout) engraves once.
  * @param options.onRender (view) after every finished engraving
  * @param options.onPointer ({kind:'down'|'move'|'up'|'cancel', event, at}) pointer callback
  */
-export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false, fonts = null, onRender = () => {}, onPointer = null} = {}) {
+export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false, fonts = null, resizeSettleMs = 0, onRender = () => {}, onPointer = null} = {}) {
   host.classList.add('score-view');
   const stage = document.createElement('div');
   stage.className = 'score-stage';
@@ -128,6 +132,24 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
   const api = new alphaTab.AlphaTabApi(root, settings);
 
   let built = null, score = null, renderOptions = {}, starts = [], ready = false, disposed = false, fontsLoaded = false, renderToken = 0;
+  // Width changes: alphaTab re-engraves through triggerResize() when its container's width differs
+  // from the width it last rendered at. With a settle, that waits; any render in between (render()
+  // and renderScore() take the container's current width) makes the late check a no-op.
+  let widthTimer = null;
+  if (resizeSettleMs > 0 && typeof api.triggerResize === 'function') {
+    const resizeNow = api.triggerResize.bind(api);
+    api.triggerResize = () => {
+      clearTimeout(widthTimer);
+      widthTimer = setTimeout(() => {
+        widthTimer = null;
+        if (disposed) return;
+        const container = api.container, renderer = api.renderer;
+        // Hidden: nothing to do; showing it again is a width change of its own.
+        if (!container?.isVisible || !renderer) return;
+        if (container.width !== renderer.width) resizeNow();
+      }, resizeSettleMs);
+    };
+  }
   let playhead = null, loop = null, selection = new Set(), caret = null, focusBars = null, barMarks = new Map();
   let handlesOn = false, dragging = false;
   /** Per rendered bar: knots of {q, x} for cursor interpolation, plus bounds. */
@@ -392,7 +414,7 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
     rendered(index) { return geometry.has(index); },
     /** Number of bars with geometry in the current engraving. */
     renderedBars() { return geometry.size; },
-    destroy() { disposed = true; resize?.disconnect(); window.removeEventListener('woodshed:theme', onTheme); window.removeEventListener('woodshed:place', onTheme); api.destroy(); host.replaceChildren(); host.classList.remove('score-view'); },
+    destroy() { disposed = true; clearTimeout(widthTimer); resize?.disconnect(); window.removeEventListener('woodshed:theme', onTheme); window.removeEventListener('woodshed:place', onTheme); api.destroy(); host.replaceChildren(); host.classList.remove('score-view'); },
   };
   return view;
 }
