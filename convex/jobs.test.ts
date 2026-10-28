@@ -11,7 +11,7 @@ import schema from './schema';
 import { api } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { defaultSongMap } from '../shared/song-map';
-import { LIST_PER_STATUS, PRESENCE_ONLINE_MS, QUEUE_CAP, RESUME_MESSAGE, jobRowValidator, jobDetailValidator } from './jobs';
+import { LIST_PER_STATUS, PRESENCE_ONLINE_MS, QUEUE_CAP, RESUME_MESSAGE, UNAPPLIED_MAX, UNAPPLIED_SCAN, jobRowValidator, jobDetailValidator } from './jobs';
 import { resolveQuality } from './lib/presets';
 
 const modules = import.meta.glob('./**/*.ts');
@@ -517,6 +517,104 @@ describe('markApplied and latestDetection', () => {
     await setAccount(t, 'alice', 'export_only');
     const another = await insertJob(t, doneBeats(songId));
     await expect(alice.mutation(api.jobs.markApplied, { jobId: another })).resolves.toBeNull();
+  });
+});
+
+// ---- listUnappliedDetections (ticket I1b-1) ---------------------------------------
+
+describe('listUnappliedDetections', () => {
+  const beatsResult = { beats: [[0.5, 1], [1, 2], [1.5, 3], [2, 4]] };
+  const doneBeats = (userId: string, songId: Id<'songs'>, extra: Partial<JobInput> = {}) =>
+    job(userId, { kind: 'beats', songId, status: 'done', stage: 'done', percent: 100, result: beatsResult, ...extra });
+  const songs = (t: T, n: number, userId = 'alice') =>
+    t.run(async ctx => { const ids: Id<'songs'>[] = []; for (let i = 0; i < n; i++) ids.push(await ctx.db.insert('songs', song(userId, `Song ${i}`))); return ids; });
+  const ids = (rows: { jobId: Id<'jobs'> }[]) => rows.map(r => r.jobId);
+
+  test('lists the caller’s done, user-started, unapplied detections with their result, newest first', async () => {
+    const { t, alice, songId } = await setup();
+    expect(await alice.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
+    const [a, b] = await songs(t, 2);
+    const older = await insertJob(t, doneBeats('alice', songId, { createdAt: T0 + 1 }));
+    const middle = await insertJob(t, doneBeats('alice', a, { createdAt: T0 + 2 }));
+    const newest = await insertJob(t, doneBeats('alice', b, { createdAt: T0 + 3 }));
+    const rows = await alice.query(api.jobs.listUnappliedDetections, {});
+    expect(ids(rows)).toEqual([newest, middle, older]);
+    expect(rows[0]).toMatchObject({ kind: 'beats', status: 'done', songId: b, result: beatsResult, appliedAt: null, chainedFrom: null });
+    for (const row of rows) expect(Object.keys(row).sort()).toEqual(Object.keys(jobDetailValidator.fields).sort());
+  });
+
+  test('chained (B6) detections are excluded', async () => {
+    const { t, alice, songId } = await setup();
+    const separation = await insertJob(t, job('alice', { songId, status: 'done' }));
+    await insertJob(t, doneBeats('alice', songId, { chainedFrom: separation }));
+    expect(await alice.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
+    // A chained one never hides the song's user-started detection behind it.
+    const user = await insertJob(t, doneBeats('alice', songId, { createdAt: T0 - 1 }));
+    await insertJob(t, doneBeats('alice', songId, { chainedFrom: separation, createdAt: T0 + 1 }));
+    expect(ids(await alice.query(api.jobs.listUnappliedDetections, {}))).toEqual([user]);
+  });
+
+  test('applied detections are excluded, and never uncover an older one of the same song', async () => {
+    const { t, alice, songId } = await setup();
+    const [other] = await songs(t, 1);
+    await insertJob(t, doneBeats('alice', songId, { createdAt: T0 + 1 }));
+    const applied = await insertJob(t, doneBeats('alice', songId, { createdAt: T0 + 2 }));
+    const kept = await insertJob(t, doneBeats('alice', other, { createdAt: T0 + 3 }));
+    expect(ids(await alice.query(api.jobs.listUnappliedDetections, {}))).toEqual([kept, applied]);
+    await alice.mutation(api.jobs.markApplied, { jobId: applied });
+    // As latestDetection: the song's newest detection was used, so its older one is not offered.
+    expect(ids(await alice.query(api.jobs.listUnappliedDetections, {}))).toEqual([kept]);
+    expect(await alice.query(api.jobs.latestDetection, { songId })).toBeNull();
+  });
+
+  test('detections without a result, other kinds and other statuses are excluded', async () => {
+    const { t, alice, songId } = await setup();
+    const [a, b, c] = await songs(t, 3);
+    await insertJob(t, doneBeats('alice', songId, { result: undefined }));
+    await insertJob(t, doneBeats('alice', a, { kind: 'sections', result: { sections: [] } }));
+    await insertJob(t, job('alice', { songId: b, status: 'done', result: { anything: true } }));
+    await insertJob(t, doneBeats('alice', c, { status: 'running' }));
+    await insertJob(t, doneBeats('alice', c, { status: 'error' }));
+    await insertJob(t, doneBeats('alice', c, { status: 'canceled' }));
+    expect(await alice.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
+  });
+
+  test('other users’ jobs are excluded; signed out lists nothing', async () => {
+    const { t, alice, bob, songId, bobSong } = await setup();
+    const mine = await insertJob(t, doneBeats('alice', songId));
+    const theirs = await insertJob(t, doneBeats('bob', bobSong));
+    // A job naming another account’s song is not listed either.
+    await insertJob(t, doneBeats('alice', bobSong, { createdAt: T0 + 1 }));
+    expect(ids(await alice.query(api.jobs.listUnappliedDetections, {}))).toEqual([mine]);
+    expect(ids(await bob.query(api.jobs.listUnappliedDetections, {}))).toEqual([theirs]);
+    expect(await t.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
+  });
+
+  test('a deleted song’s detection is excluded', async () => {
+    const { t, alice } = await setup();
+    const [gone] = await songs(t, 1);
+    await insertJob(t, doneBeats('alice', gone));
+    await t.run(ctx => ctx.db.delete('songs', gone));
+    expect(await alice.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
+  });
+
+  test('returns at most 20, the newest', async () => {
+    const { t, alice } = await setup();
+    const many = await songs(t, UNAPPLIED_MAX + 5);
+    const jobIds: Id<'jobs'>[] = [];
+    for (const [i, id] of many.entries()) jobIds.push(await insertJob(t, doneBeats('alice', id, { createdAt: T0 + i })));
+    const rows = await alice.query(api.jobs.listUnappliedDetections, {});
+    expect(rows).toHaveLength(UNAPPLIED_MAX);
+    expect(ids(rows)).toEqual(jobIds.slice(-UNAPPLIED_MAX).reverse());
+  });
+
+  test('scans only the newest 200 done jobs', async () => {
+    const { t, alice, songId } = await setup();
+    await insertJob(t, doneBeats('alice', songId, { createdAt: T0 }));
+    await t.run(async ctx => {
+      for (let i = 0; i < UNAPPLIED_SCAN; i++) await ctx.db.insert('jobs', job('alice', { status: 'done', createdAt: T0 + 1 + i }));
+    });
+    expect(await alice.query(api.jobs.listUnappliedDetections, {})).toEqual([]);
   });
 });
 

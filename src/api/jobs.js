@@ -6,6 +6,7 @@
 //   listActive()                                   → JobRow[]          queued, running and failed jobs, by createdAt
 //   get({jobId})                                   → JobDetail | null  `result` only for a done detection
 //   latestDetection({songId})                      → JobDetail | null  a done, user-started, unapplied beat detection (D44)
+//   listUnappliedDetections()                      → JobDetail[]       every song's such detection, newest first, at most 20
 //   createSeparation({source?, deviceId, settings, label, replaceSongId?, meta?, confirmed?}) → {jobId}
 //   createBeatDetection({songId, deviceId?})       → {jobId}           an existing live detection is returned instead
 //   createSectionDetection({songId, deviceId?})    → {jobId}           likewise; needs a real map
@@ -33,6 +34,7 @@ export const isLive = job => job?.status === 'queued' || job?.status === 'runnin
 export const listActive = () => query('jobs:listActive', {});
 export const get = ({jobId}) => query('jobs:get', {jobId});
 export const latestDetection = ({songId}) => query('jobs:latestDetection', {songId});
+export const listUnappliedDetections = () => query('jobs:listUnappliedDetections', {});
 
 export const createSeparation = args => mutation('jobs:createSeparation', pick(args, ['source', 'deviceId', 'settings', 'label', 'replaceSongId', 'meta', 'confirmed']));
 export const createBeatDetection = args => mutation('jobs:createBeatDetection', pick(args, ['songId', 'deviceId']));
@@ -47,3 +49,5 @@ export const markApplied = ({jobId}) => mutation('jobs:markApplied', {jobId});
 export const subscribeActive = (onValue, onError) => subscribe('jobs:listActive', {}, onValue, onError);
 /** One job, while a flow waits on it (the detect flow, §2.14.1). */
 export const subscribeJob = ({jobId}, onValue, onError) => subscribe('jobs:get', {jobId}, onValue, onError);
+/** Detections waiting to be used, for the Library's Jobs model (LB1b). */
+export const subscribeUnappliedDetections = (onValue, onError) => subscribe('jobs:listUnappliedDetections', {}, onValue, onError);

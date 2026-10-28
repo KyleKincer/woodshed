@@ -23,6 +23,8 @@ import { sourceValidator } from './schema';
  * - `retry`, `cancel`, `dismiss`: the job card's actions (§2.10).
  * - `markApplied` / `latestDetection`: the one-applier rule for detections on
  *   mapped songs (D44).
+ * - `listUnappliedDetections`: every song's detection that is waiting to be
+ *   used, for the Library's Jobs model (ticket I1b-1).
  *
  * Every user-reachable failure is a coded error (§6.1).
  */
@@ -54,6 +56,10 @@ export const STEM_MODE_IDS: readonly string[] = [...new Set([...Object.keys(STEM
 const SONG_SCAN = 50;
 /** A song's newest jobs scanned by `latestDetection` (§6.4). */
 const LATEST_SCAN = 5;
+/** Detections `listUnappliedDetections` returns at most (§6.4). */
+export const UNAPPLIED_MAX = 20;
+/** Done jobs `listUnappliedDetections` scans, newest first, to find them (§6.4). */
+export const UNAPPLIED_SCAN = 200;
 /** Paired computers scanned for the default detection device. */
 const DEVICE_SCAN = 20;
 /** Presence older than this reads as offline, as the client reads `devices.list` (§6.6). */
@@ -346,6 +352,40 @@ export const latestDetection = query({
     const latest = rows.find(j => j.userId === userId && j.kind === 'beats' && j.status === 'done' && !j.chainedFrom);
     if (!latest || latest.result == null || latest.appliedAt !== undefined) return null;
     return toDetail(latest);
+  },
+});
+
+/**
+ * Every detection waiting to be used (ticket I1b-1): the caller's done,
+ * user-started beat detections with a result and no `appliedAt`, newest first,
+ * at most `UNAPPLIED_MAX`, from the newest `UNAPPLIED_SCAN` done jobs. Each
+ * song answers as `latestDetection` does: only its newest done, user-started
+ * detection counts, so an older one behind a newer applied (or empty) one is
+ * never listed, and a song that is gone or not the caller's lists nothing.
+ */
+export const listUnappliedDetections = query({
+  args: {},
+  returns: v.array(jobDetailValidator),
+  handler: async (ctx) => {
+    const userId = await getUserId(ctx);
+    if (!userId) return [];
+    const done = await ctx.db
+      .query('jobs')
+      .withIndex('by_user_status', q => q.eq('userId', userId).eq('status', 'done'))
+      .order('desc')
+      .take(UNAPPLIED_SCAN);
+    const seen = new Set<Id<'songs'>>();
+    const out: JobDetail[] = [];
+    for (const job of done) {
+      if (out.length >= UNAPPLIED_MAX) break;
+      if (job.kind !== 'beats' || job.chainedFrom || !job.songId || seen.has(job.songId)) continue;
+      seen.add(job.songId);
+      if (job.result == null || job.appliedAt !== undefined) continue;
+      const song = await ctx.db.get('songs', job.songId);
+      if (!song || song.userId !== userId) continue;
+      out.push(toDetail(job));
+    }
+    return out;
   },
 });
 
