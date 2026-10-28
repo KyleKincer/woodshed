@@ -1,0 +1,92 @@
+/* Settings sections (src/settings/sections/*.js; spec §6.2): what the Practice, Instruments, Pedals &
+ * keys, Appearance, This device and Account sections add to the shared rows in frame.css. */
+@layer views {
+  .settings-intro {
+    max-width: 60ch;
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.45;
+  }
+
+  /* A toggle names its own row (spec §8.4: the label names the feature, never the state). */
+  .settings-toggle {
+    justify-content: flex-start;
+    max-width: 100%;
+    text-align: start;
+  }
+
+  /* Practice: the custom count-in and the two follow styles. */
+  .settings-countin-custom,
+  .settings-follow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3) var(--s5);
+    flex-basis: 100%;
+  }
+  .settings-inline {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+  .settings-inline-label {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+
+  /* Instruments: the picker is the row. */
+  .settings-instruments .settings-row-control {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
+  }
+
+  /* Facts (This device, Account). */
+  .settings-value {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .settings-value[data-supported=false] { color: var(--ink-3); }
+  .settings-tip,
+  .settings-note {
+    flex-basis: 100%;
+    max-width: 60ch;
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-note-state { color: var(--ink-2); }
+  .settings-row-control > .settings-row-hint { flex-basis: 100%; }
+
+  /* Licenses: one quiet button per licence; the text opens in a Dialog. */
+  .settings-licenses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s2);
+  }
+  .settings-license-text {
+    max-height: min(60vh, 520px);
+    margin: 0;
+    padding: var(--s3);
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s3);
+  }
+}
