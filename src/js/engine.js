@@ -33,8 +33,14 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
  * scheduled. Every other plan change (a scheduled rate, `seekAt`,
  * `cancelPending`, a loop edit that keeps the position) bumps `planVersion`
  * and emits `'plan' {from, version}`, so listeners cancel only what they
- * scheduled at or after `from`. Scheduled entries change `rate` and `loop`
- * only once they start (the ticker promotes them).
+ * scheduled at or after `from`.
+ *
+ * `rate` and `loop` are what is audible now: an entry changes them once it
+ * starts (`_promote`, run by the ticker, by every change before it builds on
+ * them, and by the `rate`/`loop` getters). Entries and direct writes are
+ * stamped in order, so an entry never overrides a newer direct write (a loop
+ * the user set after the entry was planned), and an entry derived from a
+ * pending scheduled one carries its rate forward.
  *
  * Signalsmith posting (SignalsmithStretch 1.3.2): the worklet's `schedule`
  * pops every queued change at or after `outputTime` and then drops every
@@ -64,9 +70,12 @@ export class MultitrackEngine {
     this.duration = 0;
 
     this.playing = false;
-    this.rate = 1;
-    this.preservePitch = true;
     this.plan = [];
+    this._seq = 0;
+    this._rateSeq = 0;
+    this._loopSeq = 0;
+    this._rate = 1;
+    this.preservePitch = true;
     this.planVersion = 0;
     this.lookahead = 0.05;
     this.destroyed = false;
@@ -79,7 +88,7 @@ export class MultitrackEngine {
     this.countIn = null;
     this.stopAtWhen = null;
 
-    this.loop = { enabled: false, a: 0, b: 0 };
+    this._loop = { enabled: false, a: 0, b: 0 };
     this.onEnded = null;
 
     this._listeners = new Map();
@@ -229,6 +238,26 @@ export class MultitrackEngine {
       track.auto.gain.setValueAtTime(1, now);
       track.autoGain = 1;
       track.autoPending = [];
+    }
+  }
+
+  // ---- rate and loop (what is audible now) --------------------------------
+  get rate() { this._promote(); return this._rate; }
+  set rate(value) { this._rate = value; this._rateSeq = ++this._seq; }
+  get loop() { this._promote(); return this._loop; }
+  set loop(value) { this._loop = value; this._loopSeq = ++this._seq; }
+
+  /**
+   * Apply every entry that has started, in order: its rate and loop become
+   * the engine's unless a newer direct write (stamped later) has replaced them.
+   */
+  _promote(now = this.ctx.currentTime) {
+    for (const segment of this.plan) {
+      if (segment.when > now) break;
+      if (segment.promoted) continue;
+      segment.promoted = true;
+      if (segment.seq > this._rateSeq) { this._rate = segment.rate; this._rateSeq = segment.seq; }
+      if (segment.seq > this._loopSeq) { this._loop = {...segment.loop}; this._loopSeq = segment.seq; }
     }
   }
 
@@ -454,13 +483,14 @@ export class MultitrackEngine {
   // pending scheduled rate or quantized seek is dropped (the user's change wins).
   _schedule(offset, when = this.ctx.currentTime + this.lookahead) {
     const now = this.ctx.currentTime;
+    this._promote(now);
     const current = this._segmentAt(now);
     const pending = this.plan.find(s => s.when > now && !s.scheduled);
     const seekOffset = offset ?? pending?.seekOffset;
     let position = seekOffset ?? (current ? this._positionIn(current, when) : this.pausedAt);
     if (this.loop.enabled && position >= this.loop.b) position = this.loop.a;
     const processing = this.preservePitch && this.rate !== 1;
-    const segment = { kind: 'play', when, offset: position, seekOffset, rate: this.rate, loop: {...this.loop}, processing };
+    const segment = { kind: 'play', when, offset: position, seekOffset, rate: this.rate, loop: {...this.loop}, processing, seq: ++this._seq };
     this._clearStopAt();
     this._replacePlan(now, [segment], {strict: true});
     this.revision++;
@@ -470,7 +500,7 @@ export class MultitrackEngine {
 
   /** A plan change from `cut` (not a discontinuity): planVersion++ and 'plan'. */
   _planChange(cut, {offset, rate, loop, scheduled = false, seekOffset}) {
-    const segment = {kind: 'play', when: cut, offset, seekOffset, rate, loop: {...loop}, processing: this.preservePitch && rate !== 1, scheduled};
+    const segment = {kind: 'play', when: cut, offset, seekOffset, rate, loop: {...loop}, processing: this.preservePitch && rate !== 1, scheduled, seq: ++this._seq};
     this._replacePlan(cut, [segment]);
     this.planVersion++;
     this._emit('plan', {from: cut, version: this.planVersion});
@@ -539,8 +569,9 @@ export class MultitrackEngine {
 
   pause() {
     this.playRequest++;
-    if (!this.playing) return;
     const now = this.ctx.currentTime;
+    if (!this.playing) { this._resetTrackGains(now); return; }
+    this._promote(now);
     const pendingSeek = this.plan.find(s => s.when > now && s.seekOffset != null && !s.scheduled);
     this.pausedAt = this.countingIn ? this.countIn.target : pendingSeek ? pendingSeek.offset : this.getPosition();
     this.countIn = null;
@@ -605,6 +636,7 @@ export class MultitrackEngine {
       return null;
     }
     this._duringCount('seekAt');
+    this._promote();
     const at = Math.max(when, this.ctx.currentTime + this.lookahead);
     const {base} = this._baseAt(at);
     const nextLoop = loop ? this._normalLoop(loop.enabled, loop.a ?? base.loop.a, loop.b ?? base.loop.b) : base.loop;
@@ -621,6 +653,7 @@ export class MultitrackEngine {
    */
   cancelPending() {
     if (!this.playing) return false;
+    this._promote();
     const cut = this.ctx.currentTime + this.lookahead;
     if (!this.plan.some(s => s.scheduled && !s.promoted && s.when >= cut)) return false;
     const base = this.plan.filter(s => !(s.scheduled && s.when >= cut)).findLast(s => s.when <= cut) ?? this.plan[0];
@@ -660,6 +693,7 @@ export class MultitrackEngine {
   setSpeed(rate, {at} = {}) {
     if (!Number.isFinite(rate)) return;
     rate = clamp(rate, MIN_RATE, MAX_RATE);
+    this._promote();
     if (this.playing && !this.countingIn && Number.isFinite(at) && at > this.ctx.currentTime + this.lookahead) {
       const {base, seekOffset} = this._baseAt(at);
       this._planChange(at, {offset: this._positionIn(base, at), rate, loop: base.loop, scheduled: true, seekOffset});
@@ -679,6 +713,7 @@ export class MultitrackEngine {
   setLoop(enabled, a = this.loop.a, b = this.loop.b) {
     if (!Number.isFinite(a) || !Number.isFinite(b)) return;
     const counted = this._duringCount('setLoop');
+    this._promote();
     this.loop = this._normalLoop(enabled, a, b);
     if (!this.playing) {
       if (this.loop.enabled && this.pausedAt >= this.loop.b) this.pausedAt = this.loop.a;
@@ -752,13 +787,8 @@ export class MultitrackEngine {
   _tick() {
     if (!this.playing) return;
     const now = this.ctx.currentTime;
+    this._promote(now);
     const index = this.plan.findLastIndex(s => s.when <= now);
-    const current = this.plan[index];
-    if (current?.scheduled && !current.promoted) {
-      current.promoted = true;
-      this.rate = current.rate;
-      this.loop = {...current.loop};
-    }
     for (const track of this.tracks) {
       if (!track.autoPending?.length) continue;
       const due = track.autoPending.filter(p => p.when <= now);
@@ -767,7 +797,8 @@ export class MultitrackEngine {
       track.autoPending = track.autoPending.filter(p => p.when > now);
     }
     const wraps = this._wrapsBetween(this._wrapCursor, now);
-    this._wrapCursor = now;
+    // A wrap within the tolerance after `now` is emitted now; never again.
+    this._wrapCursor = Math.max(now, wraps.at(-1)?.when ?? -Infinity);
     if (index > 0) this.plan = this.plan.slice(index);
     this._postStretch();
     for (const wrap of wraps) {

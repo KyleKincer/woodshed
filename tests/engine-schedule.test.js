@@ -461,6 +461,85 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
     expect(engine.ctx.oscillators.filter((o) => o.startTime >= t && o.playsAt(o.startTime))).toEqual([]);
     metronome.destroy();
   });
+
+  // A change made while a scheduled entry is about to start, or has started but
+  // no tick has run yet, builds on what is audible and keeps the user's loop.
+  test.each([
+    {gap: 0.025, label: 'before it starts'},
+    {gap: 0.05, label: 'with a tick between its start and the cut'},
+  ])('setLoop inside the lookahead of a scheduled rate change keeps both ($label)', async ({gap}) => {
+    engine.seek(10);
+    await engine.play();
+    clock.advance(1);
+    const T = now() + engine.lookahead + 0.015;
+    engine.setSpeed(1.2, {at: T});
+    clock.advance(gap);
+    expect(now() + engine.lookahead).toBeGreaterThan(T);
+    engine.setLoop(true, 0, 50);
+    clock.advance(0.5);
+    expect(engine.rate).toBe(1.2);
+    expect(engine.loop).toEqual({enabled: true, a: 0, b: 50});
+    // The next immediate change rebuilds from that state.
+    engine.seek(30);
+    const t = now() + engine.lookahead + 0.05;
+    expect(engine.plan.at(-1)).toMatchObject({rate: 1.2, loop: {enabled: true, a: 0, b: 50}});
+    expectAudibleAt(path, t, 30 + 0.05 * 1.2);
+    expectAudibleAt(path, t + 0.5, 30 + 0.55 * 1.2);
+  });
+
+  test('a change after a scheduled rate has started but before the next tick keeps the new rate', async () => {
+    await playLoop(rate);
+    const W = engine.nextWrapAt();
+    engine.setSpeed(1.2, {at: W});
+    vi.clearAllTimers();
+    engine.ctx._advanceTo(W + 0.01);
+    expect(engine.rate).toBe(1.2);
+    engine.seek(11, {cue: false});
+    const t = now() + engine.lookahead;
+    expect(engine.plan.at(-1)).toMatchObject({rate: 1.2, loop: {enabled: true, a: 10, b: 14}});
+    expectAudibleAt(path, t + 0.1, 11 + 0.1 * 1.2);
+  });
+
+  test('a change after a quantized jump with a loop change has started keeps the jump\'s loop', async () => {
+    await playLoop(rate);
+    const W = engine.nextWrapAt();
+    engine.seekAt(40, W, {loop: {enabled: false}});
+    vi.clearAllTimers();
+    engine.ctx._advanceTo(W + 0.01);
+    engine.setPreservePitch(preservePitch);
+    expect(engine.loop.enabled).toBe(false);
+    expect(engine.rate).toBe(rate);
+    expect(engine.plan.at(-1).loop.enabled).toBe(false);
+    const t = now() + engine.lookahead + 0.1;
+    expectAudibleAt(path, t, 40 + (t - W) * rate);
+  });
+
+  test('a wrap within the tolerance after a tick is emitted once', async () => {
+    const wraps = [];
+    engine.on('wrap', (w) => wraps.push([w.when, w.pass]));
+    await playLoop(rate, {after: 0.1});
+    vi.clearAllTimers();
+    const W = engine.nextWrapAt();
+    engine.ctx._advanceTo(W - 5e-10);
+    engine._tick();
+    engine.ctx._advanceTo(W + 0.01);
+    engine._tick();
+    engine.ctx._advanceTo(W + 0.02);
+    engine._tick();
+    expect(wraps).toEqual([[W, 1]]);
+  });
+
+  test('stop() and pause() reset the auto gains even when already stopped', async () => {
+    const [drums] = engine.tracks;
+    engine.setTrackGains({drums: 0});
+    engine.stop();
+    expect(drums.autoGain).toBe(1);
+    expect(drums.auto.gain.valueAt(now() + 1)).toBe(1);
+    engine.setTrackGains({drums: 0});
+    engine.pause();
+    expect(drums.autoGain).toBe(1);
+    expect(drums.auto.gain.valueAt(now() + 1)).toBe(1);
+  });
 });
 
 describe('events and lifecycle', () => {
