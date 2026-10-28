@@ -259,15 +259,46 @@ describe('setSongs', () => {
     expect((await stored(t, bobList))!.songIds).toEqual([b1]);
   });
 
-  test('a song deleted since the client read the list is dropped; a new missing id is refused', async () => {
+  test('a song deleted since the client read the list (deleted and stripped, as deleteSongData does) is dropped', async () => {
     const { t, alice } = setup();
     const [a, b, c] = await songs(t, 'alice', 3);
-    const id = await alice.mutation(api.setlists.create, { name: 'Set', songIds: [a, b] });
-    await t.run(ctx => ctx.db.delete('songs', b));
-    expect(await alice.mutation(api.setlists.setSongs, { id, songIds: [b, a] })).toEqual([a]);
+    const id = await alice.mutation(api.setlists.create, { name: 'Set', songIds: [a, b, c] });
+    // Model songs.remove → deleteSongData: delete the song and strip it from every list in one transaction.
+    const deleteSong = (songId: Id<'songs'>) => t.run(async ctx => {
+      await ctx.db.delete('songs', songId);
+      for (const row of await ctx.db.query('setlists').collect())
+        if (row.songIds.includes(songId)) await ctx.db.patch('setlists', row._id, { songIds: row.songIds.filter(x => x !== songId) });
+    });
+    // A drag reorder from a stale subscription that still holds b.
+    await deleteSong(b);
+    expect((await stored(t, id))!.songIds).toEqual([a, c]);
+    expect(await alice.mutation(api.setlists.setSongs, { id, songIds: [c, b, a] })).toEqual([c, a]);
+    expect((await stored(t, id))!.songIds).toEqual([c, a]);
+    // The 8 s Undo of a removal: Alice removes a, deletes c inside the window, then presses Undo with the old order.
+    await alice.mutation(api.setlists.setSongs, { id, songIds: [c] });
+    await deleteSong(c);
+    expect(await alice.mutation(api.setlists.setSongs, { id, songIds: [c, a] })).toEqual([a]);
     expect((await stored(t, id))!.songIds).toEqual([a]);
-    await t.run(ctx => ctx.db.delete('songs', c));
-    expect((await codeFrom(() => alice.mutation(api.setlists.setSongs, { id, songIds: [a, c] }))).code).toBe('not_found');
+  });
+
+  test('a stale order whose only change is a deleted song writes nothing', async () => {
+    const { t, alice } = setup();
+    const [a, b] = await songs(t, 'alice', 2);
+    const id = await alice.mutation(api.setlists.create, { name: 'Set', songIds: [a] });
+    await t.run(ctx => ctx.db.delete('songs', b));
+    vi.setSystemTime(T0 + 1000);
+    expect(await alice.mutation(api.setlists.setSongs, { id, songIds: [a, b] })).toEqual([a]);
+    expect((await stored(t, id))!.updatedAt).toBe(T0);
+  });
+
+  test('a song that exists but is another user\'s is still not_found, deleted or not alongside', async () => {
+    const { t, alice } = setup();
+    const [a, gone] = await songs(t, 'alice', 2);
+    const [b1] = await songs(t, 'bob', 1);
+    const id = await alice.mutation(api.setlists.create, { name: 'Set', songIds: [a] });
+    await t.run(ctx => ctx.db.delete('songs', gone));
+    expect((await codeFrom(() => alice.mutation(api.setlists.setSongs, { id, songIds: [a, gone, b1] }))).code).toBe('not_found');
+    expect((await stored(t, id))!.songIds).toEqual([a]);
   });
 });
 

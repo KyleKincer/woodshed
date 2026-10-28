@@ -7,7 +7,10 @@
 //   - ≤ 100 lists (`setlist_limit`), ≤ 100 songs per list (`setlist_full`),
 //     song ids deduplicated (the first occurrence keeps its place);
 //   - every song id must be in `db.songs` (the fixture has one user), else
-//     `not_found`; a list that is not the user's is `not_found`;
+//     `not_found`, except in setSongs, which drops an id with no song (a song
+//     deleted since the client read the list); a list that is not the user's
+//     is `not_found`;
+//   - new ids are `set-<n>` from a counter in the db, never reused after a remove;
 //   - export-only accounts (fx-auth=export_only) cannot create or change lists,
 //     but may `touch`; like the other handler modules, the queries do not refuse
 //     a suspended account, and every mutation does.
@@ -53,11 +56,15 @@ function ownList(id) {
   return row;
 }
 
-/** The next free `set-<n>` id, so a seed and its switches always give the same ids. */
+/**
+ * The next `set-<n>` id: deterministic per seed, and never reused after a
+ * remove (like a server document id). `db.setlistSeq` is the highest n issued;
+ * it is persisted with the rest of the db, and any live `set-<n>` row counts too.
+ */
 function nextId() {
-  const taken = new Set((db.setlists ?? []).map(l => l.id));
-  let n = 1;
-  while (taken.has(`set-${n}`)) n++;
+  const live = (db.setlists ?? []).map(l => /^set-(\d+)$/.exec(l.id)?.[1]).filter(Boolean).map(Number);
+  const n = Math.max(db.setlistSeq ?? 0, ...live) + 1;
+  db.setlistSeq = n;
   return `set-${n}`;
 }
 
@@ -107,12 +114,10 @@ export const handlers = {
     const row = ownList(id);
     const wanted = dedupe(songIds);
     assertRoom(wanted.length);
-    const stored = new Set(row.songIds);
-    const next = [];
-    for (const songId of wanted) {
-      if (findSong(songId)) next.push(songId);
-      else if (!stored.has(songId)) notYourSong();   // a song deleted since the client read the list is dropped
-    }
+    // An id with no song is dropped quietly (songs:remove strips deleted songs
+    // from every list, so a stale reorder or Undo may still name one). The
+    // fixture has one user, so there is no foreign song to refuse.
+    const next = wanted.filter(songId => findSong(songId));
     if (!sameOrder(next, row.songIds)) Object.assign(row, {songIds: next, updatedAt: Date.now()});
     return clone(next);
   },

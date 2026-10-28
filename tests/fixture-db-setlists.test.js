@@ -87,6 +87,17 @@ describe('create, rename, setSongs, addSongs, remove, touch', () => {
     expect(db().setlists.find(l => l.id === 'set-1')).toMatchObject({userId: 'user1', createdAt: NOW + 1000, updatedAt: NOW + 1000});
   });
 
+  test('ids are never reused after a remove, so a stale /set/:id finds nothing', async () => {
+    expect(await call('mutation', 'setlists:create', {name: 'One'})).toBe('set-1');
+    expect(await call('mutation', 'setlists:create', {name: 'Two'})).toBe('set-2');
+    await call('mutation', 'setlists:remove', {id: 'set-2'});
+    await call('mutation', 'setlists:remove', {id: 'set-1'});
+    expect(await call('mutation', 'setlists:create', {name: 'Three'})).toBe('set-3');
+    expect(await call('query', 'setlists:get', {id: 'set-1'})).toBeNull();
+    expect((await codeFrom(call('mutation', 'setlists:touch', {id: 'set-2'}))).code).toBe('not_found');
+    expect((await codeFrom(call('mutation', 'setlists:setSongs', {id: 'set-1', songIds: []}))).code).toBe('not_found');
+  });
+
   test('the name, list and song caps and song ownership give the server\'s codes', async () => {
     for (const name of ['', '  ', 'n'.repeat(81)]) {
       const {code, data} = await codeFrom(call('mutation', 'setlists:create', {name}));
@@ -111,11 +122,16 @@ describe('create, rename, setSongs, addSongs, remove, touch', () => {
     expect((await call('query', 'setlists:list', {}))[0].id).toBe('set-warmup');
   });
 
-  test('setSongs reorders and dedupes, drops a song deleted meanwhile, refuses an unknown one', async () => {
+  test('setSongs reorders and dedupes, and drops a song deleted (and stripped) since the client read the list', async () => {
     expect(await call('mutation', 'setlists:setSongs', {id: 'set-warmup', songIds: ['quiet', 'shuffle', 'quiet']})).toEqual(['quiet', 'shuffle']);
+    // As songs:remove does: delete the song and strip it from every list.
     db().songs = db().songs.filter(s => s.id !== 'shuffle');
+    for (const l of db().setlists) l.songIds = l.songIds.filter(id => id !== 'shuffle');
+    expect(db().setlists.find(l => l.id === 'set-warmup').songIds).toEqual(['quiet']);
+    vi.setSystemTime(NOW + 5000);
     expect(await call('mutation', 'setlists:setSongs', {id: 'set-warmup', songIds: ['shuffle', 'quiet']})).toEqual(['quiet']);
-    expect((await codeFrom(call('mutation', 'setlists:setSongs', {id: 'set-warmup', songIds: ['quiet', 'ghost']}))).code).toBe('not_found');
+    expect(db().setlists.find(l => l.id === 'set-warmup').updatedAt).not.toBe(NOW + 5000);
+    expect(await call('mutation', 'setlists:setSongs', {id: 'set-warmup', songIds: ['ghost', 'quiet']})).toEqual(['quiet']);
     expect(db().setlists.find(l => l.id === 'set-warmup').songIds).toEqual(['quiet']);
   });
 

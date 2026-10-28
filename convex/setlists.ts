@@ -143,9 +143,11 @@ export const rename = mutation({
 
 /**
  * Replace the order: reorder, remove, and the Undo of an add or a removal.
- * Ids are deduplicated. A song deleted since the client read the list (still
- * in the stored order, but gone) is dropped quietly; every other id must be
- * the caller's song. An unchanged order writes nothing. Returns the stored order.
+ * Ids are deduplicated. An id whose song no longer exists is dropped quietly:
+ * songs.remove strips a deleted song from every list in the same transaction,
+ * so a stale client (a reorder or an 8 s Undo built from an old snapshot) may
+ * still send it. A song that exists but is another user's is `not_found`. An
+ * unchanged order writes nothing. Returns the stored order.
  */
 export const setSongs = mutation({
   args: { id: v.id('setlists'), songIds: v.array(v.id('songs')) },
@@ -155,12 +157,12 @@ export const setSongs = mutation({
     const row = await ownList(ctx, userId, args.id);
     const wanted = dedupe(args.songIds);
     assertRoom(wanted.length);
-    const stored = new Set<string>(row.songIds);
     const songIds: Id<'songs'>[] = [];
     for (const id of wanted) {
       const song = await ctx.db.get('songs', id);
-      if (song && song.userId === userId) songIds.push(id);
-      else if (song || !stored.has(id)) notYourSong();
+      if (!song) continue; // deleted since the client read the list
+      if (song.userId !== userId) notYourSong();
+      songIds.push(id);
     }
     if (!sameOrder(songIds, row.songIds)) await ctx.db.patch('setlists', row._id, { songIds, updatedAt: Date.now() });
     return songIds;
