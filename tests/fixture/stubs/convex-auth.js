@@ -1,6 +1,6 @@
 // Stand-in for '@convex-dev/auth/browser': a session that is already signed in
 // (or signed out with ?fx-auth=signedout).
-import {fx} from '../db.js';
+import {fx} from '../db/index.js';
 export const defaultStorage = () => ({getItem: () => null, setItem() {}, removeItem() {}});
 export class AuthClient {
   constructor() { this.listeners = new Set(); this.state = {isLoading: true, isAuthenticated: false}; }

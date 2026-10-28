@@ -1,30 +1,60 @@
-// Runs before the app: desktop bridge, local-processor HTTP, and a clean slate.
-import {fx} from './db.js';
-if (fx.reset !== '0' && !sessionStorage.getItem('fx-booted')) {
-  // Each fresh tab starts from the fixture defaults; keep theme from the URL.
-  for (const key of Object.keys(localStorage)) if (key.startsWith('ws.') && key !== 'ws.theme') localStorage.removeItem(key);
-  sessionStorage.setItem('fx-booted', '1');
+// The fixture's first module (architecture §11.2): installed by the fixture's
+// Vite plugin ahead of the app's entry (and of every harness page), after the
+// classic early.js. It boots the fixture database and installs the fakes,
+// then exposes their controls on window.fixture.
+//
+// Switches read here (the database and the fakes document their own):
+//   fx-platform=ipad|mac|win       the navigator looks like that platform (fakes/platform.js)
+//   fx-nofeature=<list>            remove features first; a removed feature is never faked (fakes/features.js)
+//   fx-audio=manual                AudioContext time moves only through fixture.advance(ms) (fakes/manual-audio.js)
+//   fx-desktop=1                   window.woodshedDesktop and the local processor (fakes/desktop-bridge.js, fakes/companion.js)
+// Always installed (unless removed): wakeLock, requestMIDIAccess, the Media Session recorder,
+// beforeinstallprompt on demand, navigator.share and navigator.clipboard recorders.
+//
+// window.fixture = {fx, db(), update(fn), reset(), freezeJobs(), changed(),       (db/index.js)
+//   now(), platform, removed: [...],
+//   advance(ms), audio,                                                        (fx-audio=manual)
+//   wakeLock, midi, media, install, share, clipboard,
+//   companion, upload, desktop}                                                (fx-desktop=1)
+import {fx, installFixtureApi} from './db/index.js';
+import {applyPlatform} from './fakes/platform.js';
+import {parseFeatures, removeFeatures} from './fakes/features.js';
+import {installManualAudio} from './fakes/manual-audio.js';
+import {installWakeLock} from './fakes/wake-lock.js';
+import {installMidi} from './fakes/midi.js';
+import {installMediaSession} from './fakes/media-session.js';
+import {installInstallPrompt} from './fakes/install-prompt.js';
+import {installShare, installClipboard} from './fakes/share-clipboard.js';
+import {createCompanion} from './fakes/companion.js';
+import {installDesktopBridge} from './fakes/desktop-bridge.js';
+
+export function installFixture(win, switches) {
+  const fixture = installFixtureApi(win);
+  fixture.now = () => win.Date.now();
+  fixture.platform = applyPlatform(win, switches.platform);
+  const removed = removeFeatures(win, parseFeatures(switches.nofeature, win));
+  fixture.removed = [...removed];
+
+  if (switches.audio === 'manual') {
+    const manual = installManualAudio(win);
+    if (manual) Object.assign(fixture, manual);
+  } else if (switches.audio !== undefined) win.console.error(`[fixture] fx-audio must be "manual", got ${JSON.stringify(switches.audio)}`);
+  if (!fixture.advance) fixture.advance = async () => { throw new Error('fixture.advance needs ?fx-audio=manual'); };
+
+  if (!removed.has('wakelock')) fixture.wakeLock = installWakeLock(win);
+  if (!removed.has('midi')) fixture.midi = installMidi(win);
+  if (!removed.has('mediasession')) fixture.media = installMediaSession(win);
+  fixture.install = installInstallPrompt(win);
+  if (!removed.has('share')) fixture.share = installShare(win);
+  if (!removed.has('clipboard')) fixture.clipboard = installClipboard(win);
+
+  if (switches.desktop === '1') {
+    const companion = createCompanion(win, switches);
+    fixture.companion = companion;
+    fixture.upload = {calls: companion.uploads};
+    fixture.desktop = installDesktopBridge(win, switches);
+  }
+  return fixture;
 }
-if (fx.view) localStorage.setItem('ws.view', JSON.stringify({group: fx.view.split('-')[0], layout: fx.view.split('-')[1] || 'grid'}));
-if (fx.practice) localStorage.setItem('ws.practice.view', fx.practice);
-if (fx.overview) localStorage.setItem('ws.overview', '1');
-if (fx.notation) localStorage.setItem('ws.notation.layout', fx.notation);
-if (fx.desktop === '1') {
-  let updateListener = null;
-  window.woodshedDesktop = {
-    info: async () => ({version: '1.9.0', companion: {port: 47831, token: 'f'.repeat(64)}, update: {status: fx.update || 'idle', percent: 40}}),
-    onUpdate: fn => { updateListener = fn; },
-    onOpenUpdates: () => {},
-    update: async () => {},
-    setTheme: async () => {},
-  };
-  const realFetch = window.fetch.bind(window);
-  window.fetch = async (input, init) => {
-    const url = String(input?.url || input);
-    if (!url.startsWith('http://127.0.0.1:47831')) return realFetch(input, init);
-    const route = new URL(url).pathname;
-    const body = {'/status': {connected: fx.companion !== 'offline', deviceId: 'dev1', name: 'Studio MacBook'}, '/connect': {}, '/upload': {id: 'local-upload'}, '/legacy': [], '/export-originals': {count: 48, directory: '~/Downloads/Woodshed export'}}[route] ?? {};
-    await new Promise(r => setTimeout(r, route === '/upload' ? 900 : 50));
-    return new Response(JSON.stringify(body), {status: 200, headers: {'content-type': 'application/json'}});
-  };
-}
+
+if (typeof window !== 'undefined' && !globalThis.__FX_DB_MANUAL_BOOT__) installFixture(window, fx);
