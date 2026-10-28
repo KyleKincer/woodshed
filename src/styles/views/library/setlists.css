@@ -1,0 +1,215 @@
+/* The setlist page (src/library/setlist-page.js, /set/:id; spec §1.2 B3): the header (kicker, name or the inline
+ * rename, count and length, Play from the top, Rename, Delete), the ordered song rows with their move handles and
+ * remove buttons, and the edge states. layout.css gives .app-content the 1280 px column and the gutters. */
+@layer views {
+  .set-scroller {
+    block-size: 100%;
+    scrollbar-gutter: stable;
+  }
+  .set-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s5);
+    max-inline-size: 880px;
+    padding-block: var(--s5) var(--s8);
+  }
+
+  .set-back {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--h-sm);
+    padding-inline: var(--s2);
+    margin-inline-start: calc(-1 * var(--s2));
+    border-radius: var(--r-control);
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+    text-decoration: none;
+  }
+  @media (hover: hover) { .set-back:hover { color: var(--ink); background: var(--surface-2); } }
+  .set-back[hidden] { display: none; }
+
+  /* ---------- header ---------- */
+  .set-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .set-header[hidden] { display: none; }
+  .set-kicker {
+    margin: 0;
+    color: var(--ink-3);
+    font: var(--fw-semibold) var(--fs-12)/1.2 var(--font-ui);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .set-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-32)/1.15 var(--font-ui);
+    overflow-wrap: anywhere;
+  }
+  .set-title[hidden] { display: none; }
+  .set-meta {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.3 var(--font-ui);
+  }
+  .set-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-block-start: var(--s2);
+  }
+  .set-delete { margin-inline-start: auto; }
+  .set-note {
+    margin: 0;
+    color: var(--ink-3);
+    font: var(--fw-regular) var(--fs-14)/1.4 var(--font-ui);
+  }
+  .set-note[hidden] { display: none; }
+
+  /* inline rename */
+  .set-rename {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+  }
+  .set-rename[hidden] { display: none; }
+  .set-rename-label {
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+  }
+  .set-rename-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .set-rename-input {
+    flex: 1 1 280px;
+    min-inline-size: 0;
+    block-size: var(--h-lg);
+    padding-inline: var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-24)/1.2 var(--font-ui);
+  }
+  .set-rename-input[aria-invalid=true] { border-color: var(--danger); }
+  .set-rename-error {
+    margin: 0;
+    color: var(--danger);
+    font: var(--fw-regular) var(--fs-14)/1.4 var(--font-ui);
+  }
+  .set-rename-error[hidden] { display: none; }
+
+  /* ---------- rows ---------- */
+  .set-list {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border-block-start: 1px solid var(--line);
+    list-style: none;
+  }
+  .set-list[hidden] { display: none; }
+  .set-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 2.5ch var(--h-md) minmax(0, 1fr) auto var(--h-md);
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: 64px;
+    padding-block: var(--s2);
+    padding-inline-end: var(--s1);
+    border-block-end: 1px solid var(--line);
+    background: var(--bg);
+  }
+  @media (pointer: coarse) {
+    .set-row { min-block-size: 72px; }
+  }
+  .set-row[data-dragging] {
+    z-index: var(--z-drag);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    box-shadow: var(--shadow-popover);
+  }
+  .set-list[data-dragging] .set-row:not([data-dragging]) {
+    transition: transform var(--motion-fast) var(--ease);
+  }
+  .set-list[data-dragging] { cursor: grabbing; user-select: none; }
+  .set-pos {
+    color: var(--ink-3);
+    font: var(--fw-semibold) var(--fs-14)/1 var(--font-ui);
+    text-align: end;
+  }
+  .set-handle {
+    display: grid;
+    place-items: center;
+    inline-size: var(--h-md);
+    block-size: var(--h-md);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-3);
+    cursor: grab;
+    touch-action: none;
+  }
+  .set-handle:disabled { cursor: default; opacity: .4; }
+  @media (hover: hover) { .set-handle:not(:disabled):hover { background: var(--surface-2); color: var(--ink); } }
+  /* Six dots: two columns of three, drawn with gradients in the current colour. */
+  .set-handle-grip {
+    inline-size: 10px;
+    block-size: 16px;
+    background-image: radial-gradient(circle, currentColor 1.5px, transparent 1.6px);
+    background-size: 5px 5.33px;
+  }
+  .set-open {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s3);
+    min-inline-size: 0;
+    min-block-size: var(--h-md);
+    border-radius: var(--r-control);
+    color: var(--ink);
+    text-decoration: none;
+    -webkit-touch-callout: none;
+  }
+  @media (hover: hover) { .set-open:hover .set-song-title { text-decoration: underline; } }
+  .set-thumb { inline-size: 48px; }
+  .set-song-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-inline-size: 0;
+  }
+  .set-song-title {
+    overflow: hidden;
+    font: var(--fw-semibold) var(--fs-16)/1.3 var(--font-ui);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .set-song-artist {
+    overflow: hidden;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .set-song-artist[hidden] { display: none; }
+  .set-length {
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- edge states ---------- */
+  .set-edge[hidden] { display: none; }
+  .set-edge .ui-empty { margin-block-start: var(--s4); }
+}
