@@ -13,7 +13,8 @@ export class Metronome {
     this.ctx = engine.ctx;
     this.out = this.ctx.createGain();
     this.out.gain.value = 1;
-    this.out.connect(this.ctx.destination);
+    // The engine's aux bus is silenced with the stems by stopAt and pause.
+    this.out.connect(engine.aux ?? this.ctx.destination);
 
     this.enabled = false;
     this.accent = true;
@@ -28,12 +29,17 @@ export class Metronome {
     this._schedUntil = 0;
     this._lastPos = 0;
     this._scheduledClicks = new Set();
+    this._clickWhen = new WeakMap();
     this._transportRevision = -1;
     this.onChange = null; // notified when the map/settings change (for persistence + redraw)
-    // A song with no saved tempo has no map yet either: treat it like the legacy
-    // default so an existing drum part's timing can still be adopted.
-    this.songMap = songMap || new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1, {legacy: {map: null, detected: null, source: 'map'}});
+    this.songMap = songMap || new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1);
     this._unsubscribe = this.songMap.subscribe(() => { this.recompute(); this._notify(); });
+    // A discontinuity drops every scheduled click; a plan change drops only the
+    // clicks at or after the change and reschedules from there.
+    this._engineOff = [
+      engine.on?.('transport', () => { this._cancelClicks(); this._transportRevision = engine.revision; this._schedUntil = this.ctx.currentTime; }),
+      engine.on?.('plan', ({from}) => { this._cancelClicks(from); this._schedUntil = Math.min(this._schedUntil, from); }),
+    ].filter(Boolean);
     this.recompute();
   }
 
@@ -56,10 +62,8 @@ export class Metronome {
       countInLength: this.countInLength, countInUnit: this.countInUnit, audiblePreRoll: this.audiblePreRoll,
       enabled: this.enabled,
     };
-    // Untouched pre-1.6 maps are saved as they were. Otherwise save the song
-    // map, plus its pulses in the old detected-beat shape so earlier desktop
-    // versions still hear the same clicks.
-    if (this.songMap.legacy) return {...settings, ...this.songMap.legacy};
+    // The song map, plus its pulses in the old detected-beat shape (the tempo
+    // dual-write, removed with the click fields when serialize() becomes {songMap}).
     return {...settings, songMap: this.songMap.serialize(), source: 'detected', map: [],
       detected: this.beats.map((b) => ({time: b.time, downbeat: b.downbeat}))};
   }
@@ -104,9 +108,13 @@ export class Metronome {
   }
   stop() { if (this._timer) clearInterval(this._timer); this._timer = null; this._cancelClicks(); }
 
-  _cancelClicks() {
-    for (const osc of this._scheduledClicks) { try { osc.stop(); } catch {} }
-    this._scheduledClicks.clear();
+  /** Stop the tracked clicks scheduled at or after `from` (all of them by default). */
+  _cancelClicks(from = -Infinity) {
+    for (const osc of this._scheduledClicks) {
+      if (this._clickWhen.get(osc) < from - 1e-9) continue;
+      try { osc.stop(); } catch {}
+      this._scheduledClicks.delete(osc);
+    }
   }
 
   tick() {
@@ -170,13 +178,11 @@ export class Metronome {
     g.gain.exponentialRampToValueAtTime(v, ctxTime + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, ctxTime + 0.05);
     osc.connect(g).connect(this.out);
-    if (tracked) this._scheduledClicks.add(osc);
+    if (tracked) { this._scheduledClicks.add(osc); this._clickWhen.set(osc, ctxTime); }
     osc.onended = () => { this._scheduledClicks.delete(osc); osc.disconnect(); g.disconnect(); };
     osc.start(ctxTime);
     osc.stop(ctxTime + 0.06);
   }
 
-  beatsForView(t0, t1) { return this.beats.filter((b) => b.time >= t0 && b.time <= t1); }
-
-  destroy() { this.stop(); this._unsubscribe(); try { this.out.disconnect(); } catch {} }
+  destroy() { this.stop(); this._unsubscribe(); for (const off of this._engineOff) off(); try { this.out.disconnect(); } catch {} }
 }

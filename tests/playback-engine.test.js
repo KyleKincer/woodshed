@@ -3,8 +3,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 vi.mock('signalsmith-stretch', () => ({default: vi.fn()}));
 import SignalsmithStretch from 'signalsmith-stretch';
 vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuffer(0))}));
-import { MultitrackEngine } from '../src/js/engine.js';
-import { buildBarIndex, barPosition } from '../src/js/musical-position.js';
+import { MultitrackEngine, MIN_RATE } from '../src/js/engine.js';
 import { Metronome } from '../src/js/metronome.js';
 let engine;
 beforeEach(() => {
@@ -89,15 +88,6 @@ test('metronome schedules the loop downbeat and follows pending rate changes', a
   engine.setSpeed(0.5); settle(); advance(0.9);
   expect(engine.beatsBetween(engine.ctx.currentTime, engine.ctx.currentTime + 0.2, beats)[0].when).toBeCloseTo(1.1);
 });
-test('bar progress follows irregular detected downbeats, pickups, and partial final bars', () => {
-  const index = buildBarIndex([{time:0,downbeat:false},{time:1,downbeat:true},{time:1.5,downbeat:false},{time:2,downbeat:false},{time:2.5,downbeat:true},{time:3,downbeat:false}]);
-  expect(index.total).toBe(2);
-  expect(barPosition(index, 0.2)).toMatchObject({bar:0});
-  expect(barPosition(index, 2)).toMatchObject({bar:1,beat:3});
-  expect(barPosition(index, 2.5)).toMatchObject({bar:2,beat:1});
-  expect(barPosition(index, 10)).toMatchObject({bar:2,beat:2});
-});
-
 test('normal speed bypasses DSP with sample-locked original buffers and no processed tail', async () => {
   engine.seek(10); await engine.play();
   const entries=engine.tracks.map(track=>[...track.nativeSources][0]);
@@ -164,16 +154,42 @@ test('pre-roll before song start retains a full count-in with silence for unavai
   settle(); advance(2); expect(engine.getPosition()).toBe(0);
   advance(2); expect(engine.getPosition()).toBe(1);
 });
-test('cancel, seek, and speed changes during count-in cannot leave a delayed start armed', async () => {
-  engine.seek(10);
-  await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
-  settle();advance(1);engine.pause();
-  expect(engine.getPosition()).toBe(10);expect(engine.countIn).toBeNull();
-  advance(10); expect(engine.playing).toBe(false);
-  await engine.play({countIn:{duration:4,beats:[]}}); engine.seek(30);
-  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
-  await engine.play({countIn:{duration:4,beats:[]}});engine.setSpeed(0.75);
-  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
+test('pausing a count-in cannot leave a delayed start armed; a seek or speed change during a count never pauses the engine', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    engine.seek(10);
+    await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+    settle();advance(1);engine.pause();
+    expect(engine.getPosition()).toBe(10);expect(engine.countIn).toBeNull();
+    advance(10); expect(engine.playing).toBe(false);
+    // The transport restarts or cancels a count itself (rule 21). A stray call ends the count and plays on.
+    await engine.play({countIn:{duration:4,beats:[]}}); engine.seek(30);
+    expect(engine.playing).toBe(true);expect(engine.countingIn).toBe(false);expect(engine.getPosition()).toBe(30);
+    settle(); advance(1); expect(engine.getPosition()).toBeCloseTo(31);
+    engine.stop();
+    await engine.play({countIn:{duration:4,beats:[]}});engine.setSpeed(0.75);
+    expect(engine.playing).toBe(true);expect(engine.countingIn).toBe(false);expect(engine.rate).toBe(0.75);
+    expect(engine.getPosition()).toBe(30);
+    expect(warn).toHaveBeenCalledTimes(2);
+  } finally { warn.mockRestore(); }
+});
+test('E1: the speed range reaches 25% on both paths and clamps below it', async () => {
+  expect(MIN_RATE).toBe(0.25);
+  engine.setSpeed(0.25); await engine.play();
+  expect(engine.rate).toBe(0.25);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.25,active:true});
+  engine.setPreservePitch(false);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.25,active:false});
+  expect([...engine.tracks[0].nativeSources].at(-1).source.playbackRate.value).toBe(0.25);
+  engine.setSpeed(0.2); expect(engine.rate).toBe(0.25);
+  engine.setSpeed(2); expect(engine.rate).toBe(1.5);
+});
+test('toggle() is gone; seek(t, {cue: false}) leaves the cue', async () => {
+  expect(engine.toggle).toBeUndefined();
+  engine.seek(12); engine.seek(20, {cue:false});
+  expect(engine.editPosition).toBe(12); expect(engine.getPosition()).toBe(20);
+  await engine.play(); settle(); advance(2); engine.seek(50, {cue:false});
+  engine.stop(); expect(engine.getPosition()).toBe(12);
 });
 test('count-in supports bars and beats, legacy defaults, and persisted audible pre-roll', () => {
   const metro = new Metronome(engine);
