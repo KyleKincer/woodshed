@@ -17,9 +17,10 @@
 //   vf1-touch-card-menu    long-press (500 ms) on every song card and list row → onMenu, a
 //                          shorter press is a tap, job cards never ask for a menu (probe-touch.cjs)
 //   vf1-touch-app-card     in the app a tap on a card opens the song
-//   vf1-flow-back-*        Back from the placeholder Stage refocuses the opened card (mouse,
-//                          keyboard with a visible ring, iPad tap with the scroll position kept,
-//                          and the placeholder's own "Back to Library" link)
+//   vf1-flow-back-*        Back from the Stage refocuses the opened card (mouse, keyboard with a
+//                          visible ring, iPad tap with the scroll position kept, and the Stage's
+//                          own ‹ "Back to Library", the HUD's HoldButton: a button, a plain click
+//                          while stopped)
 //   vf1-flow-intended-*    the intended route survives sign-in (web: the OAuth return URL is the
 //                          route; desktop: ws.intendedRoute brings the reload at / back to it)
 //   vf1-flow-prefs-tabs    Library prefs sync across two tabs (storage event, both ways), the URL
@@ -430,14 +431,17 @@ module.exports = [
   {
     name: 'vf1-flow-back-link',
     url: ROUTES.library.url,
-    opts: {requires: LIBRARY, ready: 'library', devices: ['laptop'], structure: PLACEHOLDER_OK, capture: false},
+    opts: {requires: [...LIBRARY, 'src/stage/hud.js'], ready: 'library', devices: ['laptop'], structure: PLACEHOLDER_OK, capture: false},
     async fn(page, t) {
-      // The placeholder Stage's own visible Back control, not the browser's: it is a Back too, so it
-      // returns through history and refocuses the card as page.goBack() does.
+      // The Stage's own visible Back control, not the browser's: the HUD's ‹ (a HoldButton, so role
+      // button; stopped, a plain click runs stage.leave). It is a Back too, so it returns through
+      // history and refocuses the card as page.goBack() does.
       await page.locator('[data-key="song:glasshouse"] .lib-open-cover').click();
       await t.ready('stage');
       const idx = await page.evaluate(() => history.state?.idx ?? null);
-      await page.getByRole('link', {name: 'Back to Library'}).click();
+      const back = page.getByRole('button', {name: 'Back to Library', exact: true});
+      t.expect((await back.count()) === 1, `the Stage shows exactly one ‹ "Back to Library" button (${await back.count()})`);
+      await back.click();
       await t.ready('library');
       const focus = await page.waitForFunction(() => {
         const a = document.activeElement;
