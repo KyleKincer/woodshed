@@ -6,14 +6,15 @@
 //   const {user} = await initialize({optional: true});  // Shared Stage: never throws
 //   client()      the authenticated ConvexClient (src/api/client.js), null when signed out
 //   signIn()      starts Google OAuth (the page navigates away); desktop stashes the route
-//   signOut()     flushes the active session, then ends the Convex Auth session
+//   signOut()     flushes the active session, then ends the Convex Auth session (never throws)
 //   onChange(fn)  ({user, status}) after any change: sign-in, sign-out (here or in
 //                 another tab), a lost session, a live users.me update (status, name…)
 //   user()        the signed-in User, or null
 //
 // Errors are AuthError {kind, message, code?}:
 //   'config'   VITE_CONVEX_URL is missing, or an unknown provider was asked for
-//   'network'  the session or the account could not be loaded (the fatal boot card)
+//   'network'  the session or the account could not be loaded, or the backend did not
+//              answer in time (code 'timeout'): the fatal boot card with Retry
 //   'oauth'    a sign-in problem the sign-in card shows: the OAuth flow error codes
 //              (access_denied, expired, invalid_flow, oauth_error, rejected), plus
 //              'unverified' (the backend refused the stored session) and
@@ -29,6 +30,7 @@ import {AuthClient, defaultStorage} from '@convex-dev/auth/browser';
 // oauth() is used.
 import {oauth} from '@convex-dev/auth/providers/oauth/react';
 import {ConvexClient, ConvexHttpClient} from 'convex/browser';
+import {ConvexError} from 'convex/values';
 import {api} from '../../convex/_generated/api';
 import {stashIntendedRoute} from './router.js';
 
@@ -54,7 +56,6 @@ const MESSAGES = Object.freeze({
   provider: 'That sign-in provider is not available.',
   network: 'Woodshed could not reach its server. Check your connection and try again.',
   account: 'Your account could not be loaded.',
-  signOut: 'Couldn’t sign out. Check your connection and try again.',
 });
 
 const PROVIDERS = Object.freeze({
@@ -90,6 +91,8 @@ let current = {user: null, status: null};
 let connecting = null;     // in-flight connect(): shared by concurrent callers
 let offMe = null;          // the live users.me subscription
 let resolveSession = defaultResolveSession;
+const CONNECT_TIMEOUT_MS = 20000;
+let connectTimeoutMs = CONNECT_TIMEOUT_MS;
 const listeners = new Set();
 
 const win = () => globalThis.window;
@@ -105,9 +108,12 @@ async function defaultResolveSession() {
 /**
  * Integration and test seam. `activeSession: () => Session|null|Promise` replaces how
  * signOut() finds the session to flush (default: src/stage/session.js activeSession()).
+ * `connectTimeoutMs` bounds how long initialize() waits for the backend (default 20 s)
+ * before it throws AuthError{kind: 'network', code: 'timeout'}.
  */
-export function configure({activeSession} = {}) {
+export function configure({activeSession, connectTimeoutMs: ms} = {}) {
   resolveSession = typeof activeSession === 'function' ? async () => activeSession() : defaultResolveSession;
+  connectTimeoutMs = Number.isFinite(ms) && ms > 0 ? ms : CONNECT_TIMEOUT_MS;
 }
 
 function emit() {
@@ -205,7 +211,13 @@ function settled(auth) {
 
 // ---------- connecting ----------
 
+const CANCELLED = Symbol('cancelled');   // the session went away while connect() ran
+const TIMED_OUT = Symbol('timed out');   // the backend did not answer in time (offline)
+let abortConnect = null;                 // (reason) => void while connect() is in flight
+let recheck = false;                     // a sign-out cancelled connect(): re-read the state after
+
 function teardown() {
+  abortConnect?.(CANCELLED);
   offMe?.();
   offMe = null;
   const c = convex;
@@ -221,53 +233,85 @@ function signedOut() {
 
 function onAuthState(auth) {
   const state = auth.getSnapshot();
-  if (state.isLoading || connecting) return;
-  if (!state.isAuthenticated && current.user) signedOut();
-  else if (state.isAuthenticated && !current.user && setup) {
+  if (state.isLoading) return;
+  if (!state.isAuthenticated) {
+    // Also cancels an in-flight connect(), so it can never commit a stale user.
+    if (connecting) recheck = true;
+    if (current.user || convex || connecting) signedOut();
+  } else if (!current.user && !connecting && setup) {
     // Signed in from another tab: adopt the session quietly (errors stay signed out).
     connect().catch(() => {});
   }
 }
 
+/**
+ * Opens the authenticated client, waits for the backend's verdict, reads users.me.
+ * Every await races teardown (resolves signed out) and a deadline (AuthError
+ * {kind: 'network', code: 'timeout'}), so an unreachable backend or a sign-out
+ * mid-way never leaves it pending or commits a user whose session is gone.
+ */
 function connect() {
   if (connecting) return connecting;
-  connecting = (async () => {
-    const {auth} = await ensureSetup();
-    const c = convex ?? new ConvexClient(convexUrl());
-    convex = c;
-    // Wait for the backend's verdict before any subscription starts.
-    let first = true;
-    const verified = await new Promise(resolve => {
-      c.setAuth(auth.fetchAccessToken, ok => {
-        if (first) { first = false; resolve(ok); return; }
-        if (!ok && convex === c) signedOut();
-      });
-    });
-    if (!verified) {
-      teardown();
-      try { await auth.signOut(); } catch { /* the stored tokens are useless either way */ }
-      throw new AuthError({kind: 'oauth', code: 'unverified', message: OAUTH_MESSAGES.unverified});
-    }
-    let me;
+  let abortedWith = null;
+  let abort;
+  const aborted = new Promise(resolve => { abort = reason => { abortedWith ??= reason; resolve(); }; });
+  abortConnect = abort;
+  const timer = setTimeout(() => abort(TIMED_OUT), connectTimeoutMs);
+  const step = async promise => {
+    const value = await Promise.race([promise, aborted]);
+    if (abortedWith) throw abortedWith;
+    return value;
+  };
+  let c = null;
+  const run = (async () => {
     try {
-      me = await c.query(api.users.me, {});
+      const {auth} = await step(ensureSetup());
+      if (!auth.getSnapshot().isAuthenticated) throw CANCELLED;
+      c = new ConvexClient(convexUrl());
+      convex = c;
+      // Wait for the backend's verdict before any subscription starts.
+      let first = true;
+      const verified = await step(new Promise(resolve => {
+        c.setAuth(auth.fetchAccessToken, ok => {
+          if (first) { first = false; resolve(ok); return; }
+          if (!ok && convex === c) signedOut();
+        });
+      }));
+      if (!verified) {
+        teardown();
+        try { await auth.signOut(); } catch { /* the stored tokens are useless either way */ }
+        throw new AuthError({kind: 'oauth', code: 'unverified', message: OAUTH_MESSAGES.unverified});
+      }
+      const me = await step(c.query(api.users.me, {}));
+      if (!me) throw new AuthError({kind: 'network', code: 'account_unavailable', message: MESSAGES.account});
+      // Nothing awaits from here on: the user is committed only for a live session.
+      if (abortedWith || !auth.getSnapshot().isAuthenticated) throw CANCELLED;
+      offMe = c.onUpdate(api.users.me, {}, next => {
+        // A null row mid-session is transient (token refresh); sign-out comes from auth state.
+        if (next && convex === c) setCurrent({user: toUser(next), status: statusOf(next)});
+      }, () => {});
+      setCurrent({user: toUser(me), status: statusOf(me)});
+      return {user: current.user, status: current.status};
     } catch (err) {
-      teardown();
+      if (c && convex === c) teardown();
+      if (err === CANCELLED) return {user: null, status: null};
+      if (err === TIMED_OUT) throw new AuthError({kind: 'network', code: 'timeout', message: MESSAGES.network});
       throw asNetwork(err, MESSAGES.network);
+    } finally {
+      clearTimeout(timer);
+      if (abortConnect === abort) abortConnect = null;
     }
-    if (!me) {
-      teardown();
-      throw new AuthError({kind: 'network', code: 'account_unavailable', message: MESSAGES.account});
-    }
-    offMe = c.onUpdate(api.users.me, {}, next => {
-      // A null row mid-session is transient (token refresh); sign-out comes from auth state.
-      if (next && convex === c) setCurrent({user: toUser(next), status: statusOf(next)});
-    }, () => {});
-    setCurrent({user: toUser(me), status: statusOf(me)});
-    return current;
   })();
-  connecting.then(() => { connecting = null; }, () => { connecting = null; });
-  return connecting;
+  connecting = run;
+  const settle = () => {
+    if (connecting === run) connecting = null;
+    if (!recheck) return;
+    recheck = false;
+    // A sign-out cancelled this run; a sign-in may have followed while it unwound.
+    setup?.then(({auth}) => onAuthState(auth), () => {});
+  };
+  run.then(settle, settle);
+  return run;
 }
 
 // ---------- public ----------
@@ -337,15 +381,22 @@ export async function signIn(provider = 'google') {
     if (!actions?.signIn) throw new Error('OAuth sign-in is not registered.');
     await actions.signIn(refs, redirectTo ? {redirectTo} : {});
   } catch (err) {
-    const flowError = values.get('flowError');
-    if (flowError) throw oauthError(flowError);
-    const error = new AuthError({kind: 'oauth', code: 'start_failed', message: OAUTH_MESSAGES.start_failed});
-    error.cause = err;
-    throw error;
+    // The library records every start failure as a flow error ('oauth_error' unless the
+    // backend threw a ConvexError), so only a ConvexError is a real rejection; anything
+    // else (offline, a failed save of the flow) means sign-in could not start.
+    if (err instanceof ConvexError) {
+      const flowError = values.get('flowError');
+      throw oauthError(flowError?.code === 'rejected' ? flowError : {code: 'rejected', message: typeof err.data === 'string' ? err.data : undefined});
+    }
+    throw new AuthError({kind: 'oauth', code: 'start_failed', message: OAUTH_MESSAGES.start_failed, cause: err});
   }
 }
 
-/** Flushes the active session (final save), then signs out. Throws AuthError{kind: 'network'}. */
+/**
+ * Flushes the active session (final save), then ends this page's session. Never throws:
+ * the library always erases the local tokens, and revoking the refresh token on the
+ * server is best effort (an offline revoke is not reported).
+ */
 export async function signOut() {
   try {
     const session = await resolveSession();
@@ -353,13 +404,13 @@ export async function signOut() {
   } catch {
     // A failed final save must not trap the user signed in; the save path reports its own errors.
   }
-  if (!setup) { signedOut(); return; }
-  let auth;
-  try { ({auth} = await setup); } catch { signedOut(); return; }
-  try {
-    await auth.signOut();
-  } catch (err) {
-    throw new AuthError({kind: 'network', code: 'sign_out_failed', message: MESSAGES.signOut, cause: err});
+  if (setup) {
+    try {
+      const {auth} = await setup;
+      await auth.signOut();
+    } catch {
+      // Setup never finished, or storage refused the erase: nothing more this page can do.
+    }
   }
   signedOut();
 }

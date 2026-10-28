@@ -2,6 +2,7 @@
 // environment on purpose: there is no `document`, so any DOM access fails the suite.
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import {getFunctionName} from 'convex/server';
+import {ConvexError} from 'convex/values';
 
 const fx = vi.hoisted(() => {
   const state = {
@@ -16,9 +17,10 @@ const fx = vi.hoisted(() => {
     signOutError: null,
     stripOnInit: true,
     flowError: null,
-    signInImpl: null,
+    startImpl: null,       // the auth:startSignInGoogle mutation (the real oauth() calls it)
     // ConvexClient behaviour
-    verdict: true,
+    verdict: true,         // true | false | 'never' (offline: the verdict never arrives)
+    meHold: null,          // a promise users.me waits on
     me: {id: 'u1', name: 'Kyle Kincer', email: 'kyle@example.com', picture: 'https://img/k.png', status: 'active'},
     meError: null,
   };
@@ -34,9 +36,19 @@ vi.mock('@convex-dev/auth/browser', () => ({
       this.config = config;
       this.listeners = new Set();
       this.state = {isLoading: true, isAuthenticated: false, token: null};
-      this.values = new Map([['flowError', null], ['actions', {signIn: (...args) => this.signInCall(...args)}]]);
+      this.values = new Map();
       this.fetchAccessToken = async () => 'token';
       fx.authClients.push(this);
+      // Run the real ambient sign-in setups, as the library's constructor does.
+      const flowStore = new Map();
+      const storage = {
+        get: async k => (flowStore.has(k) ? flowStore.get(k) : null),
+        set: async (k, v) => { flowStore.set(k, v); },
+        remove: async k => { flowStore.delete(k); },
+      };
+      for (const {setup} of config.ambientSignIns?.signIns ?? []) {
+        setup?.({client: this, values: {get: k => this.values.get(k), set: (k, v) => this.values.set(k, v)}, storage, signInApi: config.ambientSignIns.signInApi});
+      }
     }
     async init() {
       fx.log.push('auth.init');
@@ -60,25 +72,34 @@ vi.mock('@convex-dev/auth/browser', () => ({
       fx.log.push(`values ${id}`);
       return {get: key => this.values.get(key), subscribe: () => () => {}};
     }
-    async signInCall(refs, options) {
-      fx.log.push('actions.signIn');
-      return fx.signInImpl ? fx.signInImpl.call(this, refs, options) : {redirect: new URL('https://accounts.example/o')};
-    }
+    // Like the library: the server revoke is best effort and the local tokens are always erased.
     async signOut() {
       fx.log.push('auth.signOut');
-      if (fx.signOutError) throw fx.signOutError;
-      this.set({isLoading: false, isAuthenticated: false});
+      try { await this.config.authApi.signOut('refresh'); } catch { /* already signed out */ }
+      this.set({isLoading: false, isAuthenticated: false, token: null});
     }
   },
 }));
 
-vi.mock('@convex-dev/auth/providers/oauth/react', () => ({oauth: () => ({id: 'oauth'})}));
+// The real oauth() setup, so sign-in failures carry the library's own flow errors.
+vi.mock('@convex-dev/auth/providers/oauth/react', async () => {
+  const {oauth} = await vi.importActual('@convex-dev/auth/providers/oauth/react');
+  return {oauth};
+});
 
 vi.mock('convex/browser', () => ({
   ConvexHttpClient: class {
     constructor(url) {
       this.url = url;
-      this.mutation = vi.fn(async (ref, args) => ({ref: fnName(ref), args}));
+      this.mutation = vi.fn(async (ref, args) => {
+        const name = fnName(ref);
+        if (name === 'auth:startSignInGoogle') {
+          fx.log.push(`start ${args.redirectTo}`);
+          return fx.startImpl ? fx.startImpl(args) : {redirect: 'https://accounts.example/o', state: 'st1'};
+        }
+        if (name === 'auth:signOut' && fx.signOutError) throw fx.signOutError;
+        return {ref: name, args};
+      });
       this.action = vi.fn(async () => null);
       fx.http.push(this);
     }
@@ -94,10 +115,11 @@ vi.mock('convex/browser', () => ({
       fx.log.push('convex.setAuth');
       this.fetchToken = fetchToken;
       this.authChange = onChange;
-      queueMicrotask(() => onChange(fx.verdict));
+      if (fx.verdict !== 'never') queueMicrotask(() => onChange(fx.verdict));
     }
     async query(ref, args) {
       fx.log.push(`query ${fnName(ref)}`);
+      if (fx.meHold) await fx.meHold;
       if (fx.meError) throw fx.meError;
       return fx.me && {...fx.me, ...args};
     }
@@ -155,7 +177,7 @@ beforeEach(async () => {
   Object.assign(fx, {
     log: [], authClients: [], convexClients: [], http: [],
     authenticated: true, loadingAfterInit: false, initError: null, signOutError: null, stripOnInit: true,
-    flowError: null, signInImpl: null, verdict: true, meError: null,
+    flowError: null, startImpl: null, verdict: true, meError: null, meHold: null,
     me: {id: 'u1', name: 'Kyle Kincer', email: 'kyle@example.com', picture: 'https://img/k.png', status: 'active'},
   });
   vi.stubEnv('VITE_CONVEX_URL', 'https://example.convex.cloud');
@@ -176,7 +198,7 @@ describe('no DOM access', () => {
     expect(r.user.id).toBe('u1');
     await auth.signOut();
     expect(auth.user()).toBe(null);
-    fx.signInImpl = async () => { throw new Error('offline'); };
+    fx.startImpl = async () => { throw new Error('offline'); };
     await expect(auth.signIn()).rejects.toMatchObject({kind: 'oauth', code: 'start_failed'});
   });
 });
@@ -199,7 +221,7 @@ describe('initialize: signed in', () => {
     expect(config.mode).toBe('spa');
     expect(config.storageNamespace).toBe('https://example.convex.cloud');
     expect(config.storage).toEqual({kind: 'default-storage'});
-    expect(config.ambientSignIns.signIns).toEqual([{id: 'oauth'}]);
+    expect(config.ambientSignIns.signIns.map(s => s.id)).toEqual(['oauth']);
     const http = fx.http[0];
     await config.authApi.refreshSession('r1');
     expect(http.mutation).toHaveBeenLastCalledWith(expect.anything(), {refreshToken: 'r1'});
@@ -473,12 +495,25 @@ describe('signOut', () => {
     expect(fx.log.at(-1)).toBe('auth.signOut');
   });
 
-  test('a failed sign-out throws AuthError{kind: network} and keeps the user signed in', async () => {
+  test('an offline server revoke still signs out locally and never throws (the library swallows it)', async () => {
     await auth.initialize();
-    fx.signOutError = new Error('Network down');
-    await expect(auth.signOut()).rejects.toMatchObject({kind: 'network', code: 'sign_out_failed'});
-    expect(auth.user().id).toBe('u1');
-    expect(auth.client()).not.toBe(null);
+    const seen = [];
+    auth.onChange(v => seen.push(v));
+    fx.signOutError = new TypeError('Failed to fetch');
+    await expect(auth.signOut()).resolves.toBeUndefined();
+    expect(fnName(fx.http[0].mutation.mock.calls.at(-1)[0])).toBe('auth:signOut');
+    expect(auth.user()).toBe(null);
+    expect(auth.client()).toBe(null);
+    expect(lastAuth().getSnapshot().isAuthenticated).toBe(false);
+    expect(seen).toEqual([{user: null, status: null}]);
+  });
+
+  test('a library sign-out that throws (storage refused the erase) still ends this page’s session', async () => {
+    await auth.initialize();
+    lastAuth().signOut = async () => { throw new Error('QuotaExceededError'); };
+    await expect(auth.signOut()).resolves.toBeUndefined();
+    expect(auth.user()).toBe(null);
+    expect(auth.client()).toBe(null);
   });
 
   test('before initialize it is a harmless no-op', async () => {
@@ -487,15 +522,14 @@ describe('signOut', () => {
   });
 });
 
-describe('signIn', () => {
+describe('signIn (driving the real oauth() setup)', () => {
   test('web: returns to the same path and query, without stashing a route', async () => {
     globalThis.window = makeWindow('/share/abc?save=1');
     fx.authenticated = false;
     await auth.initialize({optional: true});
-    let got;
-    fx.signInImpl = async (_refs, options) => { got = options; };
     await auth.signIn();
-    expect(got).toEqual({redirectTo: `${ORIGIN}/share/abc?save=1`});
+    expect(fx.log).toContain(`start ${ORIGIN}/share/abc?save=1`);
+    expect(globalThis.window.location.href).toBe('https://accounts.example/o');
     expect(globalThis.window.store.size).toBe(0);
     expect(fx.authClients).toHaveLength(1);
   });
@@ -503,38 +537,135 @@ describe('signIn', () => {
   test('passes the Google refs and the redirect (web)', async () => {
     globalThis.window = makeWindow('/s/song1?bar=12');
     let got;
-    fx.signInImpl = async (refs, options) => { got = {refs, options}; };
+    fx.startImpl = async args => { got = args; return {redirect: 'https://accounts.example/o', state: 'st1'}; };
     await auth.signIn('google');
-    expect(got.refs.providerName).toBe('google');
-    expect(fnName(got.refs.startSignIn)).toBe('auth:startSignInGoogle');
-    expect(fnName(got.refs.completeSignIn)).toBe('auth:completeSignInGoogle');
-    expect(got.options).toEqual({redirectTo: `${ORIGIN}/s/song1?bar=12`});
+    const [ref] = fx.http[0].mutation.mock.calls.find(([r]) => fnName(r) === 'auth:startSignInGoogle');
+    expect(fnName(ref)).toBe('auth:startSignInGoogle');
+    expect(got).toEqual({redirectTo: `${ORIGIN}/s/song1?bar=12`});
     expect(globalThis.window.store.size).toBe(0);
   });
 
   test('desktop: stashes the intended route first, then redirects through /oauth/callback', async () => {
     globalThis.window = makeWindow('/s/song1/edit/map?bar=3', {desktop: true});
-    let got;
-    fx.signInImpl = async (refs, options) => { got = options; };
     await auth.signIn();
     expect(globalThis.window.store.get('ws.intendedRoute')).toBe('/s/song1/edit/map?bar=3');
-    expect(got).toEqual({redirectTo: `${ORIGIN}/oauth/callback`});
-    expect(fx.log.indexOf('stash /s/song1/edit/map?bar=3')).toBeLessThan(fx.log.indexOf('actions.signIn'));
+    expect(fx.log).toContain(`start ${ORIGIN}/oauth/callback`);
+    expect(fx.log.indexOf('stash /s/song1/edit/map?bar=3')).toBeLessThan(fx.log.indexOf(`start ${ORIGIN}/oauth/callback`));
   });
 
-  test('a failure with a flow error maps it; without one it is start_failed', async () => {
-    fx.signInImpl = async function () { this.values.set('flowError', {code: 'oauth_error'}); throw new Error('x'); };
-    await expect(auth.signIn()).rejects.toMatchObject({kind: 'oauth', code: 'oauth_error', message: auth.OAUTH_MESSAGES.oauth_error});
+  test('a network failure starting sign-in is start_failed, although the library records oauth_error', async () => {
+    globalThis.window = makeWindow('/');
     const raw = new TypeError('Failed to fetch');
-    fx.signInImpl = async function () { this.values.set('flowError', null); throw raw; };
+    fx.startImpl = async () => { throw raw; };
     const err = await auth.signIn().catch(e => e);
+    expect(lastAuth().values.get('flowError')).toMatchObject({code: 'oauth_error'});
     expect(err).toMatchObject({kind: 'oauth', code: 'start_failed', message: 'Could not start Google sign-in. Check your connection and try again.'});
     expect(err.cause).toBe(raw);
+  });
+
+  test('a backend ConvexError is a rejection carrying its message', async () => {
+    globalThis.window = makeWindow('/');
+    fx.startImpl = async () => { throw new ConvexError('This account is not allowed.'); };
+    await expect(auth.signIn()).rejects.toMatchObject({kind: 'oauth', code: 'rejected', message: 'This account is not allowed.'});
+    fx.startImpl = async () => { throw new ConvexError({reason: 'x'}); };
+    await expect(auth.signIn()).rejects.toMatchObject({kind: 'oauth', code: 'rejected', message: auth.OAUTH_MESSAGES.fallback});
   });
 
   test('missing configuration surfaces as AuthError{kind: config}', async () => {
     vi.stubEnv('VITE_CONVEX_URL', '');
     await load();
     await expect(auth.signIn()).rejects.toMatchObject({kind: 'config'});
+  });
+});
+
+describe('races with connect()', () => {
+  const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+
+  test('signOut() while users.me is in flight: initialize resolves signed out, nothing stale is committed', async () => {
+    const hold = deferred();
+    fx.meHold = hold.promise;
+    const seen = [];
+    auth.onChange(v => seen.push(v));
+    const init = auth.initialize();
+    await vi.waitFor(() => expect(fx.log).toContain('query users:me'));
+    await auth.signOut();
+    hold.resolve();
+    expect(await init).toEqual({user: null, status: null});
+    expect(auth.user()).toBe(null);
+    expect(auth.client()).toBe(null);
+    expect(lastConvex().updates).toHaveLength(0);
+    await flush();
+    expect(lastConvex().closed).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  test('another tab signs in, then out, while the adopt is in flight: stays signed out', async () => {
+    fx.authenticated = false;
+    await auth.initialize();
+    const hold = deferred();
+    fx.meHold = hold.promise;
+    const seen = [];
+    auth.onChange(v => seen.push(v));
+    lastAuth().set({isLoading: false, isAuthenticated: true});
+    await vi.waitFor(() => expect(fx.log).toContain('query users:me'));
+    lastAuth().set({isLoading: false, isAuthenticated: false});
+    hold.resolve();
+    await flush();
+    await flush();
+    expect(auth.user()).toBe(null);
+    expect(auth.client()).toBe(null);
+    expect(seen).toEqual([]);
+  });
+
+  test('a sign-out then a sign-in during connect is picked up once the cancelled run unwinds', async () => {
+    const hold = deferred();
+    fx.meHold = hold.promise;
+    const init = auth.initialize();
+    await vi.waitFor(() => expect(fx.log).toContain('query users:me'));
+    lastAuth().set({isLoading: false, isAuthenticated: false});
+    lastAuth().set({isLoading: false, isAuthenticated: true});
+    expect(await init).toEqual({user: null, status: null});
+    fx.meHold = null;
+    hold.resolve();
+    await vi.waitFor(() => expect(auth.user()?.id).toBe('u1'));
+    expect(auth.client()).toBe(lastConvex());
+    expect(fx.convexClients).toHaveLength(2);
+    expect(fx.convexClients[0].closed).toBe(true);
+  });
+
+  test('an unreachable backend times out as AuthError{kind: network} and Retry starts a fresh connect', async () => {
+    auth.configure({connectTimeoutMs: 30});
+    fx.verdict = 'never';
+    const err = await auth.initialize().catch(e => e);
+    expect(err).toMatchObject({kind: 'network', code: 'timeout', message: 'Woodshed could not reach its server. Check your connection and try again.'});
+    expect(auth.client()).toBe(null);
+    await flush();
+    expect(fx.convexClients[0].closed).toBe(true);
+    expect((await auth.initialize({optional: true})).error).toMatchObject({kind: 'network', code: 'timeout'});
+    fx.verdict = true;
+    expect((await auth.initialize()).user.id).toBe('u1');
+    expect(fx.convexClients).toHaveLength(3);
+    expect(fx.authClients).toHaveLength(1);
+  });
+
+  test('users.me that never answers also times out', async () => {
+    auth.configure({connectTimeoutMs: 30});
+    fx.meHold = new Promise(() => {});
+    await expect(auth.initialize()).rejects.toMatchObject({kind: 'network', code: 'timeout'});
+  });
+
+  test('a sign-out while the verdict hangs does not wedge the module: a later sign-in is adopted', async () => {
+    fx.verdict = 'never';
+    const init = auth.initialize();
+    await vi.waitFor(() => expect(fx.log).toContain('convex.setAuth'));
+    await auth.signOut();
+    expect(await init).toEqual({user: null, status: null});
+    fx.verdict = true;
+    const seen = [];
+    auth.onChange(v => seen.push(v));
+    lastAuth().set({isLoading: false, isAuthenticated: true});
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].user.id).toBe('u1');
+    expect((await auth.initialize()).user.id).toBe('u1');
   });
 });
