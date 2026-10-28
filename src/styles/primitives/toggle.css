@@ -1,0 +1,14 @@
+/* Toggle (architecture §2.12): a Button with aria-pressed. On it is lit in cobalt (what you
+ * chose) with a lamp edge, so the state reads by shape as well as colour; off it is a plain
+ * secondary button. */
+@layer primitives {
+  .ui-toggle[aria-pressed=true] {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: inset 0 -3px 0 var(--accent);
+  }
+  .ui-toggle[aria-pressed=true][aria-disabled=true] {
+    box-shadow: inset 0 -3px 0 var(--line-strong);
+  }
+}

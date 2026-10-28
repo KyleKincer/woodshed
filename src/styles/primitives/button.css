@@ -1,0 +1,121 @@
+/* Button and IconButton (architecture §2.12, spec §8.2 and §8.8). Heights come from the
+ * pointer-aware tokens (--h-sm/md/lg: 32/40/48 fine, 44/48/56 coarse) and the Stage dock tokens
+ * (--h-dock 64 band / 56 rail, --h-play 80 / 72). Disabled is shown with ink and surface, never
+ * with opacity. Colours are tokens only. */
+@layer primitives {
+  .ui-button {
+    position: relative;
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s1) var(--s2);
+    min-height: var(--h-md);
+    min-width: var(--h-md);
+    padding: 0 var(--s4);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-16)/1.2 var(--font-ui);
+    white-space: nowrap;
+    text-align: center;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+  }
+
+  .ui-button-text {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+  }
+  .ui-button-sublabel {
+    font-size: var(--fs-12);
+    font-weight: var(--fw-regular);
+    color: inherit;
+  }
+  .ui-button-reason {
+    flex-basis: 100%;
+    max-inline-size: 32ch;
+    padding-bottom: var(--s1);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-regular);
+    line-height: 1.3;
+    white-space: normal;
+    color: var(--ink-3);
+  }
+  /* Coarse-pointer chrome reads at 14 px at least (spec §8.1). */
+  @media (pointer: coarse) {
+    .ui-button-sublabel,
+    .ui-button-reason { font-size: var(--fs-14); }
+  }
+  .ui-button-kbd,
+  .ui-keycap {
+    font: var(--fw-semibold) var(--fs-12)/1 var(--font-mono);
+    padding: 3px var(--s1);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    color: var(--ink-3);
+    background: transparent;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    .ui-keycap { display: none; }
+  }
+
+  /* Sizes */
+  .ui-button[data-size=sm] { min-height: var(--h-sm); min-width: var(--h-sm); padding: 0 var(--s3); font-size: var(--fs-14); }
+  .ui-button[data-size=lg] { min-height: var(--h-lg); min-width: var(--h-lg); padding: 0 var(--s5); }
+  .ui-button[data-size=dock],
+  .ui-button[data-size=play] {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: var(--s1);
+    min-height: var(--h-dock);
+    min-width: var(--h-dock);
+    padding: var(--s1) var(--s3);
+  }
+  .ui-button[data-size=play] { min-height: var(--h-play); min-width: var(--h-play); }
+  .ui-button[data-size=dock] .ui-button-label,
+  .ui-button[data-size=play] .ui-button-label { font-size: 0.8125rem; font-weight: var(--fw-semibold); }
+  .ui-button[data-icon-only] { padding: 0; }
+  .ui-button[data-icon-only][data-size=dock],
+  .ui-button[data-icon-only][data-size=play] { padding: 0; }
+
+  /* Variants */
+  .ui-button[data-variant=primary] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+  .ui-button[data-variant=quiet] { background: transparent; border-color: transparent; color: var(--ink-2); }
+  .ui-button[data-variant=danger] { color: var(--danger); border-color: var(--danger); }
+
+  @media (hover: hover) {
+    .ui-button:hover { background: var(--surface-2); }
+    .ui-button[data-variant=primary]:hover { background: var(--accent-fill); border-color: var(--ink); }
+    .ui-button[data-variant=quiet]:hover { background: var(--surface-2); color: var(--ink); }
+  }
+  .ui-button:active { background: var(--surface-2); }
+  .ui-button[data-variant=primary]:active { background: var(--accent-fill); border-color: var(--ink); }
+
+  /* Pressed (aria-pressed=true): what the user chose, in cobalt. */
+  .ui-button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .ui-button[aria-pressed=true] .ui-button-sublabel { color: var(--accent); }
+
+  /* Disabled: stays focusable (aria-disabled) so the reason can be read. */
+  .ui-button[aria-disabled=true],
+  .ui-button[aria-disabled=true]:hover,
+  .ui-button[aria-disabled=true]:active {
+    background: var(--surface-2);
+    border-color: var(--line);
+    color: var(--ink-3);
+    cursor: not-allowed;
+  }
+  .ui-button[data-variant=quiet][aria-disabled=true] { background: transparent; border-color: transparent; }
+
+  /* Busy */
+  .ui-button[aria-busy=true] { cursor: progress; }
+  .ui-button[aria-busy=true] > .ui-icon:not(.ui-button-icon-end) { display: none; }
+  .ui-button-spinner { display: inline-flex; animation: ui-button-spin calc(var(--motion-slow) * 4) linear infinite; }
+  @keyframes ui-button-spin { to { transform: rotate(1turn); } }
+  @media (prefers-reduced-motion: reduce) {
+    .ui-button-spinner { animation: none; }
+  }
+}

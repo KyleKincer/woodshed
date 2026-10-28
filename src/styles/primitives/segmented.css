@@ -1,0 +1,60 @@
+/* Segmented (architecture §2.12): a pill radiogroup. The chosen option is filled with the
+ * accent soft surface and an accent edge; disabled options use ink-3, never opacity. */
+@layer primitives {
+  .ui-segmented {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--s1);
+    max-width: 100%;
+  }
+  .ui-segmented-options {
+    display: inline-flex;
+    gap: var(--s1);
+    padding: var(--s1);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    background: var(--surface-2);
+    max-width: 100%;
+  }
+  .ui-segmented-option {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: var(--h-sm);
+    min-width: var(--h-sm);
+    padding: 0 var(--s4);
+    border: 1px solid transparent;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+  }
+  .ui-segmented[data-size=sm] .ui-segmented-option { padding: 0 var(--s3); }
+  .ui-segmented[data-size=lg] .ui-segmented-option { min-height: var(--h-md); font-size: var(--fs-16); }
+  @media (hover: hover) {
+    .ui-segmented-option:hover { color: var(--ink); background: var(--surface); }
+  }
+  .ui-segmented-option[aria-checked=true] {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .ui-segmented-option[aria-disabled=true],
+  .ui-segmented-option[aria-disabled=true]:hover {
+    color: var(--ink-3);
+    background: transparent;
+    cursor: not-allowed;
+    text-decoration: line-through;
+  }
+  .ui-segmented-reason {
+    font-size: var(--fs-12);
+    color: var(--ink-3);
+    white-space: normal;
+  }
+  @media (pointer: coarse) { .ui-segmented-reason { font-size: var(--fs-14); } }   /* spec §8.1 coarse minimum */
+}

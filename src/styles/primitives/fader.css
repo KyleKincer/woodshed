@@ -1,0 +1,35 @@
+/* Fader (architecture §2.12). Inline it is a Slider. In pad mode it is the StemPad's value strip:
+ * the whole strip is the role=slider hit area with the value centred on it, the track and thumb
+ * are not drawn (the pad's own fill shows the level from --ui-fader-level), and the host takes
+ * every touch so a vertical drag sets the level instead of scrolling. */
+@layer primitives {
+  .ui-fader[data-variant=pad] {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: var(--h-sm);
+  }
+  .ui-fader[data-variant=pad] .ui-slider-control {
+    position: absolute;
+    inset: 0;
+    min-width: 0;
+    min-height: 0;
+    border-radius: var(--r-control);
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  .ui-fader[data-variant=pad] .ui-slider-track,
+  .ui-fader[data-variant=pad] .ui-slider-thumb { display: none; }
+  .ui-fader[data-variant=pad] .ui-slider-value {
+    position: relative;
+    min-width: 0;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .ui-fader-host { touch-action: none; }
+  .ui-fader-host[data-level-drag] { cursor: ns-resize; }
+}

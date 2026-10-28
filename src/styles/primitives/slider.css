@@ -1,0 +1,92 @@
+/* Slider (architecture §2.12): a custom role=slider. The hit area is the whole control
+ * (--h-sm tall: 32 fine, 44 coarse); the visible track is 4 px with a 20 px thumb. The position
+ * comes from --ui-slider-pos (0…1), set by slider.js on the wrapper. */
+@layer primitives {
+  .ui-slider {
+    --ui-slider-pos: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+    color: var(--ink);
+  }
+  .ui-slider[data-orientation=vertical] { flex-direction: column-reverse; }
+
+  .ui-slider-control {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 120px;
+    min-height: var(--h-sm);
+    cursor: pointer;
+    touch-action: pan-y;
+  }
+  .ui-slider[data-orientation=vertical] .ui-slider-control {
+    min-width: var(--h-sm);
+    min-height: 120px;
+    touch-action: pan-x;
+  }
+  .ui-slider-control[aria-disabled=true] { cursor: not-allowed; }
+
+  .ui-slider-track {
+    position: absolute;
+    inset-inline: 10px;
+    top: 50%;
+    height: 4px;
+    margin-top: -2px;
+    border-radius: var(--r-pill);
+    background: var(--line-strong);
+    overflow: hidden;
+  }
+  .ui-slider[data-orientation=vertical] .ui-slider-track {
+    inset-inline: auto;
+    inset-block: 10px;
+    left: 50%;
+    top: 10px;
+    width: 4px;
+    height: auto;
+    margin: 0 0 0 -2px;
+  }
+  .ui-slider-fill {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: calc(var(--ui-slider-pos) * 100%);
+    background: var(--accent);
+  }
+  .ui-slider[data-orientation=vertical] .ui-slider-fill {
+    inset-inline: 0;
+    top: auto;
+    bottom: 0;
+    width: auto;
+    height: calc(var(--ui-slider-pos) * 100%);
+  }
+  .ui-slider-thumb {
+    position: absolute;
+    top: 50%;
+    left: calc(10px + var(--ui-slider-pos) * (100% - 20px));
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid var(--accent);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    box-shadow: var(--shadow-overlay);
+  }
+  .ui-slider[data-orientation=vertical] .ui-slider-thumb {
+    left: 50%;
+    top: auto;
+    bottom: calc(10px + var(--ui-slider-pos) * (100% - 20px));
+    margin: 0 0 -10px -10px;
+  }
+  .ui-slider-control[aria-disabled=true] .ui-slider-fill { background: var(--ink-3); }
+  .ui-slider-control[aria-disabled=true] .ui-slider-thumb { border-color: var(--ink-3); }
+
+  .ui-slider-value {
+    flex: none;
+    min-width: 5ch;
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
