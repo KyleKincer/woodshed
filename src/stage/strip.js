@@ -28,7 +28,14 @@
 //   playing        tap → transport.jump (quantized at the next downbeat; unmapped: at once); a tap
 //                  on the pending target (or a double-tap) cancels it. Mouse clicks are the same.
 //   long-press (350 ms) / right-click / Shift+F10 / ContextMenu → the section menu
-//                  (menus.sectionMenu, ST8a; the strip passes `rename` for its inline Rename… field)
+//                  (menus.sectionMenu, ST8a; the strip passes `rename` for its inline Rename… field).
+//                  A pointer press on an overlay opens that overlay's menu instead (spec §8 "Defined
+//                  menus"), first match wins: a spot diamond → 'spot', a marker tick → 'marker', the
+//                  loop bracket → 'loopBand'. Their hit areas are MENU_HIT_PX either side (fine/coarse;
+//                  a narrow bracket is widened to the same). They open through the Stage's
+//                  `stage.openMenu(kind, {spot|marker, rename, anchor})` (registry context 'stage'),
+//                  else (no Stage: the harness) straight from menus.js. The keyboard (Shift+F10,
+//                  ContextMenu) keeps the section menu of the roving item.
 //   touch drag while stopped → scrub with a `Bar 41 · Bridge` label (cue on release); touch drag
 //                  while playing scrolls the strip
 //   mouse drag (any time), touch long-press then drag → a loop across segments (bars in wave mode,
@@ -64,6 +71,8 @@ export const SPRING_MS = 180;
 /** A touch or mouse press moves this far before it is a drag or scrub (press.js's moveTol). */
 export const MOVE_TOL = 8;
 const EPS = 1e-6;
+/** Half-widths (px) of the spot, marker and loop-bracket menu hit areas: 24 px fine, 44 px coarse (spec §5.1's pins). */
+export const MENU_HIT_PX = Object.freeze({fine: 12, coarse: 22});
 /** How long after a press on the strip a focus-in still counts as the press's (no click came). */
 const PRESS_FOCUS_MS = 1000;
 const MAX_LABEL = 60;
@@ -92,6 +101,8 @@ export const COPY = Object.freeze({
   rename: (name) => `Rename ${name}`,
   renameUndo: 'Rename section',
   renameMarkerUndo: 'Rename marker',
+  /** The overlay menus' accessible names (without a Stage; the Stage names its own). */
+  menuLabel: Object.freeze({spot: (spot) => spot?.name || 'Spot', marker: (marker) => marker?.label || 'Marker', loopBand: () => 'Loop'}),
 });
 
 /** The strip's controls, for the table-driven test: role, accessible name, command and when it shows. */
@@ -879,10 +890,81 @@ export function mountStrip(el, {session, onScrub, viewport = null, onViewport, r
   track.addEventListener('wheel', onWheel, {passive: false});
   offs.push(() => track.removeEventListener('wheel', onWheel));
 
-  // ------------------------------------------------------------------ the section menu
+  // ------------------------------------------------------------------ the menus
+  /** The overlay a pointer menu press at clientX aims at: {kind: 'spot'|'marker'|'loopBand', …} or null. */
+  function menuTargetAt(clientX, pointerType) {
+    const x = xOf(clientX);
+    const tol = pointerType === 'touch' || pointerType === 'pen' ? MENU_HIT_PX.coarse : MENU_HIT_PX.fine;
+    const nearest = (list, tOf) => {
+      let best = null, bestD = Infinity;
+      for (const item of list) {
+        const d = Math.abs(toX(tOf(item)) - x);
+        if (d <= tol && d < bestD) { best = item; bestD = d; }
+      }
+      return best;
+    };
+    const spot = nearest((peek(practice.value)?.spots ?? []).filter((s) => s?.id && !s.deleted && finite(s.a)), (s) => s.a);
+    if (spot) return {kind: 'spot', spot};
+    const marker = nearest(position.markerTicks().filter((m) => m?.id && finite(m.t)), (m) => m.t);
+    if (marker) return {kind: 'marker', marker};
+    const loop = snap().loop;
+    if (loop?.on && finite(loop.a) && finite(loop.b) && loop.b > loop.a) {
+      const x0 = toX(loop.a), x1 = toX(loop.b), mid = (x0 + x1) / 2;
+      if (Math.abs(x - mid) <= Math.max((x1 - x0) / 2, tol)) return {kind: 'loopBand'};
+    }
+    return null;
+  }
+
+  /** The mounted Stage's api (registry context 'stage'), or null (the harness mounts the strip alone). */
+  function stageApi() {
+    try {
+      const stage = registry.context?.().stage;
+      return stage && typeof stage.openMenu === 'function' ? stage : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Opens the spot, marker or loop-band menu at the press point. */
+  async function openTargetMenu(target, g) {
+    const anchor = {x: g.clientX, y: g.clientY};
+    const opts = {};
+    if (target.kind === 'spot') opts.spot = target.spot;
+    if (target.kind === 'marker') {
+      opts.marker = target.marker;
+      // Unmapped, the marker starts a region: Rename… uses the strip's inline field (else menus.js asks).
+      opts.rename = () => {
+        const region = mapped() ? null : position.regions().find((r) => r.kind === 'marker' && r.id === target.marker.id);
+        return region ? rename(region) : false;
+      };
+    }
+    menu?.close?.();
+    const stage = stageApi();
+    if (stage) {
+      try { await stage.openMenu(target.kind, {...opts, anchor}); } catch (err) { console.error(`[strip] the ${target.kind} menu could not open`, err); }
+      return;
+    }
+    const load = LATER[MENUS_PATH];
+    if (!load) return;
+    let mod;
+    try { mod = await load(); } catch (err) { console.error('[strip] the menus could not load', err); return; }
+    if (destroyed) return;
+    const build = {spot: mod?.spotMenu, marker: mod?.markerMenu, loopBand: mod?.loopBandMenu}[target.kind];
+    if (typeof build !== 'function') return;
+    const builderOpts = {registry, ...(opts.rename ? {rename: opts.rename} : {})};
+    const list = target.kind === 'loopBand' ? build(session, builderOpts) : build(session, opts[target.kind], builderOpts);
+    if (!Array.isArray(list) || !list.length) return;
+    menu?.close?.();
+    menu = Menu.open(list, {anchor, label: COPY.menuLabel[target.kind](opts[target.kind]), registry, onClose: () => { menu = null; }});
+  }
+
   let menu = null;
   async function openMenu(g) {
     if (renaming) return;
+    if (!g.keyboard) {
+      const target = menuTargetAt(g.clientX, g.pointerType);
+      if (target) { await openTargetMenu(target, g); return; }
+    }
     let region = null, t;
     if (g.keyboard) {
       const item = focusIndex >= 0 ? items()[focusIndex] : null;
