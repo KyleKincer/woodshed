@@ -159,4 +159,4 @@ Contract details are in Appendix C items 76–84.
 - With `fx-library=empty` the seed has no `demoToken`, so the first-run Demo card cannot show; LB1a's `first-run-web` state sets the token with `fixture.update` and reloads. Seeding the token independently of the library would let the plain fixture show it.
 
 ### VF1
-- Run §10.3's `LB1a`/`LB1b`/`ON1` captures on the merged tree; the found-detection rows depend on tickets I1b-1/I1b-2 (until they land, only the 12 most recently practised or added songs are probed).
+- Run §10.3's `LB1a`/`LB1b`/`ON1` captures on the merged tree; found-detection rows come from `jobs.listUnappliedDetections` (tickets I1b-1/I1b-2, merged).
