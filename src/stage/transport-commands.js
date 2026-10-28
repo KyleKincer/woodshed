@@ -9,6 +9,9 @@
 //   focused    c.focused, the focused strip segment, bar-list row or Road map bar (focus.play,
 //              focus.loop; D45): {kind: 'section'|'marker'|'bar', t0, t1, label, bar?}
 //   stage      c.stage.openSheet(name, {anchor}) and c.stage.anchors (stage.js, §2.14.10)
+// While c.session.load.phase === 'error' (spec §4.12), transport.playStop and transport.again
+// are disabled with COPY.loadError, the controls' copy: the key stays bound (taken, no
+// fall-through) but nothing runs, so no "Play when ready" is armed behind the error.
 // Outside the Stage (Edit's slim transport) the sheet commands open the sheet through
 // src/stage/sheets/host.js (`openSheet(name, {session, anchor})`, §2.14.11), loaded on first
 // use. A sheet's anchor is `args.anchor`, else `stage.anchors.get(<sheet name>)`.
@@ -32,6 +35,7 @@
 
 import {registry as appRegistry} from '../app/commands.js';
 import {MIN_RATE, MAX_RATE} from '../../shared/practice.ts';
+import {COPY as HUD_COPY} from './hud.copy.js';
 
 // Later-wave module, resolved by contract path (D2; Appendix C item 58): the sheets host (ST4).
 const SHEETS = import.meta.glob('./sheets/host.js');
@@ -131,6 +135,7 @@ export const COPY = Object.freeze({
   noRegions: 'Add a marker (S) to jump between parts of this song.',
   noSections: 'Add a section (S) to jump between parts of this song.',
   callNeedsPart: 'Call & response needs a stem for your instrument. Choose what you play in Settings → Instruments.',
+  loadError: HUD_COPY.loadError,   // the controls' copy (spec §4.12): one string for the button and the command
 });
 
 const STEM_LABELS = Object.freeze({drums: 'Drums', bass: 'Bass', guitar: 'Guitar', piano: 'Piano', vocals: 'Vocals', other: 'Other'});
@@ -168,6 +173,9 @@ export function isMapped(c) {
 }
 
 const hasTransport = (c) => !!transportOf(c);
+/** The song's audio failed to load (spec §4.12): no live transport behind the error, so play / again refuse. */
+export const loadFailed = (c) => read(c?.session?.load)?.phase === 'error';
+const loadErrorReason = (c) => (loadFailed(c) ? COPY.loadError : null);
 const loopOf = (c) => snapshotOf(c)?.loop ?? null;
 const hasRange = (loop) => !!loop && Number.isFinite(loop.a) && Number.isFinite(loop.b) && loop.b - loop.a > EPS;
 const tracksOf = (c) => {
@@ -238,6 +246,7 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
       },
       menu: {electron: 'Transport'},   // the label follows the title (Play · Stop · Cancel count-in)
       palette: {keywords: ['play', 'stop', 'start']},
+      disabledReason: loadErrorReason,
       run: (c) => { void transportOf(c).playStop(); },
     }),
     transportDef({
@@ -254,6 +263,7 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
       id: 'transport.again', title: COPY.again, group: 'Transport', keys: ['Enter'], scopes: [S, EC], pedal: true, global: true,
       icon: 'rotate-ccw', menu: {label: COPY.again, electron: 'Transport'},
       palette: {keywords: ['again', 'repeat', 'restart', 'from the top']},
+      disabledReason: loadErrorReason,
       run: (c) => { void transportOf(c).again(); },
     }),
     transportDef({
