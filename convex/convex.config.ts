@@ -21,6 +21,8 @@ const app = defineApp({
     STRIPE_BILLING_ENABLED: v.optional(v.string()),
     BILLING_SITE_URL: v.optional(v.string()),
     PRO_STORAGE_BYTES: v.optional(v.string()),
+    // B8 (D7): the share token of the demo song, served by `settings.demo` (64 hex characters).
+    DEMO_SHARE_TOKEN: v.optional(v.string()),
   },
 });
 app.use(r2);
