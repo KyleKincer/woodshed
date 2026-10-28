@@ -23,6 +23,8 @@ import {checkSourceText} from '../scripts/check-source.mjs';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
 import {createFakeSession} from './helpers/fake-session.js';
+import {resolveItem} from '../src/ui/menu.js';
+import {pickup, tempoOf} from './fixtures/maps.js';
 import {ALLOWED_SHADOWS, REACHABLE_CHAINS, isAllowedShadow} from './registry-shadows.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -408,6 +410,30 @@ describe('loop', () => {
     const none = await bed({stage: false, sheets: {}});
     expect(none.state('speed.sheet').visible).toBe(false);
   });
+
+  test('Edit: a sheets host that throws (or has no openSheet) is a warning, never an unhandled rejection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rejections = [];
+    const onRejection = (err) => rejections.push(err);
+    process.on('unhandledRejection', onRejection);
+    try {
+      const empty = await bed({stage: false, sheets: {'./sheets/host.js': async () => ({})}});
+      expect(empty.run('mix.sheet')).toBe(true);
+      const throwing = await bed({stage: false, sheets: {'./sheets/host.js': async () => ({openSheet: () => { throw new Error('render failed'); }})}});
+      throwing.run('speed.sheet');
+      const failing = await bed({stage: false, sheets: {'./sheets/host.js': () => Promise.reject(new Error('chunk failed'))}});
+      failing.run('click.sheet');
+      await settle();
+      await new Promise((r) => setImmediate(r));
+      expect(rejections).toEqual([]);
+      expect(warn.mock.calls.map((c) => c[0])).toEqual([
+        expect.stringMatching(/the mix sheet could not be opened/), expect.stringMatching(/the speed sheet could not be opened/),
+        expect.stringMatching(/the click sheet could not be opened/)]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('focus scopes (D45)', () => {
@@ -451,6 +477,16 @@ describe('navigation', () => {
     expect(b.state('nav.nextSection').enabled).toBe(true);
     b.run('nav.nextSection');
     expect(b.snap.cue).toBe(30);
+  });
+
+  test('mapped with no sections: the reason names a section, which is what S adds there (§4.5)', async () => {
+    const b = await bed({tempo: tempoOf(pickup), duration: pickup.duration});
+    expect(b.ts.map.isReal).toBe(true);
+    for (const id of ['nav.prevSection', 'nav.nextSection']) {
+      expect(b.state(id)).toMatchObject({enabled: false, reason: COPY.noSections});
+    }
+    expect(COPY.noSections).toMatch(/section \(S\)/);
+    expect(COPY.noSections).not.toMatch(/marker/i);
   });
 
   test('arrows step by bar and beat when mapped, 5 s and 1 s when not; ⌥ nudges the cue 50 ms, ⌥⇧ 10 ms', async () => {
@@ -591,6 +627,14 @@ describe('click and count-in (D14)', () => {
     b.run('click.countIn');
     expect(b.snap.countIn.on).toBe(true);
   });
+
+  test('menus label the count-in from its title: "Lead-in 2 s" unmapped, "Count-in" mapped', async () => {
+    const un = await bed({mapped: false, duration: 60});
+    expect(un.reg.get('click.countIn').menu).toEqual({electron: 'Transport'});
+    expect(resolveItem({command: 'click.countIn'}, un.reg).label).toBe(COPY.leadIn);
+    const mapped = await bed();
+    expect(resolveItem({command: 'click.countIn'}, mapped.reg).label).toBe(COPY.countIn);
+  });
 });
 
 describe('mix (D37)', () => {
@@ -622,6 +666,15 @@ describe('mix (D37)', () => {
     b.run('mix.minusMe');
     expect(b.snap.mix.minusMe).toBe(false);
     expect(b.opened).toEqual([]);
+  });
+
+  test('an explicit "off" with no stem of yours does not open the Mix sheet', async () => {
+    const b = await bed({stems: ['vocals', 'no_vocals']});   // a drummer: nothing is yours
+    b.run('mix.minusMe', {on: false});
+    b.run('mix.onlyMe', {on: false});
+    expect(b.opened).toEqual([]);
+    b.run('mix.minusMe', {on: true});
+    expect(b.opened.map((o) => o.name)).toEqual(['mix']);
   });
 
   test('1–9 mute and ⇧1–9 solo stems in canonical order; titles name the stem; beyond the stems they are unavailable', async () => {

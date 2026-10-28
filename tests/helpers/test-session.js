@@ -43,14 +43,17 @@
 // session can tell: subscriptions deliver on a microtask; `saveTempo` bumps `tempoRev`, stores
 // `tempoSaveId`, echoes the row, refuses a stale base that would replace a real map with an
 // unreal one (`conflict`) and clears `sectionSuggestion` when sections appear; `savePractice`
-// stores the blob and echoes it; a beats job that finishes on an unmapped song writes the map
-// itself and stamps `appliedAt` (D44).
+// stores the blob and echoes it; map writes keep the other `tempo` fields (nonMapFields) and an
+// unchanged map is a no-op; a beats job that finishes on a song with no real map (a drum part
+// counts as one) writes a usable detected map itself and stamps `appliedAt` (D44); sections
+// become a suggestion only when the map has none (D47).
 
 import {signal} from '../../src/app/store.js';
 import {openSession} from '../../src/stage/session.js';
 import {beatsOf} from '../../src/stage/detect.js';
 import {MultitrackEngine} from '../../src/js/engine.js';
-import {cleanSongMap, fromBeats, hasRealMap, sectionsOf} from '../../shared/song-map.ts';
+import {cleanSongMap, fromBeats, hasRealMap, sectionsOf, songMapFromTempo, validateSongMap} from '../../shared/song-map.ts';
+import {sameContent} from '../../shared/content.ts';
 import {sectioned} from '../fixtures/maps.js';
 
 /** The rehearsal song's stems (glasshouse, Appendix A). */
@@ -70,6 +73,10 @@ const LOCAL_DEVICE = 'device-local';
 let sequence = 0;
 
 const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
+/** convex/songs.ts MAP_KEYS / nonMapFields: a map write keeps every other `tempo` field (D51's 1.9 click settings). */
+const MAP_KEYS = new Set(['songMap', 'source', 'map', 'detected']);
+const nonMapFields = (tempo) => (!tempo || typeof tempo !== 'object' || Array.isArray(tempo) ? {}
+  : Object.fromEntries(Object.entries(tempo).filter(([key, value]) => !MAP_KEYS.has(key) && value !== undefined)));
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** Plain deep merge for settings objects (arrays and scalars replace). */
@@ -167,8 +174,8 @@ export function createTestServer(song, {practice = null, clock = {now: () => Dat
       const songMap = cleanSongMap(tempo?.songMap);
       if (!songMap) throw Object.assign(new Error('This song map could not be saved.'), {code: 'invalid'});
       const rev = row.tempoRev ?? 0;
-      const next = {songMap};
-      if (JSON.stringify(row.tempo ?? null) === JSON.stringify(next)) return {tempoRev: rev, conflict: false};
+      const next = {...nonMapFields(row.tempo), songMap};
+      if (sameContent(clone(row.tempo) ?? null, clone(next))) return {tempoRev: rev, conflict: false};
       if (baseRev !== rev && hasRealMap(row.tempo) && !hasRealMap(next)) return {tempoRev: rev, conflict: true, tempo: clone(row.tempo)};
       row = {...row, tempo: next, tempoRev: rev + 1, tempoSaveId: saveId};
       if (row.sectionSuggestion && sectionsOf(songMap, Math.max(0.001, row.duration || 0)).length) delete row.sectionSuggestion;
@@ -240,22 +247,35 @@ export function createTestServer(song, {practice = null, clock = {now: () => Dat
     progressJob: (jobId, percent, extra = {}) => touchJob(jobId, {status: 'running', stage: 'detect', percent, ...extra}),
     /**
      * The worker finishes a detection. `beats` is `[[time, beatInBar], …]` (or `{time, downbeat}`).
-     * On an unmapped song a beats job writes the map itself (worker.beatsDone, D44); `sections`
-     * become the song's `sectionSuggestion`.
+     * On a song with no real map (a drum part counts as one) a usable beats result is written by the
+     * server itself (worker.beatsDone, D44); non-empty `sections` become the song's
+     * `sectionSuggestion` when its map has no sections (worker.suggestSections, D47).
      */
     finishJob(jobId, {beats = [], sections = null} = {}) {
       const job = jobs.get(jobId);
       if (!job) throw new Error(`No job ${jobId}`);
-      const result = job.kind === 'beats' ? {beats: beats.map((b) => (Array.isArray(b) ? b : [b.time, b.downbeat ? 1 : 2]))} : {};
+      const list = Array.isArray(sections) ? clone(sections) : [];
+      const result = job.kind === 'beats'
+        ? {beats: beats.map((b) => (Array.isArray(b) ? b : [b.time, b.downbeat ? 1 : 2])), sections: list}
+        : {sections: list};
       let patch = {status: 'done', stage: 'done', percent: 100, result};
       let songPatch = null;
-      if (job.kind === 'beats' && result.beats.length && !hasRealMap(row.tempo)) {
-        const list = beatsOf(result);
-        songPatch = {tempo: {songMap: {...fromBeats(list, row.duration), origin: 'detected'}}, tempoRev: (row.tempoRev ?? 0) + 1, tempoSaveId: undefined};
-        patch = {...patch, appliedAt: clock.now()};
+      const duration = row.duration;
+      let map = songMapFromTempo(row.tempo, duration);
+      // worker.beatsDone: only a song with no real map (a drum part counts as one) and only a usable map.
+      if (job.kind === 'beats' && result.beats.length && !hasRealMap(row.tempo, {hasPart: row.hasChart === true})) {
+        const detected = {...fromBeats(beatsOf(result), duration), origin: 'detected'};
+        let usable = detected.pins.length >= 2;
+        try { validateSongMap(detected); } catch { usable = false; }
+        if (usable) {
+          songPatch = {tempo: {...nonMapFields(row.tempo), songMap: detected}, tempoRev: (row.tempoRev ?? 0) + 1, tempoSaveId: undefined};
+          patch = {...patch, appliedAt: clock.now()};
+          map = detected;
+        }
       }
-      if (Array.isArray(sections)) {
-        songPatch = {...songPatch, sectionSuggestion: {jobId, createdAt: clock.now(), sections: clone(sections)}};
+      // worker.suggestSections (D47): only a non-empty list, only when the map has no sections of its own.
+      if (list.length && !sectionsOf(map, duration).length) {
+        songPatch = {...songPatch, sectionSuggestion: {jobId, createdAt: clock.now(), sections: list}};
       }
       if (songPatch) { row = {...row, ...songPatch}; songCh.push(); }
       return touchJob(jobId, patch);

@@ -18,7 +18,8 @@ import {COPY as DETECT_COPY} from '../src/stage/detect.js';
 import {SAVE_DEBOUNCE_MS} from '../src/stage/practice-state.js';
 import {FAKE_TIMERS, FakeAudioContext, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {DEFAULT_STEMS, createTestServer, createTestSession, settle, waitForLoad} from './helpers/test-session.js';
-import {SHAPED_MEMBERS, TRANSPORT_METHODS, createFakeSession, missingKeys, sessionShape} from './helpers/fake-session.js';
+import {NAMED_MEMBERS, OMITTED_MEMBERS, SHAPED_MEMBERS, TRANSPORT_METHODS, createFakeSession, memberNames, missingKeys, sessionShape} from './helpers/fake-session.js';
+import {emptyScore} from '../shared/notation.ts';
 import {legacyTempoMap, sectioned, tempoOf, unmapped, REHEARSAL_SECTIONS} from './fixtures/maps.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -287,6 +288,73 @@ describe('createTestSession: the detect flow over the fake jobs API', () => {
   });
 });
 
+describe('createTestServer: parity with convex/songs.ts and worker.ts', () => {
+  /** The 1.9 click settings D51 keeps in `songs.tempo` next to the map. */
+  const LEGACY_CLICK = {enabled: true, countIn: true, accent: false, volume: 0.4, audiblePreRoll: true};
+
+  test('saveTempo keeps the non-map tempo fields, and an unchanged map is a no-op (no tempoRev bump)', async () => {
+    const server = createTestServer({id: 's', duration: 128, tempo: {...tempoOf(sectioned), ...LEGACY_CLICK}, tempoRev: 1, stems: []});
+    expect(await server.songs.saveTempo({id: 's', tempo: tempoOf(sectioned), baseRev: 1, saveId: 'a'})).toEqual({tempoRev: 1, conflict: false});
+    expect(server.song.tempo).toEqual({...tempoOf(sectioned), ...LEGACY_CLICK});
+    const moved = tempoOf(sectioned);
+    moved.songMap.tailQpm = 100;
+    expect(await server.songs.saveTempo({id: 's', tempo: moved, baseRev: 1, saveId: 'b'})).toEqual({tempoRev: 2, conflict: false});
+    expect(server.song.tempo).toMatchObject({...LEGACY_CLICK, songMap: {tailQpm: 100}});
+    expect(Object.keys(server.song.tempo)).not.toContain('map');
+  });
+
+  test('a song with a drum part counts as mapped (D44 rule 2): the server never writes a detected map over it', () => {
+    const server = createTestServer({id: 'c', duration: 80, tempo: tempoOf(unmapped), hasChart: true, stems: []});
+    const jobId = server.addJob({kind: 'beats', songId: 'c'});
+    server.finishJob(jobId, {beats: BEATS});
+    expect(server.job(jobId)).toMatchObject({status: 'done', appliedAt: null, result: {beats: BEATS, sections: []}});
+    expect(server.song.tempo).toEqual(tempoOf(unmapped));
+    expect(server.tempoRev).toBe(0);
+  });
+
+  test('a session with a score (a drum part) applies the result itself, as a mapped song does', async () => {
+    const ts = await make({mapped: false, duration: 80, score: emptyScore(80), desktop: true});
+    expect(ts.server.song.hasChart).toBe(true);
+    await ts.detect.start();
+    await settle();
+    const [{jobId}] = ts.server.jobRows;
+    ts.server.finishJob(jobId, {beats: BEATS});
+    await settle();
+    expect(ts.server.song.tempo).toBeNull();
+    expect(ts.server.calls.markApplied).toEqual([{jobId}]);
+  });
+
+  test('an unusable result (fewer than 2 pins) is never written; a usable one keeps the click fields', () => {
+    const server = createTestServer({id: 'u', duration: 80, tempo: {...LEGACY_CLICK}, tempoRev: 3, stems: []});
+    const one = server.addJob({kind: 'beats', songId: 'u'});
+    server.finishJob(one, {beats: [[1, 1]]});
+    expect(server.job(one).appliedAt).toBeNull();
+    expect(server.song.tempo).toEqual(LEGACY_CLICK);
+    const good = server.addJob({kind: 'beats', songId: 'u'});
+    server.finishJob(good, {beats: BEATS});
+    expect(server.job(good).appliedAt).toEqual(expect.any(Number));
+    expect(server.song.tempo).toMatchObject({...LEGACY_CLICK, songMap: {origin: 'detected'}});
+    expect(server.tempoRev).toBe(4);
+  });
+
+  test('sections become a suggestion only when non-empty and the map has none (worker.suggestSections, D47)', () => {
+    const sections = [{t0: 0, label: 'Intro', confidence: 0.8}, {t0: 32, label: 'Chorus', confidence: 0.7}];
+    const withSections = createTestServer({id: 'a', duration: 128, tempo: tempoOf(sectioned), stems: []});
+    const j1 = withSections.addJob({kind: 'sections', songId: 'a'});
+    withSections.finishJob(j1, {sections});
+    expect(withSections.song.sectionSuggestion).toBeUndefined();
+    expect(withSections.job(j1).result).toEqual({sections});
+    const empty = createTestServer({id: 'b', duration: 80, stems: []});
+    empty.finishJob(empty.addJob({kind: 'beats', songId: 'b'}), {beats: BEATS, sections: []});
+    expect(empty.song.sectionSuggestion).toBeUndefined();
+    const fresh = createTestServer({id: 'd', duration: 80, stems: []});
+    const j3 = fresh.addJob({kind: 'beats', songId: 'd'});
+    fresh.finishJob(j3, {beats: BEATS, sections});
+    expect(fresh.song.sectionSuggestion).toMatchObject({jobId: j3, sections});
+    expect(fresh.job(j3).result).toEqual({beats: BEATS, sections});
+  });
+});
+
 describe('browser safety', () => {
   test('neither helper imports a test framework or a Node API', () => {
     for (const file of ['tests/helpers/test-session.js', 'tests/helpers/fake-session.js']) {
@@ -311,6 +379,23 @@ describe('fake-session: the shape of the real Session', () => {
     expect(real.snapshot).toEqual(expect.arrayContaining(['phase', 'loop.on', 'mix.tracks', 'click.mode', 'countIn.on']));
     expect(missingKeys(real, fake)).toEqual([]);
     for (const name of SHAPED_MEMBERS) expect(real.members[name].length, name).toBeGreaterThan(0);
+  });
+
+  test('the engine and metronome: every public member of the real classes is faked or a reviewed omission', async () => {
+    const ts = await make();
+    const real = sessionShape(ts.session);
+    const fake = sessionShape(createFakeSession());
+    for (const name of NAMED_MEMBERS) {
+      expect(real.named[name].length, name).toBeGreaterThan(20);
+      // No stale omission: each one is still a real member, and none is also faked.
+      expect(OMITTED_MEMBERS[name].filter((k) => !real.named[name].includes(k)), name).toEqual([]);
+      expect(OMITTED_MEMBERS[name].filter((k) => fake.named[name].includes(k)), name).toEqual([]);
+    }
+    expect(missingKeys(real, fake)).toEqual([]);
+    const grown = {...real, named: {...real.named, engine: [...real.named.engine, 'setPan'], metronome: [...real.named.metronome, 'swing']}};
+    expect(missingKeys(grown, fake)).toEqual(['engine.setPan', 'metronome.swing']);
+    expect(memberNames(ts.session.metronome)).toEqual(expect.arrayContaining(['onBeat', 'settings', 'configure']));
+    expect(memberNames(ts.session.engine).some((k) => k.startsWith('_'))).toBe(false);
   });
 
   test('the transport method list is the real transport\'s', async () => {

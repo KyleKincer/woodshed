@@ -12,12 +12,14 @@
 //   `undo` (the practice undo stack), `peaks` (an empty peaks cache unless one is passed);
 // - fake: `transport` (a settable snapshot built from the practice value, recorded calls, `on` +
 //   `emit`, `position()` from `setPosition(t)`), `practice` (a practice value signal whose
-//   writes apply synchronously), `engine`, `metronome`, `notation`, `frame` (`emit()` delivers
-//   a frame), `detect`, `load` (`setLoad(patch)`) and the session methods (recorded in `calls`).
+//   writes apply synchronously), `engine` (state read from the snapshot), `metronome`
+//   (`emitBeat(beat)` delivers an onBeat), `notation`, `frame` (`emit()` delivers a frame),
+//   `detect`, `load` (`setLoad(patch)`) and the session methods (recorded in `calls`).
 //
 // The shape is checked against a real session (tests/helpers-test-session.test.js): a key of the
 // real Session, of one of its members or of the transport snapshot that is missing here fails
-// that test. `sessionShape(obj)` is the description both sides are compared with.
+// that test; the engine and metronome are compared by public prototype-chain names, less the
+// reviewed OMITTED_MEMBERS. `sessionShape(obj)` is the description both sides are compared with.
 //
 // Browser-safe: no test framework, no Node API.
 
@@ -34,6 +36,39 @@ export const DEFAULT_STEMS = Object.freeze(['drums', 'bass', 'vocals', 'other'])
 
 /** Session members whose own keys the shape check compares (the rest are compared by name only). */
 export const SHAPED_MEMBERS = Object.freeze(['transport', 'position', 'practice', 'undo', 'notation', 'frame', 'detect', 'peaks']);
+
+/**
+ * Class-instance members (MultitrackEngine, Metronome) are compared by their public names along
+ * the prototype chain (fields, getters and methods; `_`-prefixed internals excluded). View tests
+ * reach audio through the transport, so the fakes cover only what a view reads; every other
+ * public member is listed here as a deliberate omission. A new real member fails the shape test
+ * until it is faked or added below, and an omission the real class no longer has fails too.
+ */
+export const NAMED_MEMBERS = Object.freeze(['engine', 'metronome']);
+export const OMITTED_MEMBERS = Object.freeze({
+  // Loading, mixing, scheduling and seeking: the transport owns these (§2.14); a view never calls them.
+  engine: Object.freeze([
+    'master', 'recordingAudible', 'stretch', 'pitchGate', 'splitter', 'plan', 'planVersion', 'playRequest', 'revision',
+    'transportListeners', 'pausedAt', 'editPosition', 'countIn', 'stopAtWhen', 'onEnded',
+    'loadStems', 'setVolume', 'setRecordingAudible', 'setMuted', 'setSoloed', 'toggleMute', 'toggleSolo', 'resetMixer',
+    'setTrackGains', 'loopGap', 'getPositionAt', 'subscribeTransport', 'play', 'pause', 'stop', 'seek', 'seekAt',
+    'cancelPending', 'stopAt', 'cancelStopAt', 'setSpeed', 'setPreservePitch', 'setLoop', 'beatsBetween', 'gapsBetween',
+  ]),
+  // Click scheduling and the map wiring: the transport configures the click (D14); views read settings().
+  metronome: Object.freeze([
+    'engine', 'ctx', 'out', 'countInAudible', 'accent', 'volume', 'countIn', 'countInLength', 'countInUnit', 'audiblePreRoll',
+    'onChange', 'setDetected', 'recompute', 'sectionAt', 'setEnabled', 'start', 'stop', 'tick',
+  ]),
+});
+
+/** Public names of an object along its prototype chain (own fields, getters, methods; no `_` internals). */
+export function memberNames(obj) {
+  const out = new Set();
+  for (let p = obj; p && p !== Object.prototype && p !== Function.prototype; p = Object.getPrototypeOf(p)) {
+    for (const k of Object.getOwnPropertyNames(p)) if (k !== 'constructor' && !k.startsWith('_')) out.add(k);
+  }
+  return [...out];
+}
 
 /** Every method of the transport (§2.14.3, as built by src/stage/transport.js). */
 export const TRANSPORT_METHODS = Object.freeze([
@@ -70,10 +105,13 @@ function deepKeys(value, prefix = '', depth = 2) {
 export function sessionShape(session) {
   const members = {};
   for (const name of SHAPED_MEMBERS) members[name] = keysOf(session[name]);
+  const named = {};
+  for (const name of NAMED_MEMBERS) named[name] = memberNames(session[name]);
   const snapshot = session.transport?.snapshot;
   return {
     session: keysOf(session),
     members,
+    named,
     snapshot: deepKeys(isSignal(snapshot) ? snapshot.peek() : null),
     load: deepKeys(isSignal(session.load) ? session.load.peek() : null),
   };
@@ -85,6 +123,9 @@ export function missingKeys(real, fake) {
   const diff = (where, a, b) => { for (const k of a) if (!b.includes(k)) out.push(`${where}${k}`); };
   diff('', real.session, fake.session);
   for (const name of Object.keys(real.members)) diff(`${name}.`, real.members[name], fake.members[name] ?? []);
+  for (const name of Object.keys(real.named ?? {})) {
+    diff(`${name}.`, real.named[name], [...(fake.named?.[name] ?? []), ...(OMITTED_MEMBERS[name] ?? [])]);
+  }
   diff('snapshot.', real.snapshot, fake.snapshot);
   diff('load.', real.load, fake.load);
   return out;
@@ -247,20 +288,32 @@ function fakeEngine({stems, duration, transport}) {
     get countingIn() { return transport.snapshot.peek().phase === 'counting'; },
     lookahead: 0.05,
     aux: null,
+    get rate() { return transport.snapshot.peek().rate ?? 1; },
+    get loop() { const l = transport.snapshot.peek().loop; return {enabled: !!l?.on, a: l?.a ?? 0, b: l?.b ?? 0}; },
+    get preservePitch() { return transport.snapshot.peek().keepPitch ?? true; },
+    destroyed: false,
     getPosition: () => transport.position(),
     nextWrapAt: () => null,
     whenAt: () => null,
     on: (event, fn) => events.on(event, fn),
     emit: (event, payload) => events.emit(event, payload),
-    destroy() {},
+    destroy() { this.destroyed = true; },
   };
 }
 
 function fakeMetronome({map}) {
   const {calls, fn} = recorder();
   let settings = {countIn: false, countInLength: 1, countInUnit: 'bars', mode: 'countin', accent: true, volume: 0.7, audiblePreRoll: false};
+  const beatListeners = new Set();
   return {
     calls,
+    get mode() { return settings.mode; },
+    get enabled() { return settings.mode === 'always'; },
+    get songMap() { return map; },
+    get beats() { return map.beats; },
+    /** `fn({when, downbeat, …})` per click; returns off(). `emitBeat(beat)` delivers one. */
+    onBeat(fn) { beatListeners.add(fn); return () => { beatListeners.delete(fn); }; },
+    emitBeat(beat) { for (const fn of [...beatListeners]) fn(beat); },
     settings: () => ({...settings}),
     configure: (next) => { calls.push(['configure', next]); settings = {...settings, ...next}; },
     serialize: () => ({songMap: map.serialize()}),

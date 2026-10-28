@@ -18,7 +18,7 @@
 //   nav.goTo {t, label?}                  seconds; cues when stopped, a quantized jump while playing
 //   speed.set {rate}                      0.25–1.5
 //   trainer.toggle {start, end, step, passes}   fractions; (re)starts the trainer with that configuration
-//   loop.playTimes {n}, loop.between {mode}, loop.eachPassCount {on?}, click.mode {mode},
+//   loop.playTimes {n}, loop.between {mode}, loop.eachPass {on?}, click.mode {mode},
 //   mix.chartAudio {level}
 // Toggle and radio commands answer `checked` from the transport snapshot; a radio command
 // reads `c.args` when the caller evaluates it with arguments (registry.state(id,
@@ -129,6 +129,7 @@ export const COPY = Object.freeze({
   speedRange: `Speed goes from ${Math.round(MIN_RATE * 100)}% to ${Math.round(MAX_RATE * 100)}%.`,
   at100: 'Already at 100%.',
   noRegions: 'Add a marker (S) to jump between parts of this song.',
+  noSections: 'Add a section (S) to jump between parts of this song.',
   callNeedsPart: 'Call & response needs a stem for your instrument. Choose what you play in Settings → Instruments.',
 });
 
@@ -202,7 +203,7 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
     const load = sheets?.[SHEETS_PATH];
     const session = c?.session;
     if (!load || !session) return undefined;
-    return Promise.resolve(load()).then((mod) => mod.openSheet(name, {session, anchor}), (err) => {
+    return Promise.resolve().then(load).then((mod) => mod.openSheet(name, {session, anchor})).catch((err) => {
       console.warn(`[transport-commands] the ${name} sheet could not be opened`, err);
     });
   }
@@ -218,10 +219,12 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
     } finally {
       off?.();
     }
-    if (noPart) openSheet(c, 'mix');
+    if (noPart && on !== false) openSheet(c, 'mix');   // an explicit "off" never pops the sheet open
   }
 
   const transportDef = (def) => ({when: hasTransport, ...def});
+  /** [ / ]: S adds a marker on an unmapped song and a section on a mapped one (§4.5), the regions they jump between. */
+  const noRegionsReason = (c) => (regionsOf(c)?.length === 0 ? (isMapped(c) ? COPY.noSections : COPY.noRegions) : null);
 
   const defs = [
     // ---- play / stop --------------------------------------------------------------------------------------------
@@ -367,14 +370,14 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
     transportDef({
       id: 'nav.prevSection', group: 'Navigate', keys: ['[', 'PageUp'], scopes: [S, EM], pedal: true, icon: 'chevron-left',
       title: (c) => (isMapped(c) ? COPY.prevSection : COPY.prevMarker),
-      disabledReason: (c) => (regionsOf(c)?.length === 0 ? COPY.noRegions : null),
+      disabledReason: noRegionsReason,
       palette: {keywords: ['previous part', 'back a section']},
       run: (c) => { transportOf(c).goToRegion(-1); },
     }),
     transportDef({
       id: 'nav.nextSection', group: 'Navigate', keys: [']', 'PageDown'], scopes: [S, EM], pedal: true, global: true, icon: 'chevron-right',
       title: (c) => (isMapped(c) ? COPY.nextSection : COPY.nextMarker),
-      disabledReason: (c) => (regionsOf(c)?.length === 0 ? COPY.noRegions : null),
+      disabledReason: noRegionsReason,
       palette: {keywords: ['next part', 'skip section']},
       run: (c) => { transportOf(c).goToRegion(1); },
     }),
@@ -507,7 +510,8 @@ export function defineTransportCommands({registry = appRegistry, sheets = SHEETS
     transportDef({
       id: 'click.countIn', group: 'Click', keys: ['KeyC'], scopes: [S, E], pedal: true, icon: 'count-in',
       title: (c) => (isMapped(c) ? COPY.countIn : COPY.leadIn),
-      checked: (c) => !!snapshotOf(c)?.countIn?.on, menu: {label: COPY.countIn, electron: 'Transport'},
+      checked: (c) => !!snapshotOf(c)?.countIn?.on,
+      menu: {electron: 'Transport'},   // the label follows the title (Count-in · Lead-in 2 s)
       palette: {keywords: ['count in', 'count-in', 'lead in', 'pre-roll']},
       run: (c) => { transportOf(c).toggleCountIn(); },
     }),
