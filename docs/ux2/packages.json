@@ -215,7 +215,7 @@
         "P0",
         "FX0"
       ],
-      "notes": "Creates tests/fixture/db/{songs,jobs,devices,settings,sharing,setlists,metadata}.js with today's handlers moved verbatim; wave 0B packages own their bodies. tests/fixture/states/<ID>.cjs belong to each package through the \u00a79.0 naming rule (FX1's own is tests/fixture/states/FX1.cjs), so FX1's glob excludes them. Amended at I0A: harness discovery also covers tests/fixture/harness/*.harness.js (the fixture smoke harness, \u00a711.2); size exception recorded (Appendix C item 18)."
+      "notes": "Creates tests/fixture/db/{songs,jobs,devices,settings,sharing,setlists,metadata}.js with today's handlers moved verbatim; wave 0B packages own their bodies. tests/fixture/states/<ID>.cjs belong to each package through the \u00a79.0 naming rule (FX1's own is tests/fixture/states/FX1.cjs), so FX1's glob excludes them. Amended at I0A: harness discovery also covers tests/fixture/harness/*.harness.js (the fixture smoke harness, \u00a711.2); size exception recorded (Appendix C item 18). I0B follow-ups (tickets I0B-2 to I0B-4): the tests/fixture/db/songs.js change is limited to deleting the fixture-only songs:rename handler, the tests/fixture/db/jobs.js change to liveDetection (both bodies otherwise belong to BK1/BK2)."
     },
     {
       "id": "I0A",
@@ -452,11 +452,13 @@
         "convex/worker.test.ts",
         "convex/devices.test.ts",
         "src/api/devices.js",
-        "tests/fixture/db/devices.js"
+        "tests/fixture/db/devices.js",
+        "convex/renditions.ts"
       ],
       "deps": [
         "I0A"
-      ]
+      ],
+      "notes": "I0B follow-up (ticket I0B-6): convex/renditions.ts is owned only to write hasChart and mapSummary on the song it inserts."
     },
     {
       "id": "BK4",
@@ -488,11 +490,15 @@
         "convex/shareAudio.ts",
         "convex/sharing.test.ts",
         "src/api/sharing.js",
-        "tests/fixture/db/sharing.js"
+        "tests/fixture/db/sharing.js",
+        "convex/schema.ts",
+        "src/api/client.js",
+        "tests/api-client.test.js"
       ],
       "deps": [
         "I0A"
-      ]
+      ],
+      "notes": "I0B follow-ups: convex/schema.ts is owned only to add songShares.includeMap: v.optional(v.boolean()) (ticket I0B-7, Appendix C item 33); src/api/client.js and tests/api-client.test.js only to add publicClient().action (ticket I0B-8, Appendix C item 31). Size exception subsumed by Appendix C item 40."
     },
     {
       "id": "BK6",
@@ -522,11 +528,15 @@
         "convex/metadata.test.ts",
         "tests/metadata-shared.test.js",
         "src/api/metadata.js",
-        "tests/fixture/db/metadata.js"
+        "tests/fixture/db/metadata.js",
+        "convex/artworkUpload.ts",
+        "convex/lib/catalogRequest.ts",
+        "convex/catalogRequest.test.ts"
       ],
       "deps": [
         "I0A"
-      ]
+      ],
+      "notes": "I0B follow-up (ticket I0B-9): convex/artworkUpload.ts and convex/lib/catalogRequest.ts (and catalogRequest.test.ts) are owned only to replace bare-string ConvexErrors with coded fail() errors."
     },
     {
       "id": "CPA",
@@ -542,11 +552,15 @@
         "companion/pipeline.py",
         "src/js/companion.js",
         "tests/companion.test.js",
-        "package.json"
+        "package.json",
+        "scripts/build-processor.py",
+        "companion/desktop_entry.py",
+        ".github/workflows/release.yml"
       ],
       "deps": [
         "I0A"
-      ]
+      ],
+      "notes": "I0B follow-up (ticket I0B-10): scripts/build-processor.py, companion/desktop_entry.py and .github/workflows/release.yml are owned only to bundle, self-check and cache-key companion/ytdlp-args.json."
     },
     {
       "id": "I0B",
@@ -573,7 +587,8 @@
         "BK6",
         "BK7",
         "CPA"
-      ]
+      ],
+      "notes": "Amended at I0B (orchestrator-authorised integration wiring; integrations own no globs, so recorded here): I0B wrote convex/crons.ts and convex/crons.test.ts (the self-running B1 backfill, Appendix C item 22) and made one hand edit to convex/_generated/api.d.ts adding the crons module lines, which gate G1 codegen reproduces. Later changes to convex/crons.ts go to the package that owns the job it schedules."
     },
     {
       "id": "S1",
@@ -666,11 +681,13 @@
       "title": "Companion processing core (B5, B6, D12)",
       "owns": [
         "companion/{process.py,pipeline.py,errors.py,server.mjs,heartbeat.mjs,test_errors.py,heartbeat.test.mjs}",
-        "convex/worker.ts"
+        "convex/worker.ts",
+        "convex/metadata.test.ts"
       ],
       "deps": [
         "I0B"
-      ]
+      ],
+      "notes": "Amended at I0B: convex/metadata.test.ts is owned only to delete the 1.9 case \"update cancellation is scoped to the device and preserves completed jobs\" together with worker.cancelForUpdate (D12)."
     },
     {
       "id": "I1",

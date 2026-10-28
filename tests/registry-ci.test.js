@@ -200,6 +200,39 @@ describe('registry CI: the app registry', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Primitive `command` props (I0B): Button, IconButton and Toggle (src/ui/button.js, toggle.js) and MenuItem
+// (src/ui/menu.js) resolve `command` through the registry, so every literal id passed to them anywhere in src/** must
+// exist. The source scan above reads every `command:` literal; these checks keep it pointed at the primitives.
+
+/** The primitives that take a registry `command` prop, by module. A new one must be added here (and scanned). */
+const COMMAND_PRIMITIVES = {'src/ui/button.js': ['Button', 'IconButton'], 'src/ui/toggle.js': ['Toggle'], 'src/ui/menu.js': ['MenuItem']};
+
+describe('registry CI: primitive command props', () => {
+  it('every src/ui module that reads a command prop is a listed command primitive, inside the scanned directories', () => {
+    const readers = walk(join(ROOT, 'src/ui'))
+      .filter(file => /\b(?:p|props|item|r)\.command\b/.test(stripComments(readFileSync(file, 'utf8'))))
+      .map(file => relative(ROOT, file)).sort();
+    expect(readers).toEqual(Object.keys(COMMAND_PRIMITIVES).sort());
+    for (const file of readers) expect(SCAN_DIRS.some(d => file.startsWith(`${d}/`)), file).toBe(true);
+  });
+
+  it('the scan finds command ids in every primitive call form', () => {
+    const src = [
+      'const play = Button({',
+      "  label: 'Play',",
+      "  command: 'transport.playStop',",
+      '});',
+      'IconButton({icon: "loop", command: "transport.loopToggle"});',
+      'Toggle({label: `Mute ${n}`, command: `mix.mute.${n}`});',
+      "Menu({items: [{label: 'Loop', command: 'loop.clear'}, {type: 'separator'}, {command: 'nav.home', kbd: true}]});",
+      'Button({command}); // a variable: resolved at run time, not scanned',
+    ].join('\n');
+    expect(commandReferences(src).map(r => r.id)).toEqual(['transport.playStop', 'transport.loopToggle', 'mix.mute.${n}',
+      'loop.clear', 'nav.home']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // The contract key table (§3): every keyed command with its scopes. It must pass with exactly the listed shadows.
 
 /** chart.piece.<kitId> for every KIT id, bound to its default letter (the choke pieces have none). */

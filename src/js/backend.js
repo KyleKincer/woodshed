@@ -38,10 +38,6 @@ export function onJobs(cb, onError) {
   return convex.onUpdate(api.jobs.listActive, {}, cb, onError);
 }
 
-export function renameSong(id, title) {
-  return convex.mutation(api.songs.rename, { id, title });
-}
-
 export function saveTempo(id, tempo) {
   return convex.mutation(api.songs.saveTempo, { id, tempo });
 }
