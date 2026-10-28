@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // S1: src/js/startup.js, the boot status (#startup) and its 8 s "Still connecting… [Retry]".
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
-import {SLOW_MS, STARTUP_COPY, finishStartup, showSignIn, showStartup, waitForAuthSession} from '../src/js/startup.js';
+import * as startup from '../src/js/startup.js';
+import {SLOW_MS, STARTUP_COPY, finishStartup, showSignIn, showStartup} from '../src/js/startup.js';
 
 const root = document.documentElement;
 const status = () => document.getElementById('startup');
@@ -74,40 +75,7 @@ describe('the boot status', () => {
   });
 });
 
-// The 1.9 client (src/js/auth.js) waits on its auth state through this until I1 deletes it.
-describe('waitForAuthSession', () => {
-  function session(initial) {
-    let state = initial, listener;
-    const unsubscribe = vi.fn();
-    return {getSnapshot: () => state, subscribe: cb => { listener = cb; return unsubscribe; }, unsubscribe,
-      update: next => { state = next; listener(); }};
-  }
-
-  test('a restoring session never reports signed out; it resolves once authenticated', async () => {
-    const auth = session({isLoading: true, isAuthenticated: false});
-    const onSignedOut = vi.fn(), onLoading = vi.fn();
-    const ready = waitForAuthSession(auth, {onSignedOut, onLoading});
-    auth.update({isLoading: false, isAuthenticated: true});
-    await ready;
-    expect(onSignedOut).not.toHaveBeenCalled();
-    expect(onLoading).toHaveBeenCalled();
-    expect(auth.unsubscribe).toHaveBeenCalled();
-  });
-
-  test('a settled signed-out state reports it; an OAuth return goes back to loading', async () => {
-    const auth = session({isLoading: false, isAuthenticated: false});
-    const onSignedOut = vi.fn(), onLoading = vi.fn();
-    const ready = waitForAuthSession(auth, {onSignedOut, onLoading});
-    expect(onSignedOut).toHaveBeenCalledTimes(1);
-    auth.update({isLoading: true, isAuthenticated: false});
-    expect(onLoading).toHaveBeenCalledTimes(1);
-    auth.update({isLoading: false, isAuthenticated: true});
-    await ready;
-  });
-
-  test('an already authenticated session resolves at once', async () => {
-    const onSignedOut = vi.fn();
-    await waitForAuthSession(session({isLoading: false, isAuthenticated: true}), {onSignedOut, onLoading: vi.fn()});
-    expect(onSignedOut).not.toHaveBeenCalled();
-  });
+// I1-6: the 1.9 auth bridge (waitForAuthSession) left with src/js/auth.js; the module is the boot status only.
+test('exports only the boot status API', () => {
+  expect(Object.keys(startup).sort()).toEqual(['SLOW_MS', 'STARTUP_COPY', 'finishStartup', 'showSignIn', 'showStartup']);
 });
