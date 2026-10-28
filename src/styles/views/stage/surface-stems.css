@@ -1,0 +1,258 @@
+@layer views {
+  /* The Stems surface (src/stage/surfaces/stems-surface.js, spec §4.4D): a 40 px view toolbar, a
+   * ruler, then one row per stem (a header of 168 px on a laptop, 128 px on an iPad or any coarse
+   * pointer) beside one waveform canvas. Positions along the time axis (ruler marks, the cue and
+   * the playhead) are set inline by the module; everything else is tokens.
+   *   section.stems[data-compact][data-coarse][data-playing][data-phase][data-grid][data-snap][data-follow]
+   *     .stems-toolbar   .stems-ruler (.stems-ruler-gap + .stems-ruler-marks)
+   *     .stems-scroller[data-scroller] > .stems-rows (grid: header | lane per row, plus the
+   *       .stems-lanes overlay across every row: canvas, cue, playhead, loop handles) */
+  .stems {
+    --stems-head: 168px;
+    --stems-rows: 1;
+    position: relative;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg);
+    color: var(--ink);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .stems[data-compact] { --stems-head: 128px; }
+
+  /* ---- toolbar (40 px; taller only when coarse targets need 44 px) ---- */
+  .stems-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 40px;
+    min-width: 0;
+    padding: 0 var(--s3);
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .stems-toolbar::-webkit-scrollbar { display: none; }
+  .stems-toolbar > * { flex: none; }
+  /* Follow sits at the far end (spec §10.7: "… Snap ● (⇧S)   …   Follow ●"). */
+  .stems-toolbar > .stems-follow { margin-inline-start: auto; }
+
+  .stems-tool-group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+
+  /* ---- ruler ---- */
+  .stems-ruler {
+    display: grid;
+    grid-template-columns: var(--stems-head) minmax(0, 1fr);
+    height: 24px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .stems-ruler-gap { border-inline-end: 1px solid var(--line); }
+  .stems-ruler-marks {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .stems-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    padding-inline-start: var(--s1);
+    border-inline-start: 1px solid var(--line-strong);
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;   /* 15 px, the Stage minimum */
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* ---- rows ---- */
+  .stems-scroller {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .stems-rows {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--stems-head) minmax(0, 1fr);
+    grid-auto-rows: minmax(min-content, 1fr);
+    min-height: 100%;
+  }
+
+  .stems-head {
+    grid-column: 1;
+    position: relative;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 72px;
+    padding: var(--s1) var(--s2) var(--s1) var(--s3);
+    border-bottom: 1px solid var(--line);
+    border-inline-end: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .stems-head[data-state=solo] { box-shadow: inset 0 0 0 2px var(--accent); }
+
+  .stems-head-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--s1);
+    height: 100%;
+    min-width: 0;
+  }
+
+  .stems-color {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 4px;
+    background: var(--stems-color, var(--stem-other));
+  }
+  /* Muted: an outline with the hatch, never opacity. */
+  .stems-head[data-state=out] .stems-color {
+    background: repeating-linear-gradient(135deg, transparent 0 3px, var(--stems-color, var(--stem-other)) 3px 5px);
+    box-shadow: inset 0 0 0 1px var(--stems-color, var(--stem-other));
+  }
+
+  .stems-head-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+  }
+
+  .stems-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-16);
+    font-weight: var(--fw-bold);
+    line-height: 1.25;
+  }
+  .stems-head[data-state=out] .stems-name { color: var(--ink-2); }
+  .stems-key { flex: none; display: inline-flex; }
+  /* iPad: the 44 px M S leave no room for the word in a 128 px header, so it wraps under them. */
+  .stems-head-buttons { flex-wrap: wrap; row-gap: var(--s1); }
+
+  .ui-button.stems-ms {
+    width: var(--h-sm);
+    min-width: var(--h-sm);
+    padding: 0;
+    font-weight: var(--fw-bold);
+  }
+
+  .stems-word {
+    flex: none;
+    margin-inline-start: var(--s1);
+    font-size: 0.9375rem;   /* 15 px */
+    font-weight: var(--fw-heavy);
+    letter-spacing: .06em;
+    color: var(--ink-2);
+  }
+  .stems-head[data-state=out] .stems-word { color: var(--out); text-decoration: line-through; text-decoration-thickness: 2px; }
+  .stems-head[data-state=solo] .stems-word { color: var(--accent); }
+
+  /* The laptop fader: a 120 px control on its own line, its % value at the end of the M S line
+   * (168 px leaves no room for both on one line). The iPad's lives in the Mix sheet. */
+  .stems-head-level .ui-fader.stems-fader { width: 120px; }
+  .stems-head-level .stems-fader .ui-slider-control { flex: none; width: 120px; min-width: 120px; }
+  .stems-level {
+    flex: none;
+    margin-inline-start: auto;
+    min-width: 4ch;
+    font-size: 0.9375rem;   /* 15 px */
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+    color: var(--ink-2);
+  }
+  .stems[data-compact] .stems-head-level,
+  .stems[data-compact] .stems-level { display: none; }
+
+  .stems-lane {
+    grid-column: 2;
+    min-width: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  /* The overlay across every lane: the canvas, the cue, the playhead and the loop handles. */
+  .stems-lanes {
+    grid-column: 2;
+    position: relative;
+    z-index: var(--z-local);
+    min-width: 0;
+    overflow: hidden;
+    cursor: pointer;
+    -webkit-touch-callout: none;
+  }
+  .stems-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: block;
+    pointer-events: none;
+  }
+  .stems-cue,
+  .stems-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: var(--z-local-2);
+  }
+  .stems-cue {
+    width: 2px;
+    margin-inline-start: -1px;
+    background: var(--accent);
+  }
+  .stems-playhead {
+    width: 2px;
+    margin-inline-start: -1px;
+    background: var(--now);
+  }
+  /* The Follow pill: 56 px, bottom centre, over the lanes. */
+  .stems-pill-host {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--s4);
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    z-index: var(--z-local-2);
+  }
+  .ui-button.stems-pill {
+    min-height: 56px;
+    padding: 0 var(--s5);
+    border-radius: var(--r-pill);
+    box-shadow: var(--shadow-popover);
+    pointer-events: auto;
+  }
+
+  /* Stopped, the playhead is the cue: only the cue line shows. */
+  .stems[data-phase=stopped] .stems-playhead,
+  .stems[data-phase=loading] .stems-playhead { visibility: hidden; }
+}
