@@ -218,7 +218,7 @@ class SeparationJobTests(Workspace):
         self.assertEqual(self.run_main(self.job(settings={'stemMode': 'six'}, quality={'model': 'htdemucs_6s', 'shifts': 1})), 0)
         events = lines(self.out)
         metas = [e for e in events if 'meta' in e]
-        self.assertEqual(metas, [{'meta': {'title': 'Harbor Lights', 'artist': 'Ada Moreno', 'uploader': 'Ada Moreno - Topic', 'provider': 'Youtube',
+        self.assertEqual(metas, [{'meta': {'title': 'Harbor Lights', 'artist': 'Ada Moreno', 'uploader': 'Ada Moreno - Topic',
                                            'duration': 221, 'thumbnail': 'https://i.ytimg.com/vi/x/maxresdefault.jpg'}}])
         # The meta line follows acquisition and precedes the split.
         self.assertLess(events.index({'stage': 'download', 'percent': 100, 'message': 'Ready'}), events.index(metas[0]))

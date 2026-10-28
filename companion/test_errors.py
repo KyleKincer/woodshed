@@ -254,7 +254,7 @@ class ReporterTests(unittest.TestCase):
         out = io.StringIO()
         pipeline.Reporter(out).meta({'title': ' Harbor Lights ', 'artist': '', 'uploader': 'Ada Moreno', 'duration': 221,
                                      'thumbnail': 'http://insecure.example/x.jpg', 'provider': 'Youtube', 'cover': '/tmp/cover.jpg'})
-        self.assertEqual(json.loads(out.getvalue()), {'meta': {'title': 'Harbor Lights', 'uploader': 'Ada Moreno', 'provider': 'Youtube', 'duration': 221}})
+        self.assertEqual(json.loads(out.getvalue()), {'meta': {'title': 'Harbor Lights', 'uploader': 'Ada Moreno', 'duration': 221}})
         silent = io.StringIO()
         pipeline.Reporter(silent).meta({'title': '', 'duration': 0})
         self.assertEqual(silent.getvalue(), '')

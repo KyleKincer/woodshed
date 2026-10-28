@@ -91,9 +91,12 @@ class Reporter:
         self._print({'stage': stage, 'percent': percent, 'message': message})
 
     def meta(self, meta):
-        """Early metadata after acquisition (§6.10 CPB item 6): title, artist, uploader, duration, thumbnail, provider."""
+        """Early metadata after acquisition (§6.10 CPB item 6): title, artist, uploader, duration, thumbnail.
+
+        Never the provider: job.meta.provider holds the Add sheet's Candidate
+        vocabulary, and yt-dlp's extractor_key goes only on result.json."""
         out = {}
-        for key in ('title', 'artist', 'uploader', 'provider'):
+        for key in ('title', 'artist', 'uploader'):
             value = str(meta.get(key) or '').strip()
             if value: out[key] = value[:300]
         duration = meta.get('duration')

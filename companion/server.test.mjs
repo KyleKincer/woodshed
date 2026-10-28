@@ -121,6 +121,26 @@ test('meta goes out at once with the latest stage, percent and message', async (
   assert.equal(sent.length, 2, 'the pending event rode on the meta send');
 });
 
+test('meta before any progress keeps the claimed job’s place: it rides on the seed, else on the next event', async () => {
+  // A resumed job (D12): process.py prints meta before any progress line.
+  const seeded = throttle();
+  seeded.t.seed(progressEvent({ stage: 'separate', percent: 70, message: 'Separating track…' }));
+  seeded.t.pushMeta({ title: 'Harbor Lights' });
+  await settle();
+  assert.deepEqual(seeded.sent, [{ at: 0, stage: 'separate', percent: 70, message: 'Separating track…', meta: { title: 'Harbor Lights' } }]);
+
+  const bare = throttle();
+  bare.t.pushMeta({ title: 'Harbor Lights' });
+  await settle();
+  assert.deepEqual(bare.sent, [], 'no invented download 0%');
+  bare.t.push({ stage: 'finalize', percent: 90, message: 'Encoding stems…' });
+  await settle();
+  assert.deepEqual(bare.sent, [{ at: 0, stage: 'finalize', percent: 90, message: 'Encoding stems…', meta: { title: 'Harbor Lights' } }]);
+  bare.t.push({ stage: 'finalize', percent: 91, message: 'Encoding stems…' });
+  await bare.clock.advance(5000);
+  assert.equal(bare.sent.at(-1).meta, undefined, 'the meta goes out once');
+});
+
 test('a failed send is logged and later sends still go out; cancel drops the pending event', async () => {
   let n = 0;
   const { clock, logs, t } = throttle({ send: () => (++n === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(true)) });
@@ -189,7 +209,8 @@ test('a processor failure: its own error line wins, else the exit, with the deve
 
 test('processor meta maps onto worker.progress meta', () => {
   assert.deepEqual(jobMetaOf({ title: ' Harbor Lights ', artist: 'Ada Moreno', uploader: 'Ada Moreno - Topic', duration: 221.4, thumbnail: 'https://i.ytimg.com/x.jpg', provider: 'Youtube' }),
-    { title: 'Harbor Lights', channel: 'Ada Moreno - Topic', duration: 221.4, thumbnail: 'https://i.ytimg.com/x.jpg', provider: 'Youtube' });
+    { title: 'Harbor Lights', channel: 'Ada Moreno - Topic', duration: 221.4, thumbnail: 'https://i.ytimg.com/x.jpg' },
+    'yt-dlp’s extractor_key never overwrites the Add sheet’s provider');
   assert.deepEqual(jobMetaOf({ title: 'Song', artist: 'Band', thumbnail: 'http://insecure/x.jpg', duration: -1 }), { title: 'Song', channel: 'Band' });
   assert.equal(jobMetaOf({ title: '  ' }), null);
   assert.equal(jobMetaOf(null), null);
@@ -497,7 +518,7 @@ test('a processor failure reports its code and raw text; meta reaches the job ea
   const failure = await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
   assert.deepEqual(failure, { token: failure.token, jobId: 'job4', stage: 'error', percent: 0, error: 'yt-dlp exited with code 1\nERROR: [youtube] x: Video unavailable', errorCode: 'unavailable' });
   const meta = progressOf(client).find(p => p.meta);
-  assert.deepEqual(meta.meta, { title: 'Harbor Lights', channel: 'Ada Moreno', duration: 221, thumbnail: 'https://i.ytimg.com/x.jpg', provider: 'Youtube' });
+  assert.deepEqual(meta.meta, { title: 'Harbor Lights', channel: 'Ada Moreno', duration: 221, thumbnail: 'https://i.ytimg.com/x.jpg' });
   assert.deepEqual([meta.stage, meta.percent, meta.message], ['download', 100, 'Ready']);
 });
 
@@ -562,6 +583,53 @@ test('an upload whose original is not on this computer fails as source_missing b
   const failure = await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
   assert.equal(failure.errorCode, 'source_missing');
   assert.equal(existsSync(path.join(jobDir('job7'), 'pid')), false);
+});
+
+test('a resumed job whose first processor line is meta keeps its stage; meta never carries yt-dlp’s provider', { timeout: 20_000 }, async t => {
+  const { client } = await companion(t, { jobs: [{
+    _id: 'job4r', kind: 'separate', source: { type: 'url', value: 'https://youtu.be/x' }, settings: {}, quality: { model: 'htdemucs' },
+    status: 'running', stage: 'separate', percent: 70, message: 'Separating track…',
+    fake: { lines: [
+      { meta: { title: 'Harbor Lights', uploader: 'Ada Moreno', duration: 221, provider: 'Youtube' } },
+      { stage: 'finalize', percent: 90, message: 'Encoding stems…' },
+      { error: 'boom', code: 'separation_failed' },
+    ], exit: 1 },
+  }] });
+  await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
+  const progress = progressOf(client);
+  assert.equal(progress.filter(p => p.stage === 'download').length, 0, 'never sent back to download 0%');
+  const meta = progress.find(p => p.meta);
+  assert.deepEqual([meta.stage, meta.percent, meta.message], ['separate', 70, 'Separating track…']);
+  assert.deepEqual(meta.meta, { title: 'Harbor Lights', channel: 'Ada Moreno', duration: 221 });
+});
+
+test('a stem download cut short mid-body fails the detection as sync_failed', { timeout: 20_000 }, async t => {
+  const files = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'audio/webm', 'Content-Length': '100000' });
+    res.write(Buffer.alloc(1000));
+    setTimeout(() => res.socket.destroy(), 20);
+  });
+  await new Promise(resolve => files.listen(0, '127.0.0.1', resolve));
+  t.after(() => files.close());
+  const base = `http://127.0.0.1:${files.address().port}`;
+  const { client, jobDir } = await companion(t, {
+    jobs: [{ _id: 'job3t', kind: 'beats', settings: {}, song: { duration: 8, stems: [{ key: 'a' }] }, fake: { result: { beats: [] } } }],
+    handlers: { 'media:signKeys': ({ keys }) => Object.fromEntries(keys.map(k => [k, `${base}/${k}`])) },
+  });
+  const failure = await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
+  assert.equal(failure.errorCode, 'sync_failed');
+  assert.match(failure.error, /^Download failed \(/);
+  assert.equal(existsSync(path.join(jobDir('job3t'), 'pid')), false, 'the processor never ran');
+});
+
+test('a paused account fails the job as account_paused', { timeout: 20_000 }, async t => {
+  const { client } = await companion(t, {
+    jobs: [{ _id: 'job6p', kind: 'separate', source: { type: 'url', value: 'https://youtu.be/x' }, settings: {}, quality: {} }],
+    handlers: { 'worker:claim': () => { throw new ConvexError({ code: 'account_suspended', message: 'Your account is suspended. Contact the app owner for help.' }); } },
+  });
+  const failure = await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
+  assert.equal(failure.errorCode, 'account_paused');
+  assert.equal(failure.error, 'Your account is suspended. Contact the app owner for help.');
 });
 
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };

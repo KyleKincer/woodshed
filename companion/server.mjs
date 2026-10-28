@@ -101,6 +101,15 @@ export function createProgressThrottle({
   let sentAt = -Infinity;
   let timer = null;
   let chain = Promise.resolve();
+  let seed = null;        // the claimed job's own stage, percent and message
+  let heldMeta = null;    // meta that arrived before any progress, with nothing to ride on
+
+  function withHeldMeta(event) {
+    if (!heldMeta) return event;
+    const out = { ...event, meta: heldMeta };
+    heldMeta = null;
+    return out;
+  }
 
   function dispatch(event) {
     if (timer !== null) { cancelAfter(timer); timer = null; }
@@ -120,6 +129,7 @@ export function createProgressThrottle({
     /** A progress event from the processor (or the companion itself). */
     push(event) {
       latest = event;
+      if (heldMeta) { void dispatch(withHeldMeta(event)); return; }
       const atZero = Math.floor(Number(event.percent) || 0) === 0;
       if (!sent || event.stage !== sent.stage || (atZero && event.message !== sent.message) || now() - sentAt >= intervalMs) {
         void dispatch(event);
@@ -128,21 +138,32 @@ export function createProgressThrottle({
       pending = event;
       schedule();
     },
-    /** Early metadata (B4): sent at once, with the latest stage, percent and message. */
+    /**
+     * The claimed job's stored stage, percent and message: what an early meta
+     * rides on before the processor reports anything, so a resumed job keeps
+     * its place (worker.progress writes stage, percent and message every time).
+     */
+    seed(event) { seed = event ?? null; },
+    /**
+     * Early metadata (B4): sent at once, with the latest (else the claimed)
+     * stage, percent and message; with neither, it rides on the next event.
+     */
     pushMeta(meta) {
-      const base = latest ?? { stage: 'download', percent: 0 };
+      const base = latest ?? seed;
+      if (!base) { heldMeta = meta; return; }
       latest = { stage: base.stage, percent: base.percent, ...(base.message !== undefined ? { message: base.message } : {}) };
       void dispatch({ ...latest, meta });
     },
     /** Sends anything pending; resolves when every send has settled. Never rejects. */
     flush() {
-      if (pending) void dispatch(pending);
+      if (pending) void dispatch(withHeldMeta(pending));
       return chain;
     },
     /** Drops anything pending (the job is gone). */
     cancel() {
       if (timer !== null) { cancelAfter(timer); timer = null; }
       pending = null;
+      heldMeta = null;
     },
     get latest() { return latest; },
   };
@@ -161,8 +182,11 @@ export function progressEvent(line) {
 
 /**
  * `worker.progress`'s `meta` (jobMetaValidator: title, channel, duration,
- * thumbnail, provider) from the processor's `{"meta": {title, artist, uploader,
- * duration, thumbnail, provider}}` line; null when nothing usable is in it.
+ * thumbnail) from the processor's `{"meta": {title, artist, uploader, duration,
+ * thumbnail}}` line; null when nothing usable is in it. `provider` is never
+ * forwarded: job.meta.provider is the Add sheet's Candidate vocabulary
+ * ('youtube'|'soundcloud'|'other'), and yt-dlp's extractor_key belongs only on
+ * the result (songs.provider).
  */
 export function jobMetaOf(meta) {
   if (!meta || typeof meta !== 'object') return null;
@@ -172,7 +196,6 @@ export function jobMetaOf(meta) {
     channel: text(meta.uploader) ?? text(meta.artist),
     duration: typeof meta.duration === 'number' && Number.isFinite(meta.duration) && meta.duration > 0 ? meta.duration : undefined,
     thumbnail: typeof meta.thumbnail === 'string' && /^https:\/\/\S+$/i.test(meta.thumbnail) && meta.thumbnail.length <= 2000 ? meta.thumbnail : undefined,
-    provider: text(meta.provider),
   };
   const clean = Object.fromEntries(Object.entries(out).filter(([, value]) => value !== undefined));
   return Object.keys(clean).length ? clean : null;
@@ -418,7 +441,12 @@ export async function startCompanion({
     try { response = await fetch(url, { signal }); }
     catch (error) { if (signal.aborted) throw error; throw new CodedError('sync_failed', `Download failed (${error.message}).`); }
     if (!response.ok || !response.body) throw new CodedError('sync_failed', `Download failed (${response.status}).`);
-    await pipeline(Readable.fromWeb(response.body), limitBytes(300_000_000), createWriteStream(destination));
+    // A body cut short or over the limit is a failed download too; a full disk stays disk_full, an abort stays silent.
+    try { await pipeline(Readable.fromWeb(response.body), limitBytes(300_000_000), createWriteStream(destination)); }
+    catch (error) {
+      if (signal.aborted || error?.code === 'ENOSPC') throw error;
+      throw new CodedError('sync_failed', `Download failed (${error?.message ?? String(error)}).`);
+    }
   }
 
   /** A progress event for the current job: /status follows every one; Convex gets them throttled. */
@@ -517,6 +545,7 @@ export async function startCompanion({
 
   async function runJob(queued, run) {
     const job = await client.mutation(api.worker.claim, { token: config.token, jobId: queued._id });
+    run.throttle.seed(progressEvent(job));
     const root = path.join(accountDir(), 'jobs', safe(job._id));
     run.root = root;
     await fs.mkdir(root, { recursive: true });
