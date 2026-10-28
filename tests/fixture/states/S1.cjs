@@ -394,25 +394,34 @@ module.exports = [
     },
   },
   {
+    // Starts on a Settings section page: on a laptop SE1's split layout replaces /settings with
+    // /settings/practice (route settingsPage), so the state opens that page directly (I2a-14).
     name: 's1-app-keys',
-    url: '/settings?fx-reset=1',
-    opts: {requires: APP, ready: 'settings', structure: PLACEHOLDER_OK, devices: ['laptop'], themes: ['light'], capture: false},
+    url: '/settings/practice?fx-reset=1',
+    opts: {requires: APP, ready: 'settingsPage', structure: PLACEHOLDER_OK, devices: ['laptop'], themes: ['light'], capture: false},
     async fn(page, t) {
+      t.expect(await page.evaluate(() => location.pathname) === '/settings/practice', 'starts outside the Library, on Settings');
       // Typing in the top bar's search outside the Library opens it filtered.
       await page.getByRole('searchbox', {name: 'Search songs'}).fill('glass');
       await t.ready('library');
-      t.expect(await page.evaluate(() => location.search) === '?q=glass', 'the Library opens with ?q=glass');
+      t.expect(await page.evaluate(() => location.pathname + location.search) === '/?q=glass', 'the Library opens with ?q=glass');
       // Esc in the field blurs it; Esc again (app.escape) clears the search.
       await page.keyboard.press('Escape');
       t.expect(await page.evaluate(() => document.activeElement === document.body), 'Esc blurs the search field');
       await page.keyboard.press('Escape');
       t.expect(await page.getByRole('searchbox', {name: 'Search songs'}).inputValue() === '', 'Esc clears the search');
-      // ⌘K and ? reach the registry from anywhere.
+      // ⌘K and ? reach the registry from anywhere: each opens its dialog, Esc closes it.
       const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
       t.expect(await page.evaluate(() => window.__woodshed.commands.isEnabled('app.palette')), 'app.palette is enabled');
       await page.keyboard.press(`${mod}+KeyK`);
+      await page.waitForSelector('dialog.app-palette[open]');
       await page.keyboard.press('Escape');
+      await page.waitForSelector('dialog.app-palette[open]', {state: 'detached'});
       t.expect(await page.evaluate(() => window.__woodshed.commands.isEnabled('app.shortcuts')), 'app.shortcuts is enabled');
+      await page.keyboard.press('Shift+Slash');
+      await page.waitForSelector('dialog.app-shortcuts[open]');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('dialog.app-shortcuts[open]', {state: 'detached'});
     },
   },
   {

@@ -24,7 +24,7 @@ import '../styles/main.css';
 import {bootCommon} from './boot-common.js';
 import {bootRoutes, matchBootRoute, redirects, routes} from './routes.js';
 import * as auth from './auth.js';
-import {query} from '../api/client.js';
+import * as adminApi from '../api/admin.js';
 import {account, startAccount} from './account.js';
 import {startData} from './data.js';
 import {registry} from './commands.js';
@@ -199,7 +199,7 @@ export async function boot({win = globalThis.window, doc = globalThis.document} 
   }
 
   // 4.
-  const admin = await query('admin:access', {}).catch(() => false);
+  const admin = await adminApi.access().catch(() => false);
   store.session.value = {user, status, admin: admin === true, online: platform.online.peek()};
   effect(() => {
     const online = platform.online.value;

@@ -46,6 +46,12 @@ vi.mock('../src/api/client.js', async importOriginal => ({
     return null;
   }),
 }));
+// Boot step 4 goes through SE3's wrapper (Appendix C item 57); the client mock above still records
+// any raw 'admin:access' call so a regression to calling the client directly shows in h.log.
+vi.mock('../src/api/admin.js', async importOriginal => ({
+  ...(await importOriginal()),
+  access: vi.fn(async () => { h.log.push('admin.access'); return h.admin; }),
+}));
 vi.mock('../src/api/settings.js', () => ({
   subscribeConfig: vi.fn(onValue => { h.log.push('settings.config'); h.configs.push(onValue); return () => {}; }),
   patch: vi.fn(async change => { h.patch = change; return {practice: change.practice}; }),
@@ -169,7 +175,7 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
   test('steps run in order: startup → auth → admin.access → desktop → account → data → dispatcher → router → ready', async () => {
     const {result, store} = await bootApp('/');
     expect(result.kind).toBe('app');
-    expect(h.log).toEqual(['showStartup', 'auth.configure', 'auth.initialize', 'admin:access', 'desktop.start', 'settings.config', 'startData',
+    expect(h.log).toEqual(['showStartup', 'auth.configure', 'auth.initialize', 'admin.access', 'desktop.start', 'settings.config', 'startData',
       'startDispatcher', 'mount library', 'finishStartup']);
     expect(store.session.peek()).toEqual({user, status: 'active', admin: true, online: true});
     expect(root.dataset.startup).toBe('ready');
@@ -201,8 +207,8 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
 
   test('step 4: a failing admin.access counts as not an admin', async () => {
     const env = await load('/');
-    const client = await import('../src/api/client.js');
-    client.query.mockImplementationOnce(async () => { throw new Error('offline'); });
+    const adminApi = await import('../src/api/admin.js');
+    adminApi.access.mockImplementationOnce(async () => { throw new Error('offline'); });
     const result = await env.main.boot();
     h.router = result.router;
     expect(env.store.session.peek().admin).toBe(false);
@@ -230,7 +236,7 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
     expect(result.kind).toBe('signin');
     expect(document.getElementById('app').textContent).toContain('This sign-in link expired. Please sign in again.');
     expect(root.dataset.startup).toBe('signin');
-    expect(h.log).not.toContain('admin:access');
+    expect(h.log).not.toContain('admin.access');
     expect(h.log).not.toContain('startData');
     expect(h.log).not.toContain('startDispatcher');
   });
@@ -270,7 +276,7 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
     expect(result.kind).toBe('paused');
     expect(document.getElementById('app').textContent).toContain('Your account is paused');
     expect(root.dataset.startup).toBe('ready');
-    expect(h.log).not.toContain('admin:access');
+    expect(h.log).not.toContain('admin.access');
     expect(h.log).not.toContain('startData');
     h.onChange.at(-1)({user, status: 'active'});
     expect(reload).toHaveBeenCalledTimes(1);
