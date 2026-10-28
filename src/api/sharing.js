@@ -20,7 +20,12 @@
 // tuning, duration, stemMode, quality, stems: [{name, key: 'stem-<i>'}], coverKey: 'cover' | null, coverUrl,
 // artwork, tempo: {songMap} (or a pre-1.6 song's legacy {source?, map, detected}) | undefined,
 // practice: a v2 practice blob with nothing personal (shared/practice.ts#sanitizeForShare)}.
-import {action, mutation, publicClient, query, subscribe} from './client.js';
+//
+// `view` and `playback` are async, so a failure inside publicClient() (no backend configured) is a
+// rejection, never a synchronous throw. `playback` needs `publicClient().action`, which §2.1 does
+// not list yet (the F2 amendment from BK5's handoff); until client.js adds it, playback rejects with
+// an ApiError ('unknown') instead of a TypeError.
+import {ApiError, action, mutation, publicClient, query, subscribe} from './client.js';
 
 /** The shape of a share token (64 lowercase hex characters); anything else is never sent. */
 export const TOKEN_RE = /^[a-f0-9]{64}$/;
@@ -30,9 +35,17 @@ export const status = ({id}) => query('sharing:status', {id});
 export const create = ({id, includeNotation}) => mutation('sharing:create', includeNotation === undefined ? {id} : {id, includeNotation});
 export const revoke = ({id}) => mutation('sharing:revoke', {id});
 
-export const view = ({token}) => publicClient().query('sharing:view', {token});
-export const subscribeView = ({token}, onValue, onError) => publicClient().subscribe('sharing:view', {token}, onValue, onError);
-export const playback = ({token}) => publicClient().action('shareAudio:playback', {token});
+export const view = async ({token}) => publicClient().query('sharing:view', {token});
+export const subscribeView = ({token}, onValue, onError) => {
+  let pub;
+  try { pub = publicClient(); } catch (err) { onError?.(err); return () => {}; }
+  return pub.subscribe('sharing:view', {token}, onValue, onError);
+};
+export const playback = async ({token}) => {
+  const pub = publicClient();
+  if (typeof pub.action !== 'function') throw new ApiError({message: 'Shared playback needs publicClient().action (architecture §2.1).'});
+  return pub.action('shareAudio:playback', {token});
+};
 
 export const saved = ({token}) => query('sharing:saved', {token});
 export const subscribeSaved = ({token}, onValue, onError) => subscribe('sharing:saved', {token}, onValue, onError);

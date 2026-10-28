@@ -69,7 +69,15 @@ export function shareView(song) {
   };
 }
 
-/** Commit a copy of the shared song, as convex/sharing.ts#finishImport does; idempotent. */
+/** As convex/sharing.ts#partHasChart: the copied part holds a chart when any bar has a hit or is marked reviewed. */
+export const scoreHasChart = score => (score?.bars ?? []).some(b => b.hits?.length > 0 || b.coverage === 'reviewed');
+
+/**
+ * Commit a copy of the shared song, as convex/sharing.ts#finishImport does; idempotent.
+ * Built from an explicit field list (the snapshot's song fields plus the columns the
+ * fixture's library rows always carry), so source-only fields such as `resolvedUrl`,
+ * `provider`, `metadataRecordingId` or `bpm` never reach the copy.
+ */
 function copyOf(song) {
   db.shareCopies ??= {};
   const existing = db.shareCopies[song.id];
@@ -77,19 +85,25 @@ function copyOf(song) {
   const id = `${song.id}-copy`, view = shareView(song), now = Date.now();
   const tempo = view.tempo && (view.tempo.songMap || hasRealMap(view.tempo)) ? {songMap: songMapFromTempo(view.tempo, view.duration)} : null;
   const withPart = db.shares[song.id]?.includeNotation !== false && !!db.notation[song.id];
-  const real = hasRealMap(tempo, {hasPart: withPart});
+  const score = withPart ? clone(db.notation[song.id].score) : null;
+  const hasChart = withPart && scoreHasChart(score);
+  const real = hasRealMap(tempo, {hasPart: hasChart});
   const bars = real ? barsOf(songMapFromTempo(tempo, view.duration), view.duration) : null;
-  const {ownerName: _owner, revision: _revision, practice, ...fields} = view;
+  const practice = view.practice;
   db.songs.unshift({
-    ...clone(song), ...fields, id, addedAt: now, tags: [], notes: '', source: null, metadataLocks: [], metadataStatus: null,
-    stems: clone(song.stems), coverKey: song.coverKey, coverUrl: song.coverUrl, artwork: view.artwork ?? null,
-    tempo, tempoRev: 0, hasChart: withPart, lastPracticedAt: undefined, practice: undefined,
-    recordingUnconfirmed: undefined, needsReview: undefined, sectionSuggestion: undefined, metadataSuggestion: undefined,
-    mapSummary: mapSummaryOf(tempo, view.duration, {hasPart: withPart}),
+    id, addedAt: now,
+    title: view.title || 'Shared song', artist: view.artist, album: view.album, albumArtist: view.albumArtist, year: view.year,
+    genre: view.genre, trackNumber: view.trackNumber, discNumber: view.discNumber, musicalKey: view.musicalKey, tuning: view.tuning,
+    duration: view.duration, stemMode: view.stemMode, quality: clone(view.quality),
+    // The fixture's stand-ins for the copied audio and cover objects.
+    stems: clone(song.stems), coverKey: song.coverKey ?? null, coverUrl: song.coverUrl ?? null, artwork: view.artwork ? clone(view.artwork) : null,
+    uploader: '', tags: [], notes: '', source: null, metadataLocks: [], metadataStatus: null, metadataRecordingId: null, metadataReleaseId: null,
+    tempo, tempoRev: 0, hasChart,
+    mapSummary: mapSummaryOf(tempo, view.duration, {hasPart: hasChart}),
     practiceSummary: summarize(practice, bars ? {sections: sectionsFromBars(bars), bars} : null),
   });
   db.songPractice.push({songId: id, userId: db.user._id, practice, updatedAt: now});
-  if (withPart) db.notation[id] = {score: clone(db.notation[song.id].score), revision: 1};
+  if (withPart) db.notation[id] = {score, revision: 1};
   db.shareCopies[song.id] = id;
   return id;
 }
@@ -132,6 +146,11 @@ export const handlers = {
     await wait(800);
     const song = sharedSong(token);
     if (!song) throw unavailable();
+    // As convex/shareAudio.ts#save: an existing copy (or, under fx-share=saved, the song) is returned
+    // as is, and a save already in progress is refused.
+    const saved = handlers['sharing:saved']({token});
+    if (saved?.songId) return saved.songId;
+    if (saved?.status === 'copying') throw convexError({code: 'invalid', message: 'This song is already being added. Please wait.'});
     return copyOf(song);
   },
 };

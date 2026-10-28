@@ -128,6 +128,46 @@ describe('Add to my library', () => {
     expect(await codeOf(call('action', 'shareAudio:save', {token: SHARE_TOKEN}))).toBe('account_export_only');
   });
 
+  it('under fx-share=saved save returns the saved song; under fx-share=copying it is refused, as the server does', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout']});
+    start('?fx-share=saved');
+    let pending = call('action', 'shareAudio:save', {token: SHARE_TOKEN});
+    await vi.advanceTimersByTimeAsync(800);
+    expect(await pending).toBe('glasshouse');
+    expect(runtime.db.songs.some(s => s.id === 'glasshouse-copy')).toBe(false);
+    start('?fx-share=copying');
+    pending = codeOf(call('action', 'shareAudio:save', {token: SHARE_TOKEN}));
+    await vi.advanceTimersByTimeAsync(800);
+    expect(await pending).toBe('invalid');
+    expect(runtime.db.songs.some(s => s.id === 'glasshouse-copy')).toBe(false);
+    expect(await call('query', 'sharing:saved', {token: SHARE_TOKEN})).toEqual({songId: null, status: 'copying'});
+  });
+
+  it('a copied part with no hits and no reviewed bars is no chart; source-only fields never reach the copy', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout']});
+    const source = runtime.db.songs.find(s => s.id === 'glasshouse');
+    Object.assign(source, {resolvedUrl: 'https://www.youtube.com/watch?v=fixture01', provider: 'Youtube', metadataRecordingId: 'rec-1', bpm: 120});
+    runtime.db.notation.glasshouse.score.bars = runtime.db.notation.glasshouse.score.bars.map(b => ({...b, hits: [], coverage: 'unstarted'}));
+    const pending = call('action', 'shareAudio:save', {token: SHARE_TOKEN});
+    await vi.advanceTimersByTimeAsync(800);
+    const id = await pending;
+    const copy = runtime.db.songs.find(s => s.id === id);
+    expect(copy.hasChart).toBe(false);
+    for (const key of ['resolvedUrl', 'provider', 'bpm', 'offset', 'ownerName', 'revision', 'practice', 'lastPracticedAt', 'needsReview']) expect(copy).not.toHaveProperty(key);
+    expect(copy.metadataRecordingId).toBeNull();
+    expect(copy.id).toBe('glasshouse-copy');
+  });
+
+  it('a part with only reviewed (empty) bars still counts as a chart', async () => {
+    vi.useFakeTimers({toFake: ['setTimeout']});
+    const bars = runtime.db.notation.glasshouse.score.bars;
+    runtime.db.notation.glasshouse.score.bars = [{...bars[0], hits: [], coverage: 'reviewed'}];
+    const pending = call('action', 'shareAudio:save', {token: SHARE_TOKEN});
+    await vi.advanceTimersByTimeAsync(800);
+    expect(runtime.db.songs.find(s => s.id === 'glasshouse-copy').hasChart).toBe(true);
+    expect(await pending).toBe('glasshouse-copy');
+  });
+
   it('playback signs every stem and the cover', async () => {
     const urls = await call('action', 'shareAudio:playback', {token: SHARE_TOKEN});
     expect(Object.keys(urls).sort()).toEqual(['cover', 'stem-0', 'stem-1', 'stem-2', 'stem-3']);

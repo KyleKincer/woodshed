@@ -1,25 +1,41 @@
 // src/api/sharing.js (package BK5): each wrapper sends exactly the contract
 // arguments to its Convex function through src/api/client.js; visitor calls go
 // through the public client, owner and save calls through the signed-in one.
-import {beforeEach, describe, expect, test, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 
 const fake = vi.hoisted(() => {
   const make = () => ({query: vi.fn(async () => 'pq'), subscribe: vi.fn(() => 'off-public'), action: vi.fn(async () => 'pa'), close: vi.fn()});
-  return {make, pub: make()};
+  return {make, pub: make(), real: false};
 });
-vi.mock('../src/api/client.js', () => ({
-  query: vi.fn(async () => 'q'),
-  mutation: vi.fn(async () => 'm'),
-  action: vi.fn(async () => 'a'),
-  subscribe: vi.fn(() => 'off'),
-  publicClient: vi.fn(() => fake.pub),
-}));
+// The real client.js runs on a stand-in Convex client, so `publicClient` can be the real one.
+vi.mock('convex/browser', () => ({ConvexClient: class {
+  constructor(url) { this.url = url; }
+  async query() { return 'real-q'; }
+  onUpdate() { return () => {}; }
+  async close() {}
+}}));
+// src/app/auth.js does not exist yet (as in tests/api-client.test.js, both specifiers are mocked).
+vi.mock('../src/app/auth.js', () => ({client: () => null}));
+vi.mock('../app/auth.js', () => ({client: () => null}));
+vi.mock('../src/api/client.js', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ApiError: actual.ApiError,
+    query: vi.fn(async () => 'q'),
+    mutation: vi.fn(async () => 'm'),
+    action: vi.fn(async () => 'a'),
+    subscribe: vi.fn(() => 'off'),
+    publicClient: vi.fn(() => fake.real ? actual.publicClient() : fake.pub),
+    realPublicClient: actual.publicClient,
+  };
+});
 
 const client = await import('../src/api/client.js');
 const sharing = await import('../src/api/sharing.js');
 const TOKEN = 'a3f1'.repeat(16);
 
-beforeEach(() => { vi.clearAllMocks(); fake.pub = fake.make(); });
+beforeEach(() => { vi.clearAllMocks(); fake.pub = fake.make(); fake.real = false; });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('owner calls (signed-in client)', () => {
   test('status, create and revoke', async () => {
@@ -64,6 +80,33 @@ describe('visitor calls (public client)', () => {
     await expect(sharing.view({token: TOKEN})).rejects.toBe(error);
     client.action.mockRejectedValueOnce(error);
     await expect(sharing.save({token: TOKEN})).rejects.toBe(error);
+  });
+});
+
+describe('against the real publicClient (architecture §2.1)', () => {
+  test('playback rejects with an ApiError, not a TypeError, while publicClient() has no action', async () => {
+    vi.stubEnv('VITE_CONVEX_URL', 'https://example.convex.cloud');
+    fake.real = true;
+    const pub = client.realPublicClient();
+    expect(Object.keys(pub).sort()).toEqual(['close', 'query', 'subscribe']); // flips when F2 adds action: drop the guard then
+    expect(await sharing.view({token: TOKEN})).toBe('real-q');
+    const error = await sharing.playback({token: TOKEN}).catch(e => e);
+    expect(error).toBeInstanceOf(client.ApiError);
+    expect(error.code).toBe('unknown');
+    await pub.close();
+  });
+  test('with no backend configured, view and playback reject (never throw) and subscribeView reports onError', async () => {
+    vi.stubEnv('VITE_CONVEX_URL', '');
+    fake.real = true;
+    const viewing = sharing.view({token: TOKEN});
+    const playing = sharing.playback({token: TOKEN});
+    await expect(viewing).rejects.toBeInstanceOf(client.ApiError);
+    await expect(playing).rejects.toBeInstanceOf(client.ApiError);
+    const onError = vi.fn();
+    const off = sharing.subscribeView({token: TOKEN}, () => {}, onError);
+    expect(onError).toHaveBeenCalledWith(expect.any(client.ApiError));
+    expect(off).toBeTypeOf('function');
+    off();
   });
 });
 
