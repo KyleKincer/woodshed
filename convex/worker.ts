@@ -469,16 +469,3 @@ export const importSong = mutation({
     return { jobId, songId: null };
   },
 });
-
-/** An updating desktop cancels only its own in-flight job. Deleted with its callers in CPB (D12). */
-export const cancelForUpdate = mutation({
-  args: { token: v.string(), jobId: v.id('jobs') },
-  returns: v.boolean(),
-  handler: async (ctx, { token, jobId }) => {
-    const device = await requireDevice(ctx, token);
-    const job = await ctx.db.get('jobs', jobId);
-    if (!job || job.userId !== device.userId || job.deviceId !== device._id || ['done', 'canceled'].includes(job.status)) return false;
-    await ctx.db.patch('jobs', jobId, { status: 'canceled', updatedAt: Date.now() });
-    return true;
-  },
-});
