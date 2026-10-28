@@ -13,6 +13,7 @@ import { fail, isJobErrorCode } from './lib/errors';
 import { jobMetaValidator, presenceStateValidator, suggestedSectionValidator, SECTION_SUGGESTIONS_MAX } from './lib/validators';
 import { barsOf, fromBeats, hasRealMap, mapSummaryOf, sectionsOf, songMapFromTempo, validateSongMap } from '../shared/song-map';
 import { PRACTICE_CAP, prunePractice, summarize, upgradePractice } from '../shared/practice';
+import { mapSummaryFor, summaryMapOf } from './migrations';
 
 /**
  * The companion's side of a job (architecture §6.6). Every function here
@@ -243,15 +244,20 @@ export const resultValidator = v.object({
   resolvedUrl: v.optional(v.string()), provider: v.optional(v.string()),
 });
 
-/** An import's practice and summaries, from `job.importMeta` (B1, B2). */
-function importedState(tempo: unknown, rawPractice: unknown, duration: number) {
-  const mapSummary = mapSummaryOf(tempo, duration);
-  if (rawPractice === null || rawPractice === undefined) return { mapSummary, practice: null };
+/**
+ * A new song's B1 fields, written at insert so `migrations.isUpgraded` holds
+ * from the start and the I0B backfill cron never has to visit it: no job
+ * brings a chart (`hasChart: false`), `mapSummary` from the imported tempo
+ * (none for a separation), and for an import its practice and summary
+ * (B1, B2). Unmapped songs never get bar labels; their loops read
+ * 'm:ss–m:ss loop'.
+ */
+function newSongState(tempo: unknown, rawPractice: unknown, duration: number) {
+  const song = { tempo, duration, hasChart: false };
+  const base = { hasChart: false, mapSummary: mapSummaryFor(song) };
+  if (rawPractice === null || rawPractice === undefined) return { ...base, practice: null };
   const { value } = prunePractice(upgradePractice(rawPractice, { legacyTempo: tempo, duration }), PRACTICE_CAP);
-  // Unmapped songs never get bar labels; their loops read 'm:ss–m:ss loop'.
-  const data = hasRealMap(tempo) ? songMapFromTempo(tempo, duration) : null;
-  const practiceSummary = summarize(value, data ? { sections: sectionsOf(data, duration), bars: barsOf(data, duration) } : null);
-  return { mapSummary, practice: value, practiceSummary, lastPracticedAt: value.lastAt };
+  return { ...base, practice: value, practiceSummary: summarize(value, summaryMapOf(song)), lastPracticedAt: value.lastAt };
 }
 
 /** B6: queue bars for a fresh separation when the account wants them and the song has no map yet. */
@@ -318,10 +324,11 @@ export const finish = internalMutation({
     } else {
       const meta = job.kind === 'import' && isObject(job.importMeta) ? job.importMeta : null;
       const tempo = meta && meta.tempo !== null && meta.tempo !== undefined ? meta.tempo : undefined;
-      const state = importedState(tempo, meta?.practice, result.duration);
+      const state = newSongState(tempo, meta?.practice, result.duration);
       songId = await ctx.db.insert('songs', {
         ...fields,
         originDeviceId: d._id,
+        hasChart: state.hasChart,
         mapSummary: state.mapSummary,
         // D43: a search the user did not pick from B4 candidates may be the wrong recording.
         ...(job.source?.type === 'search' && job.confirmed !== true ? { recordingUnconfirmed: true } : {}),

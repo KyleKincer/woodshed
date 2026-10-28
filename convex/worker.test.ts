@@ -13,6 +13,8 @@ import { hashToken } from './devices';
 import { BOT_CHECK_BACKOFF_MS, RESUME_MESSAGE } from './worker';
 import { barsOf, defaultSongMap, hasRealMap, sectionsOf, songMapFromTempo, type SongMapData } from '../shared/song-map';
 import { PRACTICE_CAP } from '../shared/practice';
+import { isUpgraded } from './migrations';
+import { claimInto } from './renditions';
 
 const modules = import.meta.glob('./**/*.ts');
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -43,26 +45,28 @@ function beatPairs(bpm: number, offset: number, duration: number, perBar = 4) {
   return out;
 }
 
-async function setup() {
+/** `account: true` makes alice a real `users` row (the backfill cron walks `users`); otherwise her id is 'alice'. */
+async function setup({ account = false } = {}) {
   const t = convexTest(schema, modules);
-  const alice = t.withIdentity({ subject: 'alice' }), bob = t.withIdentity({ subject: 'bob' });
+  const aliceId: string = account ? await t.run(ctx => ctx.db.insert('users', { emailVerified: true, createdAt: 1 })) : 'alice';
+  const alice = t.withIdentity({ subject: aliceId }), bob = t.withIdentity({ subject: 'bob' });
   const deviceId = await alice.mutation(api.devices.pair, { tokenHash: await hashToken(TOKEN), name: 'Studio Mac' });
   const otherId = await bob.mutation(api.devices.pair, { tokenHash: await hashToken(OTHER_TOKEN), name: 'Other' });
   let clock = 1_000;
   const job = (fields: Record<string, unknown> = {}) => t.run(ctx => {
     const now = clock++;
     return ctx.db.insert('jobs', {
-      userId: 'alice', deviceId, kind: 'separate', label: 'Song', status: 'queued', stage: 'queued', percent: 0,
+      userId: aliceId, deviceId, kind: 'separate', label: 'Song', status: 'queued', stage: 'queued', percent: 0,
       attempts: 0, createdAt: now, updatedAt: now, ...fields,
     } as never) as Promise<Id<'jobs'>>;
   });
   const song = (fields: Record<string, unknown> = {}) => t.run(ctx => ctx.db.insert('songs', {
-    userId: 'alice', title: 'Harbor Lights', duration: 200, stems: [], stemMode: 'full', quality, addedAt: 1, ...fields,
+    userId: aliceId, title: 'Harbor Lights', duration: 200, stems: [], stemMode: 'full', quality, addedAt: 1, ...fields,
   } as never) as Promise<Id<'songs'>>);
   const getJob = (id: Id<'jobs'>) => t.run(ctx => ctx.db.get('jobs', id));
   const getSong = (id: Id<'songs'>) => t.run(ctx => ctx.db.get('songs', id));
-  const settings = (value: unknown) => t.run(ctx => ctx.db.insert('userSettings', { userId: 'alice', settings: value }));
-  return { t, alice, bob, deviceId, otherId, job, song, getJob, getSong, settings };
+  const settings = (value: unknown) => t.run(ctx => ctx.db.insert('userSettings', { userId: aliceId, settings: value }));
+  return { t, aliceId, alice, bob, deviceId, otherId, job, song, getJob, getSong, settings };
 }
 
 /** Reserves one stem and finishes the (claimed) job, as blobs.complete does after the upload. */
@@ -425,6 +429,39 @@ describe('worker.finish', () => {
     const result = { title: 'x', duration: 10, stemMode: 'full', quality, stems: [{ name: 'drums', key: 'missing' }] };
     expect(await caught(s.t.mutation(internal.worker.finish, { token: TOKEN, jobId, result }))).toMatchObject({ code: 'invalid', message: 'Invalid upload manifest.' });
     expect((await caught(s.t.mutation(internal.worker.finish, { token: OTHER_TOKEN, jobId, result }))).code).toBe('not_found');
+  });
+
+  // I0B-6: a song inserted without the B1 fields made every hourly
+  // crons.backfillB1Tick start a whole-table backfill.
+  test('new songs are B1-upgraded at insert (hasChart, mapSummary), so the backfill cron finds nothing to do', async () => {
+    const s = await setup({ account: true });
+    const separated = await finishJob(s, await s.job({ source: { type: 'url', value: 'https://youtu.be/x' } }));
+    const tempo = { songMap: madeMap(200, 100, { 0: 'Intro' }) };
+    const { jobId } = await s.t.mutation(api.worker.importSong, { token: TOKEN, legacyId: 'legacy-9', title: 'Old Friends', tempo, practice: { rate: 0.9 } });
+    const imported = await finishJob(s, jobId!, { title: 'Old Friends' });
+    const bare = await s.t.mutation(api.worker.importSong, { token: TOKEN, legacyId: 'legacy-10', title: 'Bare' });
+    const importedBare = await finishJob(s, bare.jobId!, { title: 'Bare' });
+    for (const id of [separated, imported, importedBare]) expect(isUpgraded((await s.getSong(id))!)).toBe(true);
+    expect(await s.getSong(separated)).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] } });
+    expect(await s.getSong(imported)).toMatchObject({ hasChart: false, mapSummary: { real: true, bpm: 100, meter: '4/4', sections: ['Intro'] } });
+    expect(await s.getSong(importedBare)).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] } });
+    expect(await s.t.mutation(internal.crons.backfillB1Tick, {})).toEqual({ started: false, reason: 'complete' });
+    const backfills = (await s.t.run(ctx => ctx.db.system.query('_scheduled_functions').collect())).filter(f => f.name.includes('backfillB1'));
+    expect(backfills).toEqual([]);
+  });
+
+  test('a song claimed from a shared rendition is B1-upgraded at insert too', async () => {
+    const s = await setup({ account: true });
+    const songId = await s.t.run(async ctx => {
+      const id = await ctx.db.insert('renditions', {
+        sourceKey: 'url:youtu.be/x', qualityKey: 'q', stems: [], title: 'Harbor Lights', duration: 200, stemMode: 'full', quality, refCount: 1, createdAt: 1,
+      });
+      return await claimInto(ctx, (await ctx.db.get('renditions', id))!, s.aliceId, { type: 'url', value: 'https://youtu.be/x' }, 5);
+    });
+    const song = (await s.getSong(songId))!;
+    expect(isUpgraded(song)).toBe(true);
+    expect(song).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] } });
+    expect(await s.t.mutation(internal.crons.backfillB1Tick, {})).toEqual({ started: false, reason: 'complete' });
   });
 });
 
