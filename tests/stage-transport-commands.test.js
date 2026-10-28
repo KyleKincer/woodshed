@@ -18,7 +18,8 @@ import {clock as appClock} from '../src/app/clock.js';
 import {defineGlobalCommands} from '../src/app/global-commands.js';
 import {PROFILES} from '../src/app/pedals.js';
 import {PARSED_ONLY} from '../src/app/palette.js';
-import {COPY, defineTransportCommands, isMapped, snapshotOf, stemLabel, transportOf} from '../src/stage/transport-commands.js';
+import {COPY, defineTransportCommands, isMapped, loadFailed, snapshotOf, stemLabel, transportOf} from '../src/stage/transport-commands.js';
+import {COPY as HUD_COPY} from '../src/stage/hud.copy.js';
 import {checkSourceText} from '../scripts/check-source.mjs';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
@@ -312,6 +313,69 @@ describe('play, stop, pause, again', () => {
     expect(b.ts.transport.position()).toBeGreaterThan(16);
     expect(b.ts.transport.position()).toBeLessThan(16.5);
     expect(b.snap.cue).toBe(3);
+  });
+});
+
+describe('a load error (spec §4.12, I2a-4)', () => {
+  /** A real session whose stem signing fails: load.phase 'error', no audio behind the transport. */
+  const failing = () => bed({media: {signKeys: vi.fn(async () => { throw new Error('offline'); })}});
+
+  test('Play / Stop and Again are disabled with the controls\' load-error copy, and the registry refuses them', async () => {
+    const b = await failing();
+    expect(b.ts.session.load.peek().phase).toBe('error');
+    expect(COPY.loadError).toBe(HUD_COPY.loadError);
+    for (const id of ['transport.playStop', 'transport.again']) {
+      expect(b.reg.isEnabled(id), id).toBe(false);
+      expect(b.reg.disabledReasonFor(id), id).toBe(COPY.loadError);
+      expect(b.state(id), id).toMatchObject({visible: true, enabled: false, reason: COPY.loadError});
+    }
+    const playCalls = vi.spyOn(b.ts.session.transport, 'playStop');
+    const againCalls = vi.spyOn(b.ts.session.transport, 'again');
+    expect(b.run('transport.playStop')).toBe(false);
+    expect(b.run('transport.again')).toBe(false);
+    await settle();
+    expect(playCalls).not.toHaveBeenCalled();
+    expect(againCalls).not.toHaveBeenCalled();     // so no "Play when ready" is armed behind the error
+    expect(b.snap.phase).not.toBe('playing');
+  });
+
+  test('the keyboard (Space, Enter) is taken but runs nothing while the load failed', async () => {
+    const b = await failing();
+    document.documentElement.dataset.place = 'stage';
+    document.documentElement.dataset.posture = 'stage';
+    const stop = startDispatcher({registry: b.reg, platform: 'win'});
+    current.push(() => stop());
+    const playCalls = vi.spyOn(b.ts.session.transport, 'playStop');
+    const againCalls = vi.spyOn(b.ts.session.transport, 'again');
+    for (const [code, k] of [['Space', ' '], ['Enter', 'Enter']]) {
+      const e = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, code, key: k});
+      document.body.dispatchEvent(e);
+      document.body.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, cancelable: true, code, key: k}));
+      expect(e.defaultPrevented, code).toBe(true);   // the binding still owns the key: no page scroll, no fall-through
+    }
+    await settle();
+    expect(playCalls).not.toHaveBeenCalled();
+    expect(againCalls).not.toHaveBeenCalled();
+  });
+
+  test('a fake session: enabled while loading or ready, disabled only in the error phase', () => {
+    const reg = createRegistry();
+    defineTransportCommands({registry: reg});
+    const fake = createFakeSession({load: 'loading'});
+    reg.provide('session', () => fake);
+    expect(loadFailed(reg.context())).toBe(false);
+    expect(reg.isEnabled('transport.again')).toBe(true);   // Again arms "Play when ready" while loading
+    fake.setLoad({phase: 'error', error: {code: 'storage'}});
+    expect(loadFailed(reg.context())).toBe(true);
+    for (const id of ['transport.playStop', 'transport.again']) {
+      expect(reg.isEnabled(id), id).toBe(false);
+      expect(reg.disabledReasonFor(id), id).toBe(COPY.loadError);
+    }
+    expect(reg.run('transport.again')).toBe(false);
+    expect(fake.transport.calls).toEqual([]);
+    fake.setLoad({phase: 'ready', error: null});
+    expect(reg.isEnabled('transport.playStop')).toBe(true);
+    expect(reg.disabledReasonFor('transport.playStop')).toBe(null);
   });
 });
 
