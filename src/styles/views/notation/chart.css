@@ -1,0 +1,25 @@
+/* The rehearsal chart (src/js/notation/chart.js): chrome-less, it fills the
+   music area of its surface. The scroller keeps a stable gutter so a
+   scrollbar appearing never changes the music width (§7.5). */
+@layer views {
+  .chart { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--bg); color: var(--ink); }
+  .chart-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; outline: none; }
+  /* The bottom pad lets the last systems reach the follow line and turn a page. */
+  .chart-score { max-width: 1500px; margin: 0 auto; padding: var(--s2) var(--s2) 40vh; transform-origin: 50% 0; }
+  .chart-score[data-previewing] { will-change: transform; }
+  .chart-score .score-stage { touch-action: pan-x pan-y; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+
+  /* While playing, the loop handles stay mouse-draggable at half strength (spec §4.8). */
+  .chart[data-glass] .score-handles { opacity: .5; }
+
+  .chart-empty { margin: 0 auto; padding: var(--s8) var(--s5); max-width: 560px; text-align: center; }
+  .chart-empty h2 { margin: 0; font: var(--fw-bold) var(--fs-24)/1.25 var(--font-ui); color: var(--ink); }
+  .chart-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s3); margin-top: var(--s5); }
+  .chart-empty-actions button {
+    min-height: var(--h-md); padding: 0 var(--s4); border: 1px solid var(--line-strong); border-radius: var(--r-control);
+    background: var(--surface); color: var(--ink); font: var(--fw-semibold) var(--fs-16)/1 var(--font-ui); cursor: pointer;
+  }
+  .chart-empty-actions button:hover { background: var(--surface-2); }
+  .chart-empty-actions button[data-primary] { border-color: var(--accent-fill); background: var(--accent-fill); color: var(--on-accent); }
+  .chart-empty-actions button[data-primary]:hover { border-color: var(--accent); }
+}
