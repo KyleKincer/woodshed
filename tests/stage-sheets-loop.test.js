@@ -17,6 +17,8 @@ import {closeSheets, openSheet, openSheetName} from '../src/stage/sheets/host.js
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
 import {installPopoverShim, keydown, restoreDomShims} from './helpers/dom.js';
+import {startDispatcher} from '../src/app/dispatch.js';
+import {COPY as MENU_COPY} from '../src/stage/menus.js';
 import {sectioned, tempoOf} from './fixtures/maps.js';
 
 let clock, restoreAudio, current = [];
@@ -195,7 +197,7 @@ describe('edge nudges (spec §4.7, transport rule 16)', () => {
   test('mapped: by a bar, Alt by a beat; the edge values read bar · beat', async () => {
     const b = await bed({practice: CHORUS()});
     const values = () => [...b.host.querySelectorAll('.loop-card-edge-value')].map((n) => n.textContent);
-    expect(values()).toEqual(['17 · 1', '25 · 1']);
+    expect(values()).toEqual(['17 · 1', '24 · 4']);
     b.click(COPY.later(COPY.start, COPY.unitBar));
     expect(b.snap.loop).toMatchObject({a: 34, b: 48});
     b.click(COPY.later(COPY.start, COPY.unitBar), {altKey: true});
@@ -206,10 +208,20 @@ describe('edge nudges (spec §4.7, transport rule 16)', () => {
     expect(b.snap.loop.b).toBe(48);
     b.click(COPY.earlier(COPY.start, COPY.unitBar), {altKey: true});
     expect(b.snap.loop.a).toBe(34);
-    expect(values()).toEqual(['18 · 1', '25 · 1']);
+    expect(values()).toEqual(['18 · 1', '24 · 4']);
     // Each nudge is one undo step.
     b.ts.undo.undo();
     expect(b.snap.loop.a).toBeCloseTo(34.5, 6);
+  });
+
+  test('End reads the loop’s last beat, mid-song and at the song’s end alike (like the range line)', async () => {
+    const b = await bed({practice: practiceOf({cue: 112, loop: {on: true, a: 112, b: 128}})});
+    const values = () => [...b.host.querySelectorAll('.loop-card-edge-value')].map((n) => n.textContent);
+    expect(b.range()).toMatch(/^Bars 57–64/);
+    expect(values()).toEqual(['57 · 1', '64 · 4']);
+    b.click(COPY.moveBackName('8 bars'));
+    expect(b.range()).toMatch(/^Bars 49–56/);
+    expect(values()).toEqual(['49 · 1', '56 · 4']);
   });
 
   test('unmapped: 0.1 s, Alt 50 ms, Alt+Shift 10 ms; Alt+Enter on a focused nudge button uses the fine unit', async () => {
@@ -354,6 +366,54 @@ describe('Save as spot… and Clear', () => {
     await settle();
     expect(byRole(b.host, 'textbox', COPY.spotName)).toBeNull();
     expect(b.button(COPY.saveAsSpot)).toBeNull();
+  });
+
+  test('clearing the loop while the name field has focus keeps focus in the card (the Loop switch)', async () => {
+    const b = await bed({practice: CHORUS()});
+    b.click(COPY.saveAsSpot);
+    expect(document.activeElement).toBe(byRole(b.host, 'textbox', COPY.spotName));
+    b.ts.transport.clearLoop();
+    await settle();
+    expect(document.activeElement).toBe(b.button(COPY.loop));
+  });
+
+  test('B in the card opens the inline name pre-filled (not spot.save); outside text fields only', async () => {
+    const b = await bed({practice: CHORUS()});
+    const stop = startDispatcher({registry: b.reg});
+    document.documentElement.dataset.posture = 'stage';
+    current.push(() => { stop(); delete document.documentElement.dataset.posture; });
+    const loopBtn = b.button(COPY.loop);
+    loopBtn.focus();
+    keydown({key: 'b', code: 'KeyB'}, {target: loopBtn});
+    const input = byRole(b.host, 'textbox', COPY.spotName);
+    expect(input?.value).toBe('Chorus');
+    expect(document.activeElement).toBe(input);
+    expect(b.ts.value.spots).toHaveLength(0);
+    // B typed in the field is just a letter.
+    const typed = keydown({key: 'b', code: 'KeyB'}, {target: input});
+    expect(typed.defaultPrevented).toBe(false);
+    expect(b.ts.value.spots).toHaveLength(0);
+    // Without a loop the card does not take B (the global command decides).
+    b.click(COPY.cancel);
+    b.ts.transport.clearLoop();
+    await settle();
+    expect(b.root.hasAttribute('data-consume-keys')).toBe(false);
+  });
+
+  test('the status Undo after Clear never undoes a newer change', async () => {
+    const b = await bed({practice: CHORUS()});
+    b.click(COPY.clear);
+    const status = b.statuses.at(-1);
+    b.ts.transport.setSpeed(0.8);
+    status.action.run();
+    expect(b.snap.loop).toMatchObject({on: false});
+    expect(b.snap.rate).toBe(0.8);
+    expect(b.statuses.at(-1).text).toBe(MENU_COPY.undoStale);
+    // Once the newer change is undone, the clear is the latest step again.
+    b.ts.undo.undo();
+    expect(b.snap.rate).toBe(1);
+    status.action.run();
+    expect(b.snap.loop).toMatchObject({on: true, a: 32, b: 48});
   });
 
   test('Clear loop is undoable: "Loop cleared" with Undo in the status line', async () => {

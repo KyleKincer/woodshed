@@ -30,10 +30,12 @@ import {Segmented} from '../../ui/segmented.js';
 import {TextField} from '../../ui/field.js';
 import {formatTenths} from '../position.js';
 import {COPY as TRANSPORT_COPY} from '../transport-commands.js';
-import {saveSpot, loopLength} from '../menus.js';
+import {saveSpot, loopLength, boundUndo} from '../menus.js';
 import {MAX_NAME} from '../../../shared/practice.ts';
 
 const EPS = 1e-6;
+/** The End edge reads the beat just inside the loop (its end is exclusive). */
+const END_INSIDE = 1e-3;
 let seq = 0;
 
 /** The card's copy (spec §4.7; the row lists no .copy.js, so it lives here, §9.0). */
@@ -176,7 +178,10 @@ export function render(container, {session, close, registry = appRegistry, feedb
         const unit = isMapped ? COPY.unitBar : COPY.unitTenth;
         earlier.set({label: COPY.earlier(name, unit)});
         later.set({label: COPY.later(name, unit)});
-        value.textContent = isMapped ? position.label(t).main : formatTenths(t);
+        // Both edges read inclusively, like the range line: Start is the loop's first beat, End its last one
+        // (bars 17–24 read 17 · 1 … 24 · 4, at the song's end too).
+        const at = edge === 'b' && isMapped ? Math.max(t - END_INSIDE, snapshot().loop?.a ?? 0) : t;
+        value.textContent = isMapped ? position.label(at).main : formatTenths(t);
       },
     };
   }
@@ -252,7 +257,10 @@ export function render(container, {session, close, registry = appRegistry, feedb
     form.destroy();
     form = null;
     saveBtn.el.hidden = !hasRange(snapshot().loop);
-    if (refocus && had && !saveBtn.el.hidden) saveBtn.el.focus();
+    if (!had) return;
+    // Focus stays in the card: Save as spot… when it is still there, else the Loop switch (the loop went away).
+    if (refocus && !saveBtn.el.hidden) saveBtn.el.focus();
+    else if (root.isConnected) loopSwitch.el.focus();
   }
   function commitForm() {
     if (!form) return;
@@ -263,13 +271,25 @@ export function render(container, {session, close, registry = appRegistry, feedb
     if (spot) closeForm({refocus: true});
   }
   function cleared() {
-    fb.status?.(COPY.cleared, {key: 'loop-clear', action: {label: COPY.undo, run: () => registry.run('practice.undo', {source: 'pointer'})}});
+    // Undo there undoes the clear only while it is still the latest step (never a newer change).
+    const step = boundUndo(session, null, {registry, feedback: fb});
+    fb.status?.(COPY.cleared, {key: 'loop-clear', action: {label: COPY.undo, run: () => step.run()}});
   }
 
   const editRows = h('div', {class: 'loop-card-edit'}, edges, moveRow);
   const root = h('section', {class: 'loop-card', id, attrs: {'aria-labelledby': `${id}-range`}, dataset: {loopCard: ''}},
     head, setRow, editRows, options, actions);
   container.replaceChildren(root);
+
+  // B in the card opens the inline name (spec §4.7: "Save as spot… (inline name, pre-filled …; key B)"). The card
+  // declares it consumes B while a loop exists, so the dispatcher leaves it to this handler rather than spot.save.
+  root.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyB' || e.defaultPrevented || e.isComposing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (form?.el.contains(e.target) && e.target.matches?.('input, textarea')) return;
+    if (!hasRange(snapshot().loop)) return;
+    e.preventDefault();
+    openForm();
+  });
 
   // ---------------- live state ----------------
   function emptyText() {
@@ -299,6 +319,7 @@ export function render(container, {session, close, registry = appRegistry, feedb
     times.set({value: PLAY_TIMES.includes(loop.playTimes) ? loop.playTimes : 0});
     between.set({value: loop.between ?? 'none', options: betweenOptions()});
     saveBtn.el.hidden = !ranged || !!form;
+    if (ranged) root.setAttribute('data-consume-keys', 'KeyB'); else root.removeAttribute('data-consume-keys');
     clearBtn.el.hidden = !ranged;
     if (!ranged && form) closeForm();
   }

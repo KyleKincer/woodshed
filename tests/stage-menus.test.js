@@ -158,16 +158,27 @@ function choose(b, items, label) {
 }
 
 /** The scenario predicates of CONTROLS' `when`. */
-function scenario({mapped = true, part = false, chart = false, sectionsMissing = false} = {}) {
-  return (when) => {
-    if (!when) return true;
+function scenario({mapped = true, part = false, chart = false, sectionsMissing = false, shared = false} = {}) {
+  const one = (when) => {
     if (when === 'mapped') return mapped;
     if (when === 'unmapped') return !mapped;
     if (when === 'part') return part;
     if (when === 'chart') return chart;
     if (when === 'sections-missing') return mapped && sectionsMissing;
+    if (when === 'owner') return !shared;
     return false;
   };
+  return (when) => !when || when.split(/\s+/).every(one);
+}
+
+/** A table's rows match the menu's: role, name, and (when the table names them) command and key-cap; plain rows have neither. */
+function expectTable(rows, wanted) {
+  expect(rows.map((r) => [r.role, r.name])).toEqual(wanted.map((c) => [c.role, c.name]));
+  for (const c of wanted) {
+    const r = row(rows, c.name);
+    expect(r.command ?? null, `${c.name} command`).toBe(c.command ?? null);
+    expect(r.kbd ?? null, `${c.name} key-cap`).toBe(c.kbd ?? null);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -243,12 +254,15 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(row(rowsOf(stageMenu(ready.ts.session, ready.stage, ready.opts), ready.reg), 'Detect beats').disabled).toBe(false);
   });
 
-  test('a shared song: edit, share, re-split, tap and detect show the read-only reason', async () => {
+  test('a shared song: Edit is hidden (spec §4.13); share, re-split, tap and detect show the read-only reason', async () => {
     const b = await bed({shared: {token: 'share-1'}});
     const rows = rowsOf(stageMenu(b.ts.session, b.stage, b.opts), b.reg);
-    for (const name of ['Share…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Tap the beat…', 'Detect beats']) {
+    for (const name of ['Share…', 'Re-split…', 'Tap the beat…', 'Detect beats']) {
       expect(row(rows, name), name).toMatchObject({disabled: true, reason: STAGE_COPY.readOnly});
     }
+    for (const name of ['Edit map', 'Edit drum chart', 'Edit details']) expect(row(rows, name), name).toBeUndefined();
+    const wanted = CONTROLS.filter((c) => c.menu === 'stage' && scenario({shared: true})(c.when));
+    expect(rows.map((r) => r.name).sort()).toEqual(wanted.map((c) => c.name).sort());
     expect(row(rows, 'Spots…').disabled).toBe(false);
     expect(row(rows, 'Focus').disabled).toBe(false);
   });
@@ -479,7 +493,9 @@ describe('the section menu (sectionMenu, spec §4.5)', () => {
     const b = await bed({shared: {token: 'share-2'}});
     const rows = rowsOf(sectionMenu(b.ts.session, regionOf(b, 'Bridge'), b.opts), b.reg);
     expect(row(rows, 'Rename…')).toMatchObject({disabled: true, reason: STAGE_COPY.readOnly});
-    expect(row(rows, 'Edit sections in Map')).toMatchObject({disabled: true, reason: STAGE_COPY.readOnly});
+    expect(row(rows, 'Edit sections in Map')).toBeUndefined();
+    expect(rows.map((r) => [r.role, r.name])).toEqual(
+      CONTROLS.filter((c) => c.menu === 'section' && scenario({mapped: true, shared: true})(c.when)).map((c) => [c.role, c.name]));
     expect(row(rows, 'Loop this section').disabled).toBe(false);
   });
 
@@ -523,8 +539,7 @@ describe('spot, marker, loop-band and stem menus (spec §7.7)', () => {
     const b = await bed({practice: practiceOf({spots: [SPOT]})});
     const onOpen = vi.fn();
     const items = spotMenu(b.ts.session, SPOT, {...b.opts, onOpen});
-    expect(rowsOf(items, b.reg).map((r) => [r.role, r.name])).toEqual(
-      CONTROLS.filter((c) => c.menu === 'spot').map((c) => [c.role, c.name]));
+    expectTable(rowsOf(items, b.reg), CONTROLS.filter((c) => c.menu === 'spot'));
     choose(b, items, 'Open');
     expect(b.snap.loop).toMatchObject({on: true, a: 28, b: 32});
     expect(b.snap.rate).toBe(0.8);
@@ -562,8 +577,7 @@ describe('spot, marker, loop-band and stem menus (spec §7.7)', () => {
 
     const b = await bed({practice: practiceOf({markers})});
     const items = markerMenu(b.ts.session, markers[0], b.opts);
-    expect(rowsOf(items, b.reg).map((r) => [r.role, r.name])).toEqual(
-      CONTROLS.filter((c) => c.menu === 'marker').map((c) => [c.role, c.name]));
+    expectTable(rowsOf(items, b.reg), CONTROLS.filter((c) => c.menu === 'marker'));
     choose(b, items, 'Turn into section');
     expect(b.ts.map.sections.find((s) => s.startBar === 20)?.name).toBe('Flam');
     expect(b.ts.value.markers.filter((m) => !m.deleted)).toHaveLength(0);
@@ -615,7 +629,9 @@ describe('spot, marker, loop-band and stem menus (spec §7.7)', () => {
     const b = await bed({practice: practiceOf({tracks: [{name: 'bass', volume: 0.5, muted: false, soloed: false}]})});
     const items = stemMenu(b.ts.session, 'bass', {...b.opts, account});
     const rows = rowsOf(items, b.reg);
-    expect(rows.map((r) => [r.role, r.name])).toEqual(CONTROLS.filter((c) => c.menu === 'stem').map((c) => [c.role, c.name]));
+    // The table's example is the first stem; bass is the second, so its keyed commands end in 2.
+    expectTable(rows, CONTROLS.filter((c) => c.menu === 'stem').map((c) => (c.command
+      ? {...c, command: c.command.replace(/1$/, '2'), kbd: c.kbd.replace(/1$/, '2')} : c)));
     expect(row(rows, 'Mute')).toMatchObject({command: 'mix.mute.2', kbd: 'Digit2', checked: false});
     expect(row(rows, 'Solo')).toMatchObject({command: 'mix.solo.2', kbd: 'Shift+Digit2'});
     choose(b, items, 'Mute');
@@ -641,6 +657,101 @@ describe('spot, marker, loop-band and stem menus (spec §7.7)', () => {
     warn.mockRestore();
     expect(b.fb.log.toasts.at(-1)).toMatchObject({text: COPY.mineFailed, tone: 'error'});
     expect(stemMenu(b.ts.session, 'piano', b.opts)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+
+describe('review fixes (ST8a fix pass)', () => {
+  const SPOT = {id: 's1', name: 'Fill', a: 28, b: 32, rate: 0.8, passes: 3, updatedAt: 1};
+
+  test('the Undo on a delete toast never undoes a newer change; it works again once that change is undone', async () => {
+    const b = await bed({practice: practiceOf({spots: [SPOT]})});
+    choose(b, spotMenu(b.ts.session, SPOT, b.opts), 'Delete');
+    const toast = b.fb.log.toasts.at(-1);
+    b.ts.transport.setLoopOptions({playTimes: 4});
+    toast.action.run();
+    expect(b.snap.loop.playTimes).toBe(4);
+    expect(b.ts.value.spots.filter((s) => !s.deleted)).toHaveLength(0);
+    expect(b.fb.log.statuses.at(-1).text).toBe(COPY.undoStale);
+    b.ts.undo.undo();   // the newer change
+    expect(b.snap.loop.playTimes).toBe(0);
+    toast.action.run();
+    expect(b.ts.value.spots.filter((s) => !s.deleted).map((s) => s.id)).toEqual(['s1']);
+  });
+
+  test('the marker delete toast is bound to its own step too', async () => {
+    const markers = [{id: 'mk', t: 41, label: 'Flam', updatedAt: 1}];
+    const u = await bed({mapped: false, practice: practiceOf({markers})});
+    choose(u, markerMenu(u.ts.session, markers[0], u.opts), 'Delete');
+    const toast = u.fb.log.toasts.at(-1);
+    u.ts.transport.setSpeed(0.8);
+    toast.action.run();
+    expect(u.snap.rate).toBe(0.8);
+    expect(u.ts.value.markers.filter((m) => !m.deleted)).toHaveLength(0);
+  });
+
+  test('deleting the active spot and undoing makes it active again', async () => {
+    const b = await bed({practice: practiceOf({spots: [SPOT]})});
+    choose(b, spotMenu(b.ts.session, SPOT, b.opts), 'Open');
+    expect(b.ts.practice.activeSpotId.peek()).toBe('s1');
+    choose(b, spotMenu(b.ts.session, SPOT, b.opts), 'Delete');
+    expect(b.ts.practice.activeSpotId.peek()).toBeNull();
+    b.ts.undo.undo();
+    expect(b.ts.value.spots.filter((s) => !s.deleted).map((s) => s.id)).toEqual(['s1']);
+    expect(b.ts.practice.activeSpotId.peek()).toBe('s1');
+    b.ts.undo.redo();
+    expect(b.ts.value.spots.filter((s) => !s.deleted)).toHaveLength(0);
+  });
+
+  test('Open on a spot deleted after the menu was built does nothing and does not call onOpen', async () => {
+    const b = await bed({practice: practiceOf({spots: [SPOT]})});
+    const onOpen = vi.fn();
+    const items = spotMenu(b.ts.session, SPOT, {...b.opts, onOpen});
+    b.ts.practice.deleteSpot('s1');
+    choose(b, items, 'Open');
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(b.snap.loop.on).toBe(false);
+  });
+
+  test('Turn into section next to a named section is disabled with the reason and changes nothing', async () => {
+    const marker = {id: 'mk', t: 32.3, label: 'Marker 1', updatedAt: 1};
+    const b = await bed({practice: practiceOf({markers: [marker]})});
+    const before = b.ts.map.sections.map((s) => s.name);
+    expect(row(rowsOf(markerMenu(b.ts.session, marker, b.opts), b.reg), 'Turn into section'))
+      .toMatchObject({disabled: true, reason: 'Bar 17 already starts Chorus'});
+    expect(turnMarkerIntoSection(b.ts.session, marker, b.opts)).toBe(false);
+    expect(b.ts.map.sections.map((s) => s.name)).toEqual(before);
+    expect(b.ts.value.markers.filter((m) => !m.deleted)).toHaveLength(1);
+  });
+
+  test('Loop 10 s from here near the end moves back to keep 10 s', async () => {
+    const b = await bed({mapped: false});
+    choose(b, barMenu(b.ts.session, {t: 127.99}, b.opts), 'Loop 10 s from here');
+    expect(b.snap.loop.on).toBe(true);
+    expect(b.snap.loop.a).toBeCloseTo(118, 3);
+    expect(b.snap.loop.b).toBeCloseTo(128, 3);
+  });
+
+  test('Loop this part before the first marker loops from the start up to it', async () => {
+    const b = await bed({mapped: false, practice: practiceOf({markers: [{id: 'm1', t: 20, label: 'Verse', updatedAt: 1}]})});
+    const items = barMenu(b.ts.session, {t: 5}, b.opts);
+    expect(row(rowsOf(items, b.reg), 'Loop this part').disabled).toBe(false);
+    choose(b, items, 'Loop this part');
+    expect(b.snap.loop).toMatchObject({on: true, a: 0});
+    expect(b.snap.loop.b).toBeCloseTo(20, 6);
+  });
+
+  test('This is my instrument needs a signed-in account', async () => {
+    const b = await bed({practice: practiceOf({tracks: [{name: 'bass', volume: 1, muted: false, soloed: false}]})});
+    const account = {loaded: signal(false), profile: signal({instruments: [], primary: null, openWithMyPart: 'in'}), patch: vi.fn(async () => {})};
+    const r = row(rowsOf(stemMenu(b.ts.session, 'bass', {...b.opts, account}), b.reg), 'This is my instrument');
+    expect(r).toMatchObject({disabled: true, reason: COPY.signInForMine});
+    const shared = await bed({shared: {token: 'share-3'}});
+    expect(row(rowsOf(stemMenu(shared.ts.session, 'bass', {...shared.opts, account}), shared.reg), 'This is my instrument'))
+      .toMatchObject({disabled: true, reason: COPY.signInForMine});
+    account.loaded.value = true;
+    expect(row(rowsOf(stemMenu(b.ts.session, 'bass', {...b.opts, account}), b.reg), 'This is my instrument').disabled).toBe(false);
   });
 });
 

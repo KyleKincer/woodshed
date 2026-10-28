@@ -15,7 +15,8 @@
 //                                             opts {zoomToLoop} (else the Stems surface's stems.zoomLoop while it is registered)
 //   stemMenu(session, stem, opts?)            Mute · Solo · Reset level · This is my instrument
 //   saveSpot(session, {a, b, name, rate?}, opts?) → id|null      one practice-undo step (the Loop card shares it)
-//   askSpotName / spotRangeAt / instrumentForStem / COPY / CONTROLS
+//   boundUndo(session, entry?, opts?) → {isLatest(), run()}       an Undo (toast, status line) that only undoes its own step
+//   askSpotName / spotRangeAt / secondsLoopAt / turnReason / instrumentForStem / COPY / CONTROLS
 //
 // Items that have a registry command are command-bound (`command`, plus `args` for radios): the
 // Menu takes the label, key-cap, enabled state, checked state and disabledReason from the
@@ -114,6 +115,7 @@ export const COPY = Object.freeze({
   turnedInto: (label) => `${label} is now a section`,
   nowMine: (instrument) => `${instrument} is now your instrument`,
   mineFailed: 'Couldn’t save your instrument. Try again in a moment.',
+  undoStale: 'Something else changed since then. Use Undo (⌘Z) to step back.',
   // reasons (visible, spec §7.7)
   readOnly: STAGE_COPY.readOnly,
   notBuilt: STAGE_COPY.notBuilt,
@@ -125,6 +127,8 @@ export const COPY = Object.freeze({
   levelFull: 'Already at 100%.',
   noInstrument: 'This stem isn’t one instrument.',
   alreadyMine: 'Already your instrument.',
+  signInForMine: 'Sign in to set your instrument.',
+  noPartBefore: 'There is no part before the first marker.',
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -275,11 +279,47 @@ export function addMarkerAt(session, t, opts = {}) {
   return {kind: 'marker', id, label: marker?.label};
 }
 
+/** Practice fields that change without an undo step (play stamps, the scroll anchor, the surface, pass counts). */
+const VOLATILE_KEYS = ['lastAt', 'anchorBar', 'anchorTime', 'surface'];
+
+/** What the undo stack and the state it guards look like now: equal prints mean no newer step was pushed or undone. */
+function undoPrint(session) {
+  const p = {...(session?.practice?.value?.peek?.() ?? {})};
+  for (const key of VOLATILE_KEYS) delete p[key];
+  if (Array.isArray(p.spots)) p.spots = p.spots.map(({passes, lastAt, ...rest}) => rest);
+  return `${session?.undo?.size ?? 0}|${session?.map?.revision ?? ''}|${JSON.stringify(p)}`;
+}
+
+/**
+ * An Undo bound to the step just pushed (`entry`, or the stack's top right now): it undoes only while that
+ * step is still the latest one (a toast must never undo a newer change, spec §7.8). With the session's
+ * `undo.top` hook the check is exact; without it, the step counts as the latest while neither the stack
+ * nor the practice state or map it covers has changed since (every undoable change patches one of them).
+ */
+export function boundUndo(session, entry = null, opts = {}) {
+  const stack = session?.undo;
+  const exact = !!stack && 'top' in stack;
+  const target = entry ?? (exact ? stack.top : null);
+  const print = undoPrint(session);
+  const isLatest = () => {
+    if (!session || session.disposed) return false;
+    if (exact && target) return stack.top === target;
+    return undoPrint(session) === print;
+  };
+  return {
+    isLatest,
+    run({source = 'pointer'} = {}) {
+      if (!isLatest()) { feedbackOf(opts).status?.(COPY.undoStale, {key: 'undo'}); return false; }
+      return registryOf(opts).run('practice.undo', {source});
+    },
+  };
+}
+
 /** Undo feedback after a destructive menu action: a toast when stopped, the status line while playing (spec §4.14, §7.8). */
-function offerUndo(session, text, opts, {durationMs} = {}) {
+function offerUndo(session, text, opts, {durationMs, entry} = {}) {
   const feedback = feedbackOf(opts);
-  const reg = registryOf(opts);
-  const action = {label: COPY.undo, run: () => reg.run('practice.undo', {source: 'pointer'})};
+  const step = boundUndo(session, entry, opts);
+  const action = {label: COPY.undo, run: () => step.run()};
   if (playingOf(session)) feedback.status?.(text, {action, key: 'undo', ...(durationMs ? {durationMs} : {})});
   else feedback.toast?.(text, {action, key: 'undo', ...(durationMs ? {durationMs} : {})});
 }
@@ -311,10 +351,29 @@ function deleteMarker(session, marker, opts) {
   if (!live) return false;
   practice.deleteMarker(marker.id);
   const after = clone(practice.value.peek().markers);
-  session.undo.push({key: 'markers', label: 'marker', describe: () => `delete ${live.label}`, from: before, to: after,
+  const entry = session.undo.push({key: 'markers', label: 'marker', describe: () => `delete ${live.label}`, from: before, to: after,
     apply: (v) => practice.patch({markers: clone(v)})});
-  offerUndo(session, COPY.markerDeleted(live.label), opts);
+  offerUndo(session, COPY.markerDeleted(live.label), opts, {entry});
   return true;
+}
+
+/** The index of the listed bar whose start is nearest `t` (the bar a marker turns into a section at). */
+function nearestBarIndex(map, t) {
+  const bars = map?.bars ?? [];
+  if (!bars.length || !finite(t)) return -1;
+  let best = 0;
+  for (let i = 1; i < bars.length; i++) if (Math.abs(bars[i].t0 - t) < Math.abs(bars[best].t0 - t)) best = i;
+  return best;
+}
+
+/** Why a marker cannot become a section: the bar nearest it already starts a named section (else null). */
+export function turnReason(session, marker) {
+  if (!isMapped(session)) return null;
+  if (session.readOnly) return COPY.readOnly;
+  const map = session.map;
+  const index = nearestBarIndex(map, marker?.t);
+  const existing = index < 0 ? null : (map.sections ?? []).find((s) => s.startBar === index && String(s.label ?? '').trim() !== '');
+  return existing ? COPY.alreadyStarts(map.bars[index]?.display ?? null, existing.name) : null;
 }
 
 /** A marker becomes a section at its nearest bar line; the map change and the marker's removal are one undo step (D23). */
@@ -323,6 +382,8 @@ export function turnMarkerIntoSection(session, marker, opts = {}) {
   const practice = session.practice;
   const live = practice.value.peek().markers.find((m) => m.id === marker.id && !m.deleted);
   if (!live) return false;
+  const reason = turnReason(session, live);
+  if (reason) { feedbackOf(opts).status?.(reason, {key: 'marker'}); return false; }
   const map = session.map;
   const {change, converted} = sectionsFromMarkers(map.data, [live], map.duration);
   if (!converted.length) return false;
@@ -381,11 +442,14 @@ function deleteSpot(session, spot, opts) {
   const before = clone(practice.value.peek().spots);
   const live = before.find((s) => s.id === spot.id && !s.deleted);
   if (!live) return false;
+  const wasActive = peek(practice.activeSpotId) === spot.id;
   practice.deleteSpot(spot.id);
   const after = clone(practice.value.peek().spots);
-  session.undo.push({key: 'spots', label: 'spot', describe: () => `delete spot ${live.name}`, from: before, to: after,
-    apply: (v) => practice.patch({spots: clone(v)})});
-  offerUndo(session, COPY.spotDeleted(live.name), opts, {durationMs: UNDO_TOAST_MS});
+  // Undo brings the spot back as it was, active again when it was (its passes keep counting, §2.14.1).
+  const entry = session.undo.pushAction({key: 'spots', label: 'spot', describe: () => `delete spot ${live.name}`,
+    undo: () => { practice.patch({spots: clone(before)}); if (wasActive) practice.activeSpotId.value = spot.id; },
+    redo: () => practice.patch({spots: clone(after)})});
+  offerUndo(session, COPY.spotDeleted(live.name), opts, {durationMs: UNDO_TOAST_MS, entry});
   return true;
 }
 
@@ -413,7 +477,7 @@ export function stageMenu(session, stage, opts = {}) {
   const surface = peek(stage?.surface);
   const hasPart = !!session?.notation?.part;
   const editKey = lastEditTab(reg);
-  const editItem = (tab) => ({command: `edit.${tab}`, ...(tab === editKey ? {kbd: 'KeyE'} : {}), ...(readOnly ? {reason: readOnly} : {})});
+  const editItem = (tab) => ({command: `edit.${tab}`, ...(tab === editKey ? {kbd: 'KeyE'} : {})});
   const items = [
     {type: 'submenu', label: COPY.view, icon: 'layout-grid', items: [
       {command: 'view.chart', type: 'radio'},
@@ -455,9 +519,8 @@ export function stageMenu(session, stage, opts = {}) {
   items.push(
     SEPARATOR,
     {command: 'stage.share', ...(shareReason ? {reason: shareReason} : {})},
-    editItem('map'),
-    editItem('chart'),
-    editItem('details'),
+    // A shared song has no Edit (spec §4.13): the three Edit rows are left out, not disabled.
+    ...(readOnly ? [] : [editItem('map'), editItem('chart'), editItem('details')]),
     {command: 'song.resplit', ...(readOnly ? {reason: readOnly} : {})},
     SEPARATOR,
     {command: 'app.shortcuts', label: COPY.shortcuts},
@@ -468,14 +531,35 @@ export function stageMenu(session, stage, opts = {}) {
 // ---------------------------------------------------------------------------------------------------------------
 // The bar menu (music surfaces, spec §4.9)
 
+/** "Loop 10 s from here": 10 s from t, moved back (never shortened) when the song ends sooner. */
+export function secondsLoopAt(session, t) {
+  const duration = session?.map?.duration || session?.transport?.duration?.() || 0;
+  const end = duration > 0 ? duration : t + UNMAPPED_LOOP_SEC;
+  const a = Math.max(0, Math.min(t, end - UNMAPPED_LOOP_SEC));
+  return {a, b: Math.min(a + UNMAPPED_LOOP_SEC, end)};
+}
+
+/** The region at t; before an unmapped song's first marker, the part from 0:00 up to it. */
+function regionOrLeadIn(session, t) {
+  const position = session.position;
+  const region = position.regionAt(t);
+  if (region || isMapped(session)) return region;
+  const first = (position.regions?.() ?? []).sort((x, y) => x.t0 - y.t0)[0];
+  if (!first || t >= first.t0 || first.t0 <= EPS) return null;
+  return {kind: 'marker', label: null, t0: 0, t1: first.t0};
+}
+
 export function barMenu(session, {t} = {}, opts = {}) {
   if (!session?.transport || !finite(t)) return [];
   const transport = session.transport;
   const mapped = isMapped(session);
   const at = beatAt(session, t);
-  const region = mapped && !session.map.hasSections ? null : session.position.regionAt(t);
-  const regionReason = region ? null : mapped ? COPY.noSections : COPY.noRegions;
-  const loopRegion = () => { if (region) transport.loopRange(region.t0, region.t1, {snap: 'none', label: region.label}); };
+  const region = mapped && !session.map.hasSections ? null : regionOrLeadIn(session, t);
+  const regionReason = region ? null : mapped ? COPY.noSections
+    : (session.position.regions?.() ?? []).length ? COPY.noPartBefore : COPY.noRegions;
+  const loopRegion = () => {
+    if (region) transport.loopRange(region.t0, region.t1, {snap: 'none', ...(region.label ? {label: region.label} : {})});
+  };
   let addReason = null;
   if (mapped && writable(session)) {
     const index = session.map.barIndexAt(t);
@@ -496,7 +580,7 @@ export function barMenu(session, {t} = {}, opts = {}) {
     items.push(
       {id: 'loop-region', label: COPY.loopPart, icon: 'repeat', ...(regionReason ? {reason: regionReason} : {}), run: loopRegion},
       {id: 'loop-seconds', label: COPY.loopSeconds, icon: 'repeat',
-        run: () => transport.loopRange(t, Math.min(t + UNMAPPED_LOOP_SEC, session.map.duration || t + UNMAPPED_LOOP_SEC), {snap: 'none'})},
+        run: () => { const r = secondsLoopAt(session, t); transport.loopRange(r.a, r.b, {snap: 'none'}); }},
     );
   }
   items.push(
@@ -537,7 +621,8 @@ export function sectionMenu(session, region, opts = {}) {
       run: () => { if (end !== null) void askSpotName(session, {a: region.t0, b: end, name: region.label}, opts); }},
     SEPARATOR,
     {id: 'rename', label: COPY.rename, icon: 'pencil', ...(renameReason ? {reason: renameReason} : {}), run: rename},
-    {command: 'edit.map', label: mapped ? COPY.editSections : COPY.editMap, ...(session.readOnly ? {reason: COPY.readOnly} : {})},
+    // A shared song has no Edit (spec §4.13).
+    ...(session.readOnly ? [] : [{command: 'edit.map', label: mapped ? COPY.editSections : COPY.editMap}]),
   ];
 }
 
@@ -550,7 +635,12 @@ export function spotMenu(session, spot, opts = {}) {
   // spot.open takes its id as an argument (its `when` needs it), so the row runs it with the id.
   return [
     {id: 'open', label: COPY.open, icon: 'bookmark',
-      run: ({source} = {}) => { if (reg.run('spot.open', {source: source ?? 'pointer', args: {id: spot.id}})) opts.onOpen?.(spot); }},
+      run: ({source} = {}) => {
+        // The spot may have gone since the menu was built (another device, the Spots list, undo): onOpen only on success.
+        if (!liveSpots(session).some((s) => s.id === spot.id)) return;
+        reg.run('spot.open', {source: source ?? 'pointer', args: {id: spot.id}});
+        if (peek(session.practice.activeSpotId) === spot.id) opts.onOpen?.(spot);
+      }},
     {id: 'rename', label: COPY.rename, icon: 'pencil',
       run: () => { if (typeof opts.rename === 'function' && opts.rename() !== false) return; void renameSpot(session, spot, opts); }},
     {id: 'update', label: COPY.update, icon: 'refresh-cw', run: () => { updateSpotFromCurrent(session, spot, opts); }},
@@ -567,7 +657,8 @@ export function markerMenu(session, marker, opts = {}) {
     {id: 'delete', label: COPY.delete, icon: 'trash-2', danger: true, run: () => { deleteMarker(session, marker, opts); }},
   ];
   if (isMapped(session)) {
-    items.push({id: 'turn', label: COPY.turnInto, icon: 'flag', ...(session.readOnly ? {reason: COPY.readOnly} : {}),
+    const reason = turnReason(session, marker);
+    items.push({id: 'turn', label: COPY.turnInto, icon: 'flag', ...(reason ? {reason} : {}),
       run: () => { turnMarkerIntoSection(session, marker, opts); }});
   }
   return items;
@@ -603,6 +694,8 @@ export function stemMenu(session, stem, opts = {}) {
   const keyed = n <= 9;
   const instrument = instrumentForStem(name);
   const mine = (snapOf(session).mix?.mine ?? []).includes(name);
+  // The profile lives in the account: a visitor who is not signed in (the Shared Stage) cannot set it.
+  const signedIn = opts.signedIn ?? (peek((opts.account ?? appAccount)?.loaded) !== false);
   const items = [
     keyed ? {command: `mix.mute.${n}`, label: COPY.mute, type: 'checkbox'}
       : {id: 'mute', label: COPY.mute, type: 'checkbox', checked: !!track.muted, run: () => transport.setMuted(name, !track.muted)},
@@ -612,7 +705,7 @@ export function stemMenu(session, stem, opts = {}) {
       run: () => transport.setVolume(name, 1, {coalesce: false})},
     SEPARATOR,
     {id: 'mine', label: COPY.mine, type: 'checkbox', checked: mine,
-      ...(!instrument ? {reason: COPY.noInstrument} : mine ? {reason: COPY.alreadyMine} : {}),
+      ...(!instrument ? {reason: COPY.noInstrument} : mine ? {reason: COPY.alreadyMine} : !signedIn ? {reason: COPY.signInForMine} : {}),
       run: () => { void makeMine(instrument, opts); }},
   ];
   return items;
@@ -639,7 +732,9 @@ export async function makeMine(instrument, opts = {}) {
 // ---------------------------------------------------------------------------------------------------------------
 // The controls table (§9.0): every menu's rows, with the role and accessible name the Menu renders.
 // `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'chart' (the
-// Chart surface) | 'sections-missing' (mapped without sections); rows without it are always present.
+// Chart surface) | 'sections-missing' (mapped without sections) | 'owner' (not a shared song: Edit is hidden there,
+// spec §4.13), space-separated when a row needs several; rows without it are always present. `via` names the command
+// a plain row runs itself (it is not command-bound).
 
 const row = (menu, role, name, extra = {}) => Object.freeze({menu, role, name, ...extra});
 export const CONTROLS = Object.freeze([
@@ -666,9 +761,9 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitem', STAGE_COPY.commands.detect, {command: 'map.detect', when: 'mapped'}),
   row('stage', 'menuitem', STAGE_COPY.commands.suggest, {command: 'sections.suggest', when: 'sections-missing'}),
   row('stage', 'menuitem', STAGE_COPY.commands.share, {command: 'stage.share'}),
-  row('stage', 'menuitem', STAGE_COPY.commands.editMap, {command: 'edit.map'}),
-  row('stage', 'menuitem', STAGE_COPY.commands.editChart, {command: 'edit.chart'}),
-  row('stage', 'menuitem', STAGE_COPY.commands.editDetails, {command: 'edit.details'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.editMap, {command: 'edit.map', when: 'owner'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.editChart, {command: 'edit.chart', when: 'owner'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.editDetails, {command: 'edit.details', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.resplit, {command: 'song.resplit'}),
   row('stage', 'menuitem', COPY.shortcuts, {command: 'app.shortcuts', kbd: '?'}),
 
@@ -689,10 +784,11 @@ export const CONTROLS = Object.freeze([
   row('section', 'menuitem', COPY.extendLoop),
   row('section', 'menuitem', COPY.saveAsSpot),
   row('section', 'menuitem', COPY.rename),
-  row('section', 'menuitem', COPY.editSections, {command: 'edit.map', when: 'mapped'}),
-  row('section', 'menuitem', COPY.editMap, {command: 'edit.map', when: 'unmapped'}),
+  row('section', 'menuitem', COPY.editSections, {command: 'edit.map', when: 'mapped owner'}),
+  row('section', 'menuitem', COPY.editMap, {command: 'edit.map', when: 'unmapped owner'}),
 
-  row('spot', 'menuitem', COPY.open, {command: 'spot.open'}),
+  // Open runs spot.open with the spot's id itself (`via`): the row is not command-bound (no key-cap, no registry state).
+  row('spot', 'menuitem', COPY.open, {via: 'spot.open'}),
   row('spot', 'menuitem', COPY.rename),
   row('spot', 'menuitem', COPY.update),
   row('spot', 'menuitem', COPY.delete),
