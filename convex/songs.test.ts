@@ -103,8 +103,50 @@ describe('songs.list', () => {
       [{ title: 'My jam', source: upload('take_03.wav') }, false],
       [{ title: 'take_03.wav', source: { type: 'url', value: 'https://x.test/take_03.wav' } }, false],
       [{ title: 'Song' }, false],
+      // §6.3 as amended at I0B (I0B-5): a confirmed match ends the derived upload clause...
+      [{ title: 'take_03.wav', source: upload('take_03.wav'), metadataStatus: 'matched' }, false],
+      [{ title: 'take_03', source: upload('take_03.wav'), metadataStatus: 'matched' }, false],
+      // ...but no other status does, and needsReview still wins over 'matched'.
+      [{ title: 'take_03.wav', source: upload('take_03.wav'), metadataStatus: 'unavailable' }, true],
+      [{ title: 'take_03.wav', source: upload('take_03.wav'), metadataStatus: 'pending' }, true],
+      [{ title: 'Song', metadataStatus: 'matched', needsReview: true }, true],
     ];
     for (const [song, expected] of cases) expect(reviewMetadataOf(song), JSON.stringify(song)).toBe(expected);
+  });
+
+  test('an untitled upload is under review until metadata.confirm, and not after it (I0B-5)', async () => {
+    const { t, alice } = setup();
+    const id = await insert(t, songRow('alice', {
+      title: 'untitled_jam_03.wav', source: { type: 'upload', value: 'local1', filename: 'untitled_jam_03.wav' },
+      needsReview: true,
+    }));
+    const row = async () => (await alice.query(api.songs.list, {})).songs.find((s: { id: string }) => s.id === id);
+    expect(await row()).toMatchObject({ reviewMetadata: true, metadataStatus: null });
+    await alice.mutation(api.metadata.confirm, { id });
+    const song = await read(t, id);
+    expect(song?.needsReview).toBeUndefined();
+    expect(song?.title).toBe('untitled_jam_03.wav');
+    expect(await row()).toMatchObject({ reviewMetadata: false, metadataStatus: 'matched' });
+  });
+
+  test("the fixture's list row follows the same rule (tests/fixture/db/songs.js)", async () => {
+    const fixtureSongs = await import('../tests/fixture/db/songs.js');
+    const upload = (filename: string) => ({ type: 'upload' as const, value: 'k', filename });
+    const songs: Parameters<typeof reviewMetadataOf>[0][] = [];
+    for (const metadataStatus of [undefined, 'pending', 'matched', 'uncertain', 'unavailable'] as const)
+      for (const needsReview of [undefined, true])
+        for (const artist of [undefined, 'Me'])
+          for (const [title, source] of [['take_03', upload('take_03.wav')], ['My jam', upload('take_03.wav')], ['take_03', undefined]] as const)
+            songs.push({ title, artist, needsReview, metadataStatus, source });
+    for (const song of songs) expect(fixtureSongs.reviewMetadata(song), JSON.stringify(song)).toBe(reviewMetadataOf(song));
+    // End to end on seed v2: jam03 (an untitled upload) loses the chip after "Yes, that's it".
+    (globalThis as { __FX_DB_MANUAL_BOOT__?: boolean }).__FX_DB_MANUAL_BOOT__ = true;
+    const { boot, call } = await import('../tests/fixture/db/index.js');
+    boot({ search: '', now: Date.parse('2026-10-28T09:00:00Z') }); // no sessionStorage in edge-runtime, so no store
+    const jam03 = async () => (await call('query', 'songs:list', {})).songs.find((s: { id: string }) => s.id === 'jam03');
+    expect(await jam03()).toMatchObject({ reviewMetadata: true });
+    await call('mutation', 'metadata:confirm', { id: 'jam03' });
+    expect(await jam03()).toMatchObject({ reviewMetadata: false, metadataStatus: 'matched' });
   });
 
   test('a row the B1 upgrade has not reached gets its summaries computed on read', async () => {
