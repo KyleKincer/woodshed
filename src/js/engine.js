@@ -22,10 +22,22 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 /**
  * The playback plan (architecture §5.0). `plan` holds the segments from the
- * audible one onwards, `{kind: 'play', when, offset, rate, loop, processing,
- * seekOffset?, scheduled?}`, in time order. Every change replaces the plan from
- * a time T and posts every new entry to both paths: native sources (one per
- * entry and track) and the Signalsmith processor.
+ * audible one onwards, in time order:
+ *   - `{kind: 'play', when, offset, rate, loop, processing, seekOffset?, scheduled?}`:
+ *     gapless playback (a loop wraps inside the segment: native `source.loop`,
+ *     Signalsmith `loopStart`/`loopEnd`);
+ *   - `{kind: 'pass', when, offset, until, index}` and
+ *     `{kind: 'gap', when, until, target, mode, sec, elapsed}`: a segmented loop
+ *     (`setLoop(…, {gapSec > 0})`). Each pass plays `[offset, b)` once and ends
+ *     at `until`; a gap of `sec` media seconds follows, silent or playing the
+ *     audio before `a` ('preroll'), then the next pass from `a`. A segmented
+ *     run always holds the current pass, the next gap and the next pass: when a
+ *     pass starts, the next gap and pass are appended (`_extend`), so a
+ *     throttled timer never starves either path.
+ * Entries made by one change share a `run` id (appended passes keep it) and a
+ * `seq`. Every change replaces the plan from a time T and posts every new entry
+ * to both paths: native sources (one per entry and track; a preroll gap and its
+ * pass share one) and the Signalsmith processor.
  *
  * `revision` bumps on discontinuities (play, pause, stop, an immediate seek,
  * rate or pitch change, a loop edit that moves the position) and notifies
@@ -89,6 +101,9 @@ export class MultitrackEngine {
     this.stopAtWhen = null;
 
     this._loop = { enabled: false, a: 0, b: 0 };
+    // Segmented loops: the gap between passes in media seconds, and what it plays.
+    this._gap = {sec: 0, mode: 'silent'};
+    this._runs = 0;
     this.onEnded = null;
 
     this._listeners = new Map();
@@ -246,6 +261,8 @@ export class MultitrackEngine {
   set rate(value) { this._rate = value; this._rateSeq = ++this._seq; }
   get loop() { this._promote(); return this._loop; }
   set loop(value) { this._loop = value; this._loopSeq = ++this._seq; }
+  /** The segmented-loop options last given to `setLoop`: `{sec, mode}` (`sec = 0` is gapless). */
+  get loopGap() { return {...this._gap}; }
 
   /**
    * Apply every entry that has started, in order: its rate and loop become
@@ -263,7 +280,13 @@ export class MultitrackEngine {
 
   // ---- position -----------------------------------------------------------
   _positionIn(segment, time) {
+    if (segment.kind === 'gap') {
+      // A silent gap reads its target; a preroll gap reads the audio it plays.
+      if (segment.mode !== 'preroll') return segment.target;
+      return clamp(segment.offset + Math.max(0, time - segment.when) * segment.rate, 0, segment.target);
+    }
     let pos = segment.offset + Math.max(0, time - segment.when) * segment.rate;
+    if (segment.kind === 'pass') return clamp(pos, 0, Math.min(segment.loop.b, this.duration));
     const { enabled, a, b } = segment.loop;
     if (enabled && pos >= b - WRAP_EPS) {
       pos = a + ((pos - a) % (b - a));
@@ -310,8 +333,8 @@ export class MultitrackEngine {
     for (let i = 0; i < this.plan.length; i++) {
       const seg = this.plan[i], end = this.plan[i + 1]?.when ?? Infinity;
       if (end <= now) continue;
-      if (seg.kind === 'pass') { if (seg.until > now) return seg.until; continue; }
-      if (!seg.loop.enabled) continue;
+      if (seg.kind === 'pass') { if (seg.until > now && seg.until <= end + 1e-9) return seg.until; continue; }
+      if (seg.kind === 'gap' || !seg.loop.enabled) continue;
       const when = this._wrapTime(seg, this._wrapAfter(seg, Math.max(now, seg.when)));
       if (when <= end + 1e-9) return when;
     }
@@ -337,7 +360,13 @@ export class MultitrackEngine {
 
   _reach(seg, start, from, t) {
     const { enabled, a, b } = seg.loop, rate = seg.rate;
+    if (seg.kind === 'gap') {
+      // Nothing is heard in a silent gap; a preroll gap plays [max(0, offset), target).
+      if (seg.mode !== 'preroll' || t >= seg.target || t < Math.max(0, seg.offset) - 1e-9) return null;
+      return Math.max(start, seg.when + (t - seg.offset) / rate);
+    }
     if (Math.abs(t - from) <= 1e-9) return start;
+    if (seg.kind === 'pass') return t > from && t < b ? start + (t - from) / rate : null;
     if (!enabled) return t > from && t <= this.duration ? start + (t - from) / rate : null;
     if (t >= b) return null;
     if (t > from) return start + (t - from) / rate;
@@ -389,12 +418,13 @@ export class MultitrackEngine {
   // ---- the plan -----------------------------------------------------------
   /**
    * Replace the plan from `cut`: entries at or after `cut` (after `cut` when
-   * `strict`) are removed, `segments` are appended, and both paths are
-   * posted from there.
+   * `strict`), and entries `drop` selects, are removed, `segments` are
+   * appended, and both paths are posted from there.
    */
-  _replacePlan(cut, segments, {strict = false} = {}) {
+  _replacePlan(cut, segments, {strict = false, drop = null} = {}) {
     const now = this.ctx.currentTime;
-    const removed = new Set(this.plan.filter(s => strict ? s.when > cut : s.when >= cut));
+    const hadGaps = this._segmented();
+    const removed = new Set(this.plan.filter(s => (strict ? s.when > cut : s.when >= cut) || (drop?.(s) ?? false)));
     const kept = this.plan.filter(s => !removed.has(s));
     const first = segments[0].when;
     // Native: drop sources that have not started, move the audible source's stop.
@@ -406,28 +436,41 @@ export class MultitrackEngine {
           track.nativeSources.delete(entry);
         } else if (entry.stop == null || entry.stop >= cut) {
           // A scheduled stop can be moved when a pending change is replaced.
-          // Sources which have ended remove themselves (onended).
-          entry.source.stop(first);
-          entry.stop = first;
+          // Sources which have ended remove themselves (onended). A pass never
+          // plays beyond its own end.
+          const stop = entry.segment.kind === 'play' ? first : Math.min(entry.stop ?? first, first);
+          entry.source.stop(stop);
+          entry.stop = stop;
         }
       }
     }
     segments.forEach((segment, i) => {
       if (segment.processing) return;
+      if (segment.kind !== 'play') { const span = this._nativeSpan(segment); if (span) for (const track of this.tracks) this._startSpan(track, segment, span); return; }
       for (const track of this.tracks) this._startNative(track, segment, segments[i + 1]?.when);
     });
     // The processed and native paths are mutually exclusive at the same output
     // timestamp. Gate the processor tail too, so it cannot comb with dry audio.
     const gate = this.pitchGate?.gain;
+    // Entries dropped before the cut take their gate changes with them.
+    const from = Math.min(cut, ...[...removed].map(s => s.when).filter(t => t > now));
     if (gate) {
       if (strict) {
         gate.cancelScheduledValues(now);
-        gate.setValueAtTime(kept.findLast(s => s.when <= now)?.processing ? 1 : 0, now);
-      } else gate.cancelScheduledValues(cut);
-      for (const segment of segments) gate.setValueAtTime(segment.processing ? 1 : 0, segment.when);
+        gate.setValueAtTime(this._gateAt(kept.findLast(s => s.when <= now), now), now);
+      } else {
+        gate.cancelScheduledValues(from);
+        if (from < cut) {
+          gate.setValueAtTime(this._gateAt(kept.findLast(s => s.when <= from), from), from);
+          for (const segment of kept) for (const [t, v] of this._gateEvents(segment)) if (t > from && t < cut) gate.setValueAtTime(v, t);
+        }
+      }
+      for (const segment of segments) for (const [t, v] of this._gateEvents(segment)) gate.setValueAtTime(v, t);
     }
     for (const segment of removed) segment.removed = true;
     this.plan = [...kept, ...segments];
+    // Silent gaps also hold the stems' master at 0 (§5.1 setLoop).
+    if (hadGaps || this._segmented()) this._automateMaster(strict ? now : from);
     this._postStretch();
   }
 
@@ -446,6 +489,93 @@ export class MultitrackEngine {
     if (stop != null) native.stop(stop);
   }
 
+  /**
+   * The one native source a segmented entry needs, `{when, offset, stop}`, or
+   * null: a pass plays `[offset, b)` from `when` to `until`; a preroll gap plays
+   * from `a − sec` (silence before 0) straight through its pass, which then
+   * needs none; a silent gap needs none.
+   */
+  _nativeSpan(segment) {
+    if (segment.kind === 'pass') return segment.continuous ? null : {when: segment.when, offset: segment.offset, stop: segment.until};
+    if (segment.kind !== 'gap' || segment.mode !== 'preroll') return null;
+    return {when: segment.audibleFrom, offset: Math.max(0, segment.offset + (segment.audibleFrom - segment.when) * segment.rate), stop: segment.spanEnd};
+  }
+
+  _startSpan(track, segment, {when, offset, stop}) {
+    const now = this.ctx.currentTime;
+    if (stop <= now + 1e-9) return;
+    // An entry appended late (a throttled tab) starts where its timeline is now.
+    if (when < now) { offset += (now - when) * segment.rate; when = now; }
+    const native = this.ctx.createBufferSource();
+    native.buffer = track.buffer;
+    native.playbackRate.value = segment.rate;
+    native.loop = false;
+    native.connect(track.gain);
+    const entry = {source: native, when, segment, stop};
+    track.nativeSources.add(entry);
+    native.onended = () => { native.disconnect(); track.nativeSources.delete(entry); };
+    native.start(when, offset);
+    native.stop(stop);
+  }
+
+  /**
+   * Gate automation for one entry, `[[time, value]]`: open for processed
+   * audio, shut in gaps. A pass also shuts the gate at its end, so a late tick
+   * (a throttled tab) leaves silence after it, never the audio beyond `b`.
+   */
+  _gateEvents(segment) {
+    const open = segment.processing ? 1 : 0;
+    if (segment.kind === 'pass') return [[segment.when, open], [segment.until, 0]];
+    if (segment.kind !== 'gap') return [[segment.when, open]];
+    if (segment.mode !== 'preroll') return [[segment.when, 0]];
+    return segment.audibleFrom > segment.when ? [[segment.when, 0], [segment.audibleFrom, open]] : [[segment.when, open]];
+  }
+
+  _gateAt(segment, time) {
+    if (!segment) return 0;
+    if (segment.kind === 'gap') return segment.mode === 'preroll' && time >= segment.audibleFrom - 1e-12 && segment.processing ? 1 : 0;
+    if (segment.kind === 'pass' && time >= segment.until - 1e-12) return 0;
+    return segment.processing ? 1 : 0;
+  }
+
+  /** Whether the plan holds a segmented loop (its master is automated, §5.1 setLoop). */
+  _segmented() { return this.plan.some(s => s.kind !== 'play'); }
+
+  /**
+   * Rebuild the stems' master automation from `from`: 0 inside silent gaps
+   * (up to the next entry, which can cut a gap short), after a pass that has
+   * nothing appended yet, during a count-in before the audio starts, and from
+   * `stopAtWhen` on; 1 elsewhere.
+   */
+  _automateMaster(from) {
+    const gain = this.master.gain, spans = [];
+    this.plan.forEach((s, i) => {
+      const next = this.plan[i + 1];
+      if (s.kind === 'pass' && !next) { spans.push([s.until, Infinity]); return; }
+      if (s.kind !== 'gap' || s.mode === 'preroll') return;
+      const end = Math.min(s.until, next?.when ?? s.until);
+      if (end > s.when) spans.push([s.when, end]);
+    });
+    const stop = this.stopAtWhen, count = this.countIn;
+    const valueAt = (t) => ((stop != null && t >= stop - 1e-12) || (count && t < count.audioWhen - 1e-12)
+      || spans.some(([w, e]) => t >= w - 1e-12 && t < e - 1e-12) ? 0 : 1);
+    const points = new Set();
+    for (const [w, e] of spans) { if (w > from) points.add(w); if (e > from) points.add(e); }
+    if (stop != null && stop > from) points.add(stop);
+    gain.cancelScheduledValues(from);
+    gain.setValueAtTime(valueAt(from), from);
+    for (const t of [...points].sort((x, y) => x - y)) gain.setValueAtTime(valueAt(t), t);
+  }
+
+  /** What the processor is told for an entry, or null when it needs no post (gaps are gated). */
+  _stretchPost(segment) {
+    if (segment.kind === 'play') {
+      return {when: segment.when, input: segment.offset, loopStart: segment.loop.enabled ? segment.loop.a : 0, loopEnd: segment.loop.enabled ? segment.loop.b : 0};
+    }
+    const span = this._nativeSpan(segment);
+    return span ? {when: span.when, input: span.offset, loopStart: 0, loopEnd: 0} : null;
+  }
+
   /** Post unposted plan entries to the processor (see the class comment). */
   _postStretch() {
     const stretch = this.stretch;
@@ -455,16 +585,17 @@ export class MultitrackEngine {
     while (map.length > 1 && map[1].when <= now) map.shift();
     for (const segment of this.plan) {
       if (segment.posted) continue;
+      const post = this._stretchPost(segment);
+      if (!post) { segment.posted = true; continue; }
       if (map.some(m => m.when > now && m.segment && !m.segment.removed)) return;
       const settled = map.reduce((t, m) => (m.when <= now ? Math.max(t, m.when) : t), -Infinity);
-      const outputTime = Math.min(Math.max(now, settled + 1e-6), segment.when - 1e-6);
+      const outputTime = Math.min(Math.max(now, settled + 1e-6), post.when - 1e-6);
       while (map.length && map[map.length - 1].when >= outputTime) map.pop();
-      map.push({when: segment.when, segment});
+      map.push({when: post.when, segment});
       segment.posted = true;
       stretch.schedule({
-        active: segment.processing, output: segment.when, outputTime, input: segment.offset, rate: segment.rate, semitones: 0,
-        loopStart: segment.loop.enabled ? segment.loop.a : 0,
-        loopEnd: segment.loop.enabled ? segment.loop.b : 0,
+        active: segment.processing, output: post.when, outputTime, input: post.input, rate: segment.rate, semitones: 0,
+        loopStart: post.loopStart, loopEnd: post.loopEnd,
       });
     }
   }
@@ -477,38 +608,159 @@ export class MultitrackEngine {
     map.push({when: now, segment: null});
   }
 
+  // ---- building entries -----------------------------------------------------
+  /**
+   * The entries for playback from `when`: one 'play' entry, or, for a
+   * segmented loop (`loop.enabled` and a gap), the pass from `offset` to `b`,
+   * its gap and the next pass. With `gapFrom` (the gap audible at `when`) the
+   * gap carries on for what is left of it, towards the new loop start.
+   */
+  _build(when, {offset, seekOffset, rate, loop, scheduled = false, gapFrom = null}) {
+    const processing = this.preservePitch && rate !== 1;
+    const common = {rate, processing, scheduled, seq: ++this._seq, run: ++this._runs, gapSec: this._gap.sec, gapMode: this._gap.mode};
+    if (!loop.enabled || !(this._gap.sec > 0)) return [{kind: 'play', when, offset, seekOffset, ...common, loop: {...loop}}];
+    const entries = [];
+    let t = when, elapsed = null, continued;
+    if (gapFrom && seekOffset == null) {
+      const carry = this._carry(gapFrom, when, loop);
+      // Preroll audio already inside the new loop plays on as a pass from where it is.
+      if (!carry.inLoop) elapsed = carry.elapsed;
+      continued = !!gapFrom.continued || gapFrom.when < when - 1e-9;
+    } else if (offset >= loop.b - WRAP_EPS) elapsed = 0;
+    if (elapsed == null) {
+      const pass = this._passEntry(t, offset, 1, false, loop, common);
+      if (seekOffset != null) pass.seekOffset = seekOffset;
+      entries.push(pass);
+      t = pass.until;
+      elapsed = 0;
+      continued = undefined;
+    }
+    entries.push(...this._gapAndPass(t, elapsed, entries.length ? 2 : 1, loop, common, continued));
+    // Only the change itself is scheduled: the gap and pass after it are the run's own.
+    for (let i = 1; i < entries.length; i++) entries[i].scheduled = false;
+    return entries;
+  }
+
+  /**
+   * How the gap `gapFrom`, audible at `when`, carries on into `loop` with the
+   * current gap settings: `elapsed`, the media seconds of the new gap already
+   * behind. A silent gap carries on by the time it has run. A preroll gap
+   * keeps the audio it plays (the new gap reaches `loop.a` from the same
+   * media position); `inLoop` when that position is already inside the loop.
+   * `moves` when carrying on cannot keep the audible position (a mode change,
+   * or less gap left than the preroll still needs): a discontinuity.
+   */
+  _carry(gapFrom, when, loop) {
+    const {sec, mode} = this._gap, dt = Math.max(0, when - gapFrom.when);
+    const media = Math.max(0, (gapFrom.elapsed ?? 0) + dt * gapFrom.rate);
+    if (mode !== 'preroll' && gapFrom.mode !== 'preroll') return {elapsed: media, inLoop: false, moves: false};
+    if (mode !== gapFrom.mode) return {elapsed: Math.min(media, sec), inLoop: false, moves: true};
+    const position = gapFrom.offset + dt * gapFrom.rate;
+    if (position >= loop.a - 1e-9 && position < loop.b - WRAP_EPS) return {elapsed: sec, inLoop: true, moves: false};
+    const elapsed = sec - (loop.a - position);
+    return {elapsed: clamp(elapsed, 0, sec), inLoop: false, moves: elapsed < -1e-9};
+  }
+
+  _passEntry(when, offset, index, continuous, loop, common) {
+    return {kind: 'pass', when, offset, until: when + (loop.b - offset) / common.rate, index, continuous, ...common, loop: {...loop}};
+  }
+
+  /** A gap from `when` with `elapsed` media seconds of it already behind, then the pass after it. */
+  _gapAndPass(when, elapsed, index, loop, common, continued = elapsed > 1e-9) {
+    const {rate, gapSec: sec, gapMode: mode} = common, remaining = sec - elapsed, entries = [];
+    let t = when;
+    if (remaining > 1e-9) {
+      const gap = {kind: 'gap', when, until: when + remaining / rate, target: loop.a, mode, sec, elapsed, continued, ...common, loop: {...loop}};
+      gap.offset = mode === 'preroll' ? loop.a - remaining : loop.a;
+      if (mode === 'preroll') {
+        gap.audibleFrom = when + Math.max(0, -gap.offset) / rate;
+        gap.spanEnd = gap.until + (loop.b - loop.a) / rate;
+      }
+      entries.push(gap);
+      t = gap.until;
+    }
+    entries.push(this._passEntry(t, loop.a, index, mode === 'preroll' && remaining > 1e-9, loop, common));
+    return entries;
+  }
+
+  /**
+   * Keep every segmented run posted one pass ahead: while the plan's last
+   * entry is a pass that has started by `t`, append its gap and the next pass
+   * (a plan change from the gap's start).
+   */
+  _extend(t = this.ctx.currentTime) {
+    this._promote();
+    for (let guard = 0; guard < 10000; guard++) {
+      const last = this.plan.at(-1);
+      if (!this.playing || !last || last.kind !== 'pass' || last.when > t) return;
+      const {rate, processing, seq, run, gapSec, gapMode} = last;
+      this._appendPlan(this._gapAndPass(last.until, 0, last.index + 1, last.loop, {rate, processing, scheduled: false, seq, run, gapSec, gapMode}));
+    }
+  }
+
+  _appendPlan(entries) {
+    const now = this.ctx.currentTime, from = entries[0].when;
+    for (const segment of entries) {
+      if (segment.processing) continue;
+      const span = this._nativeSpan(segment);
+      if (span) for (const track of this.tracks) this._startSpan(track, segment, span);
+    }
+    const gate = this.pitchGate?.gain;
+    this.plan.push(...entries);
+    if (gate) {
+      if (from < now) gate.setValueAtTime(this._gateAt(this._segmentAt(now), now), now);
+      for (const segment of entries) for (const [t, v] of this._gateEvents(segment)) if (t >= now) gate.setValueAtTime(v, t);
+    }
+    if (this._segmented()) this._automateMaster(Math.max(from, now));
+    this.planVersion++;
+    this._emit('plan', {from, version: this.planVersion});
+    this._postStretch();
+  }
+
   // An immediate change (a discontinuity). Cancel unrendered changes when a
   // control is moved again, and project the audible segment forward, never
   // accumulated time from old loops. A pending immediate seek survives; a
   // pending scheduled rate or quantized seek is dropped (the user's change wins).
+  // In a segmented run, the run's own entries before `when` still play.
   _schedule(offset, when = this.ctx.currentTime + this.lookahead) {
     const now = this.ctx.currentTime;
     this._promote(now);
+    this._extend(when);
     const current = this._segmentAt(now);
-    const pending = this.plan.find(s => s.when > now && !s.scheduled);
+    const run = current && current.kind !== 'play' ? current.run : null;
+    const pending = this.plan.find(s => s.when > now && !s.scheduled && (run == null || s.run !== run));
     const seekOffset = offset ?? pending?.seekOffset;
-    let position = seekOffset ?? (current ? this._positionIn(current, when) : this.pausedAt);
+    const base = run == null ? current : this.plan.findLast(s => s.when <= when && s.run === run);
+    let position = seekOffset ?? (base ? this._positionIn(base, when) : this.pausedAt);
+    const gapFrom = seekOffset == null && this._continues(base, this.loop) ? base : null;
     if (this.loop.enabled && position >= this.loop.b) position = this.loop.a;
-    const processing = this.preservePitch && this.rate !== 1;
-    const segment = { kind: 'play', when, offset: position, seekOffset, rate: this.rate, loop: {...this.loop}, processing, seq: ++this._seq };
+    const segments = this._build(when, {offset: position, seekOffset, rate: this.rate, loop: this.loop, gapFrom});
     this._clearStopAt();
-    this._replacePlan(now, [segment], {strict: true});
+    if (run == null) this._replacePlan(now, segments, {strict: true});
+    else this._replacePlan(when, segments, {drop: s => s.when > now && s.run !== run});
     this.revision++;
     this._notifyTransport();
     return when;
   }
 
   /** A plan change from `cut` (not a discontinuity): planVersion++ and 'plan'. */
-  _planChange(cut, {offset, rate, loop, scheduled = false, seekOffset}) {
-    const segment = {kind: 'play', when: cut, offset, seekOffset, rate, loop: {...loop}, processing: this.preservePitch && rate !== 1, scheduled, seq: ++this._seq};
-    this._replacePlan(cut, [segment]);
+  _planChange(cut, {offset, rate, loop, scheduled = false, seekOffset, base = null}) {
+    const gapFrom = seekOffset == null && this._continues(base, loop) ? base : null;
+    const segments = this._build(cut, {offset, seekOffset, rate, loop, scheduled, gapFrom});
+    this._replacePlan(cut, segments);
     this.planVersion++;
     this._emit('plan', {from: cut, version: this.planVersion});
-    return segment;
+    return segments[0];
+  }
+
+  /** Whether a gap audible at a change carries on into `loop` (its target still lies in the loop). */
+  _continues(segment, loop) {
+    return segment?.kind === 'gap' && loop.enabled && segment.target >= loop.a - 1e-9 && segment.target < loop.b;
   }
 
   /** The entry audible at `cut`, and what a replacement starting at `cut` inherits from it. */
   _baseAt(cut) {
+    this._extend(cut);
     const base = this._segmentAt(cut);
     const replaced = base.when >= cut - 1e-12;
     return {base, seekOffset: replaced ? base.seekOffset : undefined, scheduled: replaced && !!base.scheduled};
@@ -553,11 +805,13 @@ export class MultitrackEngine {
       const startOffset = offset - countIn.duration;
       when = audiblePreRoll ? startWhen + Math.max(0, -startOffset) / this.rate : endWhen;
       offset = audiblePreRoll ? Math.max(0, startOffset) : offset;
+      this.countIn.audioWhen = when;
     }
     this._schedule(offset, when);
     this.master.gain.cancelScheduledValues(now);
     this.master.gain.setValueAtTime(0, now);
     this.master.gain.setValueAtTime(1, when);
+    if (this._segmented()) this._automateMaster(when);
     this.aux.gain.cancelScheduledValues(now);
     this.aux.gain.setValueAtTime(1, now);
     this.playing = true;
@@ -631,7 +885,7 @@ export class MultitrackEngine {
   seekAt(target, when, {loop} = {}) {
     if (!Number.isFinite(target) || !Number.isFinite(when)) return null;
     if (!this.playing) {
-      if (loop) this.setLoop(loop.enabled, loop.a ?? this.loop.a, loop.b ?? this.loop.b);
+      if (loop) this.setLoop(loop.enabled, loop.a ?? this.loop.a, loop.b ?? this.loop.b, {gapSec: this._gap.sec, gap: this._gap.mode});
       this.seek(target, {cue: false});
       return null;
     }
@@ -642,7 +896,7 @@ export class MultitrackEngine {
     const nextLoop = loop ? this._normalLoop(loop.enabled, loop.a ?? base.loop.a, loop.b ?? base.loop.b) : base.loop;
     let position = Math.max(0, Math.min(target, this.duration));
     if (nextLoop.enabled && position >= nextLoop.b) position = nextLoop.a;
-    this._planChange(at, {offset: position, seekOffset: position, rate: base.rate, loop: nextLoop, scheduled: true});
+    this._planChange(at, {offset: position, seekOffset: position, rate: base.rate, loop: nextLoop, scheduled: true, base});
     return at;
   }
 
@@ -656,10 +910,11 @@ export class MultitrackEngine {
     this._promote();
     const cut = this.ctx.currentTime + this.lookahead;
     if (!this.plan.some(s => s.scheduled && !s.promoted && s.when >= cut)) return false;
+    // The entry that would be audible at the cut without the pending changes.
     const base = this.plan.filter(s => !(s.scheduled && s.when >= cut)).findLast(s => s.when <= cut) ?? this.plan[0];
     this._planChange(cut, {
       offset: this._positionIn(base, cut), rate: base.rate, loop: base.loop,
-      seekOffset: base.when >= cut - 1e-12 ? base.seekOffset : undefined,
+      seekOffset: base.when >= cut - 1e-12 ? base.seekOffset : undefined, base,
     });
     return true;
   }
@@ -676,13 +931,17 @@ export class MultitrackEngine {
     this.stopAtWhen = at;
     this.master.gain.setValueAtTime(0, at);
     this.aux.gain.setValueAtTime(0, at);
+    // A later gap must not reopen the master.
+    if (this._segmented()) this._automateMaster(at);
   }
 
   _clearStopAt() {
     if (this.stopAtWhen == null) return;
-    this.master.gain.cancelScheduledValues(this.stopAtWhen);
-    this.aux.gain.cancelScheduledValues(this.stopAtWhen);
+    const at = this.stopAtWhen;
+    this.master.gain.cancelScheduledValues(at);
+    this.aux.gain.cancelScheduledValues(at);
     this.stopAtWhen = null;
+    if (this._segmented()) this._automateMaster(at);
   }
 
   /**
@@ -696,7 +955,7 @@ export class MultitrackEngine {
     this._promote();
     if (this.playing && !this.countingIn && Number.isFinite(at) && at > this.ctx.currentTime + this.lookahead) {
       const {base, seekOffset} = this._baseAt(at);
-      this._planChange(at, {offset: this._positionIn(base, at), rate, loop: base.loop, scheduled: true, seekOffset});
+      this._planChange(at, {offset: this._positionIn(base, at), rate, loop: base.loop, scheduled: true, seekOffset, base});
       return;
     }
     this._duringCount('setSpeed');
@@ -710,10 +969,19 @@ export class MultitrackEngine {
     if (this.playing) this._schedule();
   }
 
-  setLoop(enabled, a = this.loop.a, b = this.loop.b) {
+  /**
+   * `gapSec = 0`: a gapless loop (native `source.loop`, Signalsmith
+   * `loopStart`/`loopEnd`). `gapSec > 0`: a segmented loop, each pass its own
+   * entry and source, with a gap of `gapSec` media seconds before every pass
+   * from `a` (`gap: 'silent'` holds the stems at 0 and reads `a`;
+   * `'preroll'` plays the audio before `a`). Changing it while playing
+   * rebuilds the plan from the current position.
+   */
+  setLoop(enabled, a = this.loop.a, b = this.loop.b, {gapSec = 0, gap = 'silent'} = {}) {
     if (!Number.isFinite(a) || !Number.isFinite(b)) return;
     const counted = this._duringCount('setLoop');
     this._promote();
+    this._gap = {sec: Number.isFinite(gapSec) && gapSec > 0 ? gapSec : 0, mode: gap === 'preroll' ? 'preroll' : 'silent'};
     this.loop = this._normalLoop(enabled, a, b);
     if (!this.playing) {
       if (this.loop.enabled && this.pausedAt >= this.loop.b) this.pausedAt = this.loop.a;
@@ -723,18 +991,26 @@ export class MultitrackEngine {
     const {base, seekOffset, scheduled} = this._baseAt(cut);
     const position = this._positionIn(base, cut);
     // A loop edit that moves the position is a discontinuity; otherwise the
-    // position carries on and only the plan from `cut` changes.
-    if (counted || (this.loop.enabled && position >= this.loop.b - WRAP_EPS)) this._schedule();
-    else this._planChange(cut, {offset: position, rate: base.rate, loop: this.loop, seekOffset, scheduled});
+    // position carries on and only the plan from `cut` changes (a gap whose
+    // target is still in the loop carries on towards the new start).
+    // A preroll gap that cannot carry on at the same audio (its mode changed,
+    // or it now has less left than the audio needs) is a discontinuity too.
+    const continues = this._continues(base, this.loop);
+    const moves = continues ? this._carry(base, cut, this.loop).moves : this.loop.enabled && position >= this.loop.b - WRAP_EPS;
+    if (counted || moves) this._schedule();
+    else this._planChange(cut, {offset: position, rate: base.rate, loop: this.loop, seekOffset, scheduled, base});
   }
 
   // Metronome scheduling uses the same future output timeline as the stems.
+  // Gaps carry no song beats (their count-in comes from `gapsBetween`), and
+  // nothing is returned at or after `stopAtWhen`.
   beatsBetween(start, end, beats) {
     if (!this.playing) return [];
     if (this.stopAtWhen != null) end = Math.min(end, this.stopAtWhen);
     const events = [];
     for (let i = 0; i < this.plan.length; i++) {
       const segment = this.plan[i];
+      if (segment.kind === 'gap') continue;
       let cursor = Math.max(start, segment.when);
       const limit = Math.min(end, this.plan[i + 1]?.when ?? end);
       while (cursor < limit - 1e-8) {
@@ -758,9 +1034,48 @@ export class MultitrackEngine {
     return events;
   }
 
+  /**
+   * The gaps of a segmented loop overlapping `[t0, t1)`, before `stopAtWhen`:
+   * `{when, until, target, rate, elapsed, end}`. `until` is where the next
+   * pass starts (count-in clicks end there); `end` is where the gap stops
+   * being audible (earlier than `until` when a pending change cuts it short);
+   * `elapsed` is the media time of the gap already behind `when` (a gap
+   * carried on through a change).
+   */
+  gapsBetween(t0, t1) {
+    if (!this.playing) return [];
+    const stop = this.stopAtWhen ?? Infinity, gaps = [];
+    this.plan.forEach((s, i) => {
+      if (s.kind !== 'gap') return;
+      const end = Math.min(s.until, this.plan[i + 1]?.when ?? s.until, stop);
+      if (s.when < t1 && end > t0 && s.when < stop) gaps.push({when: s.when, until: s.until, target: s.target, rate: s.rate, elapsed: s.elapsed, end});
+    });
+    return gaps;
+  }
+
   // ---- ticker -------------------------------------------------------------
   _startTicker() { if (this._ticker == null) this._ticker = setInterval(() => this._tick(), TICK_MS); }
   _stopTicker() { if (this._ticker != null) { clearInterval(this._ticker); this._ticker = null; } }
+
+  /** Wraps (arrivals at `b`) and gap starts with `from < when ≤ to`, in time order. */
+  _boundariesBetween(from, to) {
+    // Nothing plays after a due stopAt: a wrap at the stop is its last boundary.
+    const stop = this.stopAtWhen ?? Infinity, out = [];
+    this.plan.forEach((seg, i) => {
+      const next = this.plan[i + 1];
+      if (seg.kind === 'pass') {
+        // A pass cut short by a change never arrives at b.
+        if (seg.until > from && seg.until <= to + 1e-9 && (!next || next.when >= seg.until - 1e-9)) {
+          out.push({type: 'wrap', event: {when: seg.until, a: seg.loop.a, b: seg.loop.b, pass: seg.index}});
+        }
+      } else if (seg.kind === 'gap') {
+        if (!seg.continued && seg.when > from && seg.when <= to + 1e-9) out.push({type: 'gap', event: {when: seg.when, until: seg.until, target: seg.target}});
+      }
+    });
+    for (const wrap of this._wrapsBetween(from, to)) out.push({type: 'wrap', event: wrap});
+    // At one instant the wrap (end of a pass) comes before the gap it opens.
+    return out.filter(({type, event}) => (type === 'gap' ? event.when < stop - 1e-9 : event.when <= stop + 1e-9)).sort((x, y) => x.event.when - y.event.when || (x.type === 'wrap' ? -1 : 1));
+  }
 
   _wrapsBetween(from, to) {
     const wraps = [];
@@ -788,6 +1103,7 @@ export class MultitrackEngine {
     if (!this.playing) return;
     const now = this.ctx.currentTime;
     this._promote(now);
+    this._extend(now);
     const index = this.plan.findLastIndex(s => s.when <= now);
     for (const track of this.tracks) {
       if (!track.autoPending?.length) continue;
@@ -796,18 +1112,20 @@ export class MultitrackEngine {
       track.autoGain = due.reduce((latest, p) => (p.when >= latest.when ? p : latest)).gain;
       track.autoPending = track.autoPending.filter(p => p.when > now);
     }
-    const wraps = this._wrapsBetween(this._wrapCursor, now);
-    // A wrap within the tolerance after `now` is emitted now; never again.
-    this._wrapCursor = Math.max(now, wraps.at(-1)?.when ?? -Infinity);
+    const boundaries = this._boundariesBetween(this._wrapCursor, now);
+    // A boundary within the tolerance after `now` is emitted now; never again.
+    this._wrapCursor = Math.max(now, boundaries.at(-1)?.event.when ?? -Infinity);
+    // Where a due stopAt rests, read before the entries behind `now` go.
+    const stopAt = this.stopAtWhen, stopPosition = stopAt != null && now >= stopAt - 1e-9 ? this.getPositionAt(stopAt - 1e-4) : null;
     if (index > 0) this.plan = this.plan.slice(index);
     this._postStretch();
-    for (const wrap of wraps) {
+    for (const {type, event} of boundaries) {
       if (!this.playing) return;
-      this._emit('wrap', wrap);
+      this._emit(type, event);
     }
     if (!this.playing) return;
     if (this.stopAtWhen != null && now >= this.stopAtWhen - 1e-9) {
-      const position = this.getPositionAt(this.stopAtWhen - 1e-4);
+      const position = this.stopAtWhen === stopAt ? stopPosition : this.getPositionAt(this.stopAtWhen - 1e-4);
       this._halt(position);
       this._emit('ended', {reason: 'stopAt'});
       this._emitState();
