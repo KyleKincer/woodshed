@@ -39,9 +39,10 @@ function uploadNames(filename) {
   const base = String(filename ?? '').split(/[\\/]/).pop().trim();
   return base ? [base, base.replace(/\.[^.]+$/, '')] : [];
 }
-function reviewMetadata(s) {
+/** convex/songs.ts reviewMetadataOf: the derived upload clause ends once `metadata:confirm` sets 'matched'. */
+export function reviewMetadata(s) {
   if (s.needsReview === true || s.metadataStatus === 'uncertain') return true;
-  if (s.source?.type !== 'upload' || (s.artist ?? '').trim()) return false;
+  if (s.metadataStatus === 'matched' || s.source?.type !== 'upload' || (s.artist ?? '').trim()) return false;
   return uploadNames(s.source.filename).includes(String(s.title).trim());
 }
 

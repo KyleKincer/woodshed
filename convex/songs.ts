@@ -33,12 +33,14 @@ function uploadNames(filename: string | undefined) {
 }
 
 /**
- * The Library's "Is this right?" flag (D43): an untitled upload, a metadata
- * lookup that was not sure, or an upload still named after its file.
+ * The Library's "Is this right?" flag (D43, §6.3 as amended at I0B): an
+ * untitled upload, a metadata lookup that was not sure, or an upload still
+ * named after its file that nobody has confirmed. `metadata.confirm` ("Yes,
+ * that's it") sets `matched`, which ends the derived upload clause.
  */
 export function reviewMetadataOf(s: Pick<Song, 'needsReview' | 'metadataStatus' | 'source' | 'artist' | 'title'>) {
   if (s.needsReview === true || s.metadataStatus === 'uncertain') return true;
-  if (s.source?.type !== 'upload' || (s.artist ?? '').trim()) return false;
+  if (s.metadataStatus === 'matched' || s.source?.type !== 'upload' || (s.artist ?? '').trim()) return false;
   return uploadNames(s.source.filename).includes(s.title.trim());
 }
 
