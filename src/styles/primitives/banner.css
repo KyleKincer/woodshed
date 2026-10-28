@@ -1,0 +1,66 @@
+/* Banner (src/ui/banner.js): in layout flow only, never fixed (spec §7.9).
+ * A surface card with a tone stripe, the text, actions and an optional ✕. */
+@layer primitives {
+  .ui-banner {
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    padding: var(--s3) var(--s2) var(--s3) var(--s4);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-inline-start: 4px solid var(--accent);
+    border-radius: var(--r-surface);
+    font-size: var(--fs-16);
+  }
+  .ui-banner[data-tone=ok] { border-inline-start-color: var(--ok); }
+  .ui-banner[data-tone=warn] { border-inline-start-color: var(--warn); }
+  .ui-banner[data-tone=error] { border-inline-start-color: var(--danger); }
+  .ui-banner-icon { flex: none; display: inline-grid; place-items: center; color: var(--accent); }
+  .ui-banner[data-tone=ok] .ui-banner-icon { color: var(--ok); }
+  .ui-banner[data-tone=warn] .ui-banner-icon { color: var(--warn); }
+  .ui-banner[data-tone=error] .ui-banner-icon { color: var(--danger); }
+  .ui-banner .ui-icon { stroke-width: var(--icon-stroke); }
+  .ui-banner-content {
+    flex: 1 1 240px;
+    min-inline-size: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--s2);
+    overflow-wrap: anywhere;
+  }
+  .ui-banner-title { font-weight: var(--fw-semibold); }
+  .ui-banner-text { color: var(--ink-2); }
+  .ui-banner-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .ui-banner-action {
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .ui-banner-action[data-variant=primary] {
+    background: var(--accent-fill);
+    border-color: var(--accent-fill);
+    color: var(--on-accent);
+  }
+  .ui-banner-close {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--h-sm);
+    block-size: var(--h-sm);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .ui-banner-close:hover { background: var(--surface-2); color: var(--ink); }
+}

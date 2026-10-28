@@ -1,0 +1,106 @@
+/* Sheet (src/ui/sheet.js): a bottom sheet (band layout, phones, menus on
+ * coarse pointers) or a 360 px popover anchored left of a rail control
+ * (spec §4.7). Bottom sheets size to their content up to the current detent
+ * (--ui-sheet-detent, a percentage of the viewport height) and slide in
+ * (220 ms); the header is the drag handle. */
+@layer primitives {
+  .ui-sheet {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    font: var(--fs-16)/1.4 var(--font-ui);
+  }
+  .ui-sheet:focus { outline: none; }
+  .ui-sheet:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
+  dialog.ui-sheet::backdrop { background: var(--backdrop); }
+
+  .ui-sheet[data-presentation=bottom] {
+    position: fixed;
+    inset: auto 0 0 0;
+    margin-inline: auto;
+    inline-size: min(100%, 720px);
+    max-inline-size: 100%;
+    max-block-size: calc(var(--ui-sheet-detent, 60) * 1dvh);
+    padding-block-end: var(--safe-bottom, 0px);
+    border-block-end: 0;
+    border-radius: var(--r-surface) var(--r-surface) 0 0;
+    box-shadow: var(--shadow-sheet);
+    transition: translate var(--motion-fast) var(--ease), max-block-size var(--motion-nav) var(--ease);
+    animation: ui-sheet-in var(--motion-nav) var(--ease);
+  }
+  .ui-sheet[data-presentation=bottom][data-dragging] { transition: none; }
+
+  .ui-sheet[data-presentation=popover] {
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+
+  .ui-sheet-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: 44px;
+    padding: var(--s2) var(--s2) 0 var(--s4);
+    flex: none;
+  }
+  .ui-sheet[data-presentation=bottom] .ui-sheet-head {
+    padding-block-start: var(--s4);
+    touch-action: none;
+    cursor: grab;
+  }
+  .ui-sheet[data-dragging] .ui-sheet-head { cursor: grabbing; }
+  .ui-sheet-grabber {
+    position: absolute;
+    inset-block-start: var(--s2);
+    inset-inline-start: 50%;
+    translate: -50% 0;
+    inline-size: 36px;
+    block-size: 5px;
+    border-radius: var(--r-pill);
+    background: var(--line-strong);
+  }
+  .ui-sheet-title {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    margin: 0;
+    font-size: var(--fs-20);
+    font-weight: var(--fw-semibold);
+    overflow-wrap: anywhere;
+  }
+  .ui-sheet-close {
+    flex: none;
+    margin-inline-start: auto;
+    display: inline-grid;
+    place-items: center;
+    inline-size: 44px;
+    block-size: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .ui-sheet-close .ui-icon { stroke-width: var(--icon-stroke); }
+  .ui-sheet-close:hover { background: var(--surface-2); color: var(--ink); }
+
+  .ui-sheet-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: var(--s2) var(--s4) var(--s4);
+  }
+
+  @keyframes ui-sheet-in {
+    from { translate: 0 100%; }
+  }
+}

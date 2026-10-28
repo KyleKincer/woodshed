@@ -1,0 +1,31 @@
+/* InlineStatus (src/ui/status.js): one line in flow, a tone icon, the text
+ * and an optional action. */
+@layer primitives {
+  .ui-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    max-inline-size: 100%;
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+  .ui-status-icon { flex: none; display: inline-grid; place-items: center; color: var(--ink-3); }
+  .ui-status[data-tone=ok] .ui-status-icon { color: var(--ok); }
+  .ui-status[data-tone=warn] .ui-status-icon { color: var(--warn); }
+  .ui-status[data-tone=error] .ui-status-icon,
+  .ui-status[data-tone=error] { color: var(--danger); }
+  .ui-status .ui-icon { stroke-width: var(--icon-stroke); }
+  .ui-status-text { min-inline-size: 0; overflow-wrap: anywhere; }
+  .ui-status-action {
+    flex: none;
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+}

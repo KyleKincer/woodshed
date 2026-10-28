@@ -1,0 +1,35 @@
+/* Popover (src/ui/popover.js) and the layers every U2 overlay shares. With the
+ * Popover API an overlay sits in the top layer; without it (Safari before
+ * 17, fx-nofeature=popover) it is a fixed element on the z-layer token of its
+ * kind (spec §8.5). */
+@layer primitives {
+  [data-layer-fallback] { position: fixed; }
+  [data-layer-fallback][data-layer=popover],
+  [data-layer-fallback][data-layer=menu] { z-index: var(--z-popover); }
+  [data-layer-fallback][data-layer=sheet] { z-index: var(--z-sheet); }
+  [data-layer-fallback][data-layer=toast] { z-index: var(--z-toast); }
+  [data-layer-fallback][data-layer=coachmark] { z-index: var(--z-coachmark); }
+
+  .ui-popover {
+    box-sizing: border-box;
+    inline-size: max-content;
+    min-inline-size: 160px;
+    padding: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+  .ui-popover:focus { outline: none; }
+  .ui-popover:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+  .ui-popover-body { padding: var(--s4); }
+
+  @keyframes ui-grow {
+    from { opacity: 0; transform: scale(.96); }
+  }
+}

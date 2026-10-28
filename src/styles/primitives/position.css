@@ -1,0 +1,47 @@
+/* Anchored overlays (src/ui/position.js). [data-anchor=css] uses CSS anchor
+ * positioning: the position-area puts the overlay on its preferred side,
+ * aligned with the anchor's start, and the try-fallbacks flip it when it would
+ * overflow. [data-anchor=js] is the fallback: position.js writes left/top from
+ * place(). Both are fixed (the top layer, or the fallback layer). */
+@layer primitives {
+  [data-anchor] {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    box-sizing: border-box;
+  }
+
+  [data-anchor=css] {
+    max-inline-size: calc(100vw - 2 * var(--s2));
+    max-block-size: calc(100dvh - 2 * var(--s2));
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+    margin-block: var(--s2);
+  }
+  [data-anchor=css][data-align=center] { position-area: block-end center; position-try-fallbacks: flip-block; }
+  [data-anchor=css][data-align=end] { position-area: block-end span-inline-start; }
+  [data-anchor=css][data-placement=top] { position-area: block-start span-inline-end; }
+  [data-anchor=css][data-placement=top][data-align=center] { position-area: block-start center; }
+  [data-anchor=css][data-placement=top][data-align=end] { position-area: block-start span-inline-start; }
+  [data-anchor=css][data-placement=right],
+  [data-anchor=css][data-placement=left] {
+    margin-block: 0;
+    margin-inline: var(--s2);
+    position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  }
+  [data-anchor=css][data-placement=right] { position-area: inline-end span-block-end; }
+  [data-anchor=css][data-placement=left] { position-area: inline-start span-block-end; }
+  [data-anchor=css][data-placement=right][data-align=center] { position-area: inline-end center; }
+  [data-anchor=css][data-placement=left][data-align=center] { position-area: inline-start center; }
+
+  [data-anchor=js] {
+    max-inline-size: calc(100vw - 2 * var(--s2));
+    max-block-size: calc(100dvh - 2 * var(--s2));
+  }
+
+  /* Overlays grow from their anchor (spec §8.6: 160 ms). */
+  [data-anchor][data-side=bottom] { transform-origin: top left; }
+  [data-anchor][data-side=top] { transform-origin: bottom left; }
+  [data-anchor][data-side=right] { transform-origin: top left; }
+  [data-anchor][data-side=left] { transform-origin: top right; }
+}
