@@ -12,6 +12,8 @@
 //   st5-hud-focus-band / st5-hud-focus-mini     Focus: no identity row (band); the 120 px mini rail
 //   st5-hud-unmapped                            markers as regions, no lamps, Lead-in, Click "Needs a bar grid"
 //   st5-hud-loading                             the Play ring, then "Play when ready"
+//   st5-hud-loading-decoding                    Play mid-decode in the rail at Near ("Decoding" over "1 of 4"; ticket
+//                                               I2a-13): every loading label fits the rail, mini and dock Play at every Distance
 //   st5-hud-load-error                          a failed load: every control aria-disabled with the reason, Again never arms
 //   st5-hud-shared / st5-hud-setlist            the read-only identity row; the set line
 //   st5-hud-identity-commands                   ‹, Notes, ⋯, the set arrows and the readouts' double-tap run ST4's commands
@@ -300,6 +302,59 @@ const STATES = [
       await play.click();
       await page.waitForSelector('[data-ctl=play] button[data-armed]');
       t.expect((await play.getAttribute('aria-label')).endsWith('Play when ready'), await play.getAttribute('aria-label'));
+    },
+  },
+  {
+    // Ticket I2a-13: the loading label and sublabel fit Play with no clipping (scrollWidth ≤ clientWidth on
+    // the button and its words) in the rail, the Focus mini rail and the dock, at every Distance, at
+    // 1440 px and below 1280 px (the 32 px slimmer rail: Play is 78 px wide at Near). The capture is the
+    // rail at Near on the laptop mid-decode, the I2a failure (94 px), and the runner's structure check runs on it.
+    name: 'st5-hud-loading-decoding', url: HUD('layout=rail&distance=near&load=decoding'), opts: {devices: ['laptop'], themes: ['light', 'dark']},
+    async fn(page, t) {
+      const LOADS = [
+        ['decoding', {decoded: 0}, 'Decoding', '1 of 4'], ['decoding', {decoded: 3}, 'Decoding', '4 of 4'],
+        ['progress', {}, 'Loading', '62%'], ['progress', {loadedBytes: 100}, 'Loading', '100%'], ['preparing', {}, 'Preparing', null],
+      ];
+      const measure = () => page.evaluate(() => {
+        const b = document.querySelector('[data-ctl=play] .ui-button');
+        const parts = [b, ...b.querySelectorAll('.ui-button-text, .ui-button-label, .ui-button-sublabel')];
+        return {
+          label: b.querySelector('.ui-button-label')?.textContent ?? '', sublabel: b.querySelector('.ui-button-sublabel')?.textContent ?? null,
+          clipped: parts.filter((el) => el.clientWidth > 0 && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1))
+            .map((el) => `${el.className} ${el.scrollWidth}×${el.scrollHeight} in ${el.clientWidth}×${el.clientHeight}`),
+        };
+      });
+      const sweep = [];
+      for (const [vw, vh] of [[1440, 900], [1100, 800]]) {
+        await page.setViewportSize({width: vw, height: vh});
+        for (const layout of ['rail', 'mini', 'dock']) {
+          if (layout === 'dock' && vw !== 1440) continue;
+          for (const distance of ['near', 'stand', 'kit']) {
+            const q = layout === 'rail' ? 'layout=rail' : layout === 'mini' ? 'layout=rail&focus=1' : 'layout=band';
+            for (const [load, patch, label, sublabel] of LOADS) {
+              await page.goto(`${t.base}${HUD(`${q}&distance=${distance}&load=${load}`)}`);
+              await page.waitForSelector('[data-ctl=play] .ui-button[data-mode=loading]');
+              await page.evaluate((p) => window.__hud.setLoad(p), patch);
+              await page.evaluate(() => document.fonts.ready);
+              const m = await measure();
+              const where = `${vw} ${layout} ${distance} ${load}`;
+              t.expect(m.label === label && (m.sublabel || null) === sublabel, `${where}: "${m.label}" / "${m.sublabel}"`);
+              if (m.clipped.length) sweep.push(`${where}: ${m.clipped.join('; ')}`);
+            }
+          }
+        }
+      }
+      t.expect(!sweep.length, sweep.join('\n'));
+      // The capture: the I2a failure's rail (Near, 1440 px), Play mid-decode.
+      await page.setViewportSize({width: 1440, height: 900});
+      await page.goto(`${t.base}${HUD('layout=rail&distance=near&load=decoding')}`);
+      await page.waitForSelector('[data-ctl=play] .ui-button[data-mode=loading]');
+      await page.evaluate(() => document.fonts.ready);
+      const play = page.locator('[data-ctl=play] .ui-button');
+      t.expect((await play.getAttribute('aria-label')) === 'Decoding 1 of 4', await play.getAttribute('aria-label'));
+      t.expect(await play.locator('.ctl-ring').isVisible(), 'the ring');
+      const box = await page.locator('[data-ctl=play]').boundingBox();
+      t.expect(Math.round(box.height) === 72, `rail Play ${box.height} tall`);
     },
   },
   {

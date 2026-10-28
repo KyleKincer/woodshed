@@ -82,8 +82,9 @@ afterEach(async () => {
  * A mounted HUD on a real session, with the transport commands and stand-in definitions for the
  * Stage's own ids (stage.js and commands.js are ST4's): each run is recorded in `ran`.
  */
-async function bed({hud: hudOptions = {}, stageCtx = {}, ...options} = {}) {
+async function bed({hud: hudOptions = {}, stageCtx = {}, wrapSession, ...options} = {}) {
   const ts = await createTestSession({clock, ...options});
+  const hudSession = wrapSession ? wrapSession(ts.session) : ts.session;
   const reg = createRegistry();
   const offTransport = defineTransportCommands({registry: reg, sheets: {}});
   const ran = [];
@@ -102,7 +103,7 @@ async function bed({hud: hudOptions = {}, stageCtx = {}, ...options} = {}) {
   const prefValues = {};
   const ready = signal([]);
   const hud = mountHud(host, {
-    session: ts.session, stage, registry: reg, plateHost: music, jobs: {ready},
+    session: hudSession, stage, registry: reg, plateHost: music, jobs: {ready},
     status: (text, opts) => statuses.push({text, ...opts}),
     announce: (text, opts) => announced.push({text, ...opts}),
     prefs: {get: (k) => prefValues[k]},
@@ -510,6 +511,121 @@ describe('the mounted HUD', () => {
     vi.advanceTimersByTime(100);
     tapAt(12, 11);
     expect(b.ran.map((r) => r.id)).toEqual(['view.focus']);
+  });
+
+  // Ticket I2a-3 (§2.14.10): the drag is one gesture-bounded undo step through undo.beginGesture('speed')
+  // (I2a-1) and transport.setSpeed(rate, {gesture}) (I2a-2), whatever its timing.
+  function gestureSpy(session) {
+    const tokens = [], calls = [];
+    const real = session.undo;
+    const undo = Object.create(real, {beginGesture: {value: (key) => {
+      const token = real.beginGesture ? real.beginGesture(key) : {key, active: true, end() {}};
+      const spy = {key, ended: 0, token, get active() { return token.active; }, end() { spy.ended++; token.end(); }};
+      tokens.push(spy);
+      return spy;
+    }}});
+    const transport = Object.create(session.transport, {setSpeed: {value: (rate, opts) => {
+      calls.push({rate, gesture: opts?.gesture ?? null});
+      // Hand the real token through, so the real stack sees the gesture when it has the API.
+      return session.transport.setSpeed(rate, opts?.gesture ? {...opts, gesture: opts.gesture.token} : opts);
+    }}});
+    return {tokens, calls, wrap: (s) => Object.create(s, {undo: {value: undo}, transport: {value: transport}})};
+  }
+
+  test('the speed drag opens undo.beginGesture(\'speed\') on pointerdown, passes it on every step, and ends it on pointerup', async () => {
+    let g;
+    const b = await bed({wrapSession: (s) => { g = gestureSpy(s); return g.wrap(s); }});
+    const speed = b.q('.hud-speed');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 7});
+    expect(g.tokens.map((t) => t.key)).toEqual(['speed']);
+    expect(g.tokens[0].ended).toBe(0);
+    pointer(speed, 'pointermove', {y: 200 - SPEED_DRAG_PX, pointerId: 7});
+    vi.advanceTimersByTime(1500);
+    pointer(speed, 'pointermove', {y: 200 - 3 * SPEED_DRAG_PX, pointerId: 7});
+    expect(g.calls).toEqual([{rate: 1.01, gesture: g.tokens[0]}, {rate: 1.03, gesture: g.tokens[0]}]);
+    expect(g.tokens[0].ended).toBe(0);
+    pointer(speed, 'pointerup', {y: 200 - 3 * SPEED_DRAG_PX, pointerId: 7});
+    expect(g.tokens[0].ended).toBe(1);
+    // The next drag is a new gesture; pointercancel ends it too, and a stray pointerup changes nothing.
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 8});
+    pointer(speed, 'pointermove', {y: 200 + SPEED_DRAG_PX, pointerId: 8});
+    expect(g.tokens).toHaveLength(2);
+    expect(g.calls.at(-1)).toEqual({rate: 1.02, gesture: g.tokens[1]});
+    pointer(speed, 'pointercancel', {y: 200 + SPEED_DRAG_PX, pointerId: 8});
+    expect(g.tokens.map((t) => t.ended)).toEqual([1, 1]);
+    pointer(speed, 'pointerup', {y: 200, pointerId: 8});
+    expect(g.tokens.map((t) => t.ended)).toEqual([1, 1]);
+  });
+
+  test('lost pointer capture and destroy() end an open speed gesture', async () => {
+    let g;
+    const b = await bed({wrapSession: (s) => { g = gestureSpy(s); return g.wrap(s); }});
+    const speed = b.q('.hud-speed');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 7});
+    pointer(speed, 'lostpointercapture', {y: 200, pointerId: 7});
+    expect(g.tokens[0].ended).toBe(1);
+    expect(b.q('.hud').hasAttribute('data-speed-drag')).toBe(false);
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 9});
+    pointer(speed, 'pointermove', {y: 200 - SPEED_DRAG_PX, pointerId: 9});
+    b.hud.destroy();
+    expect(g.tokens[1].ended).toBe(1);
+  });
+
+  // End to end on the real stack: these need undo.beginGesture on the session (I2a-1 in undo.js,
+  // I2a-2 in transport.js, and session.js's undo wrapper forwarding it); until then they report as skipped.
+  const hasGestureApi = (b) => typeof b.ts.session.undo.beginGesture === 'function';
+
+  test('a speed drag with a pause of more than 1 s mid-drag is one undo step', async (ctx) => {
+    const b = await bed();
+    if (!hasGestureApi(b)) ctx.skip();
+    const speed = b.q('.hud-speed');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 7});
+    pointer(speed, 'pointermove', {y: 200 - 2 * SPEED_DRAG_PX, pointerId: 7});
+    expect(b.ts.snapshot.rate).toBe(1.02);
+    vi.advanceTimersByTime(1500);   // past the 1 s coalescing window
+    pointer(speed, 'pointermove', {y: 200 - 5 * SPEED_DRAG_PX, pointerId: 7});
+    vi.advanceTimersByTime(1200);
+    pointer(speed, 'pointermove', {y: 200 - 4 * SPEED_DRAG_PX, pointerId: 7});
+    expect(b.ts.snapshot.rate).toBe(1.04);
+    pointer(speed, 'pointerup', {y: 200 - 4 * SPEED_DRAG_PX, pointerId: 7});
+    await settle();
+    expect(b.ts.undo.size.undo).toBe(1);
+    b.ts.undo.undo();
+    await settle();
+    expect(b.ts.snapshot.rate).toBe(1);
+    expect(b.ts.undo.size.undo).toBe(0);
+  });
+
+  test('a +/− tap just before a speed drag stays its own undo step', async (ctx) => {
+    const b = await bed();
+    if (!hasGestureApi(b)) ctx.skip();
+    b.reg.run('speed.up', {source: 'pointer'});   // the + tap: 100% → 105%
+    await settle();
+    const tapped = b.ts.snapshot.rate;
+    expect(tapped).toBeGreaterThan(1);
+    expect(b.ts.undo.size.undo).toBe(1);
+    vi.advanceTimersByTime(200);                  // well inside the 1 s window
+    const speed = b.q('.hud-speed');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 7});
+    pointer(speed, 'pointermove', {y: 200 - 3 * SPEED_DRAG_PX, pointerId: 7});
+    pointer(speed, 'pointerup', {y: 200 - 3 * SPEED_DRAG_PX, pointerId: 7});
+    await settle();
+    expect(b.ts.snapshot.rate).toBe(Math.round(tapped * 100 + 3) / 100);
+    expect(b.ts.undo.size.undo).toBe(2);
+    b.ts.undo.undo();                             // the drag
+    await settle();
+    expect(b.ts.snapshot.rate).toBe(tapped);
+    b.ts.undo.undo();                             // the tap
+    await settle();
+    expect(b.ts.snapshot.rate).toBe(1);
   });
 
   test('a speed drag that ends in pointercancel does not eat the next tap (the next double-tap still focuses)', async () => {

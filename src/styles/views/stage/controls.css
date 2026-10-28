@@ -147,6 +147,14 @@
     gap: var(--s2);
   }
   .ctl-set[data-variant=rail] .ui-stepper-button { inline-size: 56px; }
+  /* Loading (ticket I2a-13): the ring stacks above "Decoding" over "1 of 4" (or "Loading" over "62%"),
+   * as in the dock, so the words get the button's whole width: the rail's Play column is 78 px wide at
+   * Near below 1280 px, too narrow for the ring beside the words. 2 + 32 + 2 + 2 × 15.75 + 2 fits 72. */
+  .ctl-set[data-variant=rail] [data-ctl=play] .ui-button[data-mode=loading] {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 2px;
+  }
   /* The rail's Mix main zone is text only ("Drums" over "OUT"), so it fits beside the ⌃ zone. */
   .ctl-set[data-variant=rail] .ctl-mix-main > .ui-icon { display: none; }
   .ctl-set[data-variant=rail] .ctl-mix-main .ui-button-text { align-items: flex-start; }
