@@ -1,0 +1,170 @@
+{
+  "package": "FX0",
+  "purpose": "Woodshed 1.9 reference captures and measurements, recorded once before wave 0A from a pristine tree. The old app is never captured again after this (architecture §8, §10.2).",
+  "source": {
+    "commit": "820f4db790236938df9ad034efe88df65c2eb5af",
+    "version": "1.9.0",
+    "fixture": "tests/fixture at 820f4db (the full-app fixture described in docs/ux2/fixture-notes.md)"
+  },
+  "recordedAt": "2026-10-28",
+  "chromium": "153.0.8010.12 (Playwright from /opt/node-tools, headless)",
+  "setup": [
+    "git worktree add --detach /tmp/claude-0/fx0-pristine 820f4db",
+    "cd /tmp/claude-0/fx0-pristine && npm ci --prefer-offline --ignore-scripts",
+    "cp <main>/tests/fixture/harness/score-geometry.{html,js} /tmp/claude-0/fx0-pristine/tests/fixture/harness/   (the harness only imports modules that exist at 820f4db)"
+  ],
+  "screenshots": {
+    "how": "node tests/fixture/capture.cjs <laptop|ipad> <light|dark> '^(chart-practice|transcribe-score|transcribe-lanes)$' run inside the pristine worktree with FIXTURE_URL pointing at its fixture server (laptop 1440x900; iPad 820x1180 with touch; dark = browser colour scheme dark with the app's System theme)",
+    "states": {
+      "chart-practice": "Glasshouse, Practice → Chart (alphaTab chart, 110% scale on laptop, 90% on iPad)",
+      "transcribe-score": "Glasshouse, Transcribe workspace, Score view",
+      "transcribe-lanes": "Glasshouse, Transcribe workspace, Drum lanes view (fx-notation=lanes)"
+    },
+    "files": [
+      {
+        "file": "chart-practice--ipad-dark.png",
+        "state": "chart-practice",
+        "device": "ipad",
+        "theme": "dark",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "c5ab1e22373b87b88ab1ba2896d49abff75d9d3c0d0e7a72359d66ac76cf7c94"
+      },
+      {
+        "file": "chart-practice--ipad-light.png",
+        "state": "chart-practice",
+        "device": "ipad",
+        "theme": "light",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "fd19adaef41abeed5ba059f3569db5342335b2b21c7e3c3b51a8df605e381cc2"
+      },
+      {
+        "file": "chart-practice--laptop-dark.png",
+        "state": "chart-practice",
+        "device": "laptop",
+        "theme": "dark",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "9b92b2731458ccd7921157223bddc95f2c5ae1e9fa9e0f2067e2eec72ef4437b"
+      },
+      {
+        "file": "chart-practice--laptop-light.png",
+        "state": "chart-practice",
+        "device": "laptop",
+        "theme": "light",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "dea87ebb88884bacf85a189abaa8bd77fb2b677693da6ef4a7281b1501e01539"
+      },
+      {
+        "file": "transcribe-lanes--ipad-dark.png",
+        "state": "transcribe-lanes",
+        "device": "ipad",
+        "theme": "dark",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "bc908c02af5a5ecce2d71dca959e76ee94e7356196f3caf936681da6d3880568"
+      },
+      {
+        "file": "transcribe-lanes--ipad-light.png",
+        "state": "transcribe-lanes",
+        "device": "ipad",
+        "theme": "light",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "eadc62d4cf8054a0749073db42956c6657df5a6bfc6f9f49c4b76570555441d4"
+      },
+      {
+        "file": "transcribe-lanes--laptop-dark.png",
+        "state": "transcribe-lanes",
+        "device": "laptop",
+        "theme": "dark",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "0f0326a38dc99d4559821cc04988fcc944489a5a14a418d6fde6226d3a49d7e6"
+      },
+      {
+        "file": "transcribe-lanes--laptop-light.png",
+        "state": "transcribe-lanes",
+        "device": "laptop",
+        "theme": "light",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "56da12223b1ad04682219de8ff7a5f4e2f95f87bd8a3e88317bb65b0efbafa89"
+      },
+      {
+        "file": "transcribe-score--ipad-dark.png",
+        "state": "transcribe-score",
+        "device": "ipad",
+        "theme": "dark",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "3c1ed3c41e7befc10e02ecdb0f8a722cc4ee336388895700988a70e266f32421"
+      },
+      {
+        "file": "transcribe-score--ipad-light.png",
+        "state": "transcribe-score",
+        "device": "ipad",
+        "theme": "light",
+        "viewport": [
+          820,
+          1180
+        ],
+        "sha256": "2bed19d6712a56fccd370ff7dcec164e95bdf74cecef111f8d98f2139715b4ae"
+      },
+      {
+        "file": "transcribe-score--laptop-dark.png",
+        "state": "transcribe-score",
+        "device": "laptop",
+        "theme": "dark",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "8c64eeb1e2d2de12c830d19dd949fdb907f0f21b5f836f09ba4c76d66d1f91b5"
+      },
+      {
+        "file": "transcribe-score--laptop-light.png",
+        "state": "transcribe-score",
+        "device": "laptop",
+        "theme": "light",
+        "viewport": [
+          1440,
+          900
+        ],
+        "sha256": "883c73a8c595fb8bb15dadccee3ee347bb0b9133dde8aa2b09e39512180de9ae"
+      }
+    ],
+    "review": "Owner gate G4 compares the 2.0 Transcribe score/lanes and chart PNGs with these side by side: colour and font changes are expected; layout and notation are not."
+  },
+  "geometry": {
+    "file": "score-geometry.json",
+    "harness": "tests/fixture/harness/score-geometry.html (createScoreView(host, {scale}) + view.setScore(demoScore(64, 120), {layout: 'combined'}) at a fixed 1200 px width)",
+    "record": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-geometry.cjs --record --root /tmp/claude-0/fx0-pristine",
+    "check": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-geometry.cjs   (starts this tree's fixture on a free port; exit 0 = identical bars per system and every notehead within ±2 px of its bar origin at scales 1.0 and 1.2)"
+  },
+  "perf": {
+    "file": "perf.json",
+    "record": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-perf-legacy.cjs --root /tmp/claude-0/fx0-pristine",
+    "rule": "Ratio checks compare a 2.0 median with metrics.<name>.median: at most 1.15x, measured in the same container with nothing else running. Re-record this file in that container first with the same command if the container changed (architecture §11.5)."
+  }
+}

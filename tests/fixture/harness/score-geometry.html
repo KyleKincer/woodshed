@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Score geometry harness</title>
+  <!--
+    Standalone engraving harness (package FX0). It engraves demoScore() through
+    createScoreView() from src/js/notation/score-view.js at a fixed width and
+    exposes the geometry for tests/fixture/probes/probe-geometry.cjs and the
+    relayout timing for tests/fixture/probes/probe-perf-legacy.cjs.
+
+    Query parameters (all optional):
+      scale=1      engraving scale passed to createScoreView(host, {scale})
+      width=1200   width of the score host, in CSS pixels
+      seconds=64   demoScore(seconds, bpm): 64 s at 120 bpm is 32 bars of 4/4
+      bpm=120
+      layout=combined   notation layout passed to view.setScore(score, {layout})
+
+    The page deliberately loads no app stylesheet: only score-view.js and the
+    CSS it imports itself take part, so the geometry measures engraving alone.
+    The text face below matches the face the 1.9 player resolves (--font).
+  -->
+  <style>
+    :root { --font: Arial, Helvetica, sans-serif; color-scheme: light; }
+    html, body { margin: 0; padding: 0; }
+    body { font-family: var(--font); background: Canvas; color: CanvasText; }
+    .harness-head { margin: 0; padding: 8px 12px; font-size: 14px; font-weight: 600; }
+    .harness-status { margin: 0; padding: 0 12px 8px; font-size: 12px; }
+    #score { box-sizing: content-box; margin: 0; padding: 0; border: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 class="harness-head">Score geometry harness</h1>
+    <p class="harness-status" id="status" role="status">Engraving…</p>
+    <div id="score" role="img" aria-label="Engraved demo drum score"></div>
+  </main>
+  <script type="module" src="./score-geometry.js"></script>
+</body>
+</html>
