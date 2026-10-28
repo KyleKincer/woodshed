@@ -11,6 +11,8 @@
 //   fx1-app-boot        the app boots on the fixture database
 'use strict';
 
+const {walkFocus} = require('../probes/probe-focus.cjs');
+
 const NOW = '2026-10-28T09:00:00.000Z';
 const SMOKE = '/__harness/fixture-smoke';
 
@@ -176,17 +178,50 @@ module.exports = [
       await page.goto(`${t.base}${SMOKE}?fx-library=empty`); await t.ready('fixture-smoke');
       t.expect(await page.evaluate(() => window.fixture.db().songs.length) === 0, 'another seed switch reseeds');
       await page.goto(`${t.base}${SMOKE}`); await t.ready('fixture-smoke');
-      t.expect(await title() === 'Glasshouse', 'switching back reseeds again');
+      t.expect(await page.evaluate(() => window.fixture.db().songs.length) === 0, 'a URL without switches keeps the tab\'s switches');
+      await page.goto(`${t.base}${SMOKE}?fx-reset=1`); await t.ready('fixture-smoke');
+      t.expect(await title() === 'Glasshouse', 'fx-reset=1 drops the tab\'s switches and reseeds');
       await page.evaluate(() => window.fixture.update(db => { db.songs[0].title = 'Changed again'; }));
       await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.songs[0].title === 'Changed again');
       await page.goto(`${t.base}${SMOKE}?fx-reset=1`); await t.ready('fixture-smoke');
-      t.expect(await title() === 'Glasshouse', 'fx-reset=1 starts from the seed');
+      t.expect(await title() === 'Glasshouse', 'fx-reset=1 starts from the seed (again, on a new navigation)');
+
+      // Switches stick for the tab: the app rewrites the URL, then the page reloads.
+      await page.goto(`${t.base}${SMOKE}?fx-now=${NOW}&fx-desktop=1&fx-platform=ipad`); await t.ready('fixture-smoke');
+      await page.evaluate(() => window.fixture.update(db => { db.songs.find(s => s.id === 'glasshouse').title = 'Saved by the flow'; }));
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.songs[0].title === 'Saved by the flow');
+      await page.evaluate(() => history.pushState({}, '', location.pathname));
+      await page.reload(); await t.ready('fixture-smoke');
+      const sticky = await page.evaluate(() => ({title: window.fixture.db().songs[0].title, now: Date.now(), desktop: !!window.woodshedDesktop, platform: navigator.platform, fx: window.fixture.fx}));
+      t.expect(sticky.title === 'Saved by the flow', `a reload after the URL lost its query keeps the data (${JSON.stringify(sticky)})`);
+      t.expect(Math.abs(sticky.now - Date.parse(NOW)) < 60_000 && sticky.desktop && sticky.platform === 'MacIntel' && sticky.fx.platform === 'ipad', `…and the switches (${JSON.stringify(sticky)})`);
+
+      // Storage switches act once per navigation: a reload does not reset or re-merge prefs.
+      await page.goto(`${t.base}${SMOKE}?fx-reset=1&fx-prefs=${encodeURIComponent('{"theme":"dark"}')}`); await t.ready('fixture-smoke');
+      await page.evaluate(() => { localStorage.setItem('ws.prefs', JSON.stringify({...JSON.parse(localStorage.getItem('ws.prefs')), theme: 'light'})); window.fixture.update(db => { db.songs[0].title = 'Kept on reload'; }); });
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.songs[0].title === 'Kept on reload');
+      await page.reload(); await t.ready('fixture-smoke');
+      const once = await page.evaluate(() => ({theme: JSON.parse(localStorage.getItem('ws.prefs')).theme, title: window.fixture.db().songs[0].title}));
+      t.expect(once.theme === 'light' && once.title === 'Kept on reload', `a reload does not apply fx-reset or fx-prefs again (${JSON.stringify(once)})`);
+      const [cloned] = await Promise.all([page.context().waitForEvent('page'), page.evaluate(() => { window.open(location.href); })]);
+      await cloned.waitForSelector('html[data-view-ready="fixture-smoke"]', {state: 'attached'});
+      t.expect(await cloned.evaluate(() => window.fixture.db().songs[0].title) === 'Kept on reload', 'nor does a tab opened from it');
+      await cloned.close();
+
+      // A beat detection running across a reload still finishes.
+      await page.goto(`${t.base}${SMOKE}?fx-reset=1`); await t.ready('fixture-smoke');
+      await page.evaluate(() => window.fixture.call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'}));
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('fx-db')).data.jobs.some(j => j.jobId === 'beats-quiet'));
+      await page.reload(); await t.ready('fixture-smoke');
+      await page.waitForFunction(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-quiet')?.status === 'done', null, {timeout: 6000});
+      const beats = await page.evaluate(() => window.fixture.db().jobs.find(j => j.jobId === 'beats-quiet'));
+      t.expect(beats.label === 'Finding bars — Quiet Hours' && beats.deviceId === 'dev1' && beats.createdAt > 0 && beats.updatedAt >= beats.createdAt, `the reloaded detection finished with a full row (${JSON.stringify({...beats, result: undefined})})`);
     },
   },
   {
     name: 'fx1-switches',
-    url: `${SMOKE}?fx-platform=ipad&fx-nofeature=anchor,popover,wakelock,midi,mediasession,viewtransition&fx-view=albums-list&fx-prefs=${encodeURIComponent(JSON.stringify({theme: 'dark', practice: {distance: 'kit'}}))}`,
-    opts: {devices: ['laptop'], themes: ['light'], capture: false},
+    url: `${SMOKE}?fx-platform=ipad&fx-nofeature=anchor,popover,wakelock,midi,mediasession,viewtransition&fx-prefs=${encodeURIComponent(JSON.stringify({theme: 'dark', practice: {distance: 'kit'}}))}`,
+    opts: {devices: ['laptop'], themes: ['light'], capture: false, allow: ['fx-prefs cannot be combined with fx-view']},
     async fn(page, t) {
       const r = await page.evaluate(() => ({
         platform: navigator.platform, touch: navigator.maxTouchPoints, uaData: 'userAgentData' in navigator, fixture: window.fixture.platform,
@@ -194,13 +229,22 @@ module.exports = [
         popover: 'showPopover' in HTMLElement.prototype || 'popover' in HTMLElement.prototype, transition: typeof document.startViewTransition,
         anchor: CSS.supports('anchor-name: --a') || CSS.supports('position-anchor', '--a'), grid: CSS.supports('display: grid'),
         removed: window.fixture.removed, fakes: {wakeLock: !!window.fixture.wakeLock, midi: !!window.fixture.midi, media: !!window.fixture.media},
-        prefs: JSON.parse(localStorage.getItem('ws.prefs')), view: JSON.parse(localStorage.getItem('ws.view')), early: window.__FIXTURE__,
+        prefs: JSON.parse(localStorage.getItem('ws.prefs')), early: window.__FIXTURE__,
       }));
       t.expect(r.platform === 'MacIntel' && r.touch === 5 && !r.uaData && r.fixture === 'ipad', `fx-platform=ipad (${JSON.stringify(r)})`);
       t.expect(!r.wakeLock && !r.midi && !r.media && !r.popover && r.transition === 'undefined' && !r.anchor && r.grid, `fx-nofeature (${JSON.stringify(r)})`);
       t.expect(r.removed.length === 6 && !r.fakes.wakeLock && !r.fakes.midi && !r.fakes.media, 'a removed feature is never faked');
       t.expect(r.prefs.v === 1 && r.prefs.theme === 'dark' && r.prefs.practice.distance === 'kit', `fx-prefs (${JSON.stringify(r.prefs)})`);
-      t.expect(r.view.group === 'albums' && r.view.layout === 'list' && r.early === true, 'legacy keys and window.__FIXTURE__');
+      t.expect(r.early === true, 'window.__FIXTURE__');
+      // A legacy key on its own (after a reset, so ws.prefs is absent and the migration would run).
+      await page.goto(`${t.base}${SMOKE}?fx-reset=1&fx-view=albums-list`); await t.ready('fixture-smoke');
+      const legacy = await page.evaluate(() => ({prefs: localStorage.getItem('ws.prefs'), view: JSON.parse(localStorage.getItem('ws.view'))}));
+      t.expect(legacy.prefs === null && legacy.view.group === 'albums' && legacy.view.layout === 'list', `fx-view writes ws.view with ws.prefs absent (${JSON.stringify(legacy)})`);
+      // Combining fx-prefs with a legacy key is refused with a console error (allowed above).
+      const errors = [];
+      page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+      await page.goto(`${t.base}${SMOKE}?fx-view=albums-list&fx-prefs=${encodeURIComponent('{"theme":"dark"}')}`); await t.ready('fixture-smoke');
+      t.expect(errors.some(e => e.includes('fx-prefs cannot be combined with fx-view')), `fx-prefs with a legacy key is a console error (${JSON.stringify(errors)})`);
     },
   },
   {
@@ -208,12 +252,21 @@ module.exports = [
     url: SMOKE,
     opts: {devices: ['laptop'], themes: ['light'], capture: false},
     async fn(page, t) {
-      for (const demo of ['overflow', 'overlap', 'clip', 'placeholder']) {
+      const demos = {overflow: 'overflow', overlap: 'overlap', clip: 'clip', placeholder: 'placeholder', 'placeholder-nested': 'placeholder', 'overlap-below': 'overlap'};
+      for (const [demo, check] of Object.entries(demos)) {
         await page.goto(`${t.base}${SMOKE}?demo=${demo}`); await t.ready('fixture-smoke');
         const problems = await t.structure();
-        t.expect(problems.length === 1 && problems[0].startsWith(`${demo}:`), `the ${demo} check finds the demo problem (${JSON.stringify(problems)})`);
-        t.expect((await t.structure({skip: [demo]})).length === 0, `opts.structure.skip turns the ${demo} check off`);
+        t.expect(problems.length === 1 && problems[0].startsWith(`${check}:`), `the ${check} check finds the ${demo} demo problem (${JSON.stringify(problems)})`);
+        t.expect((await t.structure({skip: [check]})).length === 0, `opts.structure.skip turns the ${check} check off`);
       }
+      // overlap-below: the page is scrolled to hit-test it and put back; viewportOnly skips it.
+      t.expect(await page.evaluate(() => scrollY) === 0, 'the overlap scan restores the scroll position');
+      t.expect((await t.structure({viewportOnly: true})).length === 0, 'viewportOnly checks the visible viewport only');
+      await page.goto(`${t.base}${SMOKE}?demo=chip-row`); await t.ready('fixture-smoke');
+      t.expect((await t.structure()).length === 0, 'a scrolling row of chips is not a clipped label');
+      await page.goto(`${t.base}${SMOKE}?demo=focus-shadow`); await t.ready('fixture-smoke');
+      const focus = await walkFocus(page, {stops: 4});
+      t.expect(focus.length === 1 && focus[0].includes('"Raised"') && focus[0].includes('looks the same focused and unfocused'), `a resting shadow is not a focus ring (${JSON.stringify(focus)})`);
       await page.goto(`${t.base}${SMOKE}`); await t.ready('fixture-smoke');
     },
   },

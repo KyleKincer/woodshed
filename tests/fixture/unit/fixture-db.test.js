@@ -126,6 +126,26 @@ describe('persistence (sessionStorage["fx-db"])', () => {
     await tick();
     expect(boot({search: '?fx-media=slow&fx-desktop=1&fx-platform=ipad', store, now: NOW}).restored).toBe(true);
   });
+  it('reads early.js\'s sticky switch map by default (a URL that lost its query keeps them)', async () => {
+    boot({search: {library: 'empty', desktop: '1'}, store, now: NOW});
+    expect(runtime.fx).toEqual({library: 'empty', desktop: '1'});
+    globalThis.__FIXTURE_EARLY__ = {fx: {jobs: '0', platform: 'ipad'}};
+    try {
+      boot({store, now: NOW});
+      expect(runtime.fx).toEqual({jobs: '0', platform: 'ipad'});
+      await call('mutation', 'songs:remove', {id: 'quiet'});
+      await tick();
+      expect(boot({store, now: NOW}).restored).toBe(true);
+      expect(runtime.db.songs.map(s => s.id)).not.toContain('quiet');
+    } finally { delete globalThis.__FIXTURE_EARLY__; }
+  });
+  it('window.fixture.call runs a handler as the app would and returns a copy', async () => {
+    const api = installFixtureApi({});
+    const song = await api.call('query', 'songs:get', {id: 'glasshouse'});
+    expect(song.title).toBe('Glasshouse');
+    song.title = 'mutated';
+    expect(runtime.db.songs[0].title).toBe('Glasshouse');
+  });
   it('survives a storage that refuses writes (in-memory only, with a warning)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const full = new MemoryStorage();
@@ -195,6 +215,36 @@ describe('handlers adapted to seed v2', () => {
     expect(done.status).toBe('done');
     expect(done.result.beats[0]).toEqual([0, 1]);
   });
+  it('a beat detection row is complete, and one running across a reload still finishes', async () => {
+    vi.useFakeTimers({now: NOW});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    const row = await call('query', 'jobs:get', {jobId});
+    expect(row).toMatchObject({kind: 'beats', status: 'running', label: 'Finding bars — Quiet Hours', deviceId: 'dev1', createdAt: NOW, updatedAt: NOW, finishAt: NOW + 1500});
+    // The page reloads before the timer fires: a new boot from what was persisted.
+    persist();
+    vi.clearAllTimers();
+    vi.setSystemTime(NOW + 500);
+    expect(boot({search: '', store, now: NOW}).restored).toBe(true);
+    expect((await call('query', 'jobs:get', {jobId})).status).toBe('running');
+    vi.advanceTimersByTime(1100);
+    expect((await call('query', 'jobs:get', {jobId})).status).toBe('done');
+    // A reload after it was due finishes it on boot.
+    const second = await call('mutation', 'jobs:createBeatDetection', {songId: 'velvet'});
+    persist();
+    vi.clearAllTimers();
+    vi.setSystemTime(Date.now() + 5000);
+    boot({search: '', store, now: NOW});
+    expect(await call('query', 'jobs:get', second)).toMatchObject({status: 'done', percent: 100});
+    expect((await call('query', 'jobs:get', second)).finishAt).toBeUndefined();
+  });
+  it('the job creep finishes a detection that is due', async () => {
+    vi.useFakeTimers({now: NOW});
+    const {jobId} = await call('mutation', 'jobs:createBeatDetection', {songId: 'quiet'});
+    vi.clearAllTimers();
+    startJobCreep(1000);
+    vi.advanceTimersByTime(2000);
+    expect((await call('query', 'jobs:get', {jobId})).status).toBe('done');
+  });
   it('fx-detect=fail and slow shape a beat detection', async () => {
     vi.useFakeTimers();
     boot({search: '?fx-detect=fail', store, now: NOW});
@@ -227,6 +277,12 @@ describe('handlers adapted to seed v2', () => {
     expect(await call('query', 'sharing:view', {token: 'b'.repeat(64)})).toBeNull();
     expect((await call('query', 'notation:get', {token: SHARE_TOKEN})).score.timeline.measures).toHaveLength(64);
     expect(await call('query', 'notation:get', {token: DEMO_TOKEN})).toBeNull();
+    // Like convex/notation.ts: a link made without the drum part does not show it.
+    await call('mutation', 'sharing:create', {id: 'glasshouse', includeNotation: false});
+    expect(await call('query', 'notation:get', {token: SHARE_TOKEN})).toBeNull();
+    expect(await call('query', 'notation:get', {songId: 'glasshouse'})).not.toBeNull();
+    await call('mutation', 'sharing:create', {id: 'glasshouse', includeNotation: true});
+    expect(await call('query', 'notation:get', {token: SHARE_TOKEN})).not.toBeNull();
     boot({search: '?fx-share=missing', store, now: NOW});
     expect(await call('query', 'sharing:view', {token: SHARE_TOKEN})).toBeNull();
   });

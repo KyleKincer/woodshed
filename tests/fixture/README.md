@@ -41,7 +41,7 @@ npm run fixture:compare                           # scripts/compare-shots.py: ou
 | `fx-desktop=1` | `window.woodshedDesktop` and the local processor at `127.0.0.1:47831` |
 | `fx-update=available\|downloading\|ready` | the desktop update state |
 | `fx-processor=starting\|ready\|stopped\|restarting` | the desktop processor phase |
-| `fx-companion=offline\|busy\|firstrun\|down` | the processor's `/status` (down: every request fails) |
+| `fx-companion=offline\|busy\|firstrun\|down` | the processor's `/status` (down: every request fails; an upload errors at once, with no progress) |
 | `fx-lookup=slow\|fail` · `fx-upload=slow\|fail` · `fx-legacy=1` · `fx-shortcuts=fail` | processor lookups, uploads, the old-library scan, background shortcuts |
 | `fx-library=empty\|slow` · `fx-jobs=0\|frozen` | no songs and jobs · the library never arrives · only finished jobs · no job creep |
 | `fx-devices=none\|offline\|online` | the paired computers (default: one online, one offline) |
@@ -49,14 +49,29 @@ npm run fixture:compare                           # scripts/compare-shots.py: ou
 | `fx-auth=signedout\|suspended\|export_only\|fail` · `fx-signinError=expired` | the account state |
 | `fx-billing=free\|plus\|cancel\|grace\|disabled` · `fx-admin=1` | plan and administrator |
 | `fx-media=fail\|slow` · `fx-share=missing\|saved` · `fx-detect=ok\|fail\|slow` | stem signing, shared links, beat detection |
-| `fx-view`, `fx-practice`, `fx-notation`, `fx-overview` | write the 1.9 `ws.*` keys (exercise the prefs migration) |
+| `fx-view`, `fx-practice`, `fx-notation`, `fx-overview` | write the 1.9 `ws.*` keys (exercise the prefs migration; not with `fx-prefs`) |
 
 Seed-affecting switches (`library`, `jobs`, `billing`, `auth`, `devices`, `account`, `now`) replace a
 persisted database made with other values.
 
+**Switches stick for the tab.** A URL with any `fx-*` parameter replaces the tab's switches
+(`sessionStorage['fx-switches']`; `fx-reset` itself is not kept). A URL with none uses the stored
+ones, so a reload after the app rewrote the URL keeps the database, `fx-now`, `fx-platform`,
+`fx-desktop` and the rest. `?fx-reset=1` alone drops them. App code that reads a switch must read
+`window.__FIXTURE_EARLY__.fx` (or `window.fixture.fx`), not `location.search`.
+
+**Storage switches act once per navigation.** `fx-reset`, `fx-prefs` and the legacy keys run on a
+fresh navigation only: not on a reload, back/forward, a URL without `fx-*` parameters, or a tab
+opened from this one (it inherits sessionStorage). A later `page.goto` with them applies them
+again. `fx-now` is applied on every load. Within a flow, `fixture.reset()` reseeds too.
+
+**Legacy keys need an absent `ws.prefs`.** The prefs migration runs only while `ws.prefs` is absent
+(§2.5), so `fx-view`, `fx-practice`, `fx-notation` and `fx-overview` cannot be combined with
+`fx-prefs` (a console error, which fails the state). Use them with `fx-reset=1` on their own.
+
 ## `window.fixture`
 
-`fx` · `db()` (deep copy) · `update(fn)` · `reset()` · `freezeJobs()` · `changed()` · `now()` ·
+`fx` · `db()` (deep copy) · `update(fn)` · `reset()` · `call(kind, name, args)` · `freezeJobs()` · `changed()` · `now()` ·
 `platform` · `removed` · `advance(ms)` and `audio` (`fx-audio=manual`) · `wakeLock` · `midi` · `media` ·
 `install` · `share` · `clipboard` · `companion`, `upload` and `desktop` (`fx-desktop=1`).
 Each fake documents its controls at the top of its file.

@@ -7,14 +7,16 @@
 //
 // The data comes from db/seed.js. Every change is persisted to
 // sessionStorage['fx-db'] and reloaded on boot, so reload, resume and
-// new-tab tests see what earlier steps wrote. `?fx-reset=1` (handled by
+// new-tab tests see what earlier steps wrote. The switches are early.js's map,
+// which stays for the tab when a later URL has none. `?fx-reset=1` (handled by
 // ../early.js before anything runs) clears it; a stored db from another seed
 // version, or from other seed-affecting switches (seed.js SEED_SWITCHES), is
 // replaced by a fresh seed.
 //
 // window.fixture gains: db() (a deep copy), update(fn) (mutate, then notify),
-// reset() (a fresh seed), freezeJobs(), and changed().
-import {fx, db, setDb, setFx, clone, changed, onChanged, NEVER} from './runtime.js';
+// reset() (a fresh seed), call(kind, name, args) (run a handler as the app would),
+// freezeJobs(), and changed().
+import {fx, db, setDb, setFx, pageSwitches, clone, changed, onChanged, NEVER} from './runtime.js';
 import {createSeed, seedKey, SEED_VERSION} from './seed.js';
 
 export {fx, db, changed, NEVER};
@@ -39,6 +41,17 @@ export function mergeHandlers(modules) {
 }
 
 export const handlers = mergeHandlers(MODULES);
+
+/**
+ * Run every module's optional `settle(now)`: finish work that fell due while no page
+ * was open (boot) or between timers (each job-creep tick). Modules may also export
+ * `resume()`, run once after boot to re-arm their timers.
+ */
+export function settleAll(now = Date.now()) {
+  let any = false;
+  for (const mod of Object.values(MODULES)) if (typeof mod.settle === 'function' && mod.settle(now)) any = true;
+  return any;
+}
 
 let storage = null;
 
@@ -66,15 +79,18 @@ export function persist() {
 }
 
 /**
- * (Re)initialise from a query string. Runs on import in a browser; tests call
+ * (Re)initialise from the switches: a query string or a parsed map (default:
+ * early.js's sticky map for the tab). Runs on import in a browser; tests call
  * it directly. Returns {restored: boolean}.
  */
-export function boot({search = globalThis.location?.search ?? '', store = globalThis.sessionStorage ?? null, now = Date.now()} = {}) {
+export function boot({search = pageSwitches(), store = globalThis.sessionStorage ?? null, now = Date.now()} = {}) {
   setFx(search);
   storage = store;
   const key = seedKey(fx);
   const restored = readStored(key);
   setDb(restored ?? createSeed({fx, now}));
+  settleAll();
+  for (const mod of Object.values(MODULES)) if (typeof mod.resume === 'function') mod.resume();
   persist();
   return {restored: !!restored};
 }
@@ -128,7 +144,7 @@ let creep = null;
 export function startJobCreep(intervalMs = 4000) {
   stopJobCreep();
   creep = setInterval(() => {
-    let any = false;
+    let any = settleAll();
     for (const j of db.jobs) if (j.status === 'running' && j.percent < 99 && !j.frozen) { j.percent = Math.min(99, j.percent + 1); any = true; }
     if (any) changed();
   }, intervalMs);
@@ -148,6 +164,7 @@ export function installFixtureApi(win) {
     db: () => clone(db),
     update(fn) { const result = fn(db); changed(); return result === undefined ? undefined : clone(result); },
     reset: () => reset(),
+    call: (kind, name, args) => call(kind, name, args).then(v => (v === NEVER ? null : clone(v))),
     freezeJobs,
     changed,
   });

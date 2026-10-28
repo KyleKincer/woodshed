@@ -22,7 +22,7 @@
 //           ready                      route name to wait for in html[data-view-ready]; harness
 //                                      urls wait for their own name; false: no wait
 //           allow                      [string|RegExp] expected errors (matched against the message)
-//           structure                  false, or lib/structure.cjs options {skip, ignore, allowClip, placeholder}
+//           structure                  false, or lib/structure.cjs options {skip, ignore, allowClip, placeholder, viewportOnly}
 //           capture                    false: a flow with no screenshot
 //           fullPage, reducedMotion ('reduce'), timeout (ms, default 60000)
 //           fixedTime                  page.clock.setFixedTime(ISO | ms) before loading

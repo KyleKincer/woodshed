@@ -25,6 +25,12 @@ describe('lib/structure.cjs', () => {
     const t = [{label: 'card', path: 'a', rect: rect(0, 0, 100, 100)}, {label: 'menu', path: 'b', rect: rect(80, 0, 20, 20)}, {label: 'other', path: 'c', rect: rect(90, 10, 40, 40)}];
     expect(structure.findOverlaps(t, [[0, 1]]).map(o => [o.a.label, o.b.label])).toEqual([['card', 'other'], ['menu', 'other']]);
   });
+  it('the clip check names chips and readouts, not their containers', () => {
+    const token = new RegExp(structure.LABEL_CLASS);
+    for (const c of ['chip', 'readout', 'stage-chip', 'hud_readout', 'chip--on', 'filter-chip--active']) expect(token.test(c), c).toBe(true);
+    for (const c of ['chips', 'chip-row', 'readouts', 'chipper', 'readout-group', 'microchip']) expect(token.test(c), c).toBe(false);
+    expect(structure.LABELLED).not.toMatch(/\.chip\b(?!")/);
+  });
   it('analyse reports each kind of problem and honours skip and placeholder', () => {
     const data = {
       overflow: [{target: 'html', scrollWidth: 1500, clientWidth: 1440}],
@@ -196,6 +202,36 @@ describe('probes', () => {
     expect(focus.ringProblem(stop({outlineColor: 'rgba(0, 0, 0, 0)'}))).toMatch(/shows no focus ring/);
     expect(focus.ringProblem(stop({visible: false}))).toMatch(/not visible/);
     expect(focus.ringProblem(null)).toBeNull();
+  });
+  it('probe-focus: with the unfocused look known, a ring must differ from it', () => {
+    const stop = extra => ({name: 'Card', visible: true, outlineStyle: 'none', outlineWidth: 0, outlineColor: 'rgb(0, 0, 0)', boxShadow: 'rgba(0, 0, 0, 0.2) 0px 1px 2px 0px', ...extra});
+    const rest = extra => ({outlineStyle: 'none', outlineWidth: 0, outlineColor: 'rgb(0, 0, 0)', boxShadow: 'rgba(0, 0, 0, 0.2) 0px 1px 2px 0px', ...extra});
+    expect(focus.ringProblem(stop(), rest())).toMatch(/looks the same focused and unfocused/);
+    expect(focus.ringProblem(stop())).toBeNull();
+    expect(focus.ringProblem(stop({boxShadow: 'rgb(23, 75, 209) 0px 0px 0px 3px'}), rest())).toBeNull();
+    expect(focus.ringProblem(stop({outlineStyle: 'solid', outlineWidth: 3, outlineColor: 'rgb(23, 75, 209)'}), rest())).toBeNull();
+    const ringed = {outlineStyle: 'solid', outlineWidth: 2, outlineColor: 'rgb(23, 75, 209)', boxShadow: 'none'};
+    expect(focus.ringProblem(stop(ringed), rest(ringed))).toMatch(/looks the same/);
+    expect(focus.ringProblem(stop({...ringed, outlineWidth: 3}), rest(ringed))).toBeNull();
+    expect(focus.ringProblem(stop({boxShadow: 'none'}), rest({boxShadow: 'none'}))).toMatch(/shows no focus ring/);
+  });
+  it('probe-focus: walkFocus judges each stop against its look after Tab moves on', async () => {
+    const shadow = 'rgba(0, 0, 0, 0.2) 0px 1px 2px 0px';
+    const flat = {outlineStyle: 'none', outlineWidth: 0, outlineColor: 'red', boxShadow: shadow};
+    const steps = [
+      {key: 'raised', name: 'Raised', visible: true, ...flat, prevRest: null},
+      {key: 'ringed', name: 'Ringed', visible: true, outlineStyle: 'solid', outlineWidth: 3, outlineColor: 'blue', boxShadow: 'none', prevRest: flat},
+      {none: true, prevRest: {outlineStyle: 'none', outlineWidth: 0, outlineColor: 'blue', boxShadow: 'none'}},
+      null,
+    ];
+    let i = 0;
+    const page = {keyboard: {press: vi.fn(async () => {})}, evaluate: async () => steps[Math.min(i++, steps.length - 1)]};
+    expect(await focus.walkFocus(page, {stops: 4})).toEqual([expect.stringMatching(/"Raised" looks the same focused and unfocused/)]);
+    // At the stop limit, one more Tab measures the last stop's unfocused look.
+    let j = 0;
+    const limited = {keyboard: {press: vi.fn(async () => {})}, evaluate: async () => steps[j++]};
+    expect(await focus.walkFocus(limited, {stops: 1})).toEqual([expect.stringMatching(/"Raised" looks the same/)]);
+    expect(limited.keyboard.press).toHaveBeenCalledTimes(2);
   });
   it('probe-focus: walkFocus stops when focus cycles and reports a page with nothing focusable', async () => {
     const stops = [{key: 'a', name: 'A', visible: true, outlineStyle: 'solid', outlineWidth: 3, outlineColor: 'red', boxShadow: 'none'}, {key: 'b', name: 'B', visible: true, outlineStyle: 'none', outlineWidth: 0, outlineColor: 'red', boxShadow: 'none'}];

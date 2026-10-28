@@ -6,6 +6,7 @@
 //   POST /connect            the device identity
 //   POST /upload             XHR with upload progress events (fetch works too, without progress)
 //   GET  /resolve?url=…      {kind: 'url'|'spotify', query?, candidates}  (playlist → 422)
+//                            candidate thumbnails are local data: URLs, never the network
 //   GET  /search?q=…&n=5     {query, provider, candidates}
 //   GET  /legacy · POST /import · POST /export-originals
 // Switches:
@@ -13,6 +14,7 @@
 //   fx-companion=busy      busy with job-run (Splitting · 46%)
 //   fx-companion=firstrun  no separation model downloaded yet (modelsReady all false)
 //   fx-companion=down      the processor is not running: every request fails like a refused connection
+//                          (an XHR /upload errors at once, with no upload progress)
 //   fx-lookup=slow|fail    lookups take 2.5 s | every lookup fails with bot_check (503)
 //   fx-upload=slow|fail    uploads take 10 s | the connection drops half way (an XHR network error)
 //   fx-legacy=1            /legacy finds an old library
@@ -31,10 +33,21 @@ function videoId(seed) {
   for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return `fx${h.toString(36).padStart(9, '0').slice(0, 9)}`;
 }
+/**
+ * A local 320×180 thumbnail for a candidate: an inline SVG, so a state that renders
+ * candidate rows never reaches the network (the runner fails any request that does).
+ */
+export function thumbnailFor(id) {
+  let h = 0;
+  for (const c of id) h = (h * 33 + c.charCodeAt(0)) >>> 0;
+  const hue = h % 360;
+  const body = `<rect width="320" height="180" fill="hsl(${hue} 45% 32%)"/><circle cx="160" cy="90" r="34" fill="hsl(${(hue + 40) % 360} 60% 70%)"/><path d="M150 74v32l26-16z" fill="hsl(${hue} 45% 22%)"/>`;
+  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">${body}</svg>`)}`;
+}
 const candidate = (title, channel, duration, {provider = 'youtube', live = false} = {}) => {
   const id = videoId(`${title}|${channel}`);
   return {url: provider === 'soundcloud' ? `https://soundcloud.com/${channel.toLowerCase().replace(/\W+/g, '-')}/${id}` : `https://www.youtube.com/watch?v=${id}`,
-    id, title, channel, duration, thumbnail: provider === 'youtube' ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : null, provider, live};
+    id, title, channel, duration, thumbnail: provider === 'youtube' ? thumbnailFor(id) : null, provider, live};
 };
 
 /** The search results for `q` (≤ n), shaped like companion/lookup.mjs. */
@@ -77,7 +90,7 @@ export function createCompanion(win, fx = {}) {
       return {status: 200, body: {kind: 'spotify', query, candidates: searchResults(query)}};
     }
     const id = /[?&]v=([\w-]{6,})/.exec(url)?.[1] ?? videoId(url);
-    return {status: 200, body: {kind: 'url', candidates: [{url, id, title: 'Glasshouse (Official Audio)', channel: 'Northbound', duration: 128, thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`, provider: /soundcloud/i.test(url) ? 'soundcloud' : /youtu/i.test(url) ? 'youtube' : 'other', live: false}]}};
+    return {status: 200, body: {kind: 'url', candidates: [{url, id, title: 'Glasshouse (Official Audio)', channel: 'Northbound', duration: 128, thumbnail: thumbnailFor(id), provider: /soundcloud/i.test(url) ? 'soundcloud' : /youtu/i.test(url) ? 'youtube' : 'other', live: false}]}};
   }
 
   async function search(q, n) {
@@ -172,6 +185,23 @@ export function createCompanion(win, fx = {}) {
       };
       this.dispatchEvent(new win.ProgressEvent('loadstart'));
       if (!isUpload) { finish(); return; }
+      // A processor that is not running refuses the connection at once, and a wrong token
+      // is answered before the body is read: no upload progress in either case.
+      if (fx.companion === 'down' || state.headers.authorization !== `Bearer ${TOKEN}`) {
+        if (fx.companion === 'down') {
+          calls.push({method: state.method, path: '/upload', query: {}});
+          state.timer = setTimeout(() => {
+            if (state.aborted) return;
+            state.readyState = 4; state.status = 0;
+            this.dispatchEvent(new win.Event('readystatechange'));
+            this.upload.dispatchEvent(new win.ProgressEvent('error'));
+            this.upload.dispatchEvent(new win.ProgressEvent('loadend'));
+            this.dispatchEvent(new win.ProgressEvent('error'));
+            this.dispatchEvent(new win.ProgressEvent('loadend'));
+          }, 20);
+        } else finish();
+        return;
+      }
       // Upload progress in 10 steps; fx-upload=fail stops half way with a server error.
       const steps = 10, duration = fx.upload === 'slow' ? 10_000 : 1200, failAt = fx.upload === 'fail' ? 5 : Infinity;
       this.upload.dispatchEvent(new win.ProgressEvent('loadstart', {lengthComputable: true, loaded: 0, total}));

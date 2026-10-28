@@ -240,9 +240,6 @@ export function createSeed({fx = {}, now = Date.now()} = {}) {
     {id: 'dev2', userId: USER_ID, name: 'DESKTOP-4F2K9', revoked: false, createdAt: ago(90 * DAY)},
   ];
   const online = id => devicesMode === 'online' || (devicesMode === 'mixed' && id === 'dev1');
-  const devicePresence = devices.map(d => d.id === 'dev1'
-    ? {deviceId: 'dev1', userId: USER_ID, lastSeenAt: online('dev1') ? ago(20e3) : ago(2 * HOUR), state: online('dev1') ? 'busy' : 'offline', ...(online('dev1') ? {currentJobId: 'job-run'} : {}), appVersion: '2.0.0', platform: 'darwin-arm64', accelerator: 'Apple GPU'}
-    : {deviceId: 'dev2', userId: USER_ID, lastSeenAt: online('dev2') ? ago(30e3) : ago(3 * DAY), state: online('dev2') ? 'idle' : 'offline', appVersion: '1.9.0', platform: 'win32-x64', accelerator: 'NVIDIA GPU'});
   const deviceFor = id => (devices.some(d => d.id === id) ? id : undefined);
 
   // Jobs --------------------------------------------------------------------------
@@ -283,6 +280,12 @@ export function createSeed({fx = {}, now = Date.now()} = {}) {
     for (const k of Object.keys(j)) if (j[k] === undefined) delete j[k];
     return j;
   });
+
+  // Presence is built after the jobs: dev1 is busy only while job-run exists (fx-jobs=0 and an empty library remove it).
+  const running = jobs.some(j => j.jobId === 'job-run');
+  const devicePresence = devices.map(d => d.id === 'dev1'
+    ? {deviceId: 'dev1', userId: USER_ID, lastSeenAt: online('dev1') ? ago(20e3) : ago(2 * HOUR), state: !online('dev1') ? 'offline' : running ? 'busy' : 'idle', ...(online('dev1') && running ? {currentJobId: 'job-run'} : {}), appVersion: '2.0.0', platform: 'darwin-arm64', accelerator: 'Apple GPU'}
+    : {deviceId: 'dev2', userId: USER_ID, lastSeenAt: online('dev2') ? ago(30e3) : ago(3 * DAY), state: online('dev2') ? 'idle' : 'offline', appVersion: '1.9.0', platform: 'win32-x64', accelerator: 'NVIDIA GPU'});
 
   // Account ---------------------------------------------------------------------------
   const settings = fx.account === 'new' ? null : {

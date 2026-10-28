@@ -210,6 +210,17 @@ describe('devices, setlists, pins and references', () => {
     expect(NOW - seed.devicePresence[0].lastSeenAt).toBeLessThan(150_000);
     expect(NOW - seed.devicePresence[1].lastSeenAt).toBeGreaterThan(150_000);
   });
+  it('dev1 is busy with job-run only while job-run exists (fx-jobs=0, an empty library)', () => {
+    expect(seed.devicePresence[0]).toMatchObject({state: 'busy', currentJobId: 'job-run'});
+    for (const fx of [{jobs: '0'}, {library: 'empty'}]) {
+      const other = createSeed({fx, now: NOW});
+      expect(other.jobs.some(j => j.jobId === 'job-run')).toBe(false);
+      expect(other.devicePresence[0].state).toBe('idle');
+      expect(other.devicePresence[0]).not.toHaveProperty('currentJobId');
+    }
+    const offline = createSeed({fx: {devices: 'offline'}, now: NOW});
+    expect(offline.devicePresence.map(p => p.state)).toEqual(['offline', 'offline']);
+  });
   it('every reference resolves: job songs and devices, setlist songs, pins, shares, presence', () => {
     const songs = new Set(seed.songs.map(s => s.id)), devices = new Set(seed.devices.map(d => d.id)), jobs = new Set(seed.jobs.map(j => j.jobId));
     for (const j of seed.jobs) {
@@ -222,6 +233,7 @@ describe('devices, setlists, pins and references', () => {
     for (const id of seed.settings.pins) expect(songs.has(id)).toBe(true);
     for (const id of Object.keys(seed.shares)) expect(songs.has(id)).toBe(true);
     for (const p of seed.devicePresence) expect(devices.has(p.deviceId)).toBe(true);
+    for (const p of seed.devicePresence) if (p.currentJobId) expect(jobs.has(p.currentJobId)).toBe(true);
     for (const id of Object.keys(seed.notation)) expect(song(id).hasChart).toBe(true);
     for (const s of seed.songs) if (s.coverKey) expect(seed.coverKeys[s.coverKey], s.id).toBeTruthy();
   });

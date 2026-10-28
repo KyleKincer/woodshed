@@ -2,7 +2,10 @@
 // the seed, so the smoke state (tests/fixture/states/FX1.cjs) captures a harness
 // page end to end: host, preamble, db, styles and masking.
 // ?demo=overflow|overlap|clip|placeholder renders one structural problem on
-// purpose, so the runner's structural checks can be proven against a real page.
+// purpose, so the runner's structural checks can be proven against a real page;
+// placeholder-nested (the text next to an icon and a code span), overlap-below
+// (2000 px below the fold) and focus-shadow (a resting shadow, no focus ring)
+// are the harder cases, and chip-row (a scrolling row of chips) must pass.
 const mapLabel = song => {
   const t = song.tempo;
   if (!t) return 'no tempo';
@@ -42,6 +45,18 @@ export default async function mount(el, {fixture, query, h}) {
     styled(h('button', {type: 'button'}, 'Second'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px'));
   if (demo === 'clip') el.prepend(styled(h('button', {type: 'button'}, 'A label that does not fit'), 'width: 48px; overflow: hidden; white-space: nowrap'));
   if (demo === 'placeholder') el.prepend(h('p', {}, 'Not built yet'));
+  if (demo === 'placeholder-nested') {
+    const p = h('p', {}, h('span', {'aria-hidden': 'true'}, '◆'), ' Not built yet · ', h('code', {}, '/s/x/edit'));
+    el.prepend(p);
+  }
+  if (demo === 'overlap-below') el.append(styled(h('div', {},
+    styled(h('button', {type: 'button'}, 'Third'), 'position: absolute; left: 0; top: 0; width: 120px; height: 40px'),
+    styled(h('button', {type: 'button'}, 'Fourth'), 'position: absolute; left: 60px; top: 10px; width: 120px; height: 40px')), 'position: relative; height: 60px; margin-top: 2000px'));
+  if (demo === 'chip-row') el.prepend(styled(h('div', {class: 'chips'}, ...Array.from({length: 8}, (_, i) => styled(h('button', {type: 'button', class: 'chip'}, `Section ${i}`), 'flex: none; white-space: nowrap'))), 'display: flex; gap: 8px; overflow-x: auto; width: 200px'));
+  if (demo === 'focus-shadow') el.prepend(h('div', {},
+    h('style', {}, '.fx-flat:focus { outline: none !important; } .fx-ring:focus-visible { outline: 3px solid rgb(23, 75, 209); outline-offset: 2px; }'),
+    styled(h('button', {type: 'button', class: 'fx-flat'}, 'Raised'), 'box-shadow: 0 1px 2px rgba(0,0,0,.2); margin: 8px'),
+    styled(h('button', {type: 'button', class: 'fx-ring'}, 'Ringed'), 'margin: 8px')));
 
   return {unmount() { el.replaceChildren(); }};
 }

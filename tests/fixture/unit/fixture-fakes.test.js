@@ -320,7 +320,7 @@ describe('the local processor (fetch)', () => {
     const search = async (q, n = 5) => { const r = await get(win, `/search?q=${encodeURIComponent(q)}&n=${n}`); return {status: r.status, body: await r.json()}; };
     const five = await search('glasshouse northbound');
     expect(five.body.candidates).toHaveLength(5);
-    expect(five.body.candidates[0]).toMatchObject({title: 'Glasshouse Northbound (Official Audio)', channel: 'Northbound', provider: 'youtube', thumbnail: expect.stringMatching(/^https:\/\//)});
+    expect(five.body.candidates[0]).toMatchObject({title: 'Glasshouse Northbound (Official Audio)', channel: 'Northbound', provider: 'youtube', thumbnail: expect.stringMatching(/^data:image\/svg\+xml,/)});
     expect(five.body.candidates.some(c => c.live && c.duration === null)).toBe(true);
     expect((await search('glasshouse', 2)).body.candidates).toHaveLength(2);
     expect((await search('zzz')).body.candidates).toEqual([]);
@@ -331,6 +331,17 @@ describe('the local processor (fetch)', () => {
     expect(searchResults('a b', 5).map(c => c.id)).toEqual(searchResults('a b', 5).map(c => c.id));
     const failing = makeWindow(); createCompanion(failing, {lookup: 'fail'});
     expect((await get(failing, '/search?q=glasshouse&n=5')).status).toBe(503);
+  });
+  it('candidate thumbnails are local data: URLs (a rendered row never reaches the network)', async () => {
+    const win = makeWindow();
+    createCompanion(win, {});
+    const search = await (await get(win, '/search?q=glasshouse&n=5')).json();
+    const resolved = await (await get(win, `/resolve?url=${encodeURIComponent('https://www.youtube.com/watch?v=abcdefgh')}`)).json();
+    const spotify = await (await get(win, `/resolve?url=${encodeURIComponent('https://open.spotify.com/track/x')}`)).json();
+    const thumbs = [...search.candidates, ...resolved.candidates, ...spotify.candidates].map(c => c.thumbnail).filter(Boolean);
+    expect(thumbs.length).toBeGreaterThan(5);
+    for (const t of thumbs) expect(t).toMatch(/^data:image\/svg\+xml,/);
+    expect(JSON.stringify([search, resolved, spotify])).not.toMatch(/ytimg|https:\/\/i\./);
   });
   it('legacy import, export and unknown routes; other origins go to the real fetch', async () => {
     const win = makeWindow();
@@ -414,6 +425,21 @@ describe('the local processor (XHR uploads)', () => {
     await vi.advanceTimersByTimeAsync(2000);
     await unauthorised.done;
     expect(unauthorised.xhr.status).toBe(401);
+    expect(unauthorised.progress).toEqual([]);
+  });
+  it('fx-companion=down: an upload errors at once, with no upload progress', async () => {
+    vi.useFakeTimers();
+    const win = makeWindow();
+    createCompanion(win, {companion: 'down'});
+    const refused = upload(win);
+    const uploadEvents = [];
+    for (const type of ['progress', 'error', 'loadend']) refused.xhr.upload.addEventListener(type, () => uploadEvents.push(type));
+    await vi.advanceTimersByTimeAsync(100);
+    await refused.done;
+    expect(refused.progress).toEqual([]);
+    expect(uploadEvents).toEqual(['error', 'loadend']);
+    expect(refused.events).toEqual(['loadstart', 'error', 'loadend']);
+    expect(refused.xhr.status).toBe(0);
   });
 });
 

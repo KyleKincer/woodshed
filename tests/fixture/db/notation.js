@@ -1,5 +1,6 @@
 // Fixture handlers for convex/notation.ts: drum parts by song (`db.notation`,
-// {[songId]: {score, revision}}). A shared link reads the shared song's part.
+// {[songId]: {score, revision}}). A shared link reads the shared song's part,
+// unless the link was made with includeNotation: false.
 //   fx-share=missing   the shared part is unavailable too
 import {db, fx, clone} from './runtime.js';
 
@@ -7,7 +8,11 @@ const sharedSongId = token => Object.entries(db.shares).find(([, share]) => shar
 
 export const handlers = {
   'notation:get': ({songId, token}) => {
-    if (token) { const id = sharedSongId(token); return fx.share === 'missing' || !id || !db.notation[id] ? null : clone(db.notation[id]); }
+    if (token) {
+      // Like convex/notation.ts: a link made without the drum part does not show it.
+      const id = sharedSongId(token);
+      return fx.share === 'missing' || !id || db.shares[id].includeNotation === false || !db.notation[id] ? null : clone(db.notation[id]);
+    }
     return db.notation[songId] ? clone(db.notation[songId]) : null;
   },
   'notation:save': ({songId, header, bars}) => {
