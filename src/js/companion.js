@@ -10,7 +10,7 @@
 //   aborted            the caller's signal fired (name 'AbortError')
 //   <server code>      the companion's {error, code}: bot_check, unavailable, not_found, playlist, invalid, lookup_busy, …
 //   unknown            anything else
-import { convex } from './auth.js';
+import { mutation } from '../api/client.js';
 import { anyApi as api } from 'convex/server';
 
 const DEFAULT_PORT = 47831;
@@ -314,7 +314,7 @@ export async function initializeLocalDesktop() {
     const local = await send('/status', { method: 'GET', timeoutMs: STATUS_TIMEOUT_MS });
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
     const tokenHash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-    await convex.mutation(api.devices.pair, { tokenHash, name: local.name });
+    await mutation(api.devices.pair, { tokenHash, name: local.name });
     await send('/connect', { method: 'POST', body: { convexUrl: import.meta.env.VITE_CONVEX_URL } });
     ready = true;
     return info;

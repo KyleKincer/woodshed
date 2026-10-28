@@ -1,4 +1,8 @@
-import {convex} from '../auth.js';
+// I1: on the 2.0 API client (the 1.9 src/js/auth.js is gone). Owner calls use the
+// authenticated client; share-token reads use the public client, so a signed-out
+// Shared Stage visitor never reaches an uninitialized client.
+import {query, mutation, publicClient} from '../../api/client.js';
+const convex = {query, mutation};
 import {anyApi as api} from 'convex/server';
 import {sameContent as equal} from '../../../shared/content.ts';
 import {upgradeScore,upgradeBar} from '../../../shared/notation.ts';
@@ -58,5 +62,5 @@ export class NotationStore {
   async reload(){if(this.running)await this.running.catch(()=>{});const remote=await convex.query(api.notation.get,{songId:this.songId});this.score=canonical(remote?.score??null);this.baseline=clone(this.score);this.revision=remote?.revision??0;this.pending=null;this.blocked=false;await this.persist();this.onStatus('saved');return this.score;}
   destroy(){this.closed=true;clearTimeout(this.timer);window.removeEventListener('online',this.online);void this.flush().catch(()=>{}).finally(()=>window.removeEventListener('beforeunload',this.beforeUnload));}
 }
-export const loadSharedNotation=token=>convex.query(api.notation.get,{token});
-export const watchSharedNotation=(token,onChange,onError)=>convex.onUpdate(api.notation.get,{token},onChange,onError);
+export const loadSharedNotation=token=>publicClient().query(api.notation.get,{token});
+export const watchSharedNotation=(token,onChange,onError)=>publicClient().subscribe(api.notation.get,{token},onChange,onError);

@@ -7,7 +7,6 @@
 // The click settings are the session's `practice.click` (D14, D51): the
 // transport applies them with `configure()`. `tempo` stores only the map.
 import { SongMapStore, LABEL_REASONS } from './song-map.js';
-import { defaultSongMap } from '../../shared/song-map.ts';
 
 /** How far ahead clicks are scheduled (audio seconds). */
 const AHEAD = 0.12;
@@ -32,10 +31,10 @@ function freezePlan(plan) {
 export class Metronome {
   /**
    * @param {import('./engine.js').MultitrackEngine} engine
-   * @param {SongMapStore} [songMap] the session's store. Without one the
-   *   metronome builds a placeholder store (the 1.9 player only; deleted at I1).
+   * @param {SongMapStore} songMap the session's store
    */
-  constructor(engine, songMap = null) {
+  constructor(engine, songMap) {
+    if (!songMap) throw new TypeError('Metronome needs the session\'s SongMapStore.');
     this.engine = engine;
     this.ctx = engine.ctx;
     this.out = this.ctx.createGain();
@@ -68,9 +67,7 @@ export class Metronome {
     this._plans = new Map();
     this._rests = new Map();
     this.onChange = null; // notified when the map changes (for persistence and redraw)
-    // The 1.9 player's placeholder map clicks as before (deleted at I1).
-    this._placeholder = !songMap;
-    this.songMap = songMap || new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1);
+    this.songMap = songMap;
     this._unsubscribe = this.songMap.subscribe((reason) => this._onMap(reason));
     // A discontinuity drops every scheduled click; a plan change drops only the
     // clicks at or after the change and reschedules from there.
@@ -189,7 +186,7 @@ export class Metronome {
   _wake() { if (this.engine.playing && this._wantsRun()) this.start(); }
 
   /** Unmapped songs never click (D14: the transport uses a 2 s Lead-in instead); a count's beats report silent. */
-  _clicks() { return this._placeholder || this.songMap.isReal; }
+  _clicks() { return this.songMap.isReal; }
 
   start() {
     if (this._timer) return;
@@ -310,7 +307,7 @@ export class Metronome {
   _unitAt(time) { return this.songMap.barBeatAt(time).unitIndex; }
 
   _beat(when, {downbeat, unit}, kind, audible) {
-    if (audible) this._click(when, !!downbeat && this.accent, true);
+    if (audible) this._oscillator(when, !!downbeat && this.accent, true);
     if (!this._beatListeners.size || when < this._reportedUntil - 1e-9) return;
     const event = {when, downbeat: !!downbeat, unit: unit ?? 0, kind, audible};
     for (const fn of [...this._beatListeners]) {
@@ -363,9 +360,6 @@ export class Metronome {
    * stopped.
    */
   clickAt(when, accent = false) { this._oscillator(when, accent, false); }
-
-  /** @deprecated Use `clickAt` (untracked); the 1.9 map mode calls this until I1. */
-  _click(ctxTime, accent, tracked = false) { this._oscillator(ctxTime, accent, tracked); }
 
   // Tracked clicks are dropped by the transport's and the plan's cancellations.
   _oscillator(ctxTime, accent, tracked) {

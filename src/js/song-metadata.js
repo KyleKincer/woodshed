@@ -1,7 +1,6 @@
 import * as backend from "./backend.js";
 import { focusModal } from "./modal-focus.js";
 import { setArtwork } from "./artwork.js";
-import "./song-metadata.css";
 
 export const songFields = [
   ["title", "Title"],

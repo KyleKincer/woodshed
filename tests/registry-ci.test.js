@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Registry CI (architecture §10.1). The checks run against the app-wide registry after importing every definition module
-// listed below; integrations extend the lists as definition modules land (I1: global and Stage-transport definitions,
-// I1b: Library, I2a/I2b: Stage, Stems, CONTROL_SET, I3a: Edit, Map, Chart and the Electron menu sources). The self-tests at
+// listed below; integrations extend the lists as definition modules land (I1: global definitions and the ? sheet groups,
+// I1b: Stage-transport and Library, I2a/I2b: Stage, Stems, CONTROL_SET, I3a: Edit, Map, Chart and the Electron menu sources). The self-tests at
 // the bottom prove each check catches what it should.
 import {readdirSync, readFileSync, statSync} from 'node:fs';
 import {dirname, join, relative} from 'node:path';
@@ -16,13 +16,15 @@ import {ALLOWED_SHADOWS, E, EC, ECS, EM, G, isAllowedShadow, L, REACHABLE_CHAINS
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Modules whose import registers command definitions (e.g. () => import('../src/app/global-commands.js')). */
-const DEFINITION_MODULES = [];
+const DEFINITION_MODULES = [
+  () => import('../src/app/global-commands.js'),
+];
 /** Modules exporting CONTROL_SET or CONTROLS tables whose command fields must exist (e.g. src/stage/controls.js). */
 const CONTROL_MODULES = [];
 /** Electron menu sources whose fixed command ids must exist (e.g. 'desktop/menu.cjs'). */
 const ELECTRON_MENU_SOURCES = [];
-/** The ? sheet's group order, once the sheet module exports one (S2); null until then. */
-const SHEET_GROUPS = null;
+/** The ? sheet's group order (S2's export; set at I1). */
+const SHEET_GROUPS = (await import('../src/app/shortcuts-sheet.js')).SHEET_GROUPS;
 /** Directories scanned for `command: '…'` references. */
 const SCAN_DIRS = ['app', 'ui', 'stage', 'edit', 'library', 'settings', 'share', 'onboarding', 'download', 'api'].map(d => `src/${d}`);
 

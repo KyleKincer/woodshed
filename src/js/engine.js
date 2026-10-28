@@ -1152,9 +1152,6 @@ export class MultitrackEngine {
     } finally { this._stateHold--; }
   }
 
-  /** @deprecated The old player's end check; an alias of `_tick()` until I1 deletes it. */
-  tickEnd() { this._tick(); }
-
   // iOS interrupts audio for calls and Siri; desktop browsers suspend it. Pause
   // so the position is kept; resuming is always the user's choice.
   _onContextState() {

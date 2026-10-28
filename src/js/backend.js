@@ -7,7 +7,11 @@
 // events, and media is addressed by R2 object key rather than a file path.
 
 import { anyApi } from 'convex/server';
-import { convex } from './auth.js';
+// I1: the 1.9 src/js/auth.js client is gone. Every call runs on the 2.0 API client
+// (src/api/client.js over src/app/auth.js), which throws ApiError 'not_signed_in'
+// instead of touching an uninitialized client. Deleted at I3a (§8).
+import { query, mutation, action, subscribe } from '../api/client.js';
+const convex = { query, mutation, action, onUpdate: subscribe };
 import { requireCompanion, localUpload } from './companion.js';
 
 const api = anyApi;

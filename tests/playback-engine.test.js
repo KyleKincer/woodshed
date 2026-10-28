@@ -5,6 +5,8 @@ import SignalsmithStretch from 'signalsmith-stretch';
 vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuffer(0))}));
 import { MultitrackEngine, MIN_RATE } from '../src/js/engine.js';
 import { Metronome } from '../src/js/metronome.js';
+import { SongMapStore } from '../src/js/song-map.js';
+import { defaultSongMap } from '../shared/song-map.ts';
 let engine;
 beforeEach(() => {
   const param = () => ({cancelScheduledValues:vi.fn(), setValueAtTime:vi.fn(), setTargetAtTime:vi.fn()});
@@ -32,7 +34,7 @@ test('disabling a loop after many passes continues from the audible position', a
   expect(engine.getPosition()).toBeCloseTo(11.25);
   settle(); expect(engine.getPosition()).toBeCloseTo(11.3);
   advance(2); expect(engine.getPosition()).toBeCloseTo(13.3);
-  engine.tickEnd(); expect(engine.playing).toBe(true);
+  engine._tick(); expect(engine.playing).toBe(true);
 });
 test('speed changes, clearing and editing loops stay on the same timeline as every stem', async () => {
   engine.setLoop(true, 4, 6); engine.seek(4); await engine.play(); settle(); advance(50.5);
@@ -70,7 +72,7 @@ test('seeking to the loop end wraps, seeking before A plays the lead-in, invalid
 });
 test('natural end stays at the end and replay starts at zero', async () => {
   engine.seek(99); await engine.play(); settle(); advance(1);
-  engine.onEnded = vi.fn(); engine.tickEnd(); engine.tickEnd();
+  engine.onEnded = vi.fn(); engine._tick(); engine._tick();
   expect(engine.getPosition()).toBe(100); expect(engine.onEnded).toHaveBeenCalledTimes(1);
   await engine.play(); expect(engine.getPosition()).toBe(0);
 });
@@ -195,7 +197,7 @@ test('toggle() is gone; seek(t, {cue: false}) leaves the cue', async () => {
 test('sectionAt finds the bar by quarters, not seconds, across a meter change (I0A-1)', () => {
   // 120 qpm: two 4/4 bars (q 0-8, 0-4 s), then 6/8 bars of three quarters each (q 8, 11, 14, ...).
   const bar = (id, numerator, denominator) => ({id, numerator, denominator, length: {n: 4 * numerator, d: denominator}, label: ''});
-  const metro = new Metronome(engine);
+  const metro = new Metronome(engine, new SongMapStore(defaultSongMap(engine.duration || 1), engine.duration || 1));
   metro.load({songMap: {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
     measures: [bar('a', 4, 4), bar('b', 4, 4), ...Array.from({length: 40}, (_, i) => bar(`c${i}`, 6, 8))]}});
   // t = 1.5 s is q = 3: still bar 0 (a quarters-as-seconds lookup lands in bar 1 at 2 s).

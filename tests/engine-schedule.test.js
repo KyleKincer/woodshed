@@ -10,7 +10,11 @@ vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/f
 vi.mock('../src/js/stemcache.js', async () => (await import('./helpers/fake-audio.js')).fakeStemcache);
 import {MultitrackEngine, MIN_RATE} from '../src/js/engine.js';
 import {Metronome} from '../src/js/metronome.js';
+import {SongMapStore} from '../src/js/song-map.js';
+import {defaultSongMap} from '../shared/song-map.ts';
 import {FAKE_TIMERS, createClock, installFakeAudio, loadFakeStems, scheduleTimeMap, timeMapInputAt} from './helpers/fake-audio.js';
+// The 1.9 player's no-store placeholder map clicked; I1 deleted it, so these tests pass a real 120 qpm map.
+const clickingMap = (engine) => new SongMapStore({...defaultSongMap(engine.duration), origin: 'edited'}, engine.duration);
 
 const PATHS = [
   {path: 'native', rate: 0.8, preservePitch: false},
@@ -251,7 +255,7 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
   });
 
   test('stopAt at a wrap ends at b, with stems and clicks silent from that moment', async () => {
-    const metronome = new Metronome(engine);
+    const metronome = new Metronome(engine, clickingMap(engine));
     metronome.setEnabled(true);
     const ended = [], states = [];
     engine.on('ended', (e) => ended.push(e));
@@ -376,7 +380,7 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
   });
 
   test('a scheduled rate change cancels only the clicks at or after it; a discontinuity cancels all', async () => {
-    const metronome = new Metronome(engine);
+    const metronome = new Metronome(engine, clickingMap(engine));
     metronome.setEnabled(true);
     engine.seek(20);
     await engine.play();
@@ -443,7 +447,7 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
   });
 
   test('count-in clicks sound through the aux bus while the stems are held at 0; pause mutes the bus at once', async () => {
-    const metronome = new Metronome(engine);
+    const metronome = new Metronome(engine, clickingMap(engine));
     engine.seek(20);
     await engine.play({countIn: metronome.countInPlanAt(20)});
     metronome.start();

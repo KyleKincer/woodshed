@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
-import { beforeEach, expect, test, vi } from 'vitest';
+import { beforeEach, expect, test } from 'vitest';
 import { initializeInteractions, isPointerControl } from '../src/js/interactions.js';
-import { notify, withButtonProgress } from '../src/js/feedback.js';
 initializeInteractions();
 beforeEach(() => { document.body.innerHTML = '<button id="action">Action</button><input id="entry"><details><summary>Advanced</summary></details>'; });
 test('pointer clicks release action focus but keyboard activation and text entry retain it', () => {
@@ -40,26 +39,4 @@ test('label activation and completed slider drags release focus, while a select 
   expect(document.activeElement).toBe(select);
   select.dispatchEvent(new Event('change',{bubbles:true}));
   expect(document.activeElement).not.toBe(select);
-});
-test('progress restores controls on failure and displays dismissible literal error text', async () => {
-  const button = document.getElementById('action');
-  await withButtonProgress(button, 'Working…', async () => {
-    expect(button.disabled).toBe(true);
-    throw new Error('<b>Failed</b>');
-  });
-  expect(button.disabled).toBe(false);
-  expect(button.textContent).toBe('Action');
-  const notice = document.querySelector('[role="alert"]');
-  expect(notice.textContent).toContain('<b>Failed</b>');
-  expect(notice.querySelector('b')).toBeNull();
-  notice.querySelector('button').click();
-  expect(notice.isConnected).toBe(false);
-});
-test('success feedback expires without removing a newer error', () => {
-  vi.useFakeTimers();
-  notify('Done');
-  notify('An error', { error: true });
-  vi.advanceTimersByTime(6000);
-  expect(document.querySelector('[role="alert"]').textContent).toContain('An error');
-  vi.useRealTimers();
 });

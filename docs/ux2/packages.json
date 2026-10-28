@@ -402,11 +402,14 @@
         "src/js/metronome.js",
         "tests/engine-segmented.test.js",
         "tests/metronome-gaps.test.js",
-        "tests/metronome-configure.test.js"
+        "tests/metronome-configure.test.js",
+        "src/stage/transport.js",
+        "tests/playback-engine.test.js"
       ],
       "deps": [
         "F4a"
-      ]
+      ],
+      "notes": "I1 follow-up (ticket I1-2): src/stage/transport.js is owned only to call the new public engine.cancelStopAt() instead of engine._clearStopAt() (and to drop the upcomingWrap() workaround once nextWrapAt() is strictly later, with tests/stage-transport.test.js unchanged and green); tests/playback-engine.test.js only to stop using the deleted Metronome.load() in its sectionAt test."
     },
     {
       "id": "BK1",

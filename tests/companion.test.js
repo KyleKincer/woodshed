@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const { mutation } = vi.hoisted(() => ({ mutation: vi.fn() }));
-vi.mock('../src/js/auth.js', () => ({ convex: { mutation } }));
+vi.mock('../src/api/client.js', () => ({ mutation }));
 
 const token = 'a'.repeat(64);
 const PORT = 12345;
