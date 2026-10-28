@@ -5,14 +5,44 @@ import {createRegistry} from '../src/app/commands.js';
 import {setPlatform} from '../src/app/keys.js';
 import * as clock from '../src/app/clock.js';
 import {hasIcon, icon, installIcons} from '../src/ui/icon.js';
-import {Button, IconButton, applyCommon, setPeers, trackPress, setAttr} from '../src/ui/button.js';
+import * as buttonModule from '../src/ui/button.js';
+import {Button, IconButton, applyCommon, trackPress, setAttr} from '../src/ui/button.js';
 import {Toggle} from '../src/ui/toggle.js';
 import {HoldButton} from '../src/ui/hold-button.js';
+import {tooltip} from '../src/ui/tooltip.js';
+import {Kbd} from '../src/ui/kbd.js';
+import {ProgressRing} from '../src/ui/progress.js';
 import {pointer, restoreDomShims, tap} from './helpers/dom.js';
+
+// The U3 display peers, imported statically by their contract paths (§9.0) and mocked here by
+// their contract shapes (§2.12): tooltip(el, {text, kbd}) → off, Kbd({keys}) → {el, set, destroy},
+// ProgressRing({value, size, label}) → {el, set, destroy}. Fresh fakes per test (installPeers).
+vi.mock('../src/ui/tooltip.js', () => ({tooltip: vi.fn()}));
+vi.mock('../src/ui/kbd.js', () => ({Kbd: vi.fn()}));
+vi.mock('../src/ui/progress.js', () => ({ProgressRing: vi.fn()}));
+const fakes = {off: null, rings: []};
+function installPeers() {
+  fakes.off = vi.fn();
+  fakes.rings = [];
+  vi.mocked(tooltip).mockReset().mockImplementation(() => fakes.off);
+  vi.mocked(Kbd).mockReset().mockImplementation(({keys}) => {
+    const el = document.createElement('kbd');
+    el.className = 'fake-kbd';
+    el.textContent = keys;
+    return {el, set: vi.fn(({keys: k}) => { el.textContent = k; }), destroy: vi.fn(() => el.remove())};
+  });
+  vi.mocked(ProgressRing).mockReset().mockImplementation(props => {
+    const el = document.createElement('span');
+    el.className = 'ui-progress-ring';
+    const made = {props, values: [], el};
+    fakes.rings.push(made);
+    return {el, set: vi.fn(({value}) => made.values.push(value)), destroy: vi.fn(() => el.remove())};
+  });
+}
 
 const FAKE = {toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame']};
 
-let r, restorePeers;
+let r;
 const mounted = [];
 function mount(prim) {
   document.body.append(prim.el);
@@ -26,13 +56,11 @@ const name = el => el.getAttribute('aria-label') ?? [...el.childNodes]
 beforeEach(() => {
   r = createRegistry();
   setPlatform('win');
-  // Every test states which display peers exist: none (the stand-ins) unless it installs fakes.
-  restorePeers = setPeers({});
+  installPeers();
 });
 
 afterEach(() => {
   for (const p of mounted.splice(0)) p.destroy();
-  restorePeers();
   document.body.replaceChildren();
   restoreDomShims();
   vi.useRealTimers();
@@ -247,7 +275,8 @@ describe('Button', () => {
       expect(b.el.querySelector('use').getAttribute('href')).toBe('#i-repeat');
       expect(b.el.getAttribute('aria-keyshortcuts')).toBe('L');
       expect(b.el.getAttribute('aria-pressed')).toBe('false');
-      expect(b.el.getAttribute('title')).toBe('Loop (L)');   // the stand-in for U3's tooltip
+      expect(tooltip).toHaveBeenLastCalledWith(b.el, {text: 'Loop', kbd: 'KeyL'});
+      expect(b.el.hasAttribute('title')).toBe(false);
       const own = mount(Button({command: 'loop.toggle', registry: r, label: 'Loop it', icon: 'repeat-1', kbd: true}));
       expect(name(own.el)).toBe('Loop it');
       expect(own.el.querySelector('use').getAttribute('href')).toBe('#i-repeat-1');
@@ -369,7 +398,8 @@ describe('IconButton', () => {
     expect(b.el.getAttribute('aria-label')).toBe('Close');
     expect(b.el.dataset.iconOnly).toBe('');
     expect(b.el.querySelector('.ui-button-text').hidden).toBe(true);
-    expect(b.el.getAttribute('title')).toBe('Close (Esc)');   // the stand-in for U3's tooltip
+    expect(tooltip).toHaveBeenCalledWith(b.el, {text: 'Close', kbd: 'Escape'});
+    expect(b.el.hasAttribute('title')).toBe(false);
   });
 
   it('takes its name from a command', () => {
@@ -449,9 +479,9 @@ describe('HoldButton', () => {
     pointer(b.el, 'pointerdown', {pointerType: 'touch'});
     expect(b.el.hasAttribute('data-holding')).toBe(true);
     vi.advanceTimersByTime(300);
-    const offset = Number(b.el.querySelector('.ui-hold-ring-fill').getAttribute('stroke-dashoffset'));
-    expect(offset).toBeGreaterThan(0.4);
-    expect(offset).toBeLessThan(0.6);
+    const fill = fakes.rings[0].values.at(-1);
+    expect(fill).toBeGreaterThan(0.4);
+    expect(fill).toBeLessThan(0.6);
     vi.advanceTimersByTime(299);
     expect(onActivate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -510,44 +540,27 @@ describe('HoldButton', () => {
   });
 });
 
-// The U3 display peers by their contract shapes (§2.12): tooltip(el, {text, kbd}) → off,
-// Kbd({keys}) → {el, set, destroy}, ProgressRing({value, size, label}) → {el, set, destroy}.
+// The U3 display peers (mocked above): U1 renders through them and has no stand-ins of its own.
 describe('display peers (U3 contract)', () => {
-  let fakes;
-  beforeEach(() => {
-    const off = vi.fn();
-    const ring = {calls: [], made: []};
-    fakes = {
-      off,
-      ring,
-      tooltip: vi.fn(() => off),
-      Kbd: vi.fn(({keys}) => {
-        const el = document.createElement('kbd');
-        el.className = 'fake-kbd';
-        el.textContent = keys;
-        return {el, set: vi.fn(({keys: k}) => { el.textContent = k; }), destroy: vi.fn(() => el.remove())};
-      }),
-      ProgressRing: vi.fn(props => {
-        const el = document.createElement('span');
-        el.className = 'ui-progress-ring';
-        const made = {props, values: [], el};
-        ring.made.push(made);
-        return {el, set: vi.fn(({value}) => made.values.push(value)), destroy: vi.fn(() => el.remove())};
-      }),
-    };
-    restorePeers();
-    restorePeers = setPeers({tooltip: fakes.tooltip, Kbd: fakes.Kbd, ProgressRing: fakes.ProgressRing});
+  it('has no peer seam or stand-in left (static imports, I0B-11)', () => {
+    expect(buttonModule).not.toHaveProperty('setPeers');
+    expect(buttonModule).not.toHaveProperty('peers');
+    const plain = mount(Button({label: 'Save'}));
+    expect(tooltip).not.toHaveBeenCalled();   // no text and no key: no tooltip at all
+    expect(plain.el.hasAttribute('title')).toBe(false);
+    expect(buttonModule.attachTooltip(plain.el, {text: '  ', kbd: null})).toBeTypeOf('function');
+    expect(tooltip).not.toHaveBeenCalled();
   });
 
   it('IconButton: aria-label plus the tooltip with its key-cap, and no native title', () => {
     const b = mount(IconButton({label: 'Close', icon: 'x', kbd: 'Escape'}));
     expect(b.el.getAttribute('aria-label')).toBe('Close');
-    expect(fakes.tooltip).toHaveBeenCalledTimes(1);
-    expect(fakes.tooltip).toHaveBeenCalledWith(b.el, {text: 'Close', kbd: 'Escape'});
+    expect(tooltip).toHaveBeenCalledTimes(1);
+    expect(tooltip).toHaveBeenCalledWith(b.el, {text: 'Close', kbd: 'Escape'});
     expect(b.el.hasAttribute('title')).toBe(false);
     b.set({label: 'Close panel'});
     expect(fakes.off).toHaveBeenCalledTimes(1);
-    expect(fakes.tooltip).toHaveBeenLastCalledWith(b.el, {text: 'Close panel', kbd: 'Escape'});
+    expect(tooltip).toHaveBeenLastCalledWith(b.el, {text: 'Close panel', kbd: 'Escape'});
     b.destroy();
     mounted.splice(mounted.indexOf(b), 1);
     expect(fakes.off).toHaveBeenCalledTimes(2);
@@ -556,12 +569,13 @@ describe('display peers (U3 contract)', () => {
   it('a command button gets the tooltip from the registry, and a shown key-cap is a Kbd', () => {
     r.register({id: 'loop.toggle', title: 'Loop', group: 'Loop', keys: ['KeyL'], scopes: ['stage'], icon: 'repeat', run() {}});
     const b = mount(Button({command: 'loop.toggle', registry: r, kbd: true}));
-    expect(fakes.tooltip).toHaveBeenCalledWith(b.el, {text: 'Loop', kbd: 'KeyL'});
-    expect(fakes.Kbd).toHaveBeenCalledWith({keys: 'KeyL'});
+    expect(tooltip).toHaveBeenCalledWith(b.el, {text: 'Loop', kbd: 'KeyL'});
+    expect(Kbd).toHaveBeenCalledWith({keys: 'KeyL'});
     const cap = b.el.querySelector('.fake-kbd');
     expect(cap.classList.contains('ui-button-kbd')).toBe(true);
     expect(cap.getAttribute('aria-hidden')).toBe('true');
-    expect(b.el.querySelector('kbd.ui-keycap')).toBe(null);
+    expect(b.el.querySelectorAll('kbd')).toHaveLength(1);   // the Kbd only, no plain <kbd> beside it
+    expect(b.el.querySelector('.ui-keycap')).toBe(null);
   });
 
   it('HoldButton: a ProgressRing that fills with the hold and empties after it', () => {
@@ -570,11 +584,12 @@ describe('display peers (U3 contract)', () => {
     clock.set(() => Date.now());
     const onActivate = vi.fn();
     const b = mount(HoldButton({label: 'Library', icon: 'chevron-left', requireHold: () => true, onActivate}));
-    expect(fakes.ProgressRing).toHaveBeenCalledWith({value: 0, size: 32, label: 'Library'});
-    const ring = fakes.ring.made[0];
+    expect(ProgressRing).toHaveBeenCalledWith({value: 0, size: 32, label: 'Library'});
+    const ring = fakes.rings[0];
     expect(ring.el.getAttribute('aria-hidden')).toBe('true');
     expect(b.el.querySelector('.ui-hold-icon').contains(ring.el)).toBe(true);
-    expect(b.el.querySelector('.ui-hold-ring-svg')).toBe(null);   // no stand-in ring beside the peer
+    expect([...b.el.querySelector('.ui-hold-icon').children].map(c => c.getAttribute('class'))).toEqual(['ui-progress-ring', 'ui-icon']);
+    expect(b.el.querySelector('svg:not(.ui-icon)')).toBe(null);   // no stand-in ring beside the peer
     pointer(b.el, 'pointerdown', {pointerType: 'touch'});
     vi.advanceTimersByTime(300);
     const mid = ring.values.at(-1);
@@ -586,16 +601,21 @@ describe('display peers (U3 contract)', () => {
     expect(ring.values.at(-1)).toBe(0);
     expect(b.el.hasAttribute('data-holding')).toBe(false);
     b.set({size: 'play'});
-    expect(fakes.ProgressRing).toHaveBeenLastCalledWith({value: 0, size: 48, label: 'Library'});
+    expect(ProgressRing).toHaveBeenLastCalledWith({value: 0, size: 48, label: 'Library'});
+    expect(fakes.rings[1].el.isConnected).toBe(true);
+    expect(ring.el.isConnected).toBe(false);   // the old ring is destroyed, not left beside the new one
   });
 });
 
 describe('HoldButton ring at rest (stylesheet)', () => {
-  it('hides whichever ring is in use unless a hold runs, and drops the peer ring\'s easing', async () => {
+  it('hides the ProgressRing unless a hold runs, and drops its easing', async () => {
     const {readFileSync} = await import('node:fs');
     const {resolve} = await import('node:path');
     const css = readFileSync(resolve(process.cwd(), 'src/styles/primitives/hold-button.css'), 'utf8');
     expect(css).toMatch(/\.ui-hold-button:not\(\[data-holding\]\) \.ui-hold-icon > :not\(\.ui-icon\) \{ visibility: hidden; \}/);
     expect(css).toMatch(/\.ui-hold-icon \.ui-progress-ring-fill \{ transition: none; \}/);
+    // The stand-ins' styles are gone with them (I0B-11).
+    expect(css).not.toMatch(/ui-hold-ring-/);
+    expect(readFileSync(resolve(process.cwd(), 'src/styles/primitives/button.css'), 'utf8')).not.toMatch(/ui-keycap/);
   });
 });

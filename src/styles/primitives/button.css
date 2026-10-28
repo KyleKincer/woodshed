@@ -50,17 +50,13 @@
     .ui-button-sublabel,
     .ui-button-reason { font-size: var(--fs-14); }
   }
-  .ui-button-kbd,
-  .ui-keycap {
+  .ui-button-kbd {
     font: var(--fw-semibold) var(--fs-12)/1 var(--font-mono);
     padding: 3px var(--s1);
     border: 1px solid var(--line);
     border-radius: var(--r-control);
     color: var(--ink-3);
     background: transparent;
-  }
-  @media (hover: none) and (pointer: coarse) {
-    .ui-keycap { display: none; }
   }
 
   /* Sizes */

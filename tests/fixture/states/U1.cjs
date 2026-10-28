@@ -124,18 +124,17 @@ module.exports = [
       await press(hold, 150);
       ran = await log(page);
       t.expect(ran.filter(x => x === 'hold:hint').length === 1 && ran.filter(x => x === 'hold:activate').length === 1, `playing: a short press only hints (${ran})`);
-      // The ring in use (U3's ProgressRing, or the stand-in before U3 merges): hidden at rest,
-      // shown and part-filled mid-hold. Its fill fraction is read from whichever one is there.
+      // U3's ProgressRing: hidden at rest, shown and part-filled mid-hold, and the only ring there.
       const ringState = el => {
-        const ring = el.querySelector('.ui-hold-icon > :not(.ui-icon)');
-        const stand = el.querySelector('.ui-hold-ring-fill');
-        const peer = el.querySelector('.ui-progress-ring-fill');
-        const fill = stand ? 1 - Number(stand.getAttribute('stroke-dashoffset'))
-          : peer ? Number.parseFloat(peer.getAttribute('stroke-dasharray')) / 100 : NaN;
-        return {holding: el.hasAttribute('data-holding'), ring: !!ring, visible: ring ? getComputedStyle(ring).visibility : 'none', fill};
+        const ring = el.querySelector('.ui-hold-icon > .ui-progress-ring');
+        const fillEl = ring?.querySelector('.ui-progress-ring-fill');
+        const fill = fillEl ? Number.parseFloat(fillEl.getAttribute('stroke-dasharray')) / 100 : NaN;
+        return {holding: el.hasAttribute('data-holding'), ring: !!ring, rings: el.querySelectorAll('.ui-hold-icon > :not(.ui-icon)').length,
+          visible: ring ? getComputedStyle(ring).visibility : 'none', fill};
       };
       const rest = await hold.evaluate(ringState);
       t.expect(rest.ring && rest.visible === 'hidden', `no ring shows at rest (${JSON.stringify(rest)})`);
+      t.expect(rest.rings === 1, `the ProgressRing is the only ring (${JSON.stringify(rest)})`);
       const box = await hold.boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();

@@ -1,5 +1,5 @@
 // Button and IconButton (architecture §2.12, spec §8.8), plus the plumbing every src/ui primitive
-// shares (common props, attribute patching, labels, long-press, tooltips and key-caps).
+// shares (common props, attribute patching, labels, long-press, and U3's tooltips and key-caps).
 //
 //   Button({label, icon, iconEnd, variant, size, command, onClick, onLongPress, longPressMs = 500,
 //           disabled, disabledReason, busy, pressed, kbd, title, sublabel, type = 'button', tone, registry,
@@ -24,8 +24,10 @@
 
 import '../styles/primitives/button.css';
 import {registry as appRegistry} from '../app/commands.js';
-import {aria as ariaKeys, label as keyLabel} from '../app/keys.js';
+import {aria as ariaKeys} from '../app/keys.js';
 import {icon as makeIcon} from './icon.js';
+import {Kbd} from './kbd.js';
+import {tooltip} from './tooltip.js';
 
 // ---------------------------------------------------------------------------------------------
 // Shared primitive plumbing (used by every module in src/ui; not part of the public contract).
@@ -92,57 +94,18 @@ export function requireLabel(who, label) {
 
 const hasLabel = value => typeof value === 'string' && value.trim() !== '';
 
-// Display peers (U3) by their contract paths: tooltip.js `tooltip(el, {text, kbd})` → off,
-// kbd.js `Kbd({keys})` and progress.js `ProgressRing({value, size, label})`. They load through
-// import.meta.glob (D2's mechanism) so this module builds and its harness runs before U3 merges;
-// the stand-ins below (a native title, a plain <kbd>, HoldButton's own ring) exist only until then.
-// I0B replaces the glob with static imports and deletes the stand-ins and setPeers (handoff ticket).
-const PEERS = import.meta.glob(['./tooltip.js', './kbd.js', './progress.js'], {eager: true});
-const resolvePeers = (m = {}) => Object.freeze({
-  tooltip: m.tooltip ?? null,
-  Kbd: m.Kbd ?? null,
-  ProgressRing: m.ProgressRing ?? null,
-});
-export let peers = resolvePeers({
-  tooltip: PEERS['./tooltip.js']?.tooltip,
-  Kbd: PEERS['./kbd.js']?.Kbd,
-  ProgressRing: PEERS['./progress.js']?.ProgressRing,
-});
-/** Tests only: swaps the display peers ({tooltip, Kbd, ProgressRing}, contract shapes; {} for none). Returns restore. */
-export function setPeers(next) {
-  const prev = peers;
-  peers = resolvePeers(next);
-  return () => { peers = prev; };
-}
-
-/** A tooltip on hover and focus with an optional key-cap. Returns `off`. */
+/** U3's tooltip on hover and focus with an optional key-cap. Returns `off`. */
 export function attachTooltip(el, {text, kbd}) {
   if (!hasLabel(text) && !kbd) return () => {};
-  if (peers.tooltip) return peers.tooltip(el, {text, kbd}) ?? (() => {});
-  const title = [text, kbd ? `(${keyLabel(kbd)})` : ''].filter(Boolean).join(' ');
-  setAttr(el, 'title', title);
-  return () => { if (el.getAttribute('title') === title) el.removeAttribute('title'); };
+  return tooltip(el, {text, kbd}) ?? (() => {});
 }
 
-/** A key-cap ({el, set({keys}), destroy()}): the Kbd primitive when present, else a plain <kbd>. */
+/** U3's Kbd key-cap ({el, set({keys}), destroy()}), decorative (the control carries aria-keyshortcuts). */
 export function keyCap(keys, {className = ''} = {}) {
-  if (peers.Kbd) {
-    const k = peers.Kbd({keys});
-    if (className) k.el.classList.add(...classList(className));
-    k.el.setAttribute('aria-hidden', 'true');
-    return k;
-  }
-  const el = document.createElement('kbd');
-  el.className = ['ui-keycap', ...classList(className)].join(' ');
-  el.setAttribute('aria-hidden', 'true');
-  let current = null;
-  const set = ({keys: next}) => {
-    if (next === current) return;
-    current = next;
-    setText(el, next ? keyLabel(next) : '');
-  };
-  set({keys});
-  return {el, set, destroy: () => el.remove()};
+  const k = Kbd({keys});
+  if (className) k.el.classList.add(...classList(className));
+  k.el.setAttribute('aria-hidden', 'true');
+  return k;
 }
 
 /**
