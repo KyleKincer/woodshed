@@ -241,6 +241,9 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     push(fields) { const e = baseUndo.push(fields); if (e) topEntry = e; return e; },
     pushAction(fields) { const e = baseUndo.pushAction(fields); if (e) topEntry = e; return e; },
     amend: (entry, fields) => baseUndo.amend(entry, fields),
+    // A gesture-bounded step (I2a-1, I2a-16): the token's pushes still come through `push` above,
+    // so the top-entry tracking holds for them too.
+    beginGesture: (key) => baseUndo.beginGesture(key),
     undo() { const e = replay(() => baseUndo.undo()); topEntry = null; return e; },
     redo() { const e = replay(() => baseUndo.redo()); if (e) topEntry = e; return e; },
     clear() { baseUndo.clear(); topEntry = null; },

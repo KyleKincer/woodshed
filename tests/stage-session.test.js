@@ -44,6 +44,7 @@ import {MultitrackEngine} from '../src/js/engine.js';
 import {SongMapStore} from '../src/js/song-map.js';
 import {signal, store as appStore} from '../src/app/store.js';
 import {clock as appClock} from '../src/app/clock.js';
+import {COALESCE_MS} from '../src/stage/undo.js';
 import {ApiError} from '../src/api/client.js';
 import * as profile from '../src/app/profile.js';
 import {emptyPractice} from '../shared/practice.ts';
@@ -672,6 +673,62 @@ describe('tempo persistence and adoption (D53)', () => {
     session.suspendSaves(false, {changed: true});
     await tick();
     expect(songs.saveTempo).toHaveBeenCalledOnce();
+  });
+});
+
+describe('the undo facade: gesture-bounded steps (I2a-1, I2a-16)', () => {
+  // The real transport (ST1a) over the session's real undo stack, so the gesture token
+  // travels the same path as the HUD speed drag: transport.setSpeed(rate, {gesture}) → session.undo.push.
+  const realTransport = async () => (await vi.importActual('../src/stage/transport.js')).createTransport;
+
+  test('session.undo exposes beginGesture, returning the stack\'s token', async () => {
+    const {session} = await open();
+    expect(typeof session.undo.beginGesture).toBe('function');
+    const token = session.undo.beginGesture('speed');
+    expect(token).toMatchObject({key: 'speed', active: true});
+    token.end();
+    expect(token.active).toBe(false);
+    expect(Object.isFrozen(session.undo)).toBe(true);
+  });
+
+  test('a gesture\'s setSpeed steps spaced more than coalesceMs apart are one undo entry; undo restores the start', async () => {
+    const {session} = await open({createTransport: await realTransport()});
+    await ready(session);
+    const {transport, undo} = session;
+    expect(session.practice.value.peek().rate).toBe(1);
+    const gesture = undo.beginGesture('speed');
+    expect(transport.setSpeed(0.95, {gesture})).toBe(true);
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    expect(transport.setSpeed(0.9, {gesture})).toBe(true);
+    vi.advanceTimersByTime(COALESCE_MS * 3);
+    expect(transport.setSpeed(0.85, {gesture})).toBe(true);
+    gesture.end();
+    expect(undo.size.undo).toBe(1);
+    expect(session.practice.value.peek().rate).toBe(0.85);
+    undo.undo();
+    expect(session.practice.value.peek().rate).toBe(1);
+    expect(undo.size).toEqual({undo: 0, redo: 1});
+    undo.redo();
+    expect(session.practice.value.peek().rate).toBe(0.85);
+  });
+
+  test('without a gesture the same spacing is separate steps; after end() the next step is new', async () => {
+    const {session} = await open({createTransport: await realTransport()});
+    await ready(session);
+    const {transport, undo} = session;
+    transport.setSpeed(0.95);
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    transport.setSpeed(0.9);
+    expect(undo.size.undo).toBe(2);
+    const gesture = undo.beginGesture('speed');
+    transport.setSpeed(0.8, {gesture});
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    transport.setSpeed(0.75, {gesture});
+    gesture.end();
+    expect(undo.size.undo).toBe(3);
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    transport.setSpeed(0.7);
+    expect(undo.size.undo).toBe(4);
   });
 });
 
