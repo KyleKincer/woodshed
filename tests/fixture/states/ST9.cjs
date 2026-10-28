@@ -12,8 +12,10 @@
 //   st9-chart-glass           iPad: a stopped tap cues the bar; a tap while playing shows the pill
 //                             "▶ Play from bar 13" and never seeks; tapping the pill jumps there
 //   st9-chart-mouse-loop      laptop: a mouse drag across bars 5–8 loops them (bar-snapped), answered on the chart
-//   st9-chart-pinch           iPad: a two-finger pinch previews and commits one relayout at the new scale (stored per device)
-//   st9-chart-zoom            = and − step the scale (1.3 → 1.45 → 1.3), one relayout each
+//   st9-chart-pinch           iPad: a two-finger pinch previews and commits one relayout at the new scale (stored per
+//                             device, with the Distance it was made at)
+//   st9-chart-zoom            = and − step the scale (1.3 → 1.45 → 1.3), one relayout each; a step is Stand's only:
+//                             at Kit the Kit scale applies, back at Stand the step does again (prefs.chart.pinchDistance)
 //   st9-chart-bars            keyboard: the bar list (stage.bars): ←/→ rove with a visible card, L loops
 //                             the bar, Enter plays from it; axe on the surface
 //   st9-chart-menu            right-click, Shift+F10 on the bar list and (iPad) a long-press open the bar
@@ -26,9 +28,8 @@
 //   st9-chart-r1              R1 (D54): a Distance change to each Distance on the 64-bar part (median of 5;
 //                             the sum of the chart's own timings of every relayout the change took) against
 //                             FX0's relayout64Ms × 1.15; gated only in a quiet container
-//   st9-chart-relayouts       how many engravings a Distance change and a rail → band switch (dense part)
-//                             take; the surface asks for at most two each (one once chart.js takes scale,
-//                             floors and bars per system in one call, the ST3 ticket)
+//   st9-chart-relayouts       a Distance change and a rail → band switch (dense part) are one chart.configure
+//                             call each: exactly one relayout asked for and one engraving (I2b-5)
 //   st9-app-chart             /s/glasshouse on the fixture: the Stage opens on the chart surface
 'use strict';
 
@@ -99,6 +100,16 @@ const pillBox = (page) => page.evaluate(() => {
 const following = (page) => page.evaluate(() => document.querySelector('.chart-surface').hasAttribute('data-following'));
 const prefOf = (page, key) => page.evaluate((k) => JSON.parse(localStorage.getItem('ws.prefs') ?? '{}')?.chart?.[k] ?? null, key);
 const revision = (page) => page.evaluate(() => Number(document.querySelector('.chart-surface .chart').dataset.rendered));
+/** The on-screen size of the first engraved bar number (its engraving size × the chart scale). */
+const barNumberPx = (page) => page.evaluate(() => {
+  const el = [...document.querySelectorAll('.chart-surface .chart svg text')].find((x) => /^\d+$/.test(x.textContent.trim()));
+  return el ? parseFloat(getComputedStyle(el).fontSize) : null;
+});
+/** Runs a Stage Distance change and waits for the engraving after `rev`. */
+async function changeDistance(page, d, rev) {
+  await page.evaluate((x) => window.__chartSurface.relayout(() => window.__chartSurface.stage().setDistance(x)), d);
+  await page.waitForFunction((r) => Number(document.querySelector('.chart-surface .chart').dataset.rendered) > r, rev, {timeout: 10_000});
+}
 
 /** The page position of bar n's number (1-based), the anchor for pointer gestures on that bar. */
 async function barPoint(page, n, {dy = 40} = {}) {
@@ -268,6 +279,7 @@ module.exports = [
       const scale = await prefOf(page, 'pinchScale');
       t.expect(after === before + 1, `one relayout on release (${before} → ${after})`);
       t.expect(Math.abs(scale - 1.8) < 0.05, `the pinch scale 1.2 × 1.5 is stored for this device (${scale})`);
+      t.expect(await prefOf(page, 'pinchDistance') === 'stand', `with the Distance it was made at (${await prefOf(page, 'pinchDistance')})`);
       const preview = await page.evaluate(() => document.querySelector('.chart-surface .chart-score').style.transform);
       t.expect(!preview, `the preview transform is cleared (${preview})`);
     },
@@ -285,6 +297,20 @@ module.exports = [
       await page.waitForFunction((r) => Number(document.querySelector('.chart-surface .chart').dataset.rendered) > r, r1, {timeout: 10_000});
       t.expect(await prefOf(page, 'pinchScale') === 1.3, `− steps back to 130% (${await prefOf(page, 'pinchScale')})`);
       t.expect(await revision(page) === r1 + 1, 'one relayout per step');
+      // The step belongs to Stand (I2b-3): Kit engraves at its own scale, Stand at the step again.
+      const r2 = await revision(page);
+      await page.keyboard.press('Equal');
+      await page.waitForFunction((r) => Number(document.querySelector('.chart-surface .chart').dataset.rendered) > r, r2, {timeout: 10_000});
+      t.expect(await prefOf(page, 'pinchDistance') === 'stand', `the step is stored for Stand (${await prefOf(page, 'pinchDistance')})`);
+      const stepped = await barNumberPx(page);
+      t.expect(Math.abs(stepped - 10 * 1.45) < 0.05, `bar numbers at 145% (${stepped} px)`);
+      await changeDistance(page, 'kit', await revision(page));
+      const kit = await barNumberPx(page);
+      t.expect(Math.abs(kit - 12 * 1.6) < 0.05, `Kit engraves at its own 160%, not Stand's step (${kit} px)`);
+      t.expect(await prefOf(page, 'pinchScale') === 1.45, `the step is kept for Stand (${await prefOf(page, 'pinchScale')})`);
+      await changeDistance(page, 'stand', await revision(page));
+      const back = await barNumberPx(page);
+      t.expect(Math.abs(back - 10 * 1.45) < 0.05, `back at Stand the step applies again (${back} px)`);
     },
   },
   {
@@ -444,7 +470,7 @@ module.exports = [
       await page.evaluate(() => window.__chartSurface.relayout(() => window.__chartSurface.stage().setDistance('kit')));
       const distance = {engravings: await revision(page) - before,
         asked: await page.evaluate(() => Number(document.querySelector('.chart-surface').dataset.relayouts))};
-      t.expect(distance.engravings >= 1 && distance.asked >= 1 && distance.asked <= 2, `a Distance change: the surface asks for 1–2 relayouts (${JSON.stringify(distance)})`);
+      t.expect(distance.engravings === 1 && distance.asked === 1, `a Distance change is one relayout and one engraving (${JSON.stringify(distance)})`);
       const mid = await revision(page);
       const settled = page.evaluate(() => window.__chartSurface.relayout(() => {}));
       await page.setViewportSize({width: 820, height: 1180});
@@ -453,8 +479,8 @@ module.exports = [
       await page.evaluate(() => window.__chartSurface.relayout(() => {}));
       const layout = {engravings: await revision(page) - mid,
         asked: await page.evaluate(() => Number(document.querySelector('.chart-surface').dataset.relayouts))};
-      t.expect(layout.engravings >= 1 && layout.asked >= 1 && layout.asked <= 2, `a rail → band switch: the surface asks for 1–2 relayouts (${JSON.stringify(layout)})`);
-      t.log(`engravings: Distance change ${distance.engravings} (surface asked ${distance.asked}); rail → band ${layout.engravings} (asked ${layout.asked}). One each is the contract (§4.11, §2.14.9) once chart.js takes scale, floors and bars per system in one call (ST3 ticket); a width change re-engraves on its own (ST3/ST4).`);
+      t.expect(layout.engravings === 1 && layout.asked === 1, `a rail → band switch is one relayout and one engraving (${JSON.stringify(layout)})`);
+      t.log(`engravings: Distance change ${distance.engravings} (surface asked ${distance.asked}); rail → band ${layout.engravings} (asked ${layout.asked}).`);
     },
   },
   {

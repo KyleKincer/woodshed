@@ -54,6 +54,20 @@ const fake = vi.hoisted(() => {
         state.floors = {...next};
         if (changed) chart.relayout();
       },
+      // Like chart.js (ST3, I2b-2): scale, floors and bars per system in one relayout; true when one started.
+      configure(next, opts) {
+        record('configure', next, opts);
+        let changed = false;
+        if ('scale' in next) { const n = Math.min(SCALE_MAX, Math.max(SCALE_MIN, next.scale)); if (n !== state.scale) { state.scale = n; changed = true; } }
+        if ('fonts' in next) {
+          if (next.fonts.barNumber !== state.floors.barNumber || next.fonts.marker !== state.floors.marker) changed = true;
+          state.floors = {...next.fonts};
+        }
+        if ('barsPerRow' in next && next.barsPerRow !== state.barsPerRow) { state.barsPerRow = next.barsPerRow; changed = true; }
+        if (!changed || !state.revision) return false;
+        chart.relayout();
+        return true;
+      },
       setFollowStyle(style, {anchor} = {}) { record('setFollowStyle', style, anchor); state.followStyle = style; if (anchor) state.followAnchor = anchor; },
       setFollow(on) { record('setFollow', !!on); if (state.follow !== !!on) { state.follow = !!on; options.onFollowChange(!!on); } },
       setLoopRange(range) { record('setLoopRange', range); state.loop = range; },
@@ -103,7 +117,7 @@ beforeEach(() => {
   restoreAudio = installFakeAudio();
   clock = createClock();
   fake.charts.length = 0;
-  prefs.update((d) => { d.chart = {display: {layout: null}, pinchScale: null}; });
+  prefs.update((d) => { d.practice.distance = 'stand'; d.chart = {display: {layout: null}, pinchScale: null, pinchDistance: null}; });
 });
 
 afterEach(async () => {
@@ -196,9 +210,21 @@ describe('pure rules', () => {
       expect(fontsFor(distance).barNumber).toBeCloseTo(barNumber, 9);
       expect(fontsFor(distance).marker).toBeCloseTo(marker, 9);
     }
-    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 0.9})).toBe(0.9);
-    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 3})).toBe(2);
-    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 0.5})).toBe(0.8);
+    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 0.9, pinchDistance: 'kit'})).toBe(0.9);
+    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 3, pinchDistance: 'kit'})).toBe(2);
+    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 0.5, pinchDistance: 'kit'})).toBe(0.8);
+  });
+
+  test('a pinch applies only at the Distance it was made at (I2b-3)', () => {
+    expect(scaleFor({distance: 'stand', layout: 'rail', pinch: 1.8, pinchDistance: 'stand'})).toBe(1.8);
+    expect(scaleFor({distance: 'kit', layout: 'rail', pinch: 1.8, pinchDistance: 'stand'})).toBeCloseTo(1.6, 9);
+    expect(scaleFor({distance: 'near', layout: 'band', pinch: 1.8, pinchDistance: 'kit'})).toBeCloseTo(1.0, 9);
+    // No Distance recorded (or not one of the three): not this Distance's pinch.
+    for (const pinchDistance of [null, undefined, 'far', '']) {
+      expect(scaleFor({distance: 'stand', layout: 'rail', pinch: 1.8, pinchDistance})).toBeCloseTo(1.3, 9);
+    }
+    // An unknown current Distance is Stand (layout.js distanceOf).
+    expect(scaleFor({distance: 'huge', layout: 'rail', pinch: 1.8, pinchDistance: 'stand'})).toBe(1.8);
   });
 
   test('the D54 gate: live while the last two relayouts took ≤ 300 ms, else once 400 ms after the last request', () => {
@@ -256,10 +282,17 @@ describe('hosting the chart', () => {
   });
 
   test('a sparse part keeps automatic bars per system; a pinch override from this device wins over the Distance', async () => {
-    prefs.set('chart.pinchScale', 1.45);
+    prefs.update((d) => { d.chart.pinchScale = 1.45; d.chart.pinchDistance = 'stand'; });
     const b = await bed({score: sparseScore(), layout: 'rail'});
     expect(b.chart.options.display.barsPerRow).toBe(-1);
     expect(b.chart.options.scale).toBe(1.45);
+  });
+
+  test('a pinch made at another Distance (Settings, another surface) is ignored when the chart opens', async () => {
+    prefs.update((d) => { d.chart.pinchScale = 1.45; d.chart.pinchDistance = 'kit'; });
+    const b = await bed({layout: 'rail', distance: 'stand'});
+    expect(b.chart.options.scale).toBeCloseTo(1.3, 9);
+    expect(prefs.get('chart.pinchScale')).toBe(1.45);   // kept for Kit
   });
 
   test('frames move the playhead; while stopped, cue changes do too', async () => {
@@ -360,7 +393,7 @@ describe('glass: the chart gestures reach the Stage', () => {
 });
 
 describe('pinch and size', () => {
-  test('a two-finger pinch previews with a transform and commits one setScale (80–200 %), stored for this device', async () => {
+  test('a two-finger pinch previews with a transform and commits one size change (80–200 %), stored for this device and Distance', async () => {
     const b = await bed();
     const el = b.root;
     pointer(el, 'pointerdown', {pointerType: 'touch', pointerId: 1, x: 100, y: 100, isPrimary: true});
@@ -373,8 +406,11 @@ describe('pinch and size', () => {
     expect(b.calls('previewScale').at(-1)[1]).toBeCloseTo(2 / 1.3, 6);   // clamped at 200 %
     pointer(el, 'pointerup', {pointerType: 'touch', pointerId: 2, x: 400, y: 100});
     expect(b.calls('previewScale').at(-1)).toEqual(['previewScale', null, undefined]);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 2]);
+    expect(b.calls('configure')).toHaveLength(1);
+    expect(b.chart.state.scale).toBe(2);
+    expect(b.calls('setScale')).toHaveLength(0);
     expect(prefs.get('chart.pinchScale')).toBe(2);
+    expect(prefs.get('chart.pinchDistance')).toBe('stand');
   });
 
   test('⌘-wheel zooms when stopped; with a mouse while playing it does nothing (and the page does not zoom)', async () => {
@@ -391,39 +427,73 @@ describe('pinch and size', () => {
     expect(zoom.defaultPrevented).toBe(true);
     expect(b.calls('previewScale')).toHaveLength(1);
     vi.advanceTimersByTime(300);
-    expect(b.calls('setScale').at(-1)[1]).toBeGreaterThan(1.3);
-    expect(prefs.get('chart.pinchScale')).toBe(b.calls('setScale').at(-1)[1]);
+    expect(b.chart.state.scale).toBeGreaterThan(1.3);
+    expect(prefs.get('chart.pinchScale')).toBe(b.chart.state.scale);
+    expect(prefs.get('chart.pinchDistance')).toBe('stand');
   });
 
-  test('=/− step through the scale steps and store the step for this device', async () => {
-    const b = await bed();
+  test('=/− step through the scale steps and store the step for this device, at this Distance', async () => {
+    const b = await bed({distance: 'kit', layout: 'rail'});
     b.surface.zoom(1);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.45]);
-    expect(prefs.get('chart.pinchScale')).toBe(1.45);
+    expect(b.chart.state.scale).toBe(1.8);
+    expect(prefs.get('chart.pinchScale')).toBe(1.8);
+    expect(prefs.get('chart.pinchDistance')).toBe('kit');
     b.surface.zoom(-1);
     b.surface.zoom(-1);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.2]);
-    expect(SCALE_STEPS).toContain(1.2);
+    expect(b.chart.state.scale).toBe(1.45);
+    expect(b.calls('configure').map((c) => c[1].scale)).toEqual([1.8, 1.6, 1.45]);
+    expect(SCALE_STEPS).toContain(1.45);
   });
 
-  test('a Distance change sets the floors and the Distance scale at once, and replaces a pinch', async () => {
-    prefs.set('chart.pinchScale', 0.9);
+  test('a Distance change is one chart.configure call: the floors, the Distance scale and bars per system in one relayout (I2b-5)', async () => {
     const b = await bed({layout: 'rail'});
+    const before = b.chart.raw.revision;
     b.surface.setDistance('kit');
-    expect(b.calls('setFonts').at(-1)[1].barNumber).toBeCloseTo(18.2, 9);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.6]);
-    expect(prefs.get('chart.pinchScale')).toBeNull();
+    expect(b.calls('configure')).toHaveLength(1);
+    const [, next, opts] = b.calls('configure')[0];
+    expect(next.scale).toBeCloseTo(1.6, 9);
+    expect(next.fonts.barNumber).toBeCloseTo(18.2, 9);
+    expect(next.fonts.marker).toBeCloseTo(26, 9);
+    expect(next.barsPerRow).toBe(4);
+    expect(opts).toEqual({anchor: true});
+    expect(b.calls('setScale')).toHaveLength(0);
+    expect(b.calls('setFonts')).toHaveLength(0);
+    expect(b.calls('setDisplay')).toHaveLength(0);
+    expect(b.chart.raw.revision - before).toBe(1);
+    expect(b.root.dataset.relayouts).toBe('1');
     expect(b.log.statuses).toEqual([]);
+  });
+
+  test('a pinch is kept per Distance: ignored at another, applied again on going back (I2b-3)', async () => {
+    const b = await bed({layout: 'rail', distance: 'stand'});
+    b.surface.zoom(1);
+    expect(b.chart.state.scale).toBe(1.45);
+    b.stage.sig.distance.value = 'kit';
+    b.surface.setDistance('kit');
+    expect(b.chart.state.scale).toBeCloseTo(1.6, 9);
+    expect(prefs.get('chart.pinchScale')).toBe(1.45);
+    expect(prefs.get('chart.pinchDistance')).toBe('stand');
+    b.surface.setDistance('stand');
+    expect(b.chart.state.scale).toBe(1.45);
+    // A pinch at Kit replaces Stand's: one override, for the Distance it was made at.
+    b.surface.setDistance('kit');
+    b.surface.zoom(1);
+    expect(b.chart.state.scale).toBe(1.8);
+    expect(prefs.get('chart.pinchDistance')).toBe('kit');
+    b.surface.setDistance('stand');
+    expect(b.chart.state.scale).toBeCloseTo(1.3, 9);
   });
 
   test('D54: after a relayout over 300 ms, Distance steps apply once on release (400 ms after the last) with "Resizing…"', async () => {
     const b = await bed({layout: 'rail'});
     b.chart.relayoutMs = 60;
+    const scales = () => b.calls('configure').map((c) => c[1].scale);
     b.surface.zoom(1);           // live: one fast sample
-    expect(b.calls('setScale').map((c) => c[1])).toEqual([1.45]);
+    expect(scales()).toEqual([1.45]);
     b.chart.relayoutMs = 450;
+    vi.advanceTimersByTime(1000);
     b.surface.zoom(1);           // still live (the last two were 60 ms), measured at 450 ms
-    expect(b.calls('setScale').map((c) => c[1])).toEqual([1.45, 1.6]);
+    expect(scales()).toEqual([1.45, 1.6]);
     const before = b.chart.calls.length;
     b.surface.setDistance('near');
     expect(b.log.statuses.at(-1)).toEqual([COPY.resizing, {key: 'chart-resize'}]);
@@ -431,28 +501,31 @@ describe('pinch and size', () => {
     vi.advanceTimersByTime(200);
     b.surface.setDistance('kit');
     vi.advanceTimersByTime(399);
-    expect(b.calls('setFonts')).toHaveLength(0);
+    expect(b.calls('configure')).toHaveLength(2);
     vi.advanceTimersByTime(1);
-    expect(b.calls('setFonts')).toHaveLength(1);
-    expect(b.calls('setFonts')[0][1].barNumber).toBeCloseTo(18.2, 9);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.6]);
+    expect(b.calls('configure')).toHaveLength(3);   // the two steps coalesce into one change
+    expect(b.calls('configure')[2][1].fonts.barNumber).toBeCloseTo(18.2, 9);
+    expect(scales().at(-1)).toBeCloseTo(1.6, 9);   // Stand's pinch does not apply at Kit
     // Fast relayouts again: once the last two are ≤ 300 ms, changes are live.
     b.chart.relayoutMs = 60;
-    b.surface.setDistance('stand');
-    vi.advanceTimersByTime(400);
     b.surface.setDistance('near');
     vi.advanceTimersByTime(400);
+    b.surface.setDistance('stand');
+    vi.advanceTimersByTime(1000);
     b.surface.setDistance('kit');
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.6]);
-    expect(b.calls('setScale').map((c) => c[1]).slice(-3)).toEqual([1.3, 1.1, 1.6]);
+    expect(scales().slice(-3)).toEqual([1.1, 1.6, 1.6]);   // back at Stand, its pinch (1.6) applies again
+    expect(b.calls('setScale')).toHaveLength(0);
+    expect(b.calls('setFonts')).toHaveLength(0);
   });
 
   test('a layout switch moves the follow line, the dense bars per system and the Distance scale in place', async () => {
     const b = await bed({layout: 'rail'});
     b.surface.setLayout('band');
     expect(b.calls('setFollowStyle').at(-1)).toEqual(['setFollowStyle', 'scroll', 0.28]);
-    expect(b.calls('setDisplay').at(-1)).toEqual(['setDisplay', {barsPerRow: 2}]);
-    expect(b.calls('setScale').at(-1)).toEqual(['setScale', 1.2]);
+    expect(b.calls('configure')).toHaveLength(1);
+    expect(b.calls('configure')[0][1]).toMatchObject({barsPerRow: 2, scale: 1.2});
+    expect(b.calls('setDisplay')).toHaveLength(0);
+    expect(b.calls('setScale')).toHaveLength(0);
   });
 
   test('a pinch during a deferred Distance change keeps the new Distance\'s label floors', async () => {
@@ -469,17 +542,21 @@ describe('pinch and size', () => {
     vi.advanceTimersByTime(2000);
     expect(b.chart.state.floors.barNumber).toBeCloseTo(18.2, 9);
     expect(b.chart.state.floors.marker).toBeCloseTo(26, 9);
-    expect(b.calls('setFonts')).toHaveLength(1);
+    expect(b.calls('configure').filter((c) => c[1].fonts.barNumber > 18)).toHaveLength(1);   // the pinch's change, at Kit's floors
     expect(b.chart.state.scale).toBe(prefs.get('chart.pinchScale'));
+    expect(prefs.get('chart.pinchDistance')).toBe('kit');
     expect(b.chart.state.scale).toBeGreaterThan(1.6);
   });
 
-  test('D54 judges a size change as a whole: a Distance change\'s two relayouts are summed into one sample', async () => {
+  test('D54 judges a size change as a whole: a further relayout soon after it is summed into its sample', async () => {
     const b = await bed({layout: 'rail'});
     b.chart.relayoutMs = 200;    // each relayout is under 300 ms, the change is not
     const before = b.chart.raw.revision;
     b.surface.setDistance('kit');
-    expect(b.chart.raw.revision - before).toBe(2);   // setFonts, then setScale (one call once chart.js takes both)
+    expect(b.chart.raw.revision - before).toBe(1);
+    expect(b.root.dataset.relayoutMs).toBe('200');
+    expect(b.root.dataset.relayouts).toBe('1');
+    b.chart.relayout();              // e.g. an engraving the change caused on its own
     expect(b.root.dataset.relayoutMs).toBe('400');
     expect(b.root.dataset.relayouts).toBe('2');
     expect(b.log.statuses).toEqual([]);
@@ -490,8 +567,14 @@ describe('pinch and size', () => {
     b.surface.commitSize();
     expect(b.chart.state.scale).toBe(1.1);
     expect(b.chart.state.floors.barNumber).toBeCloseTo(11.2, 9);
+    expect(b.root.dataset.relayouts).toBe('1');   // a new change: its own sample
     vi.advanceTimersByTime(1000);
-    expect(b.calls('setScale').map((c) => c[1])).toEqual([1.6, 1.1]);
+    expect(b.calls('configure').map((c) => c[1].scale)).toEqual([1.6, 1.1]);
+    // Past BATCH_IDLE_MS a relayout is a change of its own.
+    vi.advanceTimersByTime(1000);
+    b.chart.relayout();
+    expect(b.root.dataset.relayouts).toBe('1');
+    expect(b.root.dataset.relayoutMs).toBe('200');
   });
 
   test('a dense layout switch is one size change, and its follow line moves once, at the new layout', async () => {
@@ -506,19 +589,20 @@ describe('pinch and size', () => {
     expect(b.calls('setFollowStyle').slice(followCalls)).toEqual([['setFollowStyle', 'page', 0.28]]);
     expect(b.chart.state.barsPerRow).toBe(2);
     expect(b.chart.state.scale).toBe(1.2);
-    expect(b.chart.raw.revision - before).toBe(2);   // bars per system, then the scale (one call once chart.js takes both)
-    expect(b.root.dataset.relayouts).toBe('2');
-    expect(b.root.dataset.relayoutMs).toBe('80');
+    expect(b.chart.raw.revision - before).toBe(1);   // bars per system and the scale: one configure call
+    expect(b.calls('configure')).toHaveLength(1);
+    expect(b.root.dataset.relayouts).toBe('1');
+    expect(b.root.dataset.relayoutMs).toBe('40');
   });
 
   test('a layout or Distance change made while the chart module loads is applied when the chart is created', async () => {
-    prefs.set('chart.pinchScale', 0.9);
+    prefs.update((d) => { d.chart.pinchScale = 0.9; d.chart.pinchDistance = 'stand'; });
     const b = await bed({layout: 'band', distance: 'kit', surfaceOpts: {layout: 'rail', distance: 'stand'}});
-    expect(b.chart.options.scale).toBe(1.5);
+    expect(b.chart.options.scale).toBe(1.5);   // Stand's pinch does not apply at Kit
     expect(b.chart.options.followAnchor).toBe(0.28);
     expect(b.chart.options.display.barsPerRow).toBe(2);
     expect(b.chart.options.fonts.barNumber).toBeCloseTo(18.2, 9);
-    expect(prefs.get('chart.pinchScale')).toBeNull();
+    expect(prefs.get('chart.pinchScale')).toBe(0.9);   // kept for Stand
   });
 
   test('the Display (Together · Hands & feet) and Follow style are this device\'s, from the Stage', async () => {
