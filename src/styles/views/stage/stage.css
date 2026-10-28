@@ -1,0 +1,345 @@
+/* The Stage frame (src/stage/stage.js; spec §4.1, §4.10, §4.12; architecture §2.14.10, §7.5).
+ *
+ *   .stage[data-stage-layout][data-distance][data-focus][data-playing][data-rail-narrow]
+ *     .stage-hud        HUD (identity row + readouts; src/stage/hud.js)
+ *     .stage-main       banners · music (surfaces, error, Notes card, glass pill) · song strip
+ *     .stage-controls   the band dock, the rail grid or the Focus mini rail (src/stage/controls.js)
+ *     .stage-status     the status line (status.css)
+ *     .stage-reveal     the band Focus reveal zone (focus.css)
+ *
+ * Band (iPad portrait): HUD on top, the music in the middle, strip and dock at the bottom; the
+ * music always spans the full width, so chrome changes only its height. Rail (laptop, iPad
+ * landscape): the music column on the left at full height with the strip under it; the rail
+ * (--rail-w by Distance, tokens.css) holds the HUD and the controls. The status line floats over
+ * the bottom of the music on both (status.css). */
+@layer views {
+  .stage {
+    --stage-strip-h: 56px;
+    --stage-dock-h: 88px;
+    --stage-rail-pad: var(--s4);
+    position: relative;
+    display: grid;
+    box-sizing: border-box;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  .stage[data-stage-layout=band] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "hud" "main" "controls";
+  }
+
+  /* The rail column: the HUD at the top (it gives way before the controls ever do), the controls
+   * at the bottom; the rail's surface and its 1 px edge are drawn behind both. */
+  .stage[data-stage-layout=rail] {
+    grid-template-columns: minmax(0, 1fr) var(--rail-w);
+    grid-template-rows: minmax(0, max-content) minmax(0, 1fr) max-content;
+    grid-template-areas: "main hud" "main ." "main controls";
+    background: linear-gradient(to left, var(--surface) calc(var(--rail-w) - 1px), var(--line) calc(var(--rail-w) - 1px), var(--line) var(--rail-w), var(--bg) var(--rail-w));
+  }
+
+  /* ---- HUD area ---- */
+  .stage-hud {
+    grid-area: hud;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .stage[data-stage-layout=band] .stage-hud {
+    padding-top: var(--safe-top);
+    padding-inline: var(--safe-left) var(--safe-right);
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .stage[data-stage-layout=rail] .stage-hud {
+    overflow: hidden;
+    padding: calc(var(--stage-rail-pad) + var(--safe-top)) calc(var(--stage-rail-pad) + var(--safe-right)) 0 calc(var(--stage-rail-pad) + 1px);
+  }
+
+  /* ---- the music column ---- */
+  .stage-main {
+    grid-area: main;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .stage[data-stage-layout=rail] .stage-main { padding-inline-start: var(--safe-left); }
+
+  .stage-banners {
+    flex: none;
+    display: grid;
+    gap: var(--s2);
+    padding: var(--s2) var(--s4) 0;
+  }
+  .stage-banners:not(:has(> :not([hidden]))) { display: none; }
+
+  .stage-music {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .stage-surfaces {
+    position: absolute;
+    inset: 0;
+  }
+  .stage-surfaces[hidden] { display: none; }
+
+  /* One layer per surface; a switch crossfades the old and the new (--motion-slow; reduced motion: 0 ms). */
+  .stage-surface {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    opacity: 1;
+    transition: opacity var(--motion-slow) var(--ease);
+  }
+  .stage-surface[data-entering] { opacity: 0; }
+  .stage-surface[data-leaving] { opacity: 0; pointer-events: none; }
+
+  /* A surface of a later build (D2). */
+  .stage-surface-later {
+    align-self: center;
+    justify-self: center;
+    display: grid;
+    gap: var(--s2);
+    max-width: 420px;
+    padding: var(--s5);
+    text-align: center;
+  }
+  .stage-surface-later-kicker {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .stage-surface-later-body {
+    color: var(--ink-2);
+    font-size: var(--fs-stage-sub);
+  }
+
+  /* ---- the song strip slot (src/stage/strip.js) ---- */
+  .stage-strip {
+    flex: none;
+    box-sizing: border-box;
+    height: var(--stage-strip-h);
+    min-width: 0;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  /* ---- controls ---- */
+  .stage-controls {
+    grid-area: controls;
+    box-sizing: border-box;
+    min-width: 0;
+  }
+  .stage-controls[data-disabled] { cursor: not-allowed; }
+  .stage[data-stage-layout=band] .stage-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(var(--stage-dock-h) + var(--safe-bottom));
+    padding: 0 max(var(--s4), var(--safe-right)) var(--safe-bottom) max(var(--s4), var(--safe-left));
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+  }
+  .stage[data-stage-layout=rail] .stage-controls {
+    padding: var(--s3) calc(var(--stage-rail-pad) + var(--safe-right)) calc(var(--stage-rail-pad) + var(--s1) + var(--safe-bottom)) calc(var(--stage-rail-pad) + 1px);
+  }
+
+  /* ---- load errors in the music area (spec §4.12) ---- */
+  .stage-error {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--s5);
+    overflow: auto;
+  }
+  .stage-error[hidden] { display: none; }
+  .stage-error-card {
+    box-sizing: border-box;
+    display: grid;
+    gap: var(--s3);
+    width: 100%;
+    max-width: 480px;
+    padding: var(--s5);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+  }
+  .stage-error-title {
+    font-size: var(--fs-20);
+    font-weight: var(--fw-bold);
+  }
+  .stage-error-sub { color: var(--ink-2); }
+  .stage-error-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+  .stage-error-details summary {
+    cursor: pointer;
+    color: var(--ink-2);
+    font-weight: var(--fw-semibold);
+    min-height: var(--h-sm);
+    display: flex;
+    align-items: center;
+  }
+  .stage-error-raw {
+    margin: var(--s2) 0;
+    padding: var(--s3);
+    max-height: 160px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--surface-2);
+    border-radius: var(--r-control);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+  }
+
+  /* ---- the glass pill (spec §4.9): "▶ Play from bar 23" at the touch point for 3 s ---- */
+  .stage-pill-layer {
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-local-2);
+    pointer-events: none;
+  }
+  .stage-pill {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: 44px;
+    padding: 0 var(--s4);
+    translate: -50% calc(-100% - var(--s3));
+    border: 0;
+    border-radius: var(--r-pill);
+    background: var(--accent-fill);
+    color: var(--on-accent);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    white-space: nowrap;
+    box-shadow: var(--shadow-popover);
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  /* ---- the Notes card host: the music's top right, 320 px, non-modal (spec §4.7) ---- */
+  .stage-notes-host {
+    position: absolute;
+    top: var(--s3);
+    right: var(--s3);
+    z-index: var(--z-popover);
+    width: min(320px, calc(100% - 2 * var(--s3)));
+    pointer-events: none;
+  }
+  .stage-notes-card {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    max-height: min(60vh, 560px);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    pointer-events: auto;
+  }
+  .stage-notes-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s2) var(--s2) var(--s4);
+    border-bottom: 1px solid var(--line);
+  }
+  .stage-notes-title {
+    flex: 1;
+    font-size: var(--fs-16);
+    font-weight: var(--fw-bold);
+  }
+  .stage-notes-close {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .stage-notes-body {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--s3) var(--s4) var(--s4);
+    font-size: var(--fs-stage-sub);
+  }
+
+  /* A sheet of a later build (sheets/host.js). */
+  .stage-sheet-later {
+    display: grid;
+    gap: var(--s2);
+    padding: var(--s3) 0 var(--s4);
+  }
+  .stage-sheet-later-kicker {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .stage-sheet-later-body { color: var(--ink-2); }
+
+  /* ---- a song that could not be opened ---- */
+  .stage-missing {
+    display: grid;
+    place-items: center;
+    padding: max(var(--s5), var(--safe-top)) var(--s5) max(var(--s5), var(--safe-bottom));
+  }
+  .stage-missing-card {
+    box-sizing: border-box;
+    display: grid;
+    gap: var(--s3);
+    width: 100%;
+    max-width: 480px;
+    padding: var(--s6);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+  }
+  .stage-missing-title {
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+  }
+  .stage-missing-body { color: var(--ink-2); }
+  .stage-missing-link {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-md);
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    border-radius: var(--r-control);
+  }
+
+  /* The Library → Stage View Transition: the opened card's cover, held while the Stage opens. */
+  .stage-entry-ghost {
+    position: fixed;
+    z-index: var(--z-overlay);
+    margin: 0;
+    pointer-events: none;
+    border-radius: 0;
+    overflow: hidden;
+  }
+}

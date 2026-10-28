@@ -1,0 +1,11 @@
+/* "Is this the right recording?" (src/stage/review-banner.js; D43, spec §3.5): the one-time banner
+ * in flow above the music, hidden while playing. The Banner primitive draws the card. */
+@layer views {
+  .stage-review { min-width: 0; }
+  .stage-review[hidden] { display: none; }
+  .stage-review .ui-banner { font-size: var(--fs-stage-identity); }
+  .stage-review-title {
+    color: var(--ink);
+    font-weight: var(--fw-bold);
+  }
+}
