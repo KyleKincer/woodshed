@@ -96,29 +96,47 @@ describe('shared yt-dlp arguments', () => {
   });
 });
 
+// The processor packaging checks (I0B-10, I1b-3) run build-processor.py and
+// desktop_entry.py --self-check without PyInstaller or the heavy runtime.
+const repo = path.resolve(here, '..');
+const noPython = spawnSync('python3', ['--version']).status !== 0 && 'python3 not available';
+
+/** The PyInstaller argv build-processor.py would run, captured without running it. */
+function pyinstallerArgs() {
+  const capture = [
+    'import json, runpy, subprocess, sys',
+    'class Captured(Exception): pass',
+    'def run(args, **kw):',
+    '    print(json.dumps([str(a) for a in args])); raise Captured()',
+    'subprocess.run = run',
+    'try: runpy.run_path(sys.argv[1], run_name="__main__")',
+    'except Captured: pass',
+  ].join('\n');
+  const run = spawnSync('python3', ['-I', '-c', capture, path.join(repo, 'scripts', 'build-processor.py')], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  return JSON.parse(run.stdout);
+}
+const addData = args => args.flatMap((a, i) => a === '--add-data' ? [args[i + 1]] : []);
+
+/** The real companion modules a stand-in bundle carries (beats.py is stubbed: BeatNet is heavy). */
+const BUNDLED_COMPANION = ['pipeline.py', 'process.py', 'errors.py', 'fingerprint.py', 'sections.py'];
+/** A stand-in bundle: desktop_entry.py and the companion modules with stub heavy runtime modules. */
+function bundle({ withArgs, omit = [] }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cpa-selfcheck-'));
+  for (const file of ['desktop_entry.py', ...BUNDLED_COMPANION, ...(withArgs ? ['ytdlp-args.json'] : [])].filter(f => !omit.includes(f))) copyFileSync(path.join(here, file), path.join(dir, file));
+  for (const stub of ['torch', 'torchaudio', 'demucs', 'yt_dlp', 'soundfile', 'librosa', 'numpy']) writeFileSync(path.join(dir, `${stub}.py`), '');
+  writeFileSync(path.join(dir, 'beats.py'), 'def detect(*a, **k): pass\n');
+  return dir;
+}
+const selfCheck = (dir, meipass) => spawnSync('python3', ['-E', '-s', '-c',
+  'import runpy, sys; sys.path.insert(0, sys.argv[1]); m = sys.argv[2]\n' +
+  'if m: sys._MEIPASS = m\n' +
+  'sys.argv = ["woodshed-processor", "--self-check"]; runpy.run_path(sys.path[0] + "/desktop_entry.py", run_name="__main__")',
+  dir, meipass || ''], { encoding: 'utf8' });
+
 // I0B-10: the packaged processor must ship ytdlp-args.json, fail its build-time
 // self-check without it, and rebuild when it changes.
 describe('processor packaging of ytdlp-args.json', () => {
-  const repo = path.resolve(here, '..');
-  const noPython = spawnSync('python3', ['--version']).status !== 0 && 'python3 not available';
-
-  /** The PyInstaller argv build-processor.py would run, captured without running it. */
-  function pyinstallerArgs() {
-    const capture = [
-      'import json, runpy, subprocess, sys',
-      'class Captured(Exception): pass',
-      'def run(args, **kw):',
-      '    print(json.dumps([str(a) for a in args])); raise Captured()',
-      'subprocess.run = run',
-      'try: runpy.run_path(sys.argv[1], run_name="__main__")',
-      'except Captured: pass',
-    ].join('\n');
-    const run = spawnSync('python3', ['-I', '-c', capture, path.join(repo, 'scripts', 'build-processor.py')], { encoding: 'utf8' });
-    assert.equal(run.status, 0, run.stderr);
-    return JSON.parse(run.stdout);
-  }
-  const addData = args => args.flatMap((a, i) => a === '--add-data' ? [args[i + 1]] : []);
-
   test('build-processor.py bundles companion/ytdlp-args.json at the bundle root', { skip: noPython }, () => {
     const pathsep = process.platform === 'win32' ? ';' : ':';
     const data = addData(pyinstallerArgs());
@@ -144,19 +162,6 @@ describe('processor packaging of ytdlp-args.json', () => {
     }
   });
 
-  /** A stand-in bundle: desktop_entry.py and pipeline.py with stub heavy runtime modules. */
-  function bundle({ withArgs }) {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cpa-selfcheck-'));
-    for (const file of ['desktop_entry.py', 'pipeline.py', ...(withArgs ? ['ytdlp-args.json'] : [])]) copyFileSync(path.join(here, file), path.join(dir, file));
-    for (const stub of ['torch', 'torchaudio', 'demucs', 'yt_dlp', 'soundfile', 'librosa']) writeFileSync(path.join(dir, `${stub}.py`), '');
-    writeFileSync(path.join(dir, 'beats.py'), 'def detect(*a, **k): pass\n');
-    return dir;
-  }
-  const selfCheck = (dir, meipass) => spawnSync('python3', ['-E', '-s', '-c',
-    'import runpy, sys; sys.path.insert(0, sys.argv[1]); m = sys.argv[2]\n' +
-    'if m: sys._MEIPASS = m\n' +
-    'sys.argv = ["woodshed-processor", "--self-check"]; runpy.run_path(sys.path[0] + "/desktop_entry.py", run_name="__main__")',
-    dir, meipass || ''], { encoding: 'utf8' });
 
   test('desktop_entry.py --self-check fails a build that is missing ytdlp-args.json', { skip: noPython }, () => {
     const dir = bundle({ withArgs: false });
@@ -181,6 +186,62 @@ describe('processor packaging of ytdlp-args.json', () => {
       }
     } finally { for (const d of [beside, code, meipass]) rmSync(d, { recursive: true, force: true }); }
   });
+});
+
+// I1b-3: the packaged processor must bundle every companion module a job imports
+// (CPC's sections.py, CPB's errors.py), and its self-check must import them.
+describe('processor packaging of companion modules', () => {
+  /** Companion modules reachable from desktop_entry.py by any import, function-local ones included. */
+  function reachableCompanionModules() {
+    const walk = [
+      'import ast, json, pathlib, sys',
+      'root = pathlib.Path(sys.argv[1]); seen = set(); todo = ["desktop_entry"]',
+      'while todo:',
+      '    name = todo.pop()',
+      '    for node in ast.walk(ast.parse((root / (name + ".py")).read_text(encoding="utf-8"))):',
+      '        names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) and node.module and not node.level else []',
+      '        for mod in names:',
+      '            top = mod.split(".")[0]',
+      '            if (root / (top + ".py")).is_file() and top not in seen: seen.add(top); todo.append(top)',
+      'print(json.dumps(sorted(seen - {"desktop_entry"})))',
+    ].join('\n');
+    const run = spawnSync('python3', ['-I', '-c', walk, here], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout);
+  }
+
+  test('build-processor.py hidden-imports every companion module the frozen entry reaches', { skip: noPython }, () => {
+    const args = pyinstallerArgs();
+    const hidden = args.flatMap((a, i) => a === '--hidden-import' ? [args[i + 1]] : []);
+    const reachable = reachableCompanionModules();
+    for (const module of ['process', 'pipeline', 'errors', 'sections', 'beats', 'fingerprint', 'separator', 'gpu_runtime']) {
+      assert.ok(reachable.includes(module), `${module} is reached from desktop_entry.py`);
+    }
+    const missing = reachable.filter(m => !hidden.includes(m));
+    assert.deepEqual(missing, [], `--hidden-import must name every companion module a job imports; missing ${missing.join(', ')}`);
+    assert.ok(args.includes('--collect-all') && args[args.indexOf('librosa') - 1] === '--collect-all', 'sections.py needs librosa collected');
+  });
+
+  test('desktop_entry.py --self-check passes with sections, errors and process bundled', { skip: noPython }, () => {
+    const dir = bundle({ withArgs: true });
+    try {
+      const run = selfCheck(dir);
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stdout, /Woodshed processing runtime ready/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  for (const [file, module] of [['sections.py', 'sections'], ['errors.py', 'errors'], ['process.py', 'process']]) {
+    test(`desktop_entry.py --self-check fails a build that is missing ${file}`, { skip: noPython }, () => {
+      const dir = bundle({ withArgs: true, omit: [file] });
+      try {
+        const run = selfCheck(dir);
+        assert.notEqual(run.status, 0, `a processor without ${file} must not pass its self-check`);
+        assert.match(run.stderr, new RegExp(`No module named '${module}'`));
+        assert.doesNotMatch(run.stdout, /runtime ready/);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+  }
 });
 
 describe('flat-entry mapping', () => {

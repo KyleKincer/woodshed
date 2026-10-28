@@ -15,6 +15,10 @@ def self_check():
                          '(scripts/build-processor.py must --add-data companion/ytdlp-args.json).')
     import torch, torchaudio, demucs, yt_dlp, soundfile, librosa
     from beats import detect
+    # beats and sections jobs import sections lazily; process (the job runner) and
+    # errors (its failure codes) are what every job runs through.
+    from sections import suggest
+    import errors, process
     print('Woodshed processing runtime ready', flush=True)
 
 
