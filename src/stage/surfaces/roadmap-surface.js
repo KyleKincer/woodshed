@@ -26,7 +26,11 @@
 // shimmer; the root and each canvas carry data-peaks-ready once drawn from them.
 //
 // Glass (glass.js, press.js, D50): taps, double taps, long presses and right-clicks are hit-tested
-// to {t, bar, beatTime} and handed to opts.onActivate (the Stage applies pressPolicy). A mouse
+// to {t, bar, beatTime} and handed to opts.onActivate (the Stage applies pressPolicy). A long press
+// or right-click on a spot flag, a marker tick (a marker flag on the Wave page) or the loop band
+// adds `target: {kind: 'spot', spot, onOpen} | {kind: 'marker', marker} | {kind: 'loopBand'}`, so
+// the Stage opens that menu instead of the bar's (spec §8); the spot menu's Open shows the spot's
+// note in the Notes card (spec §4.7). A spot wins over a marker, a marker over the loop band. A mouse
 // drag (any time) and a touch long-press-drag (stopped) make a loop, bar-snapped (Alt: beats;
 // 0.1 s unmapped) through opts.onLoopEdit (preview, then commit or cancel).
 //
@@ -112,6 +116,11 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const peek = (s) => (s && typeof s.peek === 'function' ? s.peek() : s);
 const listen = (s, fn) => (s && typeof s.subscribe === 'function' ? s.subscribe(fn) : null);
 const PLAYING = new Set(['playing', 'counting']);
+/** Slop around a flag or a marker tick for a menu press, px each side (spec §8 "Defined menus"). */
+const TARGET_TOL = Object.freeze({mouse: 4, touch: 12});
+/** Half of a loop edge's 44 px handle (loop-handles.js hitWidth): a press there is the loop band's. */
+const LOOP_EDGE_TOL = 22;
+const cssId = (id) => String(id).replace(/["\\]/g, '\\$&');
 const nextFrame = (fn) => (typeof globalThis.requestAnimationFrame === 'function' ? globalThis.requestAnimationFrame(fn) : setTimeout(fn, 16));
 
 function reducedMotion(win) {
@@ -698,12 +707,89 @@ export function createRoadmapSurface(host, opts = {}) {
     return out;
   }
 
+  /** A flag's right edge in content x: its laid-out width, else (no layout) its text at the lane's font size. */
+  function flagRight(row, f, next) {
+    const node = views.get(row.index)?.el.querySelector(`.roadmap-flag[data-id="${cssId(f.id)}"]`);
+    const measured = node?.getBoundingClientRect?.().width || 0;
+    const w = measured > 0 ? measured : f.text.length * Math.max(14, 14 * factor()) * 0.62;
+    const cap = next ? Math.max(48, next.x - f.x - 4) : 320;
+    return f.x + Math.min(w, cap);
+  }
+
+  /**
+   * What a pointer menu gesture landed on (spec §8 "Defined menus", §4.7): a spot flag (or a marker
+   * flag on the Wave page), a marker tick, or the loop band (its 44 px edge handles included); null
+   * for a bar. A spot wins over a marker, a marker over the loop band. The keyboard's Shift+F10 /
+   * ContextMenu keep the focused bar's menu.
+   */
+  function menuTarget(e) {
+    if (e.keyboard || !model?.rows.length) return null;
+    const r = content.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const tol = e.pointerType === 'mouse' ? TARGET_TOL.mouse : TARGET_TOL.touch;
+    const row = model.rows[Math.max(0, rowAtY(model.rows, y))];
+    if (!row) return null;
+    const asTarget = (kind, id) => {
+      if (kind === 'spot') {
+        const spot = liveSpots().find((s) => s.id === id);
+        return spot ? {kind: 'spot', spot, onOpen: openSpotNotes} : null;
+      }
+      const marker = markers().find((m) => m.id === id);
+      return marker ? {kind: 'marker', marker} : null;
+    };
+    // Flags: the one under the pointer, else the flag lane with some slop.
+    const flagEl = e.target?.closest?.('.roadmap-flag');
+    if (flagEl && el.contains(flagEl)) {
+      const found = asTarget(flagEl.dataset.flag, flagEl.dataset.id);
+      if (found) return found;
+    }
+    if (row.flag && y >= row.flagY - tol / 2 && y <= row.flagY + model.metrics.flagH + tol / 2) {
+      const flags = flagsFor(row);
+      let best = null, bestD = Infinity;
+      flags.forEach((f, i) => {
+        const right = flagRight(row, f, flags[i + 1]);
+        const d = x < f.x ? f.x - x : x > right ? x - right : 0;
+        if (d <= tol && d <= bestD) { best = f; bestD = d; }   // a tie goes to the later flag (drawn on top)
+      });
+      const found = best ? asTarget(best.kind, best.id) : null;
+      if (found) return found;
+    }
+    if (y < row.band.y || y > row.band.y + row.band.h) return null;
+    // Marker ticks on a mapped row (the Wave page flies its markers as flags).
+    if (row.kind === 'bars') {
+      let best = null, bestD = Infinity;
+      for (const mk of markers()) {
+        if (!(mk.t >= row.t0 - EPS && mk.t < row.t1 - EPS)) continue;
+        const d = Math.abs(xOfTime(row, mk.t, bars()) - x);
+        if (d <= tol && d < bestD) { best = mk; bestD = d; }
+      }
+      if (best) return {kind: 'marker', marker: best};
+    }
+    // The loop band, while a loop is on.
+    const loopOn = peek(transport.snapshot)?.loop?.on !== false;
+    if (loopRange && loopOn && loopRange.a < row.t1 - EPS && loopRange.b > row.t0 + EPS) {
+      const xa = loopRange.a <= row.t0 + EPS ? row.band.x : xOfTime(row, loopRange.a, bars());
+      const xb = loopRange.b >= row.t1 - EPS ? row.band.x + row.band.w : xOfTime(row, loopRange.b, bars());
+      if (x >= xa - LOOP_EDGE_TOL && x <= xb + LOOP_EDGE_TOL) return {kind: 'loopBand'};
+    }
+    return null;
+  }
+
+  /** The spot menu's Open (after the spot is set): its note shows in the Notes card (spec §4.7). */
+  function openSpotNotes(spot) {
+    const live = liveSpots().find((s) => s.id === spot?.id);
+    if (typeof live?.note !== 'string' || !live.note.trim()) return;
+    registry.run('stage.notes', {source: 'pointer'});
+  }
+
   const activate = (kind, e) => {
+    // A menu gesture names what it landed on, so the Stage opens that menu instead of the bar's.
+    const target = kind === 'context' || kind === 'long' ? menuTarget(e) : null;
     const at = hit(e);
-    if (!at || at.outside) return;
+    if (!at || (at.outside && !target)) return;
     const {barIndex, outside, ...payload} = at;
     void barIndex; void outside;
-    opts.onActivate?.({kind, ...payload});
+    opts.onActivate?.(target ? {kind, ...payload, target} : {kind, ...payload});
   };
 
   // Loop drags on the music: a mouse drag (any time) or a touch long-press-drag (stopped).

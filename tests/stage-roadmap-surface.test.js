@@ -872,3 +872,141 @@ describe('loop handles through the surface', () => {
     expect(commit).toMatchObject({phase: 'commit', a: 12, b: 17.3});
   });
 });
+
+describe('menu targets: spot flags, marker ticks and the loop band (I2b-15; spec §8 "Defined menus", §4.7)', () => {
+  const rightClick = (target, {x, y}) => target.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2}));
+  function longPress(target, {x, y}, pointerId = 7) {
+    pointer(target, 'pointerdown', {x, y, pointerType: 'touch', pointerId});
+    vi.advanceTimersByTime(360);
+    pointer(target, 'pointerup', {x, y, pointerType: 'touch', pointerId});
+    vi.advanceTimersByTime(900);   // past the swallowed browser contextmenu
+  }
+  const rowOf = (b, i) => b.surface.model.rows.find((r) => r.first <= i && i <= r.last);
+  const spotS1 = {id: 's1', name: 'Bridge walk-up', a: 81, b: 96, rate: 0.9, passes: 0, updatedAt: 1};
+  const markerM1 = {id: 'm1', t: 41, label: 'Flam', updatedAt: 1};
+
+  test('a right-click or a long press on a spot flag reports the spot (with onOpen), not the bar', async () => {
+    const b = await bed({practice: practiceOf({spots: [spotS1]})});
+    const row = rowOf(b, 40);
+    b.userScroll(row.y);
+    const flag = b.el.querySelector('.roadmap-flag[data-flag=spot]');
+    const y = row.flagY + b.surface.model.metrics.flagH / 2;
+    const x = num(flag.style.left) + 10;
+    rightClick(flag, {x, y});
+    const e = b.log.activate.at(-1);
+    expect(e).toMatchObject({kind: 'context', target: {kind: 'spot', spot: {id: 's1', name: 'Bridge walk-up', a: 81, b: 96}}});
+    expect(typeof e.target.onOpen).toBe('function');
+    // A finger in the flag lane, a few px short of the flag's start (touch slop), off the flag element.
+    longPress(b.rows().find((n) => n.contains(flag)), {x: num(flag.style.left) - 8, y});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'long', pointerType: 'touch', target: {kind: 'spot', spot: {id: 's1'}}});
+    // Well past the flag's text, the lane is the bar's again.
+    rightClick(b.rows().find((n) => n.contains(flag)), {x: num(flag.style.left) + 600, y});
+    expect(b.log.activate.at(-1).kind).toBe('context');
+    expect(b.log.activate.at(-1).target).toBeUndefined();
+    // A tap on the flag is still a tap (no target).
+    vi.advanceTimersByTime(400);
+    pointer(flag, 'pointerdown', {x, y, pointerType: 'mouse'});
+    pointer(flag, 'pointerup', {x, y, pointerType: 'mouse'});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'tap'});
+    expect(b.log.activate.at(-1).target).toBeUndefined();
+  });
+
+  test('the spot menu\'s Open shows the spot\'s note in the Notes card (only when it has one)', async () => {
+    const b = await bed({practice: practiceOf({spots: [{...spotS1, note: 'Ghost notes on the snare'}, {...spotS1, id: 's2', name: 'Plain', a: 20, b: 24}]})});
+    const run = vi.fn();
+    b.reg.register({id: 'stage.notes', title: 'Notes', group: 'Practice', run});
+    const row = rowOf(b, 40);
+    b.userScroll(row.y);
+    const flag = b.el.querySelector('.roadmap-flag[data-id="s1"]');
+    rightClick(flag, {x: num(flag.style.left) + 4, y: row.flagY + 4});
+    const {target} = b.log.activate.at(-1);
+    target.onOpen(target.spot);
+    expect(run).toHaveBeenCalledTimes(1);
+    b.userScroll(rowOf(b, 10).y);
+    const plain = b.el.querySelector('.roadmap-flag[data-id="s2"]');
+    rightClick(plain, {x: num(plain.style.left) + 4, y: rowOf(b, 10).flagY + 4});
+    const t2 = b.log.activate.at(-1).target;
+    expect(t2).toMatchObject({kind: 'spot', spot: {id: 's2'}});
+    t2.onOpen(t2.spot);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  test('a marker tick reports the marker (with slop); a press off it is the bar\'s', async () => {
+    const b = await bed({practice: practiceOf({markers: [markerM1]})});
+    const row = rowOf(b, 20);
+    b.userScroll(row.y);
+    const tick = b.el.querySelector('.roadmap-marker');
+    const x = num(tick.style.left) + 1, y = row.band.y + row.band.h / 2;
+    rightClick(b.cell(20), {x: x + 3, y});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', target: {kind: 'marker', marker: {id: 'm1', t: 41, label: 'Flam'}}});
+    longPress(b.cell(20), {x: x - 10, y});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'long', target: {kind: 'marker', marker: {id: 'm1'}}});
+    rightClick(b.cell(20), {x: x + 30, y});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', bar: 21});
+    expect(b.log.activate.at(-1).target).toBeUndefined();
+  });
+
+  test('the loop band (and its edge handles) reports loopBand while a loop is on; a marker inside it wins', async () => {
+    const b = await bed({practice: practiceOf({cue: 36, markers: [markerM1], loop: {on: true, a: 36, b: 44}})});
+    const row = rowOf(b, 18);
+    b.userScroll(row.y);
+    const y = row.band.y + row.band.h / 2;
+    const inside = cellCentre(b, 18);   // 37 s
+    rightClick(b.cell(18), inside);
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', bar: 19, target: {kind: 'loopBand'}});
+    longPress(b.cell(18), inside);
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'long', target: {kind: 'loopBand'}});
+    // The a edge's handle (half of 44 px either side of the line).
+    const edge = b.surface.model.rows.find((r) => r.first <= 18 && 18 <= r.last).cells.find((c) => c.bar === 18).x;
+    rightClick(b.cell(17), {x: edge - 15, y});
+    expect(b.log.activate.at(-1).target).toEqual({kind: 'loopBand'});
+    // The marker at 41 s sits inside the loop: its tick wins.
+    const tick = b.el.querySelector('.roadmap-marker');
+    rightClick(b.cell(20), {x: num(tick.style.left) + 1, y});
+    expect(b.log.activate.at(-1).target).toMatchObject({kind: 'marker', marker: {id: 'm1'}});
+    // Outside the loop: the bar menu.
+    rightClick(b.cell(16), cellCentre(b, 16));
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', bar: 17});
+    expect(b.log.activate.at(-1).target).toBeUndefined();
+    // Loop off: no band.
+    b.ts.session.transport.toggleLoop();
+    b.surface.setLoop(null);
+    rightClick(b.cell(18), inside);
+    expect(b.log.activate.at(-1).target).toBeUndefined();
+  });
+
+  test('Shift+F10 on a focused bar keeps the bar menu, even inside the loop', async () => {
+    const b = await bed({practice: practiceOf({cue: 36, loop: {on: true, a: 36, b: 44}})});
+    b.userScroll(rowOf(b, 18).y);
+    b.cell(18).focus();
+    keydown({key: 'F10', code: 'F10'}, {target: b.cell(18), shiftKey: true});
+    const e = b.log.activate.at(-1);
+    expect(e.kind).toBe('context');
+    expect(e.target).toBeUndefined();
+  });
+
+  test('Wave page: marker and spot flags report their targets', async () => {
+    const b = await bed({mapped: false, duration: 128, practice: practiceOf({
+      markers: [{id: 'm1', t: 12, label: 'Groove', updatedAt: 1}], spots: [{id: 's1', name: 'The run', a: 15, b: 18, rate: 1, passes: 0, updatedAt: 1}]})});
+    const marker = b.el.querySelector('.roadmap-flag[data-flag=marker]');
+    const spot = b.el.querySelector('.roadmap-flag[data-flag=spot]');
+    const row = b.surface.model.rows[1];
+    rightClick(marker, {x: num(marker.style.left) + 4, y: row.flagY + 4});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'context', target: {kind: 'marker', marker: {id: 'm1', label: 'Groove'}}});
+    longPress(spot, {x: num(spot.style.left) + 4, y: row.flagY + 4});
+    expect(b.log.activate.at(-1)).toMatchObject({kind: 'long', target: {kind: 'spot', spot: {id: 's1', name: 'The run'}}});
+  });
+
+  test('the targets build ST8a\'s menus', async () => {
+    const menus = await import('../src/stage/menus.js');
+    const b = await bed({practice: practiceOf({spots: [spotS1], markers: [markerM1]})});
+    const s = b.ts.session;
+    expect(menus.spotMenu(s, {kind: 'spot', ...spotS1}).map((i) => i.id).filter(Boolean)).toEqual(['open', 'rename', 'update', 'delete']);
+    const row = rowOf(b, 20);
+    b.userScroll(row.y);
+    const tick = b.el.querySelector('.roadmap-marker');
+    rightClick(b.cell(20), {x: num(tick.style.left) + 1, y: row.band.y + 10});
+    const {target} = b.log.activate.at(-1);
+    expect(menus.markerMenu(s, target.marker).map((i) => i.id)).toEqual(expect.arrayContaining(['rename', 'delete']));
+  });
+});
