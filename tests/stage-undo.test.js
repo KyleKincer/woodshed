@@ -237,3 +237,127 @@ test('an injected clock drives coalescing', () => {
   push(1, 0.9); t = 100; push(0.9, 0.8); t = 201; push(0.8, 0.7);
   expect(undo.size.undo).toBe(2);
 });
+
+describe('gesture-bounded steps (beginGesture, ticket I2a-1)', () => {
+  /** A speed push that carries a gesture token, like transport.setSpeed(rate, {gesture}). */
+  const gestureRate = (undo, state, gesture) => (from, to) => {
+    state.rate = to;
+    return undo.push({key: 'speed', label: 'speed', from, to, gesture,
+      describe: (a, b) => `speed ${pct(a)} → ${pct(b)}`, apply: (v) => { state.rate = v; }});
+  };
+
+  test('a drag that pauses longer than coalesceMs is still one undo step', () => {
+    const {undo, state} = harness();
+    const token = undo.beginGesture('speed');
+    expect(token.active).toBe(true);
+    const drag = gestureRate(undo, state, token);
+    drag(1, 0.95);
+    vi.advanceTimersByTime(COALESCE_MS * 3);   // the finger rests mid-drag
+    drag(0.95, 0.9);
+    vi.advanceTimersByTime(COALESCE_MS + 1);
+    const entry = drag(0.9, 0.8);
+    token.end();
+    expect(token.active).toBe(false);
+    expect(undo.size.undo).toBe(1);
+    expect(entry.from).toBe(1);
+    expect(entry.to).toBe(0.8);
+    expect(undidMessage(undo.undo())).toBe('Undid: speed 100% → 80%');
+    expect(state.rate).toBe(1);
+    expect(undo.canUndo.value).toBe(false);
+    undo.redo();
+    expect(state.rate).toBe(0.8);
+  });
+
+  test('the first push of a gesture never merges into an earlier entry (a +/− tap just before stays its own step)', () => {
+    const {undo, state, setRate} = harness();
+    setRate(1, 0.95);                           // a stepper tap, coalescing by default
+    vi.advanceTimersByTime(100);                // well inside coalesceMs
+    const token = undo.beginGesture('speed');
+    const drag = gestureRate(undo, state, token);
+    drag(0.95, 0.9);
+    drag(0.9, 0.85);
+    token.end();
+    expect(undo.size.undo).toBe(2);
+    undo.undo();
+    expect(state.rate).toBe(0.95);
+    undo.undo();
+    expect(state.rate).toBe(1);
+  });
+
+  test('after end() the next push starts a new entry, with or without the token', () => {
+    const {undo, state, setRate} = harness();
+    const token = undo.beginGesture('speed');
+    const drag = gestureRate(undo, state, token);
+    drag(1, 0.9);
+    token.end();
+    token.end();                                // idempotent
+    vi.advanceTimersByTime(50);
+    setRate(0.9, 0.85);                         // a tap right after the drag: its own step
+    expect(undo.size.undo).toBe(2);
+    drag(0.85, 0.8);                            // the ended token is ignored: normal rules
+    expect(undo.size.undo).toBe(2);             // …so it coalesces with the tap, not the drag
+    undo.undo();
+    expect(state.rate).toBe(0.9);
+    undo.undo();
+    expect(state.rate).toBe(1);
+  });
+
+  test('a push without the token never merges into an open gesture', () => {
+    const {undo, state, setRate} = harness();
+    const token = undo.beginGesture('speed');
+    const drag = gestureRate(undo, state, token);
+    drag(1, 0.9);
+    setRate(0.9, 0.85);
+    expect(undo.size.undo).toBe(2);
+    drag(0.85, 0.8);                            // another step came between: a fresh entry
+    drag(0.8, 0.75);
+    token.end();
+    expect(undo.size.undo).toBe(3);
+    expect(undo.undo().describe()).toBe('speed 85% → 75%');
+  });
+
+  test('a gesture that returns to where it started leaves no step', () => {
+    const {undo, state} = harness();
+    const token = undo.beginGesture('speed');
+    const drag = gestureRate(undo, state, token);
+    drag(1, 0.9);
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    expect(drag(0.9, 1)).toBe(null);
+    expect(undo.size.undo).toBe(0);
+    expect(undo.canUndo.value).toBe(false);
+    drag(1, 1.1);                               // still the same gesture: one fresh step
+    drag(1.1, 1.2);
+    token.end();
+    expect(undo.size.undo).toBe(1);
+    expect(undo.undo().describe()).toBe('speed 100% → 120%');
+  });
+
+  test('gesture pushes merge even for keys that do not coalesce by default; an undo mid-gesture closes the entry', () => {
+    const undo = createPracticeUndo();
+    let v = 0;
+    const token = undo.beginGesture('loop');
+    const set = (from, to) => { v = to; return undo.push({key: 'loop', from, to, gesture: token, apply: (x) => { v = x; }}); };
+    set(0, 1);
+    set(1, 2);
+    expect(undo.size.undo).toBe(1);
+    undo.undo();
+    expect(v).toBe(0);
+    set(0, 3);
+    set(3, 4);
+    expect(undo.size).toEqual({undo: 1, redo: 0});
+    undo.undo();
+    expect(v).toBe(0);
+  });
+
+  test('a token for another key or another stack is ignored', () => {
+    const {undo, state, setRate} = harness();
+    const other = createPracticeUndo().beginGesture('speed');
+    const wrongKey = undo.beginGesture('level:drums');
+    setRate(1, 0.9);
+    vi.advanceTimersByTime(COALESCE_MS + 1);
+    gestureRate(undo, state, other)(0.9, 0.8);
+    vi.advanceTimersByTime(COALESCE_MS + 1);
+    gestureRate(undo, state, wrongKey)(0.8, 0.7);
+    expect(undo.size.undo).toBe(3);
+  });
+});
