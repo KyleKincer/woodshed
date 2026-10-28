@@ -1,0 +1,243 @@
+/* Settings frame (src/settings/settings.js; spec §6.2, §1.3): the place's one scroller (D26) holds
+ * the content column. Laptop and iPad landscape ([data-layout=split]): a sticky 200 px section nav
+ * beside content of at most 720 px. iPad portrait ([data-layout=stack]): a list of sections, then a
+ * detail page with "‹ Settings". Also the pieces every section shares: rows, the "This device" tag,
+ * the inline Saved / Couldn't save · Retry, and the desktop-only note. */
+@layer views {
+  .settings-scroller {
+    height: 100%;
+  }
+  .settings {
+    box-sizing: border-box;
+    padding-block: var(--s6) var(--s8);
+    padding-bottom: max(var(--s8), var(--safe-bottom));
+  }
+  .settings[data-layout=split] {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 720px);
+    column-gap: var(--s7);
+    align-items: start;
+    justify-content: start;
+  }
+  .settings[data-layout=stack] > * {
+    max-width: 720px;
+  }
+
+  .settings-title {
+    margin-bottom: var(--s4);
+    color: var(--ink);
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+    line-height: 1.2;
+  }
+  .settings-section-title {
+    margin-bottom: var(--s5);
+    color: var(--ink);
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+    line-height: 1.2;
+  }
+  .settings[data-layout=split] .settings-section-title {
+    /* Level with the nav's "Settings" title. */
+    margin-top: 0;
+  }
+  /* Headings take focus on arrival for screen readers; they are not controls, so no ring. */
+  .settings-title:focus,
+  .settings-section-title:focus { outline: none; }
+
+  /* ---- the section nav (split) */
+  .settings-nav {
+    position: sticky;
+    top: 0;
+  }
+  .settings-nav-list {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .settings-nav-link {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: var(--h-md);
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-control);
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    line-height: 1.25;
+    text-decoration: none;
+    transition: background-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+  }
+  .settings-nav-link[aria-current=page] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  @media (hover: hover) {
+    .settings-nav-link:not([aria-current=page]):hover { background: var(--surface-2); color: var(--ink); }
+  }
+  @media (pointer: coarse) {
+    .settings-nav-link { min-height: 44px; }
+  }
+  .settings-nav-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  /* ---- the list (stack) */
+  .settings-list .settings-nav-list {
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .settings-list .settings-nav-item + .settings-nav-item { border-top: 1px solid var(--line); }
+  .settings-list .settings-nav-link {
+    justify-content: space-between;
+    min-height: 64px;
+    padding: var(--s3) var(--s4);
+    border-radius: 0;
+    color: var(--ink);
+  }
+  .settings-list .settings-nav-link:focus-visible { outline-offset: -3px; }
+  .settings-nav-summary {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-regular);
+  }
+  .settings-nav-chevron {
+    display: inline-flex;
+    flex: none;
+    color: var(--ink-3);
+  }
+
+  /* ---- the detail page (stack) */
+  .settings-back {
+    margin-bottom: var(--s3);
+    margin-inline-start: calc(-1 * var(--s3));
+  }
+
+  .settings-loading {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .settings-load-error {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
+    color: var(--ink-2);
+  }
+
+  /* ---- rows */
+  .settings-section {
+    display: grid;
+    gap: var(--s6);
+  }
+  .settings-group {
+    display: grid;
+    border-top: 1px solid var(--line);
+  }
+  .settings-row {
+    display: grid;
+    gap: var(--s2);
+    padding-block: var(--s4);
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-row-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s2);
+  }
+  .settings-row-label {
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    line-height: 1.3;
+  }
+  .settings-scope {
+    padding: 2px var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+  .settings-row-control {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    min-width: 0;
+  }
+  .settings-row-control > .ui-segmented { max-width: 100%; }
+  .settings-row-hint {
+    max-width: 60ch;
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-row-hint:empty { display: none; }
+
+  /* ---- Saved / Couldn't save · Retry */
+  .settings-saver {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-sm);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .settings-save {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+  .settings-save[data-tone=ok] {
+    color: var(--ok);
+    transition: opacity var(--motion-slow) var(--ease);
+  }
+  .settings-save[data-tone=ok][data-fading] { opacity: 0; }
+  .settings-save[data-tone=error] { color: var(--danger); }
+  .settings-save-icon { display: inline-flex; }
+  .settings-save-sep { color: var(--ink-3); }
+  .settings-save-retry {
+    min-height: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  @media (pointer: coarse) {
+    .settings-saver, .settings-save-retry { min-height: 44px; }
+  }
+
+  /* ---- the desktop-only note (web) */
+  .settings-desktop-note {
+    padding: var(--s3) var(--s4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-desktop-link {
+    font-weight: var(--fw-semibold);
+    white-space: nowrap;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-nav-link, .settings-save[data-tone=ok] { transition: none; }
+  }
+}
