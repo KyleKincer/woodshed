@@ -21,6 +21,7 @@
 //   ready=1               a `1 ready` chip (a song finished processing)
 //   wake=1 / pedal=1      the ☼ and ⎍ indicators
 //   cue=<s>               the cue (default 0)
+//   title=, artist=       the song's title and artist (default Glasshouse · Northbound)
 // window.__hud = {ts, session, hud, controls, sheets: [names opened], calls: [Stage methods run]} for the states.
 //
 // The Stage's own commands (stage.leave, stage.notes, stage.menu, view.focus, setlist.prev/next) are
@@ -80,7 +81,7 @@ export default async function mount(el, {query, h}) {
   if (startPractice && cue) startPractice.cue = cue;
 
   const ts = await createTestSession({
-    id: 'glasshouse', title: 'Glasshouse', artist: 'Northbound',
+    id: 'glasshouse', title: query.get('title') || 'Glasshouse', artist: query.get('artist') || 'Northbound',
     tempo: mapped ? structuredClone(song.tempo) : null, mapped, duration: song.duration,
     practice: startPractice,
     song: {musicalKey: 'A minor', tuning: 'Standard', notes: 'Watch the flam into the chorus.', ...(scenario === 'shared' ? {ownerName: 'Kyle K.'} : {})},
@@ -153,7 +154,9 @@ export default async function mount(el, {query, h}) {
   } else {
     const rail = css(h('aside', {'data-testid': 'rail', 'aria-label': 'Stage rail'}),
       `flex: none; width: ${focus ? '120px' : 'var(--rail-w)'}; display: flex; flex-direction: column; justify-content: space-between; background: var(--surface); border-left: 1px solid var(--line); overflow: hidden;`);
-    const top = h('div', {'data-testid': 'hud-rail'});
+    // The Stage frame's rail inset around the HUD (stage.css .stage-hud: --stage-rail-pad, 16 px; the
+    // aside's own 1 px border stands in for the frame's edge line), so the identity measures as in the app.
+    const top = css(h('div', {'data-testid': 'hud-rail'}), focus ? '' : 'padding: var(--s4) var(--s4) 0;');
     const bottom = h('div', {'data-testid': 'rail-controls'});
     rail.append(top, bottom);
     frame.append(music, rail);

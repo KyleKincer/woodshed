@@ -741,6 +741,33 @@ describe('the mounted HUD', () => {
     expect(b.q('.ui-beat-lamps').dataset.size).toBe('md');
   });
 
+  test('the rail identity is two rows: ‹ cover title/artist ⋯, then one wrapping chip row (ORCH-1)', async () => {
+    const b = await bed({hud: {wake: signal(true)}, song: {musicalKey: 'A minor', tuning: 'Standard'}});
+    b.hud.setLayout('rail');
+    const identity = b.q('.hud-identity');
+    const kids = [...identity.children].map((el) => el.className.split(' ').find((c) => c.startsWith('hud-')));
+    expect(kids).toEqual(['hud-back', 'hud-cover-box', 'hud-titles', 'hud-chips', 'hud-more', 'hud-set']);
+    expect([...b.q('.hud-titles').children].map((el) => el.className.split(' ')[0])).toEqual(['hud-title', 'hud-artist']);
+    // Key, tuning, the shared line and action slot, Notes, ☼, ⎍, `1 ready`: one row, in reading order.
+    const chips = b.q('.hud-chips');
+    expect([...chips.children].map((el) => el.className)).toEqual(['hud-meta', 'hud-tools']);
+    const inRow = [...chips.querySelectorAll('.hud-chip, .hud-shared, .hud-action-slot, .hud-notes, .hud-indicator, .hud-ready')];
+    expect(inRow.filter((el) => !el.hidden).map((el) => el.textContent || el.getAttribute('aria-label')))
+      .toEqual(['A minor', 'Standard', COPY.notes, COPY.wake]);
+
+    const css = readFileSync(join(ROOT, 'src/styles/views/stage/hud.css'), 'utf8').replace(/\s+/g, ' ');
+    // Band: the chip groups sit inline in the identity row; rail: the grid's second row is the chip row.
+    expect(css).toContain('.hud-chips { display: contents; }');
+    expect(css).toMatch(/\.hud\[data-layout=rail\] \.hud-identity \{[^}]*grid-template-areas: "back cover titles more" "chips chips chips chips" "set set set set";/);
+    expect(css).toMatch(/\.hud\[data-layout=rail\] \.hud-chips \{[^}]*display: flex; flex-wrap: wrap;[^}]*gap: var\(--s2\);/);
+    expect(css).toMatch(/\.hud\[data-layout=rail\] \.hud-meta, \.hud\[data-layout=rail\] \.hud-tools \{ display: contents; \}/);
+    // Title and artist: one line each, truncated with an ellipsis inside a stretched column.
+    expect(css).toMatch(/\.hud\[data-layout=rail\] \.hud-titles \{[^}]*flex-direction: column; align-items: stretch;/);
+    expect(css).toMatch(/\.hud\[data-layout=rail\] \.hud-title, \.hud\[data-layout=rail\] \.hud-artist \{[^}]*overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/);
+    expect(css).toMatch(/\.hud-title \{[^}]*font: var\(--fw-bold\) var\(--fs-stage-identity\)/);
+    expect(css).toMatch(/\.hud-artist \{[^}]*color: var\(--ink-2\);/);
+  });
+
   test('while playing the identity row dims to 40% (CSS) and the readouts stay at 100%', async () => {
     const b = await bed();
     await b.ts.play();

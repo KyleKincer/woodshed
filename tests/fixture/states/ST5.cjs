@@ -8,6 +8,8 @@
 //   st5-hud-band-near / -kit, st5-hud-rail-near / -kit    Distance: type scales, controls never do
 //   st5-hud-count-in                            the count-in plate over the music, `✕ Count`, lamps counting
 //   st5-hud-playing                             identity at 40%, controls at 70%, readouts at 100%
+//   st5-hud-rail-identity-near / -stand / -kit  the rail identity (ORCH-1): ‹ cover title/artist ⋯ over one
+//                                               wrapping chip row; ellipses, never clipped; 40% while playing
 //   st5-hud-trainer                             the trainer line (rail: bars and trainer; band: trainer)
 //   st5-hud-focus-band / st5-hud-focus-mini     Focus: no identity row (band); the 120 px mini rail
 //   st5-hud-unmapped                            markers as regions, no lamps, Lead-in, Click "Needs a bar grid"
@@ -148,6 +150,55 @@ async function common(page, t, layout, {distance = 'stand', focusStops = 0, axe 
   }
 }
 
+/**
+ * Runs in the page: the rail identity (ORCH-1, spec §4.3 "two lines" on the rail). Row 1 is ‹, the 32 px
+ * cover, the title over the artist and ⋯; row 2 is one wrapping chip row (key, tuning, Notes, ☼). Each
+ * title line is one line, inside its column, and ellipsised rather than cut when it does not fit.
+ */
+function railIdentity() {
+  const q = (s) => document.querySelector(s);
+  const box = (el) => el.getBoundingClientRect();
+  const problems = [];
+  const id = q('.hud-identity'), titles = q('.hud-titles');
+  const idBox = box(id), tBox = box(titles);
+  const row1 = ['.hud-back', '.hud-cover-box', '.hud-titles', '.hud-more'].map((s) => [s, box(q(s))]);
+  const row1Bottom = Math.max(...row1.map(([, b]) => b.bottom));
+  const row1Top = Math.min(...row1.map(([, b]) => b.top));
+  for (const [s, b] of row1) {
+    const mid = (b.top + b.bottom) / 2;
+    if (mid < row1Top || mid > row1Bottom || b.top > row1Top + 12) problems.push(`${s} is not on row 1 (${Math.round(b.top)} vs ${Math.round(row1Top)})`);
+    if (b.left < idBox.left - 0.5 || b.right > idBox.right + 0.5) problems.push(`${s} leaves the identity (${Math.round(b.left)}–${Math.round(b.right)} of ${Math.round(idBox.left)}–${Math.round(idBox.right)})`);
+  }
+  const order = row1.map(([, b]) => b.left);
+  if (order.some((x, i) => i && x < order[i - 1])) problems.push(`row 1 order ${order.map(Math.round).join(' ')}`);
+  if (Math.round(box(q('.hud-cover-box')).width) !== 32) problems.push(`cover ${box(q('.hud-cover-box')).width}`);
+  for (const s of ['.hud-title', '.hud-artist']) {
+    const el = q(s), cs = getComputedStyle(el), b = box(el), size = parseFloat(cs.fontSize);
+    if (b.height > size * 1.6) problems.push(`${s} wraps (${Math.round(b.height)} px tall at ${size} px)`);
+    if (b.left < tBox.left - 0.5 || b.right > tBox.right + 0.5) problems.push(`${s} is cut by its column (${Math.round(b.right)} > ${Math.round(tBox.right)})`);
+    if (el.scrollWidth > el.clientWidth + 1 && (cs.textOverflow !== 'ellipsis' || cs.whiteSpace !== 'nowrap')) {
+      problems.push(`${s} "${el.textContent}" is clipped without an ellipsis (${el.scrollWidth} > ${el.clientWidth})`);
+    }
+  }
+  const chips = [['key', '.hud-meta .hud-chip:not([hidden])'], ['tuning', '.hud-meta .hud-chip:not([hidden]) ~ .hud-chip:not([hidden])'],
+    ['Notes', '.hud-notes'], ['wake', '.hud-indicator[aria-label="Screen stays awake"]']];
+  const row = q('.hud-chips'), rowCs = getComputedStyle(row);
+  if (rowCs.display !== 'flex' || rowCs.flexWrap !== 'wrap' || rowCs.columnGap !== '8px') problems.push(`chip row ${rowCs.display} ${rowCs.flexWrap} gap ${rowCs.columnGap}`);
+  const boxes = {};
+  for (const [name, s] of chips) {
+    const el = q(s);
+    if (!el || el.hidden) { problems.push(`${name} chip missing`); continue; }
+    const b = boxes[name] = box(el);
+    if (b.top < row1Bottom - 0.5) problems.push(`${name} is not under row 1`);
+    if (b.left < idBox.left - 0.5 || b.right > idBox.right + 0.5) problems.push(`${name} leaves the identity`);
+    if (el.scrollWidth > el.clientWidth + 1) problems.push(`${name} clipped (${el.scrollWidth} > ${el.clientWidth})`);
+    if (!row.contains(el)) problems.push(`${name} is not in the chip row`);
+  }
+  // Key and tuning share a line (never stacked one per line, the ORCH-1 failure).
+  if (boxes.key && boxes.tuning && Math.abs(boxes.key.top - boxes.tuning.top) > 1) problems.push('key and tuning are stacked');
+  return {problems, title: q('.hud-title').textContent, rail: Math.round(box(q('[data-testid=rail]')).width)};
+}
+
 const opacity = (page, selector) => page.evaluate((s) => Number(getComputedStyle(document.querySelector(s)).opacity), selector);
 const phase = (page) => page.evaluate(() => window.__hud.session.transport.snapshot.peek().phase);
 
@@ -211,6 +262,36 @@ const STATES = [
       t.expect(!small.length, `text below 15 px: ${small.join(', ')}`);
     },
   },
+  // ORCH-1: the rail identity at every Distance (232/264/312): two title lines with ellipses, one chip
+  // row, nothing clipped (the runner's structure check covers the chips; railIdentity the text), 40% while playing.
+  ...['near', 'stand', 'kit'].map((distance) => ({
+    name: `st5-hud-rail-identity-${distance}`, url: HUD(`layout=rail&distance=${distance}&wake=1`), opts: RAIL,
+    async fn(page, t) {
+      await ready(page, t);
+      const width = {near: 232, stand: 264, kit: 312}[distance];
+      for (const [title, artist] of [[null, null], ['The Unreasonably Long Song Title', 'An Artist With A Very Long Name']]) {
+        if (title) {
+          await page.goto(`${t.base}${HUD(`layout=rail&distance=${distance}&wake=1&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`)}`);
+          await ready(page, t);
+        }
+        const m = await page.evaluate(railIdentity);
+        t.expect(m.rail === width, `rail ${m.rail} at ${distance}`);
+        t.expect(!m.problems.length, `${distance} "${m.title}": ${m.problems.join('; ')}`);
+      }
+      const d = D[distance];
+      const type = await checkReadouts(page, [
+        {name: 'title 15/700', selector: '.hud-title', font: {size: max15(15 * d), weight: 700}},
+        {name: 'artist 15', selector: '.hud-artist', font: {size: max15(15 * d)}},
+      ]);
+      t.expect(!type.length, type.join('\n'));
+      await page.getByRole('button', {name: 'Play', exact: true}).click();
+      await page.mouse.move(200, 400);
+      await t.transportPhase('playing');
+      await t.advance(1100);
+      const dim = await opacity(page, '.hud-identity');
+      t.expect(Math.abs(dim - 0.4) < 0.01, `identity dims to 40% while playing (${dim})`);
+    },
+  })),
   {
     name: 'st5-hud-playing', url: HUD('layout=rail&cue=32'), opts: RAIL,
     async fn(page, t) {
