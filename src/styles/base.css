@@ -1,0 +1,54 @@
+/* Base element styles (architecture §7.1, spec §8.1 and §8.4). Imported by
+ * main.css into @layer base. Colours, sizes and motion come only from tokens. */
+
+/* html and body never scroll; each place has exactly one [data-scroller] (D26). */
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--fs-16)/1.4 var(--font-ui);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+#app { height: 100%; }
+
+/* Chrome is not selectable; text content opts back in with .selectable
+ * (utilities.css). Form fields and editable text always select. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input, textarea, select, [contenteditable]:not([contenteditable=false]) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Desk headings: line-height 1.2; views choose the size from the desk scale. */
+h1, h2, h3, h4, h5, h6 {
+  font-size: inherit;
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+}
+
+a { color: var(--accent); }
+
+input, textarea, select { font: inherit; color: inherit; }
+
+/* The single focus rule (spec §8.4): the offset gap shows the page background,
+ * so the ring reads on any surface, including filled buttons. */
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Reduced motion: components animate only through motion tokens. */
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast: 0ms; --motion-enter: 0ms; --motion-nav: 0ms; --motion-slow: 0ms; }
+}

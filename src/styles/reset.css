@@ -1,0 +1,18 @@
+/* Reset (architecture §7.1). Imported by main.css into @layer reset, the
+ * lowest layer. One of the two files allowed to use !important. There is no
+ * global input[type=range] styling: Slider and Fader are custom elements. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+* { margin: 0; }
+
+[hidden] { display: none !important; }
+.hidden { display: none !important; }
+
+img { max-width: 100%; }
+
+button {
+  font: inherit;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

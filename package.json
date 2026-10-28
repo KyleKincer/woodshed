@@ -26,7 +26,9 @@
     "fixture": "vite --config tests/fixture/vite.config.mjs",
     "fixture:capture": "NODE_PATH=${NODE_PATH:-/opt/node-tools/node_modules} node tests/fixture/lib/runner.cjs",
     "fixture:compare": "python3 -I scripts/compare-shots.py",
-    "check:ownership": "node scripts/check-ownership.mjs"
+    "check:ownership": "node scripts/check-ownership.mjs",
+    "vendor:fonts": "node scripts/vendor-fonts.mjs",
+    "build:icons": "node scripts/build-icons.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",

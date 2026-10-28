@@ -1,0 +1,44 @@
+/* Utilities (architecture §7.1). Imported by main.css into @layer utilities,
+ * the top layer. The only file besides reset.css allowed to use !important. */
+
+/* Visually hidden, still announced. */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Text content opts back into selection (titles, notes, details, error details). */
+.selectable, .selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Tabular figures for columns and meters (Next has tnum). */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Print: only the notation print page (Part ▾ → Print) is printed. */
+@media not print {
+  .notation-print { display: none; }
+}
+
+@media print {
+  @page { size: landscape; margin: 15mm; }
+  html, body { height: auto; overflow: visible; background: none; }
+  body > *:not(.notation-print) { display: none !important; }
+  body > .notation-print { display: block !important; color: var(--print-ink); background: none; }
+  .notation-print h1 { font: var(--fs-24)/1.2 var(--font-ui); margin-bottom: var(--s4); }
+  .notation-print > div { break-inside: avoid; }
+  .notation-print-score { width: 100%; }
+  .notation-print svg { width: 100%; height: auto; }
+  .notation-print svg text { fill: var(--print-ink) !important; }
+  .notation-print svg path { stroke: var(--print-ink); }
+}

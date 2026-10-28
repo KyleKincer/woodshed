@@ -1,0 +1,137 @@
+#!/usr/bin/env node
+// Builds the icon sprite (architecture §7.4, D32).
+//
+//   node scripts/build-icons.mjs            write src/styles/icons.svg when it changes
+//   node scripts/build-icons.mjs --check    exit 1 when the committed sprite is stale
+//
+// Reads every name in ICONS from node_modules/lucide-static/icons/<name>.svg
+// (lucide-static@1.62.0), strips width, height, stroke-width and class from
+// the root, and wraps the content as <symbol id="i-<name>" viewBox="0 0 24 24">.
+// Then appends the custom glyphs in src/styles/icons-custom/*.svg the same way.
+// A custom glyph replaces the Lucide icon of the same name (the custom `drum`
+// replaces Lucide's), so every id is unique. Icons render as
+// <svg><use href="#i-name"/></svg>; their stroke width comes from CSS
+// (--icon-stroke: 1.75 on desk places, 2 on [data-place=stage]). The output is
+// deterministic, so running the script twice changes nothing.
+import {readdir, readFile, writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const LUCIDE_VERSION = '1.62.0';
+export const LUCIDE_DIR = 'node_modules/lucide-static/icons';
+export const CUSTOM_DIR = 'src/styles/icons-custom';
+export const OUTPUT = 'src/styles/icons.svg';
+
+/** The Lucide icons the app uses. Add a name here, then run npm run build:icons. */
+export const ICONS = [
+  'play', 'square', 'pause', 'rotate-ccw', 'repeat', 'repeat-1', 'gauge', 'timer', 'music', 'mic', 'mic-off',
+  'volume-2', 'volume-x', 'headphones', 'list-music', 'layers', 'layout-grid', 'list', 'search', 'plus', 'x', 'check',
+  'chevron-left', 'chevron-right', 'chevron-down', 'chevron-up', 'ellipsis', 'more-vertical', 'pencil', 'share-2',
+  'link', 'copy', 'trash-2', 'pin', 'pin-off', 'star', 'flag', 'diamond', 'bookmark', 'sticky-note', 'maximize-2',
+  'minimize-2', 'zoom-in', 'zoom-out', 'scan', 'grid-3x3', 'magnet', 'arrow-down-to-line', 'arrow-left', 'arrow-right',
+  'keyboard', 'settings', 'user', 'log-out', 'download', 'upload', 'refresh-cw', 'alert-triangle', 'alert-circle',
+  'info', 'loader', 'sun', 'moon', 'monitor', 'cpu', 'hard-drive', 'cloud', 'wifi-off', 'external-link', 'file-music',
+  'file-audio', 'folder-open', 'wand-2', 'sparkles', 'sliders-horizontal', 'footprints', 'hand', 'keyboard-music',
+  'guitar', 'piano', 'drum', 'undo-2', 'redo-2', 'gamepad-2',
+];
+
+/** The custom glyphs the contract requires in src/styles/icons-custom/. */
+export const CUSTOM = ['metronome', 'drum', 'minus-me', 'trainer', 'count-in'];
+
+const STRIP = new Set(['width', 'height', 'stroke-width', 'class', 'xmlns']);
+
+/** Parses one icon file into {attrs: [[name, value]], body}. */
+export function parseIcon(svg, name = 'icon') {
+  const text = svg.replace(/<!--[\s\S]*?-->/g, '').replace(/<\?xml[^>]*\?>/g, '').trim();
+  const open = /^<svg\b([^>]*)>/.exec(text);
+  const close = text.lastIndexOf('</svg>');
+  if (!open || close < 0) throw new Error(`${name}: not an <svg> document`);
+  const attrs = [...open[1].matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map(m => [m[1], m[2]]);
+  const viewBox = attrs.find(([k]) => k === 'viewBox')?.[1];
+  if (viewBox !== '0 0 24 24') throw new Error(`${name}: viewBox must be "0 0 24 24" (got ${JSON.stringify(viewBox)})`);
+  const body = text.slice(open[0].length, close)
+    .split('\n').map(l => l.trim()).filter(Boolean).join(' ')
+    .replace(/>\s+</g, '><')   // whitespace between elements goes; inside a tag it stays one space
+    .replace(/\s*\/>/g, '/>');
+  if (!body) throw new Error(`${name}: empty icon`);
+  if (/<(script|style|foreignObject)\b/i.test(body) || /\son\w+\s*=/i.test(body)) throw new Error(`${name}: scripts, styles and handlers are not allowed`);
+  return {attrs, body};
+}
+
+/** One <symbol> for an icon file. */
+export function toSymbol(name, svg) {
+  const {attrs, body} = parseIcon(svg, name);
+  const kept = attrs.filter(([k]) => !STRIP.has(k) && k !== 'viewBox' && k !== 'id');
+  const extra = kept.map(([k, v]) => ` ${k}="${v}"`).join('');
+  return `<symbol id="i-${name}" viewBox="0 0 24 24"${extra}>${body}</symbol>`;
+}
+
+/**
+ * Builds the sprite text. `read(file)` returns a file's text (relative to root);
+ * `customNames` lists the glyphs found in CUSTOM_DIR.
+ */
+export function buildSprite({icons = ICONS, customNames = CUSTOM, read}) {
+  const custom = new Set(customNames);
+  const seen = new Set();
+  const symbols = [];
+  for (const name of icons) {
+    if (seen.has(name)) throw new Error(`ICONS lists ${name} twice`);
+    seen.add(name);
+    if (custom.has(name)) continue; // the custom glyph wins
+    symbols.push(toSymbol(name, read(`${LUCIDE_DIR}/${name}.svg`)));
+  }
+  for (const name of [...customNames].sort()) {
+    symbols.push(toSymbol(name, read(`${CUSTOM_DIR}/${name}.svg`)));
+  }
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">',
+    `<!-- Generated by scripts/build-icons.mjs; do not edit. Lucide icons: lucide-static@${LUCIDE_VERSION}, ISC (public/licenses/lucide.txt). Custom glyphs: src/styles/icons-custom/. -->`,
+    ...symbols,
+    '</svg>',
+    '',
+  ].join('\n');
+}
+
+/** The custom glyph names present on disk. */
+export async function listCustom(root = ROOT) {
+  const files = await readdir(path.join(root, CUSTOM_DIR));
+  return files.filter(f => f.endsWith('.svg')).map(f => f.slice(0, -4)).sort();
+}
+
+/** Reads the sources and returns the sprite text. */
+export async function generate(root = ROOT) {
+  const meta = JSON.parse(await readFile(path.join(root, 'node_modules/lucide-static/package.json'), 'utf8'));
+  if (meta.version !== LUCIDE_VERSION) throw new Error(`lucide-static is ${meta.version}; build-icons expects ${LUCIDE_VERSION}`);
+  const customNames = await listCustom(root);
+  const missing = CUSTOM.filter(n => !customNames.includes(n));
+  if (missing.length) throw new Error(`missing custom glyphs: ${missing.join(', ')}`);
+  const names = [...ICONS.filter(n => !customNames.includes(n)).map(n => `${LUCIDE_DIR}/${n}.svg`), ...customNames.map(n => `${CUSTOM_DIR}/${n}.svg`)];
+  const texts = new Map();
+  for (const file of names) {
+    try { texts.set(file, await readFile(path.join(root, file), 'utf8')); } catch (e) {
+      if (e.code === 'ENOENT') throw new Error(`missing ${file}`);
+      throw e;
+    }
+  }
+  return buildSprite({icons: ICONS, customNames, read: f => texts.get(f)});
+}
+
+export async function main(argv = process.argv.slice(2), {log = console.log, error = console.error, root = ROOT} = {}) {
+  const check = argv.includes('--check');
+  let sprite;
+  try { sprite = await generate(root); } catch (e) { error(`build-icons: ${e.message}`); return 2; }
+  const target = path.join(root, OUTPUT);
+  let current = null;
+  try { current = await readFile(target, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const count = (sprite.match(/<symbol /g) || []).length;
+  if (current === sprite) { log(`build-icons: ${OUTPUT} is up to date (${count} symbols)`); return 0; }
+  if (check) { error(`build-icons --check: ${OUTPUT} is stale; run npm run build:icons`); return 1; }
+  await writeFile(target, sprite);
+  log(`build-icons: wrote ${OUTPUT} (${count} symbols)`);
+  return 0;
+}
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  process.exitCode = await main();
+}
