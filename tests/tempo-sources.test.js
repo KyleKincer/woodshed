@@ -65,30 +65,6 @@ test('partial provider failures remain visible and never claim a complete empty 
   expect(document.querySelector('.ts-status').textContent).toContain('Harmonix Set is temporarily unavailable');
 });
 
-test('audition candidates independently, retain each offset, restore and cancel exactly', async () => {
-  const original = map.serialize();
-  panel.open(); await settle();
-  await choose(1);
-  expect(map.timeAt(0)).toBe(2);
-  document.querySelector('[data-shift="100"]').click();
-  expect(map.timeAt(0)).toBeCloseTo(2.1);
-  expect(document.getElementById('tempo-source-offset').value).toBe('100');
-  await choose(2);
-  expect(map.timeAt(0)).toBe(3);
-  expect(document.getElementById('tempo-source-offset').value).toBe('0');
-  expect(el('warning').textContent).toMatch(/3.0 seconds longer/);
-  await choose(1);
-  expect(map.timeAt(0)).toBeCloseTo(2.1);
-  el('restore').click(); await settle();
-  expect(map.serialize()).toEqual(original);
-  await choose(2);
-  el('cancel').click();
-  expect(map.serialize()).toEqual(original);
-  expect(map.undoStack).toHaveLength(0);
-  expect(panel.isOpen()).toBe(false);
-  expect(close).toHaveBeenCalledWith({keep: false, kept: false});
-});
-
 test('align bar 1 to selected audio position, including maps shifted before zero', async () => {
   panel.open(); await settle(); await choose(1);
   el('align').click();

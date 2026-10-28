@@ -17,7 +17,7 @@
         ".gitignore"
       ],
       "deps": [],
-      "notes": "Deviation from the \u00a79 row, to be approved or amended by the integrator: tests/scripts/toolchain.test.js (devDependency pins, npm scripts, FIXTURE_PORT servers) is listed explicitly because it is named after no P0 module. tests/scripts/wt.test.js is allowed by the naming rule (scripts/wt.mjs)."
+      "notes": "Deviation from the \u00a79 row, approved at I0A: tests/scripts/toolchain.test.js (devDependency pins, npm scripts, FIXTURE_PORT servers) is listed explicitly because it is named after no P0 module. tests/scripts/wt.test.js is allowed by the naming rule (scripts/wt.mjs)."
     },
     {
       "id": "FX0",
@@ -112,12 +112,14 @@
         "src/js/musical-position.js",
         "tests/playback-engine.test.js",
         "tests/engine-schedule.test.js",
-        "tests/helpers/fake-audio.js"
+        "tests/helpers/fake-audio.js",
+        "src/js/notation/entry.js"
       ],
       "deps": [
         "P0",
         "FX0"
-      ]
+      ],
+      "notes": "I0A follow-up (ticket I0A-1): src/js/notation/entry.js is owned only to delete the dead metronome.source branch at line 21 (architecture \u00a75.2)."
     },
     {
       "id": "F5",
@@ -133,12 +135,14 @@
         "tests/song-map-reasons.test.js",
         "tests/has-real-map.test.js",
         "tests/fixtures/maps.js",
-        "tests/map-mode.test.js"
+        "tests/map-mode.test.js",
+        "src/js/{map-mode,map-lane,player}.js"
       ],
       "deps": [
         "P0",
         "FX0"
-      ]
+      ],
+      "notes": "I0A follow-up (ticket I0A-2): src/js/{map-mode,map-lane,player}.js are owned only to rename SongMapStore.barIndexAt( to barIndexAtQ( at the quarter-note call sites (architecture \u00a74.3, Appendix C item 6). Size exception recorded (Appendix C item 18)."
     },
     {
       "id": "F6",
@@ -211,7 +215,7 @@
         "P0",
         "FX0"
       ],
-      "notes": "Creates tests/fixture/db/{songs,jobs,devices,settings,sharing,setlists,metadata}.js with today's handlers moved verbatim; wave 0B packages own their bodies. tests/fixture/states/<ID>.cjs belong to each package through the \u00a79.0 naming rule (FX1's own is tests/fixture/states/FX1.cjs), so FX1's glob excludes them."
+      "notes": "Creates tests/fixture/db/{songs,jobs,devices,settings,sharing,setlists,metadata}.js with today's handlers moved verbatim; wave 0B packages own their bodies. tests/fixture/states/<ID>.cjs belong to each package through the \u00a79.0 naming rule (FX1's own is tests/fixture/states/FX1.cjs), so FX1's glob excludes them. Amended at I0A: harness discovery also covers tests/fixture/harness/*.harness.js (the fixture smoke harness, \u00a711.2); size exception recorded (Appendix C item 18)."
     },
     {
       "id": "I0A",
@@ -466,11 +470,13 @@
         "src/api/settings.js",
         "src/app/account.js",
         "tests/app-account.test.js",
-        "tests/fixture/db/settings.js"
+        "tests/fixture/db/settings.js",
+        "convex/_generated/server.d.ts"
       ],
       "deps": [
         "I0A"
-      ]
+      ],
+      "notes": "Amended at I0A: convex/_generated/server.d.ts is owned for one hand edit only, readonly DEMO_SHARE_TOKEN: string | undefined; in Env after BILLING_SITE_URL (Appendix C item 16); gate G1's codegen regenerates it identically."
     },
     {
       "id": "BK5",

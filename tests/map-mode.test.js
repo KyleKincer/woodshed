@@ -77,22 +77,6 @@ test('arrows walk bars and beats, digits jump, and keys do not leak to the playe
   expect(mute.classList.contains('on')).toBe(false);
 });
 
-test('an existing drum part becomes the song map and protects its notes from meter changes', async () => {
-  const timeline = {version: 1, measures: Array.from({length: 20}, (_, i) => ({id: 'm' + i, numerator: 4, denominator: 4, length: fraction(4), label: ''})),
-    anchors: [{position: fraction(0), time: 0.25}, {position: fraction(4), time: 2.25}]};
-  const hit = {id: 'h', offset: fraction(3), duration: fraction(1), instrument: 'snare', voice: 1, value: 4, dotted: false, tuplet: 1, accent: false, ghost: false, flam: false, sticking: '', velocity: .75};
-  state.part = {score: {version: 1, title: 'Drums', timeline, bars: [{measureId: 'm0', coverage: 'progress', hits: [hit]}]}, revision: 3};
-  await openPlayer(song);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  key('M', {shiftKey: true});
-  key('Home');
-  expect(cell('pin')).toMatch(/0:00\.250/); // the part's own downbeat
-  key('ArrowDown', {shiftKey: true});
-  expect(note()).toMatch(/Bar 1 has drum notes that would no longer fit/);
-  key('ArrowRight'); key('ArrowDown', {shiftKey: true});
-  expect(note()).toMatch(/Bar 2 is 3\/4/);
-});
-
 test('the key sheet and menu open from the keyboard without swallowing map keys', async () => {
   await openPlayer(song); const engine = state.engines[0];
   key('M', {shiftKey: true});

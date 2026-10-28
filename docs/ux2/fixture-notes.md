@@ -1,3 +1,5 @@
+> **Superseded (I0A).** This note describes the 1.9 scratchpad fixture that FX0 used for the legacy baselines. The fixture in the repo is `tests/fixture/` (FX1); its reference is `tests/fixture/README.md` and architecture §11.2, §11.4 and Appendix C item 17.
+
 ## Full-app fixture: what was built
 
 Everything is under `/tmp/claude-0/-home-user-woodshed/b86dd4e5-7909-507e-b288-f25d17a1e2c7/scratchpad/ux/`. No tracked repo files were changed (`git status` is clean). The Vite cache goes to `fixture/.vite-cache`, not to the repo's node_modules.

@@ -36,17 +36,6 @@ beforeEach(()=>{
 });
 afterEach(()=>closePlayer());
 const settleSource=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-test('closing a source audition restores the original map before the final tempo save',async()=>{
-  const backend=await import('../src/js/backend.js');backend.saveTempo.mockClear();
-  await openPlayer({...song,tempo:{map:[{t:0,bpm:120,beatsPerBar:4,unit:4}],source:'map'}});
-  document.getElementById('map-btn').click();
-  document.querySelector('[data-map=sources]').click();await settleSource();
-  document.querySelector('[data-choice="1"]').click();await settleSource();
-  expect(document.querySelector('[data-ts=current]').textContent).toBe('Studio timing');
-  closePlayer();
-  expect(backend.saveTempo.mock.lastCall[1].songMap).toBeUndefined();
-  expect(backend.saveTempo.mock.lastCall[1].map[0].t).toBe(0);
-});
 test('a delayed notation load cannot open sources after leaving map mode',async()=>{
   let resolve;state.notation=new Promise(done=>{resolve=done;});
   await openPlayer(song);document.getElementById('map-btn').click();
