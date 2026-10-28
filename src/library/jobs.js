@@ -34,9 +34,9 @@
 //   - found detections: a user-started (no chainedFrom) beat detection that is done, has a result and is
 //     unapplied (D44: the server applies it itself on an unmapped song and sets appliedAt). Either one seen
 //     live this session that left the list done while its song was not open (an open session applies its
-//     own), or one `jobs.latestDetection` returns for the DETECTION_PROBE_MAX most recently practiced/added
-//     songs when the library first loads. Each is followed with jobs.get (subscribeJob) and leaves once
-//     applied anywhere. The row offers [Open song] (the Stage then offers "Bars found while you were away")
+//     own; followed with jobs.get, subscribeJob), or a row of `jobs.listUnappliedDetections` (§6.4: every
+//     song, newest first, capped by the server), subscribed once the library has loaded. Either leaves once
+//     applied anywhere, and stays gone once dismissed here (Not now, or opening its song). The row offers [Open song] (the Stage then offers "Bars found while you were away")
 //     and [Not now] (jobs.markApplied, as the Stage's own Not now does).
 // `ready` follows separations (and imports) seen live that left the list done (jobs.get after they vanish)
 // while their song was not open; opening the song (store.stage.songId) removes it.
@@ -77,8 +77,6 @@ export const TICK_MS = 1000;
 export const COPIED_MS = 2000;
 /** Samples kept per job (the window rarely holds more). */
 const MAX_SAMPLES = 120;
-/** Songs asked for an unapplied detection (`jobs.latestDetection`) when the library first loads. */
-export const DETECTION_PROBE_MAX = 12;
 
 /**
  * The stage a failed job stopped in when the companion reported only `stage: 'error'` (companion/server.mjs
@@ -258,6 +256,8 @@ export function createJobsModel({
   const readyIds = signal(new Set());
   const found = signal(new Map());    // jobId → JobDetail (done, unapplied, user-started detections)
   const foundWatches = new Map();     // jobId → off() of its jobs.get subscription
+  const listedIds = new Set();        // jobIds in `found` that came from jobs.listUnappliedDetections
+  const dismissedIds = new Set();     // jobIds dismissed here: a later list value does not bring them back
   const disposers = [];
   let destroyed = false;
 
@@ -308,7 +308,7 @@ export function createJobsModel({
     });
   }));
 
-  /** A detection the Library may offer: done, user-started, with a result, not applied (jobs.latestDetection, §6.4). */
+  /** A detection the Library may offer: done, user-started, with a result, not applied (§6.4, D44). */
   const offerable = d => !!d && d.status === 'done' && d.kind === 'beats' && !d.chainedFrom && !d.appliedAt && d.result != null;
 
   async function settleVanished(jobId, info) {
@@ -328,7 +328,7 @@ export function createJobsModel({
   }
 
   function addFound(detail) {
-    if (destroyed || found.peek().has(detail.jobId)) return;
+    if (destroyed || dismissedIds.has(detail.jobId) || found.peek().has(detail.jobId)) return;
     const next = new Map(found.peek());
     next.set(detail.jobId, detail);
     found.value = next;
@@ -345,30 +345,50 @@ export function createJobsModel({
     const f = found.peek();
     const gone = [...f].filter(([id, d]) => predicate(d, id)).map(([id]) => id);
     if (!gone.length) return;
-    for (const id of gone) { foundWatches.get(id)?.(); foundWatches.delete(id); }
+    for (const id of gone) { foundWatches.get(id)?.(); foundWatches.delete(id); listedIds.delete(id); dismissedIds.add(id); }
     found.value = new Map([...f].filter(([id]) => !gone.includes(id)));
   }
 
-  // ---- unapplied detections from before this session (D44: a reload, or finished while the app was closed).
-  // `latestDetection` is per song, so the most recently practiced (then added) songs are asked, once.
-  let probed = false;
+  // ---- unapplied detections from before this session (D44: a reload, or finished while the app was closed):
+  // one jobs.listUnappliedDetections subscription across every song, started once the library has loaded
+  // (signed in). The query is reactive, so a row it drops was applied (or acted on) somewhere.
+  let unappliedOff = null;
+  let unappliedStarted = false;
+  function applyUnapplied(rows) {
+    if (destroyed) return;
+    const list = (Array.isArray(rows) ? rows : []).filter(d => offerable(d) && d.jobId && d.songId);
+    const ids = new Set(list.map(d => d.jobId));
+    const stale = [...listedIds].filter(id => !ids.has(id));
+    if (stale.length) {
+      for (const id of stale) listedIds.delete(id);
+      const f = found.peek();
+      found.value = new Map([...f].filter(([id]) => !stale.includes(id)));
+    }
+    const openSong = store.stage.peek()?.songId ?? null;
+    let next = null;
+    for (const d of list) {
+      if (dismissedIds.has(d.jobId) || found.peek().has(d.jobId) || next?.has(d.jobId)) continue;
+      // Its song is open: the Stage offers it ("Bars found while you were away"), so it is not offered here.
+      if (d.songId === openSong) { dismissedIds.add(d.jobId); continue; }
+      next ??= new Map(found.peek());
+      next.set(d.jobId, d);
+      listedIds.add(d.jobId);
+    }
+    if (next) found.value = next;
+  }
   disposers.push(effect(() => {
-    const songs = lib.songs.value;
     const loaded = lib.loaded ? lib.loaded.value : true;
-    if (probed || !loaded || !(songs?.size > 0) || typeof api.latestDetection !== 'function') return;
-    probed = true;
+    if (unappliedStarted || !loaded) return;
     untracked(() => {
-      const recent = n => (Number.isFinite(n) ? n : 0);
-      const candidates = [...songs.values()].filter(x => x?.id)
-        .sort((a, b) => recent(b.lastPracticedAt) - recent(a.lastPracticedAt) || recent(b.addedAt) - recent(a.addedAt))
-        .slice(0, DETECTION_PROBE_MAX);
-      for (const song of candidates) {
-        Promise.resolve().then(() => api.latestDetection({songId: song.id})).then(detail => {
-          if (destroyed || !offerable(detail)) return;
-          const songId = detail.songId ?? song.id;
-          if (store.stage.peek()?.songId === songId) return;
-          addFound({...detail, songId});
-        }, () => {});
+      if (typeof api.subscribeUnappliedDetections === 'function') {
+        try {
+          const off = api.subscribeUnappliedDetections(applyUnapplied, () => {});
+          unappliedStarted = true;
+          if (typeof off === 'function') unappliedOff = off;
+        } catch { /* not signed in yet: tried again when the library loads again */ }
+      } else if (typeof api.listUnappliedDetections === 'function') {
+        unappliedStarted = true;
+        Promise.resolve().then(() => api.listUnappliedDetections()).then(applyUnapplied, () => {});
       }
     });
   }));
@@ -632,6 +652,8 @@ export function createJobsModel({
       for (const d of disposers.splice(0)) d();
       for (const off of foundWatches.values()) off();
       foundWatches.clear();
+      unappliedOff?.();
+      unappliedOff = null;
     },
   };
 }

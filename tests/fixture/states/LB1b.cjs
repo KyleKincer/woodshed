@@ -13,7 +13,7 @@
 //   lb1b-jobs-focus           opened from a processing card: focus lands on that job's row
 //   lb1b-jobs-found           a detection that finished during the session: Bars found, Not now, then empty
 //   lb1b-jobs-found-seeded    the seed's unapplied detection from before the session (job-detect-nightbus,
-//                             via jobs.latestDetection), offered after a reload; Open song opens it
+//                             via jobs.listUnappliedDetections), offered after a reload; Open song opens it
 //   lb1b-jobs-uploads         an upload in progress (real bytes) and a failed upload (Dismiss)
 //   lb1b-jobs-web-offline     the web footer when the paired computer is offline
 //   lb1b-jobs-web-none        the web footer with no paired computer (Get Woodshed for desktop)
@@ -97,7 +97,7 @@ module.exports = [
     name: 'lb1b-jobs-popover',
     url: `${H}?${BASE}&open=1`,
     async fn(page, t) {
-      // The seed's unapplied detection from before the session (latestDetection) joins the list last.
+      // The seed's unapplied detection from before the session (listUnappliedDetections) joins the list last.
       await page.waitForSelector('.lib-job[data-job-id="job-detect-nightbus"]', {timeout: 8000});
       const f = await expectPopoverFits(t, page);
       const kinds = new Set(f.rows.map(r => r.kind));
