@@ -18,6 +18,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** Modules whose import registers command definitions (e.g. () => import('../src/app/global-commands.js')). */
 const DEFINITION_MODULES = [
   () => import('../src/app/global-commands.js'),
+  () => import('../src/library/commands.js'),
+  () => import('../src/stage/transport-commands.js'),
 ];
 /** Modules exporting CONTROL_SET or CONTROLS tables whose command fields must exist (e.g. src/stage/controls.js). */
 const CONTROL_MODULES = [];

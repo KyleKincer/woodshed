@@ -563,7 +563,7 @@
       "deps": [
         "I0A"
       ],
-      "notes": "I0B follow-up (ticket I0B-10): scripts/build-processor.py, companion/desktop_entry.py and .github/workflows/release.yml are owned only to bundle, self-check and cache-key companion/ytdlp-args.json."
+      "notes": "I0B follow-up (ticket I0B-10): scripts/build-processor.py, companion/desktop_entry.py and .github/workflows/release.yml are owned only to bundle, self-check and cache-key companion/ytdlp-args.json. I1b follow-up (ticket I1b-3): scripts/build-processor.py and companion/desktop_entry.py are also owned to add the 'sections' and 'errors' hidden imports and the --self-check imports of sections.suggest, errors and process."
     },
     {
       "id": "I0B",

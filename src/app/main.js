@@ -36,6 +36,7 @@ import {platform} from './platform.js';
 import {desktop} from './desktop.js';
 import * as feedback from './feedback.js';
 import {mountTopbar} from './topbar.js';
+import {mountJobsChip} from '../library/jobs.js';
 import {mountBanners, renderFatal, renderPaused} from './fatal.js';
 import {renderSignIn as placeholderSignIn} from './placeholder.js';
 import './global-commands.js';
@@ -233,6 +234,7 @@ export async function boot({win = globalThis.window, doc = globalThis.document} 
   const topbar = mountTopbar(frame.header, {router, store, desktop, registry});
   ctx.topbar = topbar;
   registry.provide('topbar', () => topbar);
+  mountJobsChip(topbar.jobsSlot);
   router.link(frame.app);
   router.link(frame.modalOutlet);
   effect(() => {
