@@ -498,6 +498,20 @@ describe('Preview and calibration', () => {
     expect(text()).toBe('Your taps land 30 ms late. Taps are corrected from now on.');
   });
 
+  test('calibration clicks go through metronome.clickAt(when, accent), never the removed 1.9 _click (I1-7)', async () => {
+    await open();
+    const clickAt = vi.spyOn(metronome, 'clickAt');
+    expect(metronome._click).toBeUndefined();               // I1 removed Metronome._click
+    await session.startCalibration();
+    const start = clock.now() + CALIBRATION.lead;
+    expect(clickAt).toHaveBeenCalledTimes(CALIBRATION.clicks);
+    clickAt.mock.calls.forEach(([when, accent], i) => {
+      expect(when).toBeCloseTo(start + i * CALIBRATION.interval);
+      expect(accent).toBe(i % CALIBRATION.accentEvery === 0);
+    });
+    expect(clickAt.mock.calls.every((call) => call.length === 2)).toBe(true);
+  });
+
   test('too few calibration taps change nothing; audio that will not start is reported', async () => {
     const {prefs} = await open();
     await session.startCalibration();
