@@ -20,9 +20,15 @@ const DEFINITION_MODULES = [
   () => import('../src/app/global-commands.js'),
   () => import('../src/library/commands.js'),
   () => import('../src/stage/transport-commands.js'),
+  () => import('../src/stage/commands.js'),
 ];
 /** Modules exporting CONTROL_SET or CONTROLS tables whose command fields must exist (e.g. src/stage/controls.js). */
-const CONTROL_MODULES = [];
+const CONTROL_MODULES = [
+  () => import('../src/stage/controls.js'),
+  () => import('../src/stage/hud.js'),
+  () => import('../src/stage/stage.copy.js'),
+  () => import('../src/stage/strip.js'),
+];
 /** Electron menu sources whose fixed command ids must exist (e.g. 'desktop/menu.cjs'). */
 const ELECTRON_MENU_SOURCES = [];
 /** The ? sheet's group order (S2's export; set at I1). */
