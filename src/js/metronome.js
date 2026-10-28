@@ -77,7 +77,7 @@ export class Metronome {
 
   /** Legacy section shape at a recording time: {t, bpm, beatsPerBar, unit}. */
   sectionAt(t) {
-    const map = this.songMap, q = map.positionAt(t), index = Math.max(0, map.barIndexAt(q)), m = map.measure(index);
+    const map = this.songMap, q = map.positionAt(t), index = Math.max(0, map.barIndexAtQ(q)), m = map.measure(index);
     return {t: map.timeAt(map.barStart(index)), bpm: map.bpmAt(q), beatsPerBar: map.beatsPerBarAt(t), unit: m.denominator};
   }
 
