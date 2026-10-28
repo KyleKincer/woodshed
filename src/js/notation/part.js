@@ -1,18 +1,38 @@
-// One drum part per open song, shared by the Practice chart and the
-// Transcribe editor: loading, saving, tempo-map sync and shared-link updates
-// live here, so both views always show the same score.
+// One drum part per open song, shared by the Stage chart and Edit · Chart
+// (through the session's notation session, D27): loading, saving, tempo-map
+// sync and shared-link updates live here, so both views always show the same
+// score.
+//
+// Opening a part never creates an undo step (architecture §2.14.1 step 5):
+// - legacy timeline adoption (`adoptLegacy`: the song's stored tempo has no
+//   `songMap`, so the drum part's timeline is the better map) runs inside
+//   `songMap.withoutUndo(...)` with the store's reason 'adopt', before the
+//   part is fitted to the map;
+// - a stored part that does not fit the map rebuilds the map from the part's
+//   timeline with the explicit reason 'part-fit', also without an undo step.
+// Either only changes the map when the result differs, so the session saves
+// the tempo map only when opening really changed it.
+//
+// `setMapSyncPaused(true)` (Find a chart audition, D20): map edits still
+// retime the score in memory (listeners hear 'map'), but nothing is saved;
+// unpausing saves once when the timeline differs from when the pause began.
 import {ScoreEditor, validateScore, validateBar, upgradeScore, extent} from '../../../shared/notation.ts';
 import {sameContent} from '../../../shared/content.ts';
+import {fromTimeline} from '../../../shared/song-map.ts';
 import {NotationStore, loadSharedNotation, watchSharedNotation} from './store.js';
 import {scoreFromTiming} from './entry.js';
 
 /**
+ * @param {object} options
+ * @param {boolean} [options.adoptLegacy] the song's stored tempo has no `songMap`: adopt the
+ *   part's timeline into the map (one-way upgrade) before fitting the part to it
  * @returns part with `editor` (ScoreEditor or null when nothing is shared),
  *   `score`, `subscribe(fn(reason))`, `commit()` after edits, `status`.
  */
-export async function openPart({song, engine, metronome, songMap = null, readOnly = false, shareToken = null, persistence = null}) {
+export async function openPart({song, engine, metronome, songMap = null, readOnly = false, shareToken = null, persistence = null, adoptLegacy = false}) {
   const listeners = new Set(), statusListeners = new Set();
   let editor = null, store = null, status = readOnly ? 'read-only' : 'loading', disposed = false;
+  let syncPaused = false, pausedTimeline = null, retimedWhilePaused = false;
   const notify = reason => { for (const fn of listeners) fn(reason); };
   const setStatus = next => { status = next; for (const fn of statusListeners) fn(next); };
 
@@ -26,9 +46,15 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     validateScore(next);
     return next;
   };
+  // Fitting a part is never a user's map step: no undo entry, reason 'part-fit' (§4.2).
   const fitScore = input => {
     if (!songMap) return upgradeScore(input);
-    try { return mapScore(input); } catch { songMap.replaceFromTimeline(upgradeScore(input).timeline); return mapScore(input); }
+    try { return mapScore(input); } catch { songMap.withoutUndo(() => songMap.replaceFromTimeline(upgradeScore(input).timeline, 'part-fit')); return mapScore(input); }
+  };
+  // A stored map that predates `songMap` takes the drum part's timeline (1.9 adoptDrumPart, kept as a one-way upgrade).
+  const adopt = input => {
+    if (!songMap || !adoptLegacy || !input?.timeline) return;
+    try { songMap.withoutUndo(() => songMap.adopt(fromTimeline(upgradeScore(input).timeline, songMap.duration))); } catch { /* an unusable timeline leaves the map alone */ }
   };
   const newScore = () => songMap ? {version: 2, title: 'Drums', timeline: structuredClone(songMap.timeline()), bars: []} : scoreFromTiming(engine.duration, metronome);
 
@@ -40,6 +66,7 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
       score = await store.load();
       if (persistence) setStatus('fixture');
     }
+    if (score) adopt(score);
     if (score || !readOnly) editor = new ScoreEditor(score ? fitScore(score) : newScore());
   } catch (error) {
     // The store registers window listeners and timers; release them before failing.
@@ -58,7 +85,8 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     editor.score = next;
     editor.undoStack = retime(editor.undoStack, next.timeline);
     editor.redoStack = retime(editor.redoStack, next.timeline);
-    part.commit('map');
+    if (syncPaused) { retimedWhilePaused = true; notify('map'); }
+    else part.commit('map');
   };
   const unsubscribeMap = songMap ? songMap.subscribe(syncMap) : () => {};
   // Refuse tempo-map edits that would strand written notes.
@@ -88,6 +116,20 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     onStatus(fn) { statusListeners.add(fn); fn(status); return () => statusListeners.delete(fn); },
     /** Persist and broadcast the editor's current score. */
     commit(reason = 'edit') { if (!editor) return; store?.set(editor.score); notify(reason); },
+    /**
+     * While paused (Find a chart audition, D20) map edits retime the score in memory only.
+     * Unpausing saves once when the timeline changed since the pause began.
+     */
+    setMapSyncPaused(on) {
+      const next = !!on;
+      if (next === syncPaused) return;
+      syncPaused = next;
+      if (next) { pausedTimeline = editor ? structuredClone(editor.score.timeline) : null; retimedWhilePaused = false; return; }
+      const changed = retimedWhilePaused && editor && !sameContent(editor.score.timeline, pausedTimeline);
+      pausedTimeline = null; retimedWhilePaused = false;
+      if (changed && !disposed) part.commit('map');
+    },
+    get mapSyncPaused() { return syncPaused; },
     mapScore: input => songMap ? mapScore(input) : upgradeScore(input),
     fitScore,
     /** Adopt an imported draft into an empty part as one undoable edit. */

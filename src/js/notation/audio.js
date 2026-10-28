@@ -72,11 +72,54 @@ export function scoreEvents(score){
   return events.sort((a,b)=>a.time-b.time);
 }
 
+/** Chart playback levels (`practice.chartAudio`, D27): the drum-hit output gain for Quiet and Loud. */
+export const LEVELS = Object.freeze({quiet: .35, loud: .65});
+
+/**
+ * One drum-part player per song session (D27). Hits are scheduled ahead on the
+ * engine's own output timeline and sound through `engine.aux` (§5.0), the
+ * post-master bus that `stopAt` and `pause` silence with the stems.
+ *
+ * - A discontinuity (`subscribeTransport` / the `'transport'` event: seek,
+ *   play, stop, loop jump) cancels every scheduled hit.
+ * - A plan change (`'plan' {from}`: a scheduled rate, a quantized jump,
+ *   `cancelPending`, a loop edit that keeps the position, later passes and
+ *   gaps) cancels only the hits at or after `from` and reschedules from there,
+ *   so the audio before the cut is untouched and the new plan's hits in the
+ *   lookahead window are not skipped.
+ * - `mode`: 'recording' (no hits; the recorded drums sound), 'notation' (hits
+ *   only; the recorded drums are muted) or 'both'.
+ */
 export class DrumAudio {
-  constructor(engine){this.engine=engine;this.ctx=engine.ctx;this.out=this.ctx.createGain();this.out.gain.value=.65;this.out.connect(this.ctx.destination);this.buffers=new Map();this.active=new Set();this.events=[];this.mode='recording';this.until=0;this.revision=engine.revision;this.timer=setInterval(()=>this.tick(),25);this.unsubscribe=engine.subscribeTransport(()=>{this.cancel();this.revision=engine.revision;this.until=this.ctx.currentTime;});}
-  setScore(score){this.events=scoreEvents(score);this.cancel();this.until=this.ctx.currentTime;}
+  constructor(engine){
+    this.engine=engine;this.ctx=engine.ctx;this.out=this.ctx.createGain();this.out.gain.value=LEVELS.loud;
+    this.out.connect(engine.aux??this.ctx.destination);
+    this.buffers=new Map();this.active=new Set();this.events=[];this.mode='recording';this.until=0;this.revision=engine.revision;
+    this.timer=setInterval(()=>this.tick(),25);
+    this.unsubscribe=engine.subscribeTransport(()=>{this.cancel();this.revision=engine.revision;this.until=this.ctx.currentTime;});
+    this.offPlan=engine.on?.('plan',({from})=>this.replan(from))??(()=>{});
+  }
+  /** The part's score (null: no hits). */
+  setScore(score){this.events=score?scoreEvents(score):[];this.cancel();this.until=this.ctx.currentTime;}
   setMode(mode){this.mode=mode;this.engine.setRecordingAudible(mode!=='notation');this.cancel();this.until=this.ctx.currentTime;}
-  cancel(){for(const entry of this.active){try{entry.gain.gain.cancelScheduledValues(this.ctx.currentTime);entry.gain.gain.setTargetAtTime(0,this.ctx.currentTime,.005);entry.source.stop(this.ctx.currentTime+.025);}catch{}}this.active.clear();}
+  /** Output gain of the drum hits (0..1). */
+  setLevel(gain){const value=Math.max(0,Math.min(1,Number.isFinite(gain)?gain:LEVELS.loud));this.out.gain.value=value;}
+  get level(){return this.out.gain.value;}
+  /** Stop hits scheduled at or after `from` (every hit by default). */
+  cancel(from=-Infinity){
+    const now=this.ctx.currentTime;
+    for(const entry of this.active){
+      if(entry.when<from)continue;
+      try{entry.gain.gain.cancelScheduledValues(now);entry.gain.gain.setTargetAtTime(0,now,.005);entry.source.stop(now+.025);}catch{}
+      this.active.delete(entry);
+    }
+  }
+  /** The engine replaced its plan from `from`: drop the hits there and reschedule them on the new plan. */
+  replan(from){
+    if(!Number.isFinite(from))return;
+    this.cancel(from);
+    this.until=Math.min(this.until,from);
+  }
   /** Fade out ringing pieces that `instrument` chokes, from `when` on. Sounds scheduled later keep ringing. */
   choke(instrument,when){
     const targets=CHOKES[instrument];if(!targets)return;
@@ -105,5 +148,6 @@ export class DrumAudio {
     for(const hit of this.engine.beatsBetween(start,end,this.events))this.play(hit,hit.when);
     this.until=end;
   }
-  destroy(){clearInterval(this.timer);this.unsubscribe();this.cancel();this.out.disconnect();this.engine.setRecordingAudible(true);}
+  /** Ends the player (session dispose). A live engine gets its recorded drums back. */
+  destroy(){clearInterval(this.timer);this.unsubscribe();this.offPlan();this.cancel();this.out.disconnect();if(!this.engine.destroyed)this.engine.setRecordingAudible(true);}
 }
