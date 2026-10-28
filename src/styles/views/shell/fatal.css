@@ -1,0 +1,144 @@
+/* Boot states and the shell's notices (src/app/fatal.js, src/js/startup.js; spec §2.7, §6.3): the
+ * boot status pill, the centred 480 px fatal card, the paused-account page, and the app frame's
+ * banners row above the view outlet (src/app/main.js). */
+@layer views {
+  /* The app frame's main area: the banners row (fatal.js mountBanners), then the router outlet. */
+  .shell-main {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .shell-outlet {
+    grid-row: 2;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+  .shell-banners {
+    grid-row: 1;
+    display: grid;
+    gap: var(--s2);
+    width: 100%;
+    max-width: calc(var(--content-max) + 2 * var(--gutter));
+    margin-inline: auto;
+    padding: var(--s3) max(var(--gutter), var(--safe-right)) 0 max(var(--gutter), var(--safe-left));
+    box-sizing: border-box;
+  }
+
+  /* The boot status: index.html's #startup, shown while html[data-startup=loading]. */
+  .shell-startup,
+  #startup {
+    position: fixed;
+    inset-block-end: max(var(--s5), var(--safe-bottom));
+    inset-inline: 0;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s3);
+    width: max-content;
+    max-width: calc(100vw - 2 * var(--s4));
+    margin-inline: auto;
+    padding: var(--s3) var(--s4);
+    background: var(--surface);
+    color: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+    font-size: var(--fs-14);
+  }
+  html:not([data-startup=loading]) #startup { display: none; }
+  .shell-startup-pulse {
+    width: var(--s2);
+    height: var(--s2);
+    background: var(--accent);
+    border-radius: var(--r-pill);
+    animation: shell-startup-pulse calc(var(--motion-slow) * 4) var(--ease) infinite alternate;
+  }
+  .shell-startup-retry {
+    min-height: var(--h-sm);
+    padding: 0 var(--s3);
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  @keyframes shell-startup-pulse {
+    from { opacity: 1; }
+    to { opacity: .35; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shell-startup-pulse { animation: none; }
+  }
+
+  /* A centred card in a full-bleed frame (fatal, paused, the placeholder sign-in). */
+  .shell-centre {
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    padding: max(var(--s6), var(--safe-top)) max(var(--s4), var(--safe-right)) max(var(--s6), var(--safe-bottom)) max(var(--s4), var(--safe-left));
+    box-sizing: border-box;
+  }
+  .shell-card {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 480px;
+    display: grid;
+    gap: var(--s4);
+    padding: var(--s6);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+  }
+  .shell-card-title {
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+  }
+  .shell-card-body {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+  .shell-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+
+  .shell-fatal-details {
+    border-top: 1px solid var(--line);
+    padding-top: var(--s3);
+  }
+  .shell-fatal-summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-sm);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+    border-radius: var(--r-control);
+  }
+  .shell-fatal-raw {
+    margin-block: var(--s2);
+    max-height: 240px;
+    overflow: auto;
+    padding: var(--s3);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    border-radius: var(--r-control);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .shell-paused .ui-status { margin-top: calc(-1 * var(--s1)); }
+
+  .shell-banner { width: 100%; box-sizing: border-box; }
+}

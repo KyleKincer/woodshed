@@ -1,0 +1,68 @@
+/* The "Not built yet" view (src/app/placeholder.js, D2; deleted in wave 4): a page for unbuilt
+ * places, a modal panel for unbuilt modal routes, and the sign-in card until ON1's lands. */
+@layer views {
+  .shell-placeholder-scroller { min-height: 0; }
+  .shell-placeholder {
+    display: grid;
+    gap: var(--s3);
+    max-width: 560px;
+    padding-block: var(--s7);
+  }
+  .shell-placeholder-kicker {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .shell-placeholder-title {
+    font-size: var(--fs-32);
+    font-weight: var(--fw-bold);
+  }
+  .shell-placeholder-body { color: var(--ink-2); }
+  .shell-placeholder-link {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-md);
+    font-weight: var(--fw-semibold);
+    border-radius: var(--r-control);
+  }
+
+  .shell-placeholder-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-dialog);
+    display: grid;
+    place-items: center;
+    padding: var(--s4);
+    background: var(--backdrop);
+  }
+  .shell-placeholder-panel {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 480px;
+    padding: var(--s6);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-dialog);
+  }
+  .shell-placeholder-actions { display: flex; justify-content: flex-end; }
+
+  .shell-signin {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 400px;
+    padding: var(--s6);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+  }
+  .shell-signin-wordmark {
+    font-size: 1.125rem;
+    font-weight: var(--fw-heavy);
+    color: var(--ink);
+  }
+  .shell-signin-button { width: 100%; }
+}
