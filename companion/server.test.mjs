@@ -13,7 +13,7 @@ import { getFunctionName } from 'convex/server';
 import {
   CodedError, PROGRESS_INTERVAL_MS, SETUP_HINT, SEPARATION_MODELS,
   acceleratorOf, checkpointsDir, convexCode, createProgressThrottle, demucsRemoteDirs, errorText, jobErrorCode,
-  jobMetaOf, modelFiles, modelsReady, parseModelSignatures, parseRemoteFiles, processorFailure, progressEvent, startCompanion, statusBody,
+  jobMetaOf, modelFiles, modelsReady, parseModelSignatures, parseRemoteFiles, processorFailure, progressEvent, startCompanion, statusBody, writeFileAtomic,
 } from './server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -360,6 +360,91 @@ test('no update cancellation remains: updates pause jobs (D12)', () => {
   assert.deepEqual(hits, []);
 });
 
+// ---------------------------------------------------------------- atomic result files (ticket I1-8)
+
+test('writeFileAtomic puts the whole file in place and leaves no temp file', async t => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cpb-atomic-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'synced.json');
+  await writeFileAtomic(file, JSON.stringify({ songId: 'a' }));
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { songId: 'a' });
+  await writeFileAtomic(file, JSON.stringify({ songId: 'b' }));
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { songId: 'b' });
+  assert.deepEqual(readdirSync(dir), ['synced.json']);
+});
+
+test('writeFileAtomic writes beside the target and never exposes a partial file', async t => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cpb-atomic-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'synced.json');
+  writeFileSync(file, JSON.stringify({ songId: 'old' }));
+  const { promises: real } = await import('node:fs');
+  const seen = [];
+  // A writer that lands its bytes in two halves with a pause between, like a slow disk.
+  const io = {
+    writeFile: async (target, data) => {
+      seen.push(['write', target]);
+      await real.writeFile(target, data.slice(0, 5));
+      seen.push(['mid-write target', readFileSync(file, 'utf8')]);
+      await real.appendFile(target, data.slice(5));
+    },
+    rename: async (from, to) => { seen.push(['rename', from, to]); await real.rename(from, to); },
+    rm: real.rm,
+  };
+  await writeFileAtomic(file, JSON.stringify({ songId: 'new' }), { fs: io });
+  const [[, temp], mid, rename] = seen;
+  assert.equal(path.dirname(temp), dir, 'the temp file is in the same directory (rename stays on one filesystem)');
+  assert.notEqual(temp, file);
+  assert.deepEqual(mid, ['mid-write target', JSON.stringify({ songId: 'old' })], 'readers see the old file until the rename');
+  assert.deepEqual(rename, ['rename', temp, file]);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { songId: 'new' });
+  assert.deepEqual(readdirSync(dir), ['synced.json']);
+});
+
+test('a failed writeFileAtomic leaves the target untouched and removes its temp file', async t => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cpb-atomic-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'synced.json');
+  const { promises: real } = await import('node:fs');
+  const full = Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+  const io = { writeFile: async (target, data) => { await real.writeFile(target, data.slice(0, 3)); throw full; }, rename: real.rename, rm: real.rm };
+  await assert.rejects(writeFileAtomic(file, JSON.stringify({ songId: 'x' }), { fs: io }), full);
+  assert.deepEqual(readdirSync(dir), [], 'no empty or partial synced.json, and no temp file');
+  writeFileSync(file, 'kept');
+  const failingRename = { ...io, writeFile: real.writeFile, rename: async () => { throw new Error('EXDEV'); } };
+  await assert.rejects(writeFileAtomic(file, 'replaced', { fs: failingRename }), /EXDEV/);
+  assert.equal(readFileSync(file, 'utf8'), 'kept');
+  assert.deepEqual(readdirSync(dir), ['synced.json']);
+});
+
+test('the worker records synced.json with writeFileAtomic, never a bare writeFile', () => {
+  const source = readFileSync(path.join(here, 'server.mjs'), 'utf8');
+  assert.match(source, /await writeFileAtomic\(path\.join\(root, 'synced\.json'\)/);
+  assert.doesNotMatch(source, /fs\.writeFile\([^)]*synced\.json/);
+});
+
+test('a reader polling during repeated writeFileAtomic calls always parses a whole file', async t => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cpb-atomic-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'synced.json');
+  const payload = i => JSON.stringify({ songId: `song${i}`, pad: 'x'.repeat(256 * 1024) });
+  await writeFileAtomic(file, payload(0));
+  let writing = true, reads = 0;
+  const bad = [];
+  const reader = (async () => {
+    while (writing) {
+      try { JSON.parse(readFileSync(file, 'utf8')); reads++; } catch (error) { bad.push(error.message); }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  })();
+  for (let i = 1; i <= 50; i++) await writeFileAtomic(file, payload(i));
+  writing = false;
+  await reader;
+  assert.deepEqual(bad, []);
+  assert.ok(reads > 0);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).songId, 'song50');
+});
+
 // ---------------------------------------------------------------- the worker loop (items 1, 2, 6–10)
 
 const FAKE_PROCESSOR = `#!/usr/bin/env node
@@ -401,6 +486,16 @@ function fakeConvex(handlers) {
     close: async () => {},
     named: name => calls.filter(c => c.name === name),
   };
+}
+
+/** The parsed JSON in `file`, or undefined while it is missing or not fully written. */
+function readJson(file) {
+  try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return undefined; }
+}
+
+/** The fake processor's pid, once its pid file holds one (it is written non-atomically). */
+function readPid(file) {
+  try { const pid = Number(readFileSync(file, 'utf8')); return Number.isInteger(pid) && pid > 0 ? pid : undefined; } catch { return undefined; }
 }
 
 async function until(predicate, what, timeoutMs = 8000) {
@@ -559,8 +654,8 @@ test('a separation syncs its stems with checksums and completes with where it la
   });
   const order = client.calls.map(c => c.name === 'worker:progress' ? `progress:${c.args.stage}` : c.name);
   assert.ok(order.indexOf('progress:sync') < order.indexOf('blobs:prepare'));
-  await until(() => existsSync(path.join(jobDir('job5'), 'synced.json')), 'synced.json');
-  assert.deepEqual(JSON.parse(readFileSync(path.join(jobDir('job5'), 'synced.json'), 'utf8')), { songId: 'song1' });
+  assert.deepEqual(await until(() => readJson(path.join(jobDir('job5'), 'synced.json')), 'synced.json'), { songId: 'song1' });
+  assert.deepEqual(readdirSync(jobDir('job5')).filter(name => name.endsWith('.tmp')), [], 'no temp file is left behind');
   // The accelerator the split ran on rides on the next beat (B5).
   await until(() => beatsOf(client).find(b => b.accelerator), 'accelerator beat');
   assert.deepEqual(beatsOf(client).find(b => b.accelerator), { state: 'idle', appVersion: '2.0.0', platform: 'linux-x64', accelerator: 'Apple GPU' });
@@ -641,8 +736,7 @@ test('a canceled job is stopped and reports nothing', { timeout: 20_000 }, async
     handlers: { 'worker:progress': () => false },
   });
   const pidFile = path.join(jobDir('job8'), 'pid');
-  await until(() => existsSync(pidFile), 'processor start');
-  const pid = Number(readFileSync(pidFile, 'utf8'));
+  const pid = await until(() => readPid(pidFile), 'processor start');
   await until(() => !alive(pid), 'processor stopped');
   await until(() => beatsOf(client).at(-1)?.state === 'idle', 'idle beat');
   assert.equal(progressOf(client).filter(p => p.stage === 'error').length, 0);
@@ -652,8 +746,7 @@ test('shutting down (quit or update) stops the processor, leaves the job running
   const { client, exits, app, jobDir } = await companion(t, { jobs: [{ _id: 'job9', kind: 'separate', source: { type: 'url', value: 'https://youtu.be/x' }, settings: {}, quality: {},
     fake: { lines: [{ stage: 'separate', percent: 40, message: 'Separating stems…' }], hang: true } }] });
   const pidFile = path.join(jobDir('job9'), 'pid');
-  await until(() => existsSync(pidFile) && beatsOf(client).some(b => b.state === 'busy'), 'running job');
-  const pid = Number(readFileSync(pidFile, 'utf8'));
+  const pid = await until(() => beatsOf(client).some(b => b.state === 'busy') && readPid(pidFile), 'running job');
   await app.shutdown();
   assert.deepEqual(exits, [0]);
   await until(() => !alive(pid), 'processor stopped');
