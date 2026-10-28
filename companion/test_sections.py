@@ -19,8 +19,11 @@ starts the bar), standing in for BeatNet, which needs torch. Rebuild them with
     python companion/test_sections.py --build-fixtures <msaf-data>/Sargon
 """
 import importlib.util
+import json
 import pathlib
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -83,6 +86,18 @@ def synthetic_features(form, seed=0, noise=0.35):
     n = len(rms)
     starts = np.arange(n) * BAR
     return np.array(chroma).T, np.array(mfcc).T, np.array(rms), starts, starts + BAR
+
+
+def with_silence(form_features, silent_bars, after):
+    """Bar features with a run of identical (digitally silent) bars and then `after` appended."""
+    chroma, mfcc, rms, _, _ = form_features
+    tail = synthetic_features(after, seed=9)
+    floor = np.full(mfcc.shape[0], -40.0)  # every silent bar has the same timbre: the floor
+    chroma = np.concatenate([chroma, np.zeros((12, silent_bars)), tail[0]], axis=1)
+    mfcc = np.concatenate([mfcc, np.repeat(floor[:, None], silent_bars, axis=1), tail[1]], axis=1)
+    rms = np.concatenate([rms, np.zeros(silent_bars), tail[2]])
+    starts = np.arange(rms.size) * BAR
+    return chroma, mfcc, rms, starts, starts + BAR
 
 
 def _chord(freqs, t, harmonics=1):
@@ -172,6 +187,8 @@ class TooShortTests(unittest.TestCase):
         self.assertEqual(suggest(np.zeros(RATE, dtype=np.float32), 0, downbeats(32), duration=64.0), [])
 
     def test_a_single_segment_is_no_structure(self):
+        # The structure stage finding one part is what every input without structure comes to
+        # (NoStructureTests); here it is forced.
         chroma, mfcc, rms, starts, ends = synthetic_features(FORM)
         one_cluster = lambda features, mfcc: (np.zeros(features.shape[0], dtype=int), np.ones((features.shape[0], 3)))
         with patch.object(sections, 'segment', one_cluster):
@@ -179,6 +196,63 @@ class TooShortTests(unittest.TestCase):
 
 
 # ---- Structure (numpy only) ------------------------------------------------------------------------
+
+class NoStructureTests(unittest.TestCase):
+    """Input without parts gets no suggestion, rather than invented sections."""
+
+    def test_identical_bars_give_nothing(self):
+        starts = np.arange(60) * BAR
+        self.assertEqual(suggest_from_features(np.zeros((12, 60)), np.zeros((13, 60)), np.zeros(60), starts, starts + BAR), [])
+        self.assertEqual(suggest_from_features(np.ones((12, 60)), np.full((13, 60), -40.0), np.full(60, .2), starts, starts + BAR), [])
+
+    def test_one_section_throughout_gives_nothing(self):
+        for seed in range(5):
+            for letter in 'ABC':
+                with self.subTest(seed=seed, letter=letter):
+                    self.assertEqual(suggest_from_features(*synthetic_features([(letter, 48)], seed=seed)), [])
+
+    def test_songs_with_parts_are_far_from_the_threshold(self):
+        """The Fiedler value of every structured input here stays under half MAX_FIEDLER."""
+        def fiedler(chroma, mfcc, *_):
+            features = sections.stack_features(chroma, mfcc)
+            rec = sections.lag_median_filter(sections.recurrence_affinity(features), sections.LAG_FILTER_BARS)
+            graph = sections.balance(0.5 * (rec + rec.T), sections.sequence_affinity(sections._zblock(mfcc).T))
+            return float(np.linalg.eigvalsh(sections.normalized_laplacian(graph))[1])
+        structured = [synthetic_features(FORM, seed=s, noise=n) for s in range(3) for n in (0.35, 0.8)]
+        structured += [with_silence(synthetic_features(FORM), 40, FORM[:2])]
+        for path in fixture_paths():
+            with np.load(path) as d:
+                structured.append((d['chroma'], d['mfcc']))
+        for features in structured:
+            self.assertLess(fiedler(*features), sections.MAX_FIEDLER / 2)
+        for seed in range(3):
+            self.assertGreater(fiedler(*synthetic_features([('A', 48)], seed=seed)), sections.MAX_FIEDLER * 1.5)
+
+    def test_a_run_of_identical_bars_is_one_section(self):
+        """Digital silence between a song and a hidden track: the song keeps its sections, the
+        silence is one section, however long."""
+        for silent in (30, 60, 100):
+            with self.subTest(silent=silent):
+                features = with_silence(synthetic_features(FORM), silent, FORM[:2])
+                result = suggest_from_features(*features)
+                end = 48 * BAR
+                assert_near_bars(self, boundaries(result), FORM_BOUNDARIES + [end, end + silent * BAR, end + (silent + 8) * BAR])
+                self.assertEqual([s['label'] for s in result], FORM_LABELS + ['Part A', 'Verse', 'Chorus'])
+
+    def test_identical_bars_link_along_their_run(self):
+        """Every bar of a run of identical bars keeps recurrence links (ties do not all go to
+        the run's first bars), and their sequence links stay strong while the edges of the
+        run stay weak."""
+        features = with_silence(synthetic_features(FORM), 60, FORM[:2])
+        stacked = sections.stack_features(features[0], features[1])
+        degree = (sections.recurrence_affinity(stacked) > 0).sum(axis=1)
+        self.assertTrue((degree[48:108] > 0).all(), degree[48:108].tolist())
+        seq = sections.sequence_affinity(sections._zblock(features[1]).T)
+        self.assertAlmostEqual(seq[60, 61], 1.0)
+        self.assertLess(seq[47, 48], 0.01)  # music → silence
+        self.assertLess(seq[107, 108], 0.01)  # silence → music
+
+
 
 class StructureTests(unittest.TestCase):
     def test_the_synthetic_form_gives_its_boundaries_and_names(self):
@@ -316,18 +390,24 @@ class NamingTableTests(unittest.TestCase):
         ('the most-repeated cluster wins over a louder one',
          [(0, 8, .2), (1, 8, .9), (0, 8, .2), (1, 8, .9), (0, 8, .2)],
          ['Chorus', 'Verse', 'Chorus', 'Verse', 'Chorus']),
-        ('only a repeated cluster can be the Verse',
+        ('any cluster that precedes the Chorus can be the Verse; on a tie, the earlier one',
          [(0, 8, .5), (1, 8, .2), (0, 8, .5), (2, 8, .3), (0, 8, .5)],
-         ['Chorus', 'Bridge', 'Chorus', 'Bridge', 'Chorus']),
+         ['Chorus', 'Verse', 'Chorus', 'Bridge', 'Chorus']),
+        ('on a tie for the Verse, the cluster that occurs more often wins',
+         [(1, 8, .3), (0, 8, .6), (2, 8, .2), (0, 8, .6), (2, 8, .2), (3, 8, .1), (0, 8, .6)],
+         ['Intro', 'Chorus', 'Verse', 'Chorus', 'Verse', 'Part A', 'Chorus']),
         ('the Verse is the cluster that most often directly precedes the Chorus',
          [(0, 8, .2), (1, 8, .3), (2, 8, .6), (1, 8, .3), (2, 8, .6), (0, 8, .2), (2, 8, .6)],
          ['Part A', 'Verse', 'Chorus', 'Verse', 'Chorus', 'Part A', 'Chorus']),
         ('a unique segment that is not between two Choruses is a Part',
          [(0, 8, .2), (1, 8, .6), (2, 8, .3), (0, 8, .2), (1, 8, .6), (3, 8, .3), (1, 8, .6)],
          ['Verse', 'Chorus', 'Part A', 'Verse', 'Chorus', 'Bridge', 'Chorus']),
-        ('nothing repeats: no Chorus or Verse; Parts in order of first appearance',
+        ('nothing repeats: the loudest cluster is the Chorus, what precedes it the Verse',
          [(2, 13, .2), (0, 8, .5), (1, 8, .3)],
-         ['Part A', 'Part B', 'Outro']),
+         ['Verse', 'Chorus', 'Outro']),
+        ('equally repeated and equally loud: the earlier cluster is the Chorus',
+         [(0, 8, .3), (1, 8, .3), (0, 8, .3), (1, 8, .3)],
+         ['Chorus', 'Verse', 'Chorus', 'Verse']),
         ('Part letters follow first appearance, whatever the cluster ids',
          [(5, 13, .2), (3, 8, .9), (4, 8, .1), (3, 8, .9), (4, 8, .1), (6, 8, .2), (7, 8, .2), (6, 8, .2), (7, 8, .2)],
          ['Part A', 'Chorus', 'Verse', 'Chorus', 'Verse', 'Part B', 'Part C', 'Part B', 'Part C']),
@@ -371,11 +451,15 @@ def hit_rates(result, starts, ends, ref_times, ref_labels):
 
 @unittest.skipUnless(fixture_paths(), 'no recorded section fixtures')
 class RecordedFixtureTests(unittest.TestCase):
-    """Three real recordings: suggested boundaries sit within ±1 bar of the hand annotation.
+    """Three real recordings, measured against their hand annotations at ±1 bar.
 
-    Unsupervised structure analysis does not find every annotated change (published
-    systems reach an F-measure around 0.5–0.6 at ±3 s); the floors below hold the
-    current method with a margin, so a regression shows up while noise does not.
+    Unsupervised structure analysis does not place every boundary within a bar of an
+    annotated one, nor find every annotated change (published systems reach an F-measure
+    around 0.5–0.6 at ±3 s), so this checks hit rates, not every boundary: at least
+    MIN_PRECISION of the suggested boundaries lie within a bar of an annotated boundary,
+    and at least MIN_RECALL of the annotated changes of section have a suggested boundary
+    within a bar (measured: precision 0.67–0.82, recall 0.53–0.56). The strict "every
+    boundary within ±1 bar" holds on the synthetic form (StructureTests, AudioTests).
     """
 
     #: Precision floor: at least this share of suggested boundaries are annotated ones.
@@ -482,6 +566,26 @@ class AudioTests(unittest.TestCase):
         self.assertEqual(suggest(stereo, RATE, downbeats(48), duration=mono.size / RATE), expected)
         self.assertEqual(suggest(stereo.T, RATE, downbeats(48), duration=mono.size / RATE), expected)
 
+    def test_recordings_without_parts_give_nothing(self):
+        silence = np.zeros(64 * RATE, dtype=np.float32)
+        noise = (0.1 * np.random.RandomState(0).randn(64 * RATE)).astype(np.float32)
+        cases = {f'one section ({letter})': synthetic_audio([(letter, 48)]) for letter in 'ABC'}
+        cases.update({'silence': silence, 'steady noise': noise})
+        for name, audio in cases.items():
+            with self.subTest(name):
+                bars = int(audio.size / RATE / BAR)
+                self.assertEqual(suggest(audio, RATE, downbeats(bars), duration=audio.size / RATE), [])
+
+    def test_silence_before_a_hidden_track_is_one_section(self):
+        song, hidden = synthetic_audio(FORM), synthetic_audio(FORM[:2], seed=5)
+        for silent in (30, 60, 100):
+            with self.subTest(silent=silent):
+                audio = np.concatenate([song, np.zeros(int(silent * BAR * RATE), dtype=np.float32), hidden])
+                result = suggest(audio, RATE, downbeats(48 + silent + 16), duration=audio.size / RATE)
+                end = 48 * BAR
+                assert_near_bars(self, boundaries(result), FORM_BOUNDARIES + [end, end + silent * BAR, end + (silent + 8) * BAR])
+                self.assertEqual([s['label'] for s in result], FORM_LABELS + ['Part A', 'Verse', 'Chorus'])
+
     def test_bar_features_shape(self):
         audio = synthetic_audio([('A', 4), ('B', 4)])
         starts, ends = bar_grid(downbeats(8), audio.size / RATE)
@@ -496,16 +600,30 @@ class RuntimeTests(unittest.TestCase):
     #: architecture §9.8: under 10 s for a 5-minute song in the container.
     BUDGET_SECONDS = 10.0
 
-    @classmethod
-    def setUpClass(cls):
-        # Importing librosa's feature module is a process start-up cost the job pays
-        # once (and a beats job has already paid it through BeatNet), not part of the call.
-        import librosa.feature  # noqa: F401
-        librosa.feature.chroma_cqt
+    FORM = [('D', 8), ('A', 16), ('B', 16), ('A', 16), ('B', 16), ('C', 16), ('B', 16), ('A', 16), ('B', 16), ('E', 14)]
+
+    def test_a_five_minute_song_takes_under_ten_seconds_from_a_cold_start(self):
+        """A sections job imports sections (and so librosa) on its first call: the budget
+        covers that import too, timed in a fresh interpreter."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / 'song.npy'
+            np.save(path, synthetic_audio(self.FORM))
+            script = (
+                'import json, sys, time\n'
+                'import numpy as np\n'
+                'audio = np.load(sys.argv[1])\n'
+                'started = time.perf_counter()\n'
+                'import sections\n'
+                f'result = sections.suggest(audio, {RATE}, [i * {BAR} for i in range(150)], duration=audio.size / {RATE})\n'
+                'print(json.dumps({"elapsed": time.perf_counter() - started, "sections": len(result)}))\n')
+            out = subprocess.run([sys.executable, '-c', script, str(path)], cwd=HERE, capture_output=True, text=True, timeout=120)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        report = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertLess(report['elapsed'], self.BUDGET_SECONDS, f"{report['elapsed']:.1f} s for a 5-minute song, cold")
+        self.assertGreaterEqual(report['sections'], 2)
 
     def test_a_five_minute_song_takes_under_ten_seconds(self):
-        form = [('D', 8), ('A', 16), ('B', 16), ('A', 16), ('B', 16), ('C', 16), ('B', 16), ('A', 16), ('B', 16), ('E', 14)]
-        audio = synthetic_audio(form)
+        audio = synthetic_audio(self.FORM)
         seconds = audio.size / RATE
         self.assertAlmostEqual(seconds, 300.0)
         started = time.perf_counter()
