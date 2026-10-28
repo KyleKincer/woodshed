@@ -1,12 +1,15 @@
 /* Popover (src/ui/popover.js) and the layers every U2 overlay shares. With the
  * Popover API an overlay sits in the top layer; without it (Safari before
  * 17, fx-nofeature=popover) it is a fixed element on the z-layer token of its
- * kind (spec §8.5). */
+ * kind (spec §8.5). Popovers, menus and sheets stack in the order they open:
+ * popover.js sets --ui-layer-lift on one opened above a higher-kind layer (a
+ * menu from a sheet). */
 @layer primitives {
   [data-layer-fallback] { position: fixed; }
+  /* --z-stacked: the kind's token, lifted by the open-order offset. */
   [data-layer-fallback][data-layer=popover],
-  [data-layer-fallback][data-layer=menu] { z-index: var(--z-popover); }
-  [data-layer-fallback][data-layer=sheet] { z-index: var(--z-sheet); }
+  [data-layer-fallback][data-layer=menu] { --z-stacked: calc(var(--z-popover) + var(--ui-layer-lift, 0)); z-index: var(--z-stacked); }
+  [data-layer-fallback][data-layer=sheet] { --z-stacked: calc(var(--z-sheet) + var(--ui-layer-lift, 0)); z-index: var(--z-stacked); }
   [data-layer-fallback][data-layer=toast] { z-index: var(--z-toast); }
   [data-layer-fallback][data-layer=coachmark] { z-index: var(--z-coachmark); }
 

@@ -163,4 +163,23 @@ describe('anchorTo(): the JS fallback', () => {
     expect(anchor.style.getPropertyValue('anchor-name')).toBe('');
     expect(el.dataset.anchor).toBeUndefined();
   });
+
+  test('css mode marks an overlay that fits on neither side data-fit=shrink (the roomier side, capped)', () => {
+    const {anchor, el} = mount();
+    setRect(anchor, {x: 100, y: 380, width: 80, height: 32});
+    setRect(el, {x: 0, y: 0, width: 200, height: 120});
+    const positioner = anchorTo(el, anchor, {placement: 'bottom', mode: 'css'});
+    expect(el.dataset.fit).toBeUndefined();
+    setRect(el, {x: 0, y: 0, width: 200, height: 420, scrollHeight: 600});
+    positioner.update();
+    expect(el.dataset.fit).toBe('shrink');
+    setRect(el, {x: 0, y: 0, width: 200, height: 120});
+    positioner.update();
+    expect(el.dataset.fit).toBeUndefined();
+    setRect(el, {x: 0, y: 0, width: 200, height: 700});
+    positioner.update();
+    expect(el.dataset.fit).toBe('shrink');
+    positioner.destroy();
+    expect(el.dataset.fit).toBeUndefined();
+  });
 });

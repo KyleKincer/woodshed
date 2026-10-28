@@ -17,12 +17,14 @@
 //            with the values.
 //   danger   the destructive style for the confirm action only (spec §7.9); focus starts on the safe action.
 //   Esc closes with null (through the dispatcher's overlay stack, as a modal overlay, D36). Opening a dialog closes open
-//   menus. Focus returns to where it was. `onClose(value)` runs once; destroy() closes silently (closed resolves null).
+//   menus; closing it closes every overlay opened inside it (reason 'dialog'). Focus returns to where it was. `onClose(value)` runs once; destroy() closes silently (closed resolves null).
 
 import {pushOverlay} from '../app/dispatch.js';
 import {h} from './h.js';
 import {closeAllMenus} from './menu.js';
-import {applyCommon, withDefaults, layerHost, pushModalHost, restoreFocus, setContent, trackLayer, trapTab} from './popover.js';
+import {
+  applyCommon, closeLayersInside, withDefaults, layerHost, pushModalHost, restoreFocus, setContent, trackLayer, trapTab,
+} from './popover.js';
 import '../styles/primitives/dialog.css';
 
 const VARIANTS = new Set(['primary', 'secondary', 'quiet', 'danger']);
@@ -203,6 +205,8 @@ export function Dialog(props = {}) {
   function close(value = null, {silent = false} = {}) {
     if (!open) return;
     open = false;
+    // Overlays opened inside the dialog (a menu, a popover) close with it rather than being removed with it.
+    closeLayersInside(el, 'dialog');
     for (const fn of cleanups.splice(0).reverse()) fn();
     restoreFocus(previous, el);
     if (el.open) el.close();
@@ -211,6 +215,7 @@ export function Dialog(props = {}) {
     resolveClosed(silent ? null : value);
   }
 
+  el.__uiClose = () => close(null);
   applyProps(p);
   renderFields();
   renderActions();

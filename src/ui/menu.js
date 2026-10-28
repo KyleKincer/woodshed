@@ -5,14 +5,15 @@
 //         className, id, attrs, dataset, testid})
 //     → {el, set(partial), close(reason = 'close'), destroy(), get open, get presentation, sheet}
 //   Menu.open(items, opts) → the same handle
-//   bindContextMenu(el, getItems, {label, placement, registry, presentation, onOpen}) → off
+//   bindContextMenu(el, getItems, {label, placement, registry, presentation, onOpen}) → off (also closes its open menu)
 //   closeAllMenus(reason = 'dismiss')       Dialog calls it: opening a Dialog closes open menus
 //
 //   MenuItem = {id?, label, kbd?, command?, icon?, type: 'item'|'checkbox'|'radio'|'separator'|'submenu', checked?,
 //               items?, disabled?, reason?, danger?, run?, args?}
 //   A `command` item takes its label (def.menu.label, else the title), key-cap (keys[0]), enabled state, checked state
 //   and disabled reason from the registry (`registry.state(id)`), and follows registry changes while the menu is open;
-//   an item's own label, kbd, icon, type and checked win. `reason` is a visible disabled reason (aria-describedby).
+//   an item's own label, kbd, icon, type and checked win. `reason` is a visible disabled reason (aria-describedby; the
+//   row's name is its label alone, through aria-labelledby).
 //   Activating an item closes the menu, returns focus, then runs the command (`registry.run(id, {source, args, event})`,
 //   source 'key' or 'pointer') and the item's `run({item, event, source})`.
 //
@@ -118,14 +119,17 @@ export function Menu(props = {}) {
       row.removeAttribute('aria-expanded');
     }
     if (r.kbd) row.setAttribute('aria-keyshortcuts', keyAria(r.kbd)); else row.removeAttribute('aria-keyshortcuts');
-    const reasonId = `${row.id}-reason`;
+    // The name is the label alone; a disabled reason is the description (it is inside the row, so it would otherwise
+    // be read twice, as part of the name and as the description).
+    const labelId = `${row.id}-label`, reasonId = `${row.id}-reason`;
+    row.setAttribute('aria-labelledby', labelId);
     if (r.reason) row.setAttribute('aria-describedby', reasonId); else row.removeAttribute('aria-describedby');
     const parts = [];
     const mark = !r.checked ? null : r.type === 'radio' ? h('span', {class: 'ui-menu-dot'}) : glyph('check', {size: 16});
     if (level.hasChecks) parts.push(h('span', {class: 'ui-menu-check', 'aria-hidden': 'true'}, mark));
     if (level.hasIcons) parts.push(h('span', {class: 'ui-menu-icon', 'aria-hidden': 'true'}, r.icon ? glyph(r.icon) : null));
     parts.push(h('span', {class: 'ui-menu-text'},
-      h('span', {class: 'ui-menu-label'}, r.label),
+      h('span', {class: 'ui-menu-label', id: labelId}, r.label),
       r.reason ? h('span', {class: 'ui-menu-reason', id: reasonId}, r.reason) : null));
     if (r.kbd) parts.push(h('kbd', {class: 'ui-menu-kbd', 'aria-hidden': 'true'}, keyLabel(r.kbd)));
     if (r.type === 'submenu') parts.push(h('span', {class: 'ui-menu-chevron', 'aria-hidden': 'true'}, glyph('chevron-right', {size: 16})));
@@ -364,6 +368,7 @@ export function Menu(props = {}) {
   }
 
   if (presentation === 'popover') {
+    root.el.__uiClose = close;
     showLayer(root.el, 'menu');
     root.positioner = anchorTo(root.el, p.anchor, {placement: p.placement, gap: isElement(p.anchor) ? 4 : 2});
     root.pop = pushOverlay({el: root.el, modal: true, onEscape: () => close('escape')});
@@ -494,6 +499,10 @@ export function bindContextMenu(el, getItems, {label, placement = 'bottom', regi
   el.addEventListener('keydown', onKeydown);
   return () => {
     cancelPress();
+    // A menu still open for the unbound element (a card re-rendered away) closes with the binding.
+    const menu = current;
+    current = null;
+    menu?.destroy();
     el.removeEventListener('contextmenu', onContextMenu);
     el.removeEventListener('pointerdown', onPointerDown);
     el.removeEventListener('pointermove', onPointerMove);

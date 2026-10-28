@@ -499,4 +499,31 @@ describe('bindContextMenu', () => {
     keydown('Shift+F10');
     expect(menus).toHaveLength(0);
   });
+
+  test('off() also closes a menu it opened (the card is unmounted while its menu is open)', () => {
+    contextmenu(card);
+    const [[m]] = menus;
+    expect(m.open).toBe(true);
+    expect(openOverlays()).toHaveLength(1);
+    off();
+    card.remove();
+    expect(m.open).toBe(false);
+    expect(document.querySelector('.ui-menu')).toBeNull();
+    expect(openOverlays()).toHaveLength(0);
+  });
+});
+
+describe('accessible names', () => {
+  test("an item's name is its label; a disabled reason is its description only", () => {
+    const m = open({items: ITEMS});
+    const row = rows(m).find(r => labelOf(r) === 'Re-split…');
+    const label = document.getElementById(row.getAttribute('aria-labelledby'));
+    expect(label.textContent).toBe('Re-split…');
+    expect(label.classList.contains('ui-menu-label')).toBe(true);
+    expect(document.getElementById(row.getAttribute('aria-describedby')).textContent).toBe('Re-split from Woodshed for desktop.');
+    expect(label.contains(row.querySelector('.ui-menu-reason'))).toBe(false);
+    const plain = rows(m).find(r => labelOf(r) === 'Delete');
+    expect(document.getElementById(plain.getAttribute('aria-labelledby')).textContent).toBe('Delete');
+    expect(plain.hasAttribute('aria-describedby')).toBe(false);
+  });
 });

@@ -73,9 +73,16 @@ export function CoachMark(props = {}) {
   apply(p);
   skipButton.addEventListener('click', () => finish(p.onSkip));
   const isPlaying = () => (typeof p.playing === 'function' ? !!p.playing() : !!store.stage.value?.playing);
-  const stopWatching = effect(() => {
-    if (isPlaying()) hide(); else show();
-  });
+  // The effect tracks the signals the current `playing` reads; set({playing}) re-creates it for the new source.
+  let stopEffect = null;
+  const watch = () => {
+    stopEffect?.();
+    stopEffect = effect(() => {
+      if (isPlaying()) hide(); else show();
+    });
+  };
+  const stopWatching = () => { stopEffect?.(); stopEffect = null; };
+  watch();
 
   return {
     el,
@@ -86,6 +93,7 @@ export function CoachMark(props = {}) {
       const prev = p;
       p = {...p, ...partial};
       apply(p, prev);
+      if (p.playing !== prev.playing) watch();
       if (shown && (p.anchor !== prev.anchor || p.placement !== prev.placement)) {
         positioner?.destroy();
         positioner = anchorTo(el, p.anchor, {placement: p.placement});

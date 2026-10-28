@@ -33,6 +33,17 @@
   [data-anchor=css][data-placement=left] { position-area: inline-start span-block-end; }
   [data-anchor=css][data-placement=right][data-align=center] { position-area: inline-end center; }
   [data-anchor=css][data-placement=left][data-align=center] { position-area: inline-start center; }
+  /* Fits on neither side (position.js sets data-fit=shrink): the roomier side, capped to its area (100% is the
+   * position-area cell), so the overlay never covers its own anchor. */
+  [data-anchor=css][data-fit=shrink] {
+    max-block-size: calc(100% - 2 * var(--s2));
+    position-try-order: most-block-size;
+  }
+  [data-anchor=css][data-fit=shrink]:is([data-placement=left], [data-placement=right]) {
+    max-block-size: calc(100dvh - 2 * var(--s2));
+    max-inline-size: calc(100% - 2 * var(--s2));
+    position-try-order: most-inline-size;
+  }
 
   [data-anchor=js] {
     max-inline-size: calc(100vw - 2 * var(--s2));

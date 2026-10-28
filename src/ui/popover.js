@@ -15,11 +15,16 @@
 //   glyph(name, {size})             an <svg class="ui-icon"> using the sprite symbol #i-<name>
 //   setContent(el, content)         content: a Node, a string, an array of them, or null
 //   supportsPopover(win)            the Popover API exists
-//   showLayer(el, kind) / hideLayer(el)   put an overlay in the top layer (or the fallback layer, data-layer=<kind>)
+//   showLayer(el, kind) / hideLayer(el)   put an overlay in the top layer (or the fallback layer, data-layer=<kind>);
+//                                   fallback popovers, menus and sheets stack in the order they open (a menu opened from
+//                                   a sheet is drawn above it)
 //   trackLayer(el) → untrack        record an overlay opened another way (a modal <dialog>) in the layer stack
 //   onOutside(el, {except, onDismiss}) → off   pointer-down outside el, its exceptions and every layer opened after it
 //   pushModalHost(el) → pop / layerHost(doc)   overlays opened while a modal <dialog> is open are placed inside it, so
 //                                   they are not inert
+//   closeLayersInside(host, reason) a modal host about to close closes the overlays opened inside it (topmost first)
+//   followLayerHost(el, kind) → off a persistent layer (feedback.js's toast region) that moves into the topmost modal
+//                                   host while one is open (so its buttons are not inert) and back to the body after
 //   firstFocusable(root) / focusInto(el, {preferred}) / restoreFocus(previous, el)
 
 import {pushOverlay} from '../app/dispatch.js';
@@ -94,6 +99,10 @@ export function setContent(el, content) {
 
 const layers = [];        // open overlay elements, bottom first
 const modalHosts = [];    // open modal <dialog> elements, bottom first
+const hostListeners = new Set();   // followLayerHost syncs, run when the topmost modal host changes
+const STACKED = new Set(['popover', 'menu', 'sheet']);   // fallback kinds that stack in open order
+
+const notifyHosts = () => { for (const fn of [...hostListeners]) fn(); };
 
 /** The Popover API exists (fx-nofeature=popover removes it). */
 export function supportsPopover(win = globalThis.window) {
@@ -112,9 +121,40 @@ export function trackLayer(el) {
 /** A modal <dialog> is open: later overlays go inside it. Returns `pop`. */
 export function pushModalHost(el) {
   modalHosts.push(el);
+  notifyHosts();
   return () => {
     const at = modalHosts.lastIndexOf(el);
-    if (at >= 0) modalHosts.splice(at, 1);
+    if (at >= 0) { modalHosts.splice(at, 1); notifyHosts(); }
+  };
+}
+
+/**
+ * Closes every overlay opened inside `host` (a modal <dialog> or sheet that is about to close), topmost first, through
+ * the close function each primitive records as `el.__uiClose(reason)`. Layers without one (a followLayerHost region) are
+ * left for their owner.
+ */
+export function closeLayersInside(host, reason = 'close') {
+  for (const layer of [...layers].reverse()) {
+    if (layer !== host && host.contains(layer) && typeof layer.__uiClose === 'function') layer.__uiClose(reason);
+  }
+}
+
+/**
+ * Keeps a persistent layer (the toast region) in the top layer inside the topmost open modal host, else the body, so
+ * its buttons stay clickable while a modal dialog is open; it moves back out before the host closes. Returns `off`,
+ * which hides and removes it.
+ */
+export function followLayerHost(el, kind = 'toast') {
+  const sync = () => {
+    const host = layerHost(el.ownerDocument);
+    if (el.parentNode !== host) host.append(el);
+    showLayer(el, kind);
+  };
+  sync();
+  hostListeners.add(sync);
+  return () => {
+    hostListeners.delete(sync);
+    hideLayer(el);
   };
 }
 
@@ -138,9 +178,33 @@ export function showLayer(el, kind = 'popover') {
     if (!popoverOpen(el)) el.showPopover();
   } else {
     el.setAttribute('data-layer-fallback', '');
+    stackFallback(el, kind);
   }
   el.__uiUntrack?.();
   el.__uiUntrack = trackLayer(el);
+}
+
+const LIFT = '--ui-layer-lift';
+const liftOf = el => Number(el.style.getPropertyValue(LIFT)) || 0;
+/** The resolved z-index of a fallback layer: its kind's token plus its lift (popover.css). */
+const zOf = el => {
+  const z = parseInt(el.ownerDocument.defaultView?.getComputedStyle?.(el)?.zIndex, 10);
+  return Number.isFinite(z) ? z : liftOf(el);   // no stylesheet (unit tests): the lift alone
+};
+
+/**
+ * Without the top layer, a popover, menu or sheet goes above every one opened before it: popover.css adds
+ * `--ui-layer-lift` to its kind's z token when the token alone would leave it underneath.
+ */
+function stackFallback(el, kind) {
+  el.style.removeProperty(LIFT);
+  if (!STACKED.has(kind)) return;
+  let top = -Infinity;
+  for (const layer of layers) {
+    if (layer !== el && layer.isConnected && layer.hasAttribute('data-layer-fallback') && STACKED.has(layer.dataset.layer)) top = Math.max(top, zOf(layer));
+  }
+  const own = zOf(el);
+  if (top >= own) el.style.setProperty(LIFT, String(top - own + 1));
 }
 
 /** Hides and removes an overlay shown with showLayer. */
@@ -150,6 +214,7 @@ export function hideLayer(el) {
   if (el.hasAttribute('popover') && popoverOpen(el)) {
     try { el.hidePopover(); } catch { /* already hidden */ }
   }
+  el.style.removeProperty(LIFT);
   el.remove();
 }
 
@@ -264,8 +329,10 @@ export function Popover(props = {}) {
     offTrap?.();
     restoreFocus(previous, el);
     hideLayer(el);
+    el.__uiClose = null;
     if (reason !== 'destroy') p.onClose?.(reason);
   };
+  el.__uiClose = close;
 
   applyAttrs(p);
   setContent(body, p.content);

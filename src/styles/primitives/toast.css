@@ -10,10 +10,16 @@
     flex-direction: column;
     align-items: center;
     gap: var(--s2);
+    /* As a [popover] (followLayerHost) the UA sizes it to fit its content and gives it a frame: undo that so it
+     * stays the full-width bottom-centre strip. */
+    inline-size: auto;
+    block-size: auto;
     margin: 0;
     padding: 0 var(--s4);
+    overflow: visible;
     border: 0;
     background: transparent;
+    color: inherit;
     pointer-events: none;
   }
   .ui-toast-region > * { pointer-events: auto; }

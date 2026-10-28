@@ -17,7 +17,8 @@
 //   anchorTo(el, anchor, {placement, gap, margin, align, mode = 'auto'}) → {mode: 'css'|'js', update(), destroy()}
 //     Positions a fixed (top-layer or fallback) overlay. 'css' sets `anchor-name` on the anchor element and
 //     `position-anchor` on the overlay, with `data-placement` choosing the position-area and try-fallbacks in
-//     position.css. 'js' measures and writes left/top (and max sizes) from `place()`, again on scroll, resize and size
+//     position.css; when the overlay fits on neither side, `data-fit=shrink` makes the browser pick the roomier side and
+//     cap it there (as place() does), measured again on resize and size changes. 'js' measures and writes left/top (and max sizes) from `place()`, again on scroll, resize and size
 //     changes. A point anchor always uses 'js'. `el.dataset.anchor` records the mode and `el.dataset.side` the side
 //     ('css' mode: the preferred side; the browser may flip it).
 
@@ -141,10 +142,27 @@ export function anchorTo(el, anchor, {placement = 'bottom', gap = GAP, margin = 
     anchor.style.setProperty('anchor-name', previous && previous !== 'none' ? `${previous}, ${name}` : name);
     el.style.setProperty('position-anchor', name);
     el.dataset.anchor = 'css';
+    // Too big for either side: shrink on the roomier one (position.css), as place() would.
+    let cssDestroyed = false;
+    const fit = () => {
+      if (cssDestroyed || !el.isConnected) return;
+      const size = {width: Math.max(el.offsetWidth, el.scrollWidth), height: Math.max(el.offsetHeight, el.scrollHeight)};
+      const r = place(anchor.getBoundingClientRect(), size, viewportRect(win), placement, {gap, margin, align});
+      const shrink = vertical(r.side) ? r.maxHeight != null : r.maxWidth != null;
+      if (shrink) el.dataset.fit = 'shrink'; else delete el.dataset.fit;
+    };
+    const cssObserver = typeof win?.ResizeObserver === 'function' ? new win.ResizeObserver(fit) : null;
+    cssObserver?.observe(el);
+    win?.addEventListener?.('resize', fit);
+    fit();
     return {
       mode: 'css',
-      update() {},
+      update: fit,
       destroy() {
+        cssDestroyed = true;
+        cssObserver?.disconnect();
+        win?.removeEventListener?.('resize', fit);
+        delete el.dataset.fit;
         const names = anchor.style.getPropertyValue('anchor-name').split(',').map(s => s.trim()).filter(s => s && s !== name);
         if (names.length) anchor.style.setProperty('anchor-name', names.join(', '));
         else anchor.style.removeProperty('anchor-name');

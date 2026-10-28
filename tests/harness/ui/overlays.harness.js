@@ -1,15 +1,20 @@
 // U2's harness (/__harness/overlays): every overlay primitive on fake contexts, with the real dispatcher running.
 //   ?layout=rail|band     wraps the Sheets section in [data-stage-layout] (Sheet's auto layout)
-//   ?demo=menu|submenu|context|popover-<corner>|sheet|sheet-modal|dialog|form|coach|toast   opens one overlay at load
-// window.__overlays = {open(name), handle} lets states open and inspect overlays; the corners are
-// top-left, top-right, bottom-left and bottom-right.
+//   ?demo=menu|submenu|context|popover-<corner>|popover-inline|sheet|sheet-modal|dialog|form|coach|toast|tall-menu|
+//         menu-in-sheet|dialog-toast   opens one overlay at load
+// window.__overlays = {open(name), handle, overlays(), state} lets states open and inspect overlays; the corners are
+// top-left, top-right, bottom-left and bottom-right, and every corner popover asks for placement 'bottom' (the bottom
+// corners must flip). popover-inline asks for 'right' from the top-right corner (it must flip to the left).
+//   tall-menu       a 14-item menu from a mid-screen button: too tall for either side, it shrinks on the roomier one
+//   menu-in-sheet   a menu opened from a button inside a non-modal sheet: it must be drawn (and hit) above the sheet
+//   dialog-toast    a modal dialog with the toast region following it (followLayerHost): Undo stays clickable
 import {register, registerMany, get as getCommand, invalidate} from '/src/app/commands.js';
-import {startDispatcher} from '/src/app/dispatch.js';
+import {openOverlays, startDispatcher} from '/src/app/dispatch.js';
 import {Banner} from '/src/ui/banner.js';
 import {CoachMark} from '/src/ui/coachmark.js';
 import {Dialog} from '/src/ui/dialog.js';
 import {bindContextMenu, Menu} from '/src/ui/menu.js';
-import {Popover} from '/src/ui/popover.js';
+import {Popover, followLayerHost} from '/src/ui/popover.js';
 import {Sheet} from '/src/ui/sheet.js';
 import {InlineStatus} from '/src/ui/status.js';
 import {Toast} from '/src/ui/toast.js';
@@ -108,7 +113,7 @@ export default async function mount(el, {query, h}) {
   const corner = name => {
     const [v, side] = name.split('-');
     const b = button(name === 'top-left' ? 'Top left' : name === 'top-right' ? 'Top right' : name === 'bottom-left' ? 'Bottom left' : 'Bottom right', () => {
-      track(Popover({anchor: b, label: `Popover ${name}`, width: 280, placement: v === 'top' ? 'bottom' : 'top',
+      track(Popover({anchor: b, label: `Popover ${name}`, width: 280, placement: 'bottom',
         content: [h('p', {style: {margin: '0 0 var(--s2)'}}, 'Jobs'), h('p', {style: {margin: 0, color: 'var(--ink-2)'}}, 'Harbor Lights · Split ● 46%'),
           button('Retry', () => {}, {style: {marginBlockStart: 'var(--s2)'}})]}));
     }, {id: `ov-${name}`, dataset: {corner: name}, style: {position: 'fixed', [v]: 'var(--s2)', [side]: 'var(--s2)'}});
@@ -141,8 +146,38 @@ export default async function mount(el, {query, h}) {
     section('Coach mark', row(playButton))),
   ...CORNERS.map(corner), region);
 
+  const fixedButton = (id, label, style) => {
+    document.getElementById(id)?.remove();
+    const b = button(label, () => {}, {id, style: {position: 'fixed', ...style}});
+    el.append(b);
+    return b;
+  };
+  const tallItems = () => Array.from({length: 14}, (_, i) => ({label: `Bar ${i + 1}`}));
+
   const open = name => {
     if (name === 'menu') menuButton.click();
+    else if (name === 'popover-inline') {
+      const b = document.getElementById('ov-top-right');
+      track(Popover({anchor: b, label: 'Popover inline', width: 280, placement: 'right', content: 'Beside the anchor'}));
+    } else if (name === 'tall-menu') {
+      const b = fixedButton('ov-tall', 'Bars', {top: 'calc(50% - 20px)', left: '45%'});
+      track(Menu({anchor: b, label: 'Bars', items: tallItems(), presentation: 'popover'}));
+    } else if (name === 'menu-in-sheet') {
+      const stem = button('Bass ⋯', () => {}, {id: 'ov-stem'});
+      track(Sheet({title: 'Mix', layout: 'bottom', detents: [60], initialDetent: 60,
+        content: [h('div', {style: {display: 'grid', gap: 'var(--s2)'}},
+          ...['Drums', 'Keys'].map(n => h('p', {style: {margin: 0, minBlockSize: 'var(--h-md)'}}, n)), stem,
+          ...['Vocals', 'Other'].map(n => h('p', {style: {margin: 0, minBlockSize: 'var(--h-md)'}}, n)))]}));
+      track(Menu({anchor: stem, label: 'Bass', items: cardMenu(), presentation: 'popover'}));
+    } else if (name === 'dialog-toast') {
+      state.undone = 0;
+      const dialog = track(Dialog({title: 'Share Harbor Lights', body: 'Anyone with the link can listen.'}));
+      const off = followLayerHost(region, 'toast');
+      cleanups.push(off);
+      region.replaceChildren(Toast({message: 'Link copied', action: {label: 'Undo', run() { state.undone++; }},
+        onDismiss: () => region.replaceChildren()}).el);
+      dialog.closed.then(() => { state.dialogClosed = true; });
+    }
     else if (name === 'submenu') {
       menuButton.click();
       const view = [...document.querySelectorAll('[role=menuitem]')].find(n => n.textContent.includes('View'));
@@ -163,7 +198,7 @@ export default async function mount(el, {query, h}) {
     } else throw new Error(`overlays harness: unknown demo ${name}`);
     return window.__overlays.handle;
   };
-  window.__overlays = {open, handle: null, state};
+  window.__overlays = {open, handle: null, state, overlays: () => openOverlays().length};
 
   const demo = query.get('demo');
   if (demo) open(demo);

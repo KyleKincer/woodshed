@@ -9,7 +9,7 @@ import {Banner} from '../src/ui/banner.js';
 import {CoachMark} from '../src/ui/coachmark.js';
 import {Dialog, validateField} from '../src/ui/dialog.js';
 import {Menu} from '../src/ui/menu.js';
-import {Popover, layerHost} from '../src/ui/popover.js';
+import {Popover, followLayerHost, layerHost} from '../src/ui/popover.js';
 import {Sheet, resolveLayout, shouldDismiss, stageLayoutOf} from '../src/ui/sheet.js';
 import {InlineStatus} from '../src/ui/status.js';
 import {Toast} from '../src/ui/toast.js';
@@ -125,6 +125,25 @@ describe('Popover', () => {
     expect(pop.el.hasAttribute('data-layer-fallback')).toBe(true);
     expect(() => Popover({content: 'x'})).toThrow(TypeError);
   });
+
+  test('without the Popover API, a popover or menu opened from a sheet stacks above it, in open order', () => {
+    restoreDomShims();
+    const inner = button('Bass');
+    const sheet = keep(Sheet({title: 'Mix', layout: 'bottom', content: inner}));
+    const z = el => Number(el.style.getPropertyValue('--ui-layer-lift') || 0);
+    const menu = keep(Menu({anchor: inner, items: [{label: 'Solo'}], presentation: 'popover'}));
+    expect(menu.el.hasAttribute('data-layer-fallback')).toBe(true);
+    expect(z(menu.el)).toBeGreaterThan(z(sheet.el));
+    const pop = keep(Popover({anchor: inner, content: 'Level'}));
+    expect(z(pop.el)).toBeGreaterThan(z(menu.el));
+    pop.close();
+    expect(pop.el.style.getPropertyValue('--ui-layer-lift')).toBe('');
+    // Opened over nothing, a fallback overlay keeps its kind's token (no lift).
+    menu.close();
+    sheet.close();
+    const alone = keep(Popover({anchor, content: 'Hi'}));
+    expect(alone.el.style.getPropertyValue('--ui-layer-lift')).toBe('');
+  });
 });
 
 describe('Sheet', () => {
@@ -181,7 +200,8 @@ describe('Sheet', () => {
     expect(el.querySelector('.ui-sheet-close').getAttribute('aria-label')).toBe('Close');
     expect(el.querySelector('.ui-sheet-grabber').hidden).toBe(false);
     expect(el.querySelector('.ui-sheet-body').contains(content)).toBe(true);
-    expect(el.querySelector('.ui-sheet-body').hasAttribute('data-scroller')).toBe(true);
+    // The place's scroller is the page's own [data-scroller] (D26); a sheet body just scrolls.
+    expect(el.querySelector('.ui-sheet-body').hasAttribute('data-scroller')).toBe(false);
     expect(isPopoverOpen(el)).toBe(true);
     expect(el.dataset.layer).toBe('sheet');
     expect(openOverlays().map(o => o.modal)).toEqual([false]);
@@ -362,6 +382,62 @@ describe('Dialog', () => {
     d.el.querySelector('.ui-dialog-body').append(inner);
     const pop = keep(Popover({anchor: inner, content: 'x'}));
     expect(d.el.contains(pop.el)).toBe(true);
+  });
+
+  test('closing a dialog closes the overlays opened inside it and pops them from the overlay stack', () => {
+    dispatcher();
+    const d = Dialog({title: 'Share'});
+    const inner = button('More');
+    d.el.querySelector('.ui-dialog-body').append(inner);
+    const onPop = vi.fn(), onMenu = vi.fn();
+    const pop = Popover({anchor: inner, content: 'x', onClose: onPop});
+    const menu = Menu({anchor: inner, items: [{label: 'Copy link'}], onClose: onMenu, presentation: 'popover'});
+    expect(openOverlays()).toHaveLength(3);
+    d.close(true);
+    expect(pop.open).toBe(false);
+    expect(menu.open).toBe(false);
+    expect(onPop).toHaveBeenCalledWith('dialog');
+    expect(onMenu).toHaveBeenCalledWith('dialog');
+    expect(openOverlays()).toHaveLength(0);
+    // Registry keys are not swallowed by a dead modal entry.
+    keydown('KeyJ');
+    expect(ran).toEqual(['spots']);
+    // Nothing fires late on the next pointer-down.
+    pointer(document.body, 'pointerdown');
+    expect(onPop).toHaveBeenCalledTimes(1);
+  });
+
+  test('closing a modal sheet closes the overlays opened inside it', () => {
+    const inner = button('Paste');
+    const sheet = Sheet({title: 'Add a song', modal: true, layout: 'bottom', content: inner});
+    const pop = Popover({anchor: inner, content: 'Hint'});
+    expect(sheet.el.contains(pop.el)).toBe(true);
+    sheet.close();
+    expect(pop.open).toBe(false);
+    expect(openOverlays()).toHaveLength(0);
+  });
+
+  test('followLayerHost: the toast region moves into an open modal dialog and back out before it closes', () => {
+    const region = document.createElement('div');
+    region.className = 'ui-toast-region';
+    const off = followLayerHost(region, 'toast');
+    expect(region.parentElement).toBe(document.body);
+    expect(isPopoverOpen(region)).toBe(true);
+    const d = Dialog({title: 'Share'});
+    expect(region.parentElement).toBe(d.el);
+    expect(isPopoverOpen(region)).toBe(true);
+    const inner = Dialog({title: 'Sure?'});
+    expect(region.parentElement).toBe(inner.el);
+    inner.close();
+    expect(region.parentElement).toBe(d.el);
+    d.close();
+    expect(region.parentElement).toBe(document.body);
+    expect(region.isConnected).toBe(true);
+    expect(isPopoverOpen(region)).toBe(true);
+    off();
+    expect(region.isConnected).toBe(false);
+    Dialog({title: 'Later'}).destroy();
+    expect(region.isConnected).toBe(false);
   });
 
   describe('forms', () => {
@@ -565,6 +641,23 @@ describe('CoachMark', () => {
     expect(c.shown).toBe(false);
     store.stage.value = {songId: 's1', playing: true};
     store.stage.value = {songId: 's1', playing: false};
+    expect(c.shown).toBe(false);
+  });
+
+  test('set({playing}) switches the source the mark follows', async () => {
+    const {signal} = await import('../src/app/store.js');
+    const s1 = signal(false), s2 = signal(false);
+    const c = keep(CoachMark({anchor, body: 'Hi', playing: () => s1.value}));
+    expect(c.shown).toBe(true);
+    c.set({playing: () => s2.value});
+    s2.value = true;
+    expect(c.shown).toBe(false);
+    s1.value = true;
+    s2.value = false;
+    expect(c.shown).toBe(true);
+    c.destroy();
+    s2.value = true;
+    s2.value = false;
     expect(c.shown).toBe(false);
   });
 

@@ -23,7 +23,7 @@ import {pushOverlay} from '../app/dispatch.js';
 import {h} from './h.js';
 import {anchorTo} from './position.js';
 import {
-  applyCommon, focusInto, glyph, withDefaults, hideLayer, onOutside, pushModalHost, restoreFocus, setContent, showLayer, trackLayer, trapTab, layerHost,
+  applyCommon, closeLayersInside, focusInto, glyph, withDefaults, hideLayer, onOutside, pushModalHost, restoreFocus, setContent, showLayer, trackLayer, trapTab, layerHost,
 } from './popover.js';
 import '../styles/primitives/sheet.css';
 
@@ -69,7 +69,7 @@ export function Sheet(props = {}) {
   const title = h('h2', {class: 'ui-sheet-title', id: titleId});
   const closeButton = h('button', {type: 'button', class: 'ui-sheet-close'}, glyph('x'));
   const head = h('header', {class: 'ui-sheet-head'}, grabber, title, closeButton);
-  const body = h('div', {class: 'ui-sheet-body', 'data-scroller': ''});
+  const body = h('div', {class: 'ui-sheet-body'});
   const el = h(p.modal ? 'dialog' : 'section', {class: 'ui-sheet', tabIndex: -1}, head, body);
   el.dataset.presentation = presentation;
   const previous = doc.activeElement;
@@ -109,8 +109,10 @@ export function Sheet(props = {}) {
   const close = (reason = 'close') => {
     if (!open) return;
     open = false;
+    if (p.modal) closeLayersInside(el, 'close');   // overlays opened inside the <dialog> close with it
     for (const fn of cleanups.splice(0).reverse()) fn();
     positioner?.destroy();
+    el.__uiClose = null;
     restoreFocus(previous, el);
     if (p.modal) {
       if (el.open) el.close();
@@ -121,6 +123,7 @@ export function Sheet(props = {}) {
     if (reason !== 'destroy') p.onClose?.(reason);
   };
 
+  el.__uiClose = close;
   applyProps(p);
   setContent(body, p.content);
   closeButton.addEventListener('click', () => close('close'));

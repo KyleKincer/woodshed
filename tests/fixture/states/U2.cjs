@@ -3,9 +3,15 @@
 //   u2-menu               roving focus, a submenu (popover on laptop, drill-in sheet with 56 px rows on iPad), type-ahead,
 //                         Esc innermost first, focus return
 //   u2-contextmenu        right-click at the pointer and Shift+F10 (laptop); a 600 ms touch long-press → sheet (iPad)
-//   u2-popover-anchor     the four corners with CSS anchor positioning: inside the viewport, beside the anchor, bottom
-//                         corners flipped above
+//   u2-popover-anchor     the four corners with CSS anchor positioning, each asking for 'bottom': inside the viewport,
+//                         beside the anchor, the bottom corners flipped above; 'right' from the right edge flips left
 //   u2-popover-fallback   the same with fx-nofeature=anchor,popover (place() and the fallback layer)
+//   u2-tall-menu(-fallback)        a menu too tall for either side of a mid-screen anchor shrinks on the roomier side
+//                                  and scrolls, never covering its anchor (CSS anchor positioning, then place())
+//   u2-menu-in-sheet(-fallback)    a menu opened from a non-modal sheet is drawn and hit above it (top layer, then the
+//                                  fallback layer's open-order stacking)
+//   u2-dialog-toast       the toast region following an open modal dialog: bottom-centre, above the dialog, Undo
+//                         clickable; back in the body when the dialog closes
 //   u2-sheet-band         iPad band layout: a bottom sheet ≤ 60% high; one generous CDP swipe dismisses it
 //   u2-sheet-rail         laptop rail layout: a 360 px popover left of its control; Esc returns focus
 //   u2-sheet-modal        a modal bottom sheet (<dialog>): Tab stays inside, the backdrop tap closes it
@@ -133,17 +139,103 @@ function popoverFlow({fallback}) {
       t.expect(mode === (fallback ? 'js' : 'css'), `${corner}: positioned by ${fallback ? 'place()' : 'CSS anchor positioning'} (got ${mode})`);
       t.expect(await pop.evaluate(el => el.hasAttribute('popover')) === !fallback, `${corner}: ${fallback ? 'the fallback layer' : 'the top layer'}`);
       t.expect(inside(b, v), `${corner}: inside the viewport (${JSON.stringify(b)})`);
+      // Every corner asks for 'bottom': the top corners get it, the bottom corners must flip.
       if (corner.startsWith('top')) t.expect(b.y >= a.y + a.height && b.y - (a.y + a.height) <= 12, `${corner}: below the anchor`);
       else t.expect(b.y + b.height <= a.y && a.y - (b.y + b.height) <= 12, `${corner}: flipped above the anchor`);
+      if (fallback) {
+        const side = await pop.getAttribute('data-side');
+        t.expect(side === (corner.startsWith('top') ? 'bottom' : 'top'), `${corner}: place() reports side ${side}`);
+      }
       t.expect(b.x < a.x + a.width && b.x + b.width > a.x, `${corner}: overlaps the anchor's column`);
       t.expect(await activeText(page) === 'Retry', `${corner}: focus moves into the popover`);
       await page.keyboard.press('Escape');
       await pop.waitFor({state: 'detached'});
       t.expect(await activeId(page) === `ov-${corner}`, `${corner}: Esc returns focus to the anchor`);
     }
+    // 'right' from the right edge has no room: it flips to the left (flip-inline).
+    await page.evaluate(() => window.__overlays.open('popover-inline'));
+    const inline = page.locator('.ui-popover[aria-label="Popover inline"]');
+    await inline.waitFor();
+    await settle(inline);
+    const a = await box(page, '#ov-top-right');
+    const b = await inline.boundingBox();
+    t.expect(inside(b, v), `inline: inside the viewport (${JSON.stringify(b)})`);
+    t.expect(b.x + b.width <= a.x + 0.5 && a.x - (b.x + b.width) <= 12, `inline: flipped left of the anchor (${b.x + b.width} vs ${a.x})`);
+    if (fallback) t.expect(await inline.getAttribute('data-side') === 'left', 'inline: place() reports side left');
+    await page.keyboard.press('Escape');
+    await inline.waitFor({state: 'detached'});
     await page.locator('#ov-bottom-right').click();
     await page.locator('.ui-popover').waitFor();
   };
+}
+
+function tallMenuFlow({fallback}) {
+  return async (page, t) => {
+    const menu = page.locator('.ui-menu').first();
+    await menu.waitFor();
+    await settle(menu);
+    t.expect(await menu.getAttribute('data-anchor') === (fallback ? 'js' : 'css'), `positioned by ${fallback ? 'place()' : 'CSS anchor positioning'}`);
+    if (!fallback) t.expect(await menu.getAttribute('data-fit') === 'shrink', 'marked data-fit=shrink');
+    const v = await viewport(page);
+    const a = await box(page, '#ov-tall');
+    const m = await menu.boundingBox();
+    t.expect(inside(m, v), `inside the viewport (${JSON.stringify(m)})`);
+    t.expect(m.y >= a.y + a.height - 0.5 || m.y + m.height <= a.y + 0.5, `beside its anchor, not over it (menu ${m.y}–${m.y + m.height}, anchor ${a.y}–${a.y + a.height})`);
+    const roomBelow = v.h - (a.y + a.height), roomAbove = a.y;
+    t.expect(roomBelow >= roomAbove ? m.y >= a.y + a.height - 0.5 : m.y + m.height <= a.y + 0.5, 'on the roomier side');
+    t.expect(await menu.evaluate(el => el.scrollHeight > el.clientHeight + 1), 'shrunk: the menu scrolls');
+    await page.keyboard.press('End');
+    t.expect((await activeText(page)) === 'Bar 14', 'End reaches the last item');
+  };
+}
+
+function menuInSheetFlow({fallback}) {
+  return async (page, t) => {
+    const menu = page.locator('.ui-menu').first();
+    await menu.waitFor();
+    await settle(menu);
+    const sheet = page.locator('.ui-sheet');
+    t.expect(await sheet.isVisible(), 'the sheet stays open under the menu');
+    t.expect(await menu.evaluate(el => el.hasAttribute('data-layer-fallback')) === fallback, fallback ? 'the fallback layer' : 'the top layer');
+    const hit = await menu.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const s = document.querySelector('.ui-sheet').getBoundingClientRect();
+      const at = document.elementFromPoint(x, y);
+      return {overSheet: x >= s.left && x <= s.right && y >= s.top && y <= s.bottom, inMenu: el.contains(at), inSheet: !!at?.closest('.ui-sheet')};
+    });
+    t.expect(hit.overSheet, 'the menu opens over the sheet');
+    t.expect(hit.inMenu && !hit.inSheet, `the menu is drawn above the sheet (${JSON.stringify(hit)})`);
+    const item = menu.locator('.ui-menu-item', {hasText: 'Pin to home'});
+    const ib = await item.boundingBox();
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    t.expect((await activeText(page)) === 'Pin to home', 'the pointer reaches the menu item');
+    await t.capture('menu-over-sheet');
+  };
+}
+
+async function dialogToastFlow(page, t) {
+  const dialog = page.locator('dialog.ui-dialog');
+  await dialog.waitFor();
+  const toast = page.locator('.ui-toast-region .ui-toast');
+  await toast.waitFor();
+  await settle(toast);
+  t.expect(await page.evaluate(() => !!document.querySelector('.ui-toast-region')?.closest('dialog.ui-dialog')), 'the region is inside the open dialog');
+  const v = await viewport(page);
+  const b = await toast.boundingBox();
+  t.expect(Math.abs(b.x + b.width / 2 - v.w / 2) <= 2, `bottom-centre in the top layer (${b.x}, ${b.width})`);
+  t.expect(v.h - (b.y + b.height) >= 16 && v.h - (b.y + b.height) <= 40, 'above the bottom edge');
+  const undo = toast.locator('.ui-toast-action');
+  const u = await undo.boundingBox();
+  t.expect(await undo.evaluate((el, p) => el.contains(document.elementFromPoint(p.x, p.y)), {x: u.x + u.width / 2, y: u.y + u.height / 2}),
+    'the toast is drawn above the dialog');
+  await t.capture('toast-over-dialog');
+  await page.mouse.click(u.x + u.width / 2, u.y + u.height / 2);
+  t.expect(await page.evaluate(() => window.__overlays.state.undone) === 1, 'Undo is clickable while the dialog is open');
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state: 'detached'});
+  t.expect(await page.evaluate(() => document.querySelector('.ui-toast-region')?.parentElement === document.body), 'the region is back in the body');
+  t.expect(await page.evaluate(() => window.__overlays.overlays()) === 0, 'no overlay is left on the stack');
 }
 
 async function sheetBandFlow(page, t) {
@@ -263,4 +355,11 @@ module.exports = [
   {name: 'u2-dialog', url: H, fn: dialogFlow, opts: BEHIND},
   {name: 'u2-coach', url: `${H}?demo=coach`, fn: coachFlow, opts: BEHIND},
   {name: 'u2-toast', url: `${H}?demo=toast`, fn: toastFlow, opts: BEHIND},
+  {name: 'u2-tall-menu', url: `${H}?demo=tall-menu`, fn: tallMenuFlow({fallback: false}), opts: {devices: ['laptop'], ...BEHIND}},
+  {name: 'u2-tall-menu-fallback', url: `${H}?demo=tall-menu&fx-nofeature=anchor,popover`, fn: tallMenuFlow({fallback: true}),
+    opts: {devices: ['laptop'], ...BEHIND}},
+  {name: 'u2-menu-in-sheet', url: `${H}?demo=menu-in-sheet`, fn: menuInSheetFlow({fallback: false}), opts: {devices: ['laptop'], ...BEHIND}},
+  {name: 'u2-menu-in-sheet-fallback', url: `${H}?demo=menu-in-sheet&fx-nofeature=popover`, fn: menuInSheetFlow({fallback: true}),
+    opts: {devices: ['laptop'], ...BEHIND}},
+  {name: 'u2-dialog-toast', url: `${H}?demo=dialog-toast`, fn: dialogToastFlow, opts: BEHIND},
 ];

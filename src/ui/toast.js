@@ -8,8 +8,10 @@
 //   action     {label, run}: a button; clicking it runs `run()` and then onDismiss('action')
 //   onDismiss  (reason: 'action' | 'close') → void; the ✕ button calls it with 'close'
 // `.ui-toast-region` (toast.css) is the bottom-centre region feedback.js mounts toasts in: fixed, above the dock or
-// transport through `--toast-offset`, at --z-toast (showLayer(region, 'toast') from popover.js puts it in the top layer
-// above an open dialog).
+// transport through `--toast-offset`, at --z-toast. feedback.js mounts it with followLayerHost(region, 'toast') from
+// popover.js: the region is in the top layer (above an open dialog) and, while a modal <dialog> is open, inside it, so
+// its Undo and ✕ stay clickable (everything outside a modal dialog is inert); it moves back to the body before the
+// dialog closes. A region merely shown with showLayer while a dialog is open would be drawn on top but inert.
 
 import {h} from './h.js';
 import {applyCommon, glyph, setContent, withDefaults} from './popover.js';
