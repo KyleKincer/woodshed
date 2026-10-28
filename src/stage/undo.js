@@ -1,13 +1,22 @@
 // Practice undo (architecture §2.14.6, spec §4.14): one stack per song session,
 // 50 steps, with value changes of the same kind coalescing within 1 s.
 //
-//   push({key, label, describe, from, to, apply, coalesce})  a value entry (practice patches):
+//   push({key, label, describe, from, to, apply, coalesce, gesture})  a value entry (practice patches):
 //       undo → apply(from), redo → apply(to). Only coalescing keys merge (transport
 //       rule 19: `speed` and `level:<stem>` by default; `coalesce` overrides per push):
 //       a coalescing push with the same `key` within `coalesceMs` of the previous
 //       coalescing push merges into it, keeping the first `from` (a speed drag is one
 //       step). A merge that lands back on `from` removes the step. `loop`, `mix`,
 //       `markers`, `spots`, `section` and `startOver` pushes are always their own step.
+//   beginGesture(key) → token {key, active, end()}  a gesture-bounded step (§2.14.6,
+//       ticket I2a-1): value pushes with this `key` that carry `{gesture: token}` merge
+//       into one entry however far apart they are (a speed drag that pauses past
+//       `coalesceMs` is still one step), whatever `coalesce` says. The gesture's first
+//       push never merges into an earlier entry, and a push without the token never
+//       merges into the gesture's entry. After `end()` (idempotent) the next push starts
+//       a new entry; an ended token, a foreign token or a token for another key is
+//       ignored (the push follows the normal rules). A push of another step in the middle,
+//       or an undo, closes the current entry: the gesture's next push starts a fresh one.
 //   pushAction({key, label, describe, undo, redo})  a compound entry (map snapshots,
 //       D23); action entries never coalesce.
 //   amend(entry, {label, undo, redo})  wraps an entry so one Undo also reverts a
@@ -48,6 +57,7 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
   let last = null;        // the entry the latest push created or extended (coalescing target)
   let lastAt = -Infinity; // when that push happened
   let applying = false;   // an undo/redo is running: pushes from its apply/undo/redo are ignored
+  const gestures = new WeakMap(); // token → {key, open, entry}: this stack's gestures
 
   const sync = () => {
     canUndo.value = undoStack.length > 0;
@@ -80,9 +90,51 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
     return entry;
   }
 
-  function push({key, label, describe, from, to, apply, coalesce} = {}) {
+  function beginGesture(key) {
+    const g = {key, open: true, entry: null};
+    const token = {
+      key,
+      get active() { return g.open; },
+      end() {
+        if (!g.open) return;
+        g.open = false;
+        if (g.entry && last === g.entry) last = null;
+        g.entry = null;
+      },
+    };
+    gestures.set(token, g);
+    return token;
+  }
+
+  function pushGesture(g, {key, label, describe, from, to, apply}) {
+    const top = undoStack[undoStack.length - 1];
+    if (g.entry && top === g.entry && !top.amended) {
+      top.to = to;
+      lastAt = clock.now();
+      if (same(top.from, top.to)) {     // the drag came back to where it started
+        undoStack.pop();
+        g.entry = null;
+        last = null;
+        sync();
+        return null;
+      }
+      return top;
+    }
+    g.entry = null;
+    if (same(from, to)) return null;
+    const entry = makeEntry({kind: 'value', key, label, describe, from, to,
+      undo: () => apply(entry.from), redo: () => apply(entry.to)});
+    entry.coalesce = false;             // only this gesture's pushes extend it
+    entry.gesture = true;
+    g.entry = entry;
+    return add(entry);
+  }
+
+  function push({key, label, describe, from, to, apply, coalesce, gesture} = {}) {
     if (applying) return null;
     if (typeof apply !== 'function') throw new TypeError('undo.push: apply(value) is required');
+    const g = gesture ? gestures.get(gesture) : null;
+    if (g && g.open && g.key === key) return pushGesture(g, {key, label, describe, from, to, apply});
     const t = clock.now();
     const merges = coalesce === undefined ? coalescesByDefault(key) : !!coalesce;
     const top = undoStack[undoStack.length - 1];
@@ -165,7 +217,7 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
   }
 
   return {
-    push, pushAction, amend, undo, redo, clear,
+    push, pushAction, amend, beginGesture, undo, redo, clear,
     canUndo: readonly(canUndo), canRedo: readonly(canRedo),
     /** Steps on each stack (for the dev handle and tests). */
     get size() { return {undo: undoStack.length, redo: redoStack.length}; },
