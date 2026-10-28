@@ -227,6 +227,22 @@ describe('§4.4 text rules (table)', () => {
   ])('Lamps during a count: %s', (_, countdown, bar, unit) => {
     expect(countUnit(countdown, bar)).toBe(unit);
   });
+
+  // The counted beats end at the target: `current` counts back from it through the plan's beats.
+  const plan = (...units) => units.map((unit) => ({unit}));
+  test.each([
+    ['"2 beats" in 4/4: beats 3 and 4', [{current: 2, of: 2}, {current: 1, of: 2}], plan(2, 3), [2, 3]],
+    ['a cue on beat 3, one bar', [4, 3, 2, 1].map((current) => ({current, of: 4})), plan(2, 3, 0, 1), [2, 3, 0, 1]],
+    ['a loop-gap count the gap start cut to its last two', [{current: 2, of: 2}, {current: 1, of: 2}], plan(0, 1, 2, 3), [2, 3]],
+    ['7/8 (2+2+3), two counts', [{current: 2, of: 2}, {current: 1, of: 2}], plan(2, 4), [2, 4]],
+  ])('Lamps follow the count-in plan: %s', (_, counts, beats, units) => {
+    expect(counts.map((c) => countUnit(c, {groups: [1, 1, 1, 1]}, beats))).toEqual(units);
+  });
+
+  test('without a plan the counts run back from the downbeat (a "2 beats" count lights 3 and 4)', () => {
+    expect([2, 1].map((current) => countUnit({current, of: 2}, {groups: [1, 1, 1, 1]}))).toEqual([2, 3]);
+    expect([3, 2, 1].map((current) => countUnit({current, of: 3}, {groups: [2, 2, 3]}))).toEqual([0, 2, 4]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -350,6 +366,50 @@ describe('the mounted HUD', () => {
     expect(plate.hidden).toBe(true);
   });
 
+  test.each([
+    ['"2 beats" from a downbeat (bar 17)', 32, {length: 2, unit: 'beats'}],
+    ['one bar from beat 3 (a mid-bar cue)', 33, {length: 1, unit: 'bars'}],
+  ])('during a count-in the lamps light the counted beats\' own units: %s', async (_, cue, length) => {
+    const b = await bed({practice: {v: 2, cue, rate: 1, loop: {on: false, a: 0, b: 0}, tracks: [], minusMe: false, trainer: null, spots: [], markers: [],
+      click: {countIn: {on: true, ...length}, mode: 'off', accent: true, volume: 0.7, preRoll: false}}});
+    const expected = b.ts.session.metronome.countInPlanAt(cue).beats.map((x) => x.unit);
+    b.ts.session.frame.start();
+    await b.ts.play();
+    expect(b.ts.snapshot.phase).toBe('counting');
+    const litUnit = () => [...b.host.querySelectorAll('.ui-beat-lamp')].findIndex((d) => d.dataset.state === 'now');
+    const seen = new Map();   // current → the lit lamp
+    for (let i = 0; i < 60 && b.ts.snapshot.phase === 'counting'; i++) {
+      const c = b.ts.snapshot.countdown;
+      if (c && !seen.has(c.current)) seen.set(c.current, litUnit());
+      await b.ts.advance(0.05);
+    }
+    expect([...seen.keys()]).toEqual(expected.map((_, i) => expected.length - i));
+    expect([...seen.values()]).toEqual(expected);
+    expect(expected).toEqual(cue === 32 ? [2, 3] : [2, 3, 0, 1]);   // not 0, 1, … from the first count
+  });
+
+  test('a loop-gap count (each pass, a loop from beat 3) lights the counted beats\' own units', async () => {
+    const b = await bed({practice: {v: 2, cue: 33, rate: 1, loop: {on: true, a: 33, b: 37, eachPassCount: true, playTimes: 0, between: 'none'},
+      tracks: [], minusMe: false, trainer: null, spots: [], markers: [],
+      click: {countIn: {on: true, length: 1, unit: 'bars'}, mode: 'off', accent: true, volume: 0.7, preRoll: false}}});
+    const expected = b.ts.session.metronome.countInPlanAt(33).beats.map((x) => x.unit);
+    expect(expected).toEqual([2, 3, 0, 1]);
+    b.ts.session.frame.start();
+    await b.ts.play();
+    const litUnit = () => [...b.host.querySelectorAll('.ui-beat-lamp')].findIndex((d) => d.dataset.state === 'now');
+    // Past the first count-in and the first pass, into the gap before the second.
+    for (let i = 0; i < 200 && (b.ts.snapshot.phase === 'counting' || !b.ts.snapshot.countdown); i++) await b.ts.advance(0.05);
+    expect(b.ts.snapshot.phase).toBe('playing');
+    const seen = new Map();
+    for (let i = 0; i < 60 && b.ts.snapshot.countdown; i++) {
+      const c = b.ts.snapshot.countdown;
+      if (!seen.has(c.current)) seen.set(c.current, litUnit());
+      await b.ts.advance(0.05);
+    }
+    expect([...seen.keys()]).toEqual([4, 3, 2, 1]);
+    expect([...seen.values()]).toEqual(expected);
+  });
+
   test('dragging the speed value changes it ±1% per 12 px with pointer capture, as one undo step', async () => {
     const b = await bed();
     const speed = b.q('.hud-speed');
@@ -450,6 +510,39 @@ describe('the mounted HUD', () => {
     vi.advanceTimersByTime(100);
     tapAt(12, 11);
     expect(b.ran.map((r) => r.id)).toEqual(['view.focus']);
+  });
+
+  test('a speed drag that ends in pointercancel does not eat the next tap (the next double-tap still focuses)', async () => {
+    const b = await bed();
+    const speed = b.q('.hud-speed');
+    const readouts = b.q('.hud-readouts');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {y: 200, pointerId: 7});
+    pointer(speed, 'pointermove', {y: 200 - 2 * SPEED_DRAG_PX, pointerId: 7});
+    pointer(speed, 'pointercancel', {y: 200 - 2 * SPEED_DRAG_PX, pointerId: 7});
+    expect(b.ts.snapshot.rate).toBe(1.02);
+    vi.advanceTimersByTime(DOUBLE_TAP_MS + 50);
+    const tapAt = (x, y) => { pointer(readouts, 'pointerdown', {x, y}); pointer(readouts, 'pointerup', {x, y}); };
+    tapAt(10, 10);
+    vi.advanceTimersByTime(100);
+    tapAt(10, 10);
+    expect(b.ran.map((r) => r.id)).toEqual(['view.focus']);
+  });
+
+  test('a completed speed drag is not a tap on the readouts (no Focus from drag + tap)', async () => {
+    const b = await bed();
+    const speed = b.q('.hud-speed');
+    speed.setPointerCapture = () => {};
+    speed.releasePointerCapture = () => {};
+    pointer(speed, 'pointerdown', {x: 10, y: 200, pointerId: 7});
+    pointer(speed, 'pointermove', {x: 10, y: 200 - 2 * SPEED_DRAG_PX, pointerId: 7});
+    pointer(speed, 'pointerup', {x: 10, y: 200 - 2 * SPEED_DRAG_PX, pointerId: 7});
+    vi.advanceTimersByTime(100);
+    const readouts = b.q('.hud-readouts');
+    pointer(readouts, 'pointerdown', {x: 10, y: 176});
+    pointer(readouts, 'pointerup', {x: 10, y: 176});
+    expect(b.ran.map((r) => r.id)).toEqual([]);
   });
 
   test('the Loop line shows the loop and opens the Loop card (loop.card)', async () => {
@@ -562,6 +655,25 @@ describe('the mounted HUD', () => {
     b.ts.transport.cue(48);
     await settle();
     expect(b.host.textContent).toBe('');
+  });
+
+  test('the HUD renders no status line of its own (the Stage frame\'s role=status line is the only one)', async () => {
+    const b = await bed();
+    expect(b.host.querySelector('[role=status], [aria-live]')).toBeNull();
+    expect(b.music.querySelector('[role=status]')).toBeNull();
+  });
+
+  test('destroy removes the menu anchor from a map whose get() skips detached nodes (stage.js\'s AnchorMap)', async () => {
+    class AnchorMap extends Map {
+      constructor(fallback) { super(); this.fallback = fallback; }
+      get(name) { const own = super.get(name); return own?.isConnected ? own : this.fallback; }
+    }
+    const anchors = new AnchorMap(document.createElement('div'));
+    const b = await bed({stageCtx: {anchors}});
+    expect(Map.prototype.get.call(anchors, 'menu')).toBe(byRole(b.host, 'button', COPY.more));
+    b.host.remove();   // the Stage frame went first
+    b.hud.destroy();
+    expect(anchors.size).toBe(0);
   });
 });
 

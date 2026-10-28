@@ -12,7 +12,9 @@
 //   st5-hud-focus-band / st5-hud-focus-mini     Focus: no identity row (band); the 120 px mini rail
 //   st5-hud-unmapped                            markers as regions, no lamps, Lead-in, Click "Needs a bar grid"
 //   st5-hud-loading                             the Play ring, then "Play when ready"
+//   st5-hud-load-error                          a failed load: every control aria-disabled with the reason, Again never arms
 //   st5-hud-shared / st5-hud-setlist            the read-only identity row; the set line
+//   st5-hud-identity-commands                   ‹, Notes, ⋯, the set arrows and the readouts' double-tap run ST4's commands
 //   st5-hud-pickup / st5-hud-seven              `Pickup · 3`; 7/8 lamps grouped 2+2+3
 //   st5-hud-speed-drag                          dragging the speed value: ±1% per 12 px, one undo step
 //   st5-hud-slim                                Edit's slim transport (controls 'slim')
@@ -23,6 +25,9 @@ const {checkTargets} = require('../probes/probe-targets.cjs');
 const {walkFocus} = require('../probes/probe-focus.cjs');
 const {checkAxe} = require('../probes/probe-axe.cjs');
 
+// The harness imports ST4's Stage commands (the identity row's stage.leave, stage.notes, stage.menu,
+// view.focus and setlist.*): every state is skipped until that module exists (§9.0).
+const REQUIRES = ['src/stage/commands.js'];
 const HUD = (query = '') => `/__harness/hud?fx-audio=manual${query ? `&${query}` : ''}`;
 const BAND = {devices: ['ipad'], themes: ['dark']};
 const RAIL = {devices: ['laptop'], themes: ['dark']};
@@ -144,7 +149,7 @@ async function common(page, t, layout, {distance = 'stand', focusStops = 0, axe 
 const opacity = (page, selector) => page.evaluate((s) => Number(getComputedStyle(document.querySelector(s)).opacity), selector);
 const phase = (page) => page.evaluate(() => window.__hud.session.transport.snapshot.peek().phase);
 
-module.exports = [
+const STATES = [
   {
     name: 'st5-hud-band', url: HUD('layout=band&scenario=looping'), opts: BAND,
     async fn(page, t) {
@@ -298,6 +303,23 @@ module.exports = [
     },
   },
   {
+    name: 'st5-hud-load-error', url: HUD('layout=rail&load=error'), opts: {...RAIL, capture: false},
+    async fn(page, t) {
+      await t.loadPhase('error');
+      const states = await page.$$eval('[data-ctl] .ui-button, [data-ctl] [role=spinbutton]', (els) => els.map((el) => ({
+        name: el.getAttribute('aria-label') || el.textContent.trim(), disabled: el.getAttribute('aria-disabled'),
+        reason: document.getElementById(el.getAttribute('aria-describedby') ?? '')?.textContent ?? el.title,
+      })));
+      const live = states.filter((s) => s.disabled !== 'true' || !/Couldn.t load/.test(s.reason ?? ''));
+      t.expect(states.length >= 8 && !live.length, `controls still live: ${JSON.stringify(live)}`);
+      // aria-disabled stays focusable and clickable: the click reaches the controls and does nothing.
+      await page.locator('[data-ctl=again] button').click({force: true});
+      await page.locator('[data-ctl=play] button').click({force: true});
+      const armed = await page.evaluate(() => window.__hud.session.transport.snapshot.peek().armed);
+      t.expect(armed === false, 'Again / Play never arm Play behind a failed load');
+    },
+  },
+  {
     name: 'st5-hud-shared', url: HUD('layout=band&scenario=shared'), opts: BAND,
     async fn(page, t) {
       await ready(page, t);
@@ -311,6 +333,28 @@ module.exports = [
       await ready(page, t);
       t.expect((await page.locator('.hud-set-text').innerText()) === 'Friday gig · 2 of 5 · next: Second Wind', 'set line');
       t.expect(await page.getByRole('button', {name: 'Next song in set'}).isVisible(), 'next in set');
+    },
+  },
+  {
+    name: 'st5-hud-identity-commands', url: HUD('layout=rail&scenario=setlist'), opts: {...RAIL, capture: false},
+    async fn(page, t) {
+      await ready(page, t);
+      const calls = () => page.evaluate(() => [...window.__hud.calls]);
+      const enabled = async (name) => (await page.getByRole('button', {name, exact: true}).getAttribute('aria-disabled')) !== 'true';
+      for (const name of ['Back to Library', 'Notes', 'More…', 'Previous song in set', 'Next song in set']) {
+        t.expect(await enabled(name), `${name} is enabled`);
+      }
+      await page.getByRole('button', {name: 'Notes', exact: true}).click();
+      t.expect((await page.evaluate(() => window.__hud.sheets)).includes('notes'), 'Notes opens the notes sheet');
+      await page.getByRole('button', {name: 'More…', exact: true}).click();
+      await page.getByRole('button', {name: 'Next song in set', exact: true}).click();
+      await page.getByRole('button', {name: 'Previous song in set', exact: true}).click();
+      await page.locator('.hud-section').dblclick();
+      await page.getByRole('button', {name: 'Back to Library', exact: true}).click();
+      const ran = await calls();
+      for (const call of ['openMenu:stage', 'goSetlist:1', 'goSetlist:-1', 'toggleFocus', 'leave']) {
+        t.expect(ran.filter((c) => c === call).length === 1, `${call} once: ${JSON.stringify(ran)}`);
+      }
     },
   },
   {
@@ -357,3 +401,5 @@ module.exports = [
     },
   },
 ];
+
+module.exports = STATES.map((state) => ({...state, opts: {...state.opts, requires: REQUIRES}}));

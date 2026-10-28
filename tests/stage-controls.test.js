@@ -14,7 +14,7 @@ vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake
 import {createRegistry} from '../src/app/commands.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {defineTransportCommands} from '../src/stage/transport-commands.js';
-import {CONTROLS, CONTROL_SET, COPY, LAYOUT, LONG_PRESS_MS, VARIANTS, countInState, mixState, mountControls, playState} from '../src/stage/controls.js';
+import {CONTROLS, CONTROL_SET, COPY, LATE_CONTEXTMENU_MS, LAYOUT, LONG_PRESS_MS, VARIANTS, countInState, mixState, mountControls, ownAnchor, playState} from '../src/stage/controls.js';
 import {CONTROL_ROWS} from '../src/stage/hud.copy.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
@@ -79,6 +79,13 @@ const longPress = (el) => {
   vi.advanceTimersByTime(LONG_PRESS_MS);
   pointer(el, 'pointerup', {pointerType: 'touch', pointerId: 9});
   el.click();   // the click a long-press leaves behind is swallowed
+};
+
+/** A contextmenu event (a right-click, or the one a touch long-press raises). */
+const contextmenu = (el, init = {}) => {
+  const event = new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, button: 2, ...init});
+  el.dispatchEvent(event);
+  return event;
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -206,6 +213,32 @@ describe('Play', () => {
     expect(b.ts.snapshot.armed).toBe(false);
   });
 
+  test('a load error disables Again (and every other control) with the reason; Again never arms Play', async () => {
+    const b = await bed({variant: 'rail', media: {signKeys: async () => { throw new Error('storage down'); }}});
+    expect(b.ts.session.load.peek().phase).toBe('error');
+    for (const sel of ['[data-ctl=again] button', '[data-ctl=play] button', '[data-ctl=loop] button', '[data-ctl=countIn] button',
+      '[data-ctl=click] button', '.ctl-mix-main', '.ctl-mix-caret']) {
+      const el = b.q(sel);
+      expect(el.getAttribute('aria-disabled'), sel).toBe('true');
+      expect(document.getElementById(el.getAttribute('aria-describedby'))?.textContent, sel).toBe(COPY.loadError);
+    }
+    const value = b.q('[role=spinbutton]');
+    expect(value.getAttribute('aria-disabled')).toBe('true');
+    expect(value.title).toBe(COPY.loadError);
+    b.q('[data-ctl=again] button').click();
+    b.q('[data-ctl=play] button').click();
+    await settle();
+    expect(b.runs).not.toContain('transport.again');
+    expect(b.ts.snapshot.armed).toBe(false);
+    // The stepper changes nothing while the load failed.
+    const rate = b.ts.snapshot.rate;
+    value.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowUp', bubbles: true, cancelable: true}));
+    b.q('[data-ctl=speed] button[aria-label="Faster"]')?.click();
+    await settle();
+    expect(b.ts.snapshot.rate).toBe(rate);
+    expect(value.textContent).toBe(COPY.percent(Math.round(rate * 100)));
+  });
+
   test('long-press Play pauses; long-press again continues', async () => {
     const b = await bed({practice: FRESH()});
     const play = b.q('[data-ctl=play] button');
@@ -264,6 +297,74 @@ describe('long-press, right-click and the ⌃ zone', () => {
     await settle();
     expect(b.ts.snapshot.rate).toBe(1);
     expect(b.runs).toContain('speed.toggle100');
+  });
+
+  // A touch or pen long-press raises contextmenu too on some platforms (Android Chrome, Windows touch):
+  // during the press, at the 500 ms mark, or just after the release. The command runs once either way.
+  test.each([
+    ['after the timer, during the press', 'after'],
+    ['before the timer (the browser was first)', 'before'],
+    ['just after the release (Windows touch)', 'release'],
+  ])('a touch long-press with a contextmenu %s runs its command once', async (_, when) => {
+    for (const [selector, command, check] of [
+      ['[role=spinbutton]', 'speed.toggle100', (b) => expect(b.ts.snapshot.rate).toBe(1)],
+      ['[data-ctl=loop] button', 'loop.card', (b) => expect(b.opened.map((o) => o.name)).toEqual(['loop'])],
+      ['.ctl-mix-main', 'mix.sheet', (b) => expect(b.opened.map((o) => o.name)).toEqual(['mix'])],
+      ['[data-ctl=countIn] button', 'click.sheet', (b) => expect(b.opened.map((o) => o.name)).toEqual(['click'])],
+    ]) {
+      const b = await bed({practice: FRESH({rate: 0.8, lastRate: 0.8})});
+      const el = b.q(selector);
+      const before = b.ts.snapshot;
+      pointer(el, 'pointerdown', {pointerType: 'touch', pointerId: 9});
+      if (when === 'before') { vi.advanceTimersByTime(450); expect(contextmenu(el).defaultPrevented).toBe(true); }
+      vi.advanceTimersByTime(when === 'before' ? 50 : LONG_PRESS_MS);
+      if (when === 'after') expect(contextmenu(el).defaultPrevented).toBe(true);
+      pointer(el, 'pointerup', {pointerType: 'touch', pointerId: 9});
+      if (when === 'release') { vi.advanceTimersByTime(20); expect(contextmenu(el).defaultPrevented).toBe(true); }
+      el.click();   // the click the press leaves behind is swallowed
+      await settle();
+      expect(b.runs.filter((id) => id === command), `${selector} ${when}`).toEqual([command]);
+      check(b);
+      expect(b.ts.snapshot.loop.on).toBe(before.loop.on);
+      expect(JSON.stringify(b.ts.snapshot.click ?? null)).toBe(JSON.stringify(before.click ?? null));
+      // A later right-click is its own gesture and runs the command again.
+      vi.advanceTimersByTime(LATE_CONTEXTMENU_MS + 1);
+      contextmenu(el);
+      await settle();
+      expect(b.runs.filter((id) => id === command)).toEqual([command, command]);
+      for (const off of current.splice(0)) await off();
+      document.body.replaceChildren();
+    }
+  });
+
+  test('a touch long-press on Play pauses once (not pause, then continue)', async () => {
+    const b = await bed({practice: FRESH()});
+    const play = b.q('[data-ctl=play] button');
+    play.click();
+    await settle();
+    pointer(play, 'pointerdown', {pointerType: 'touch', pointerId: 9});
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    contextmenu(play);
+    pointer(play, 'pointerup', {pointerType: 'touch', pointerId: 9});
+    play.click();
+    await settle();
+    expect(b.runs.filter((id) => id === 'transport.pause')).toEqual(['transport.pause']);
+    expect(b.ts.snapshot.phase).toBe('paused');
+  });
+
+  test('a contextmenu that ran the command before the timer swallows the tap\'s click, and only that one', async () => {
+    const b = await bed({practice: FRESH()});
+    const loop = b.q('[data-ctl=loop] button');
+    pointer(loop, 'pointerdown', {pointerType: 'touch', pointerId: 9});
+    vi.advanceTimersByTime(300);
+    contextmenu(loop);
+    pointer(loop, 'pointerup', {pointerType: 'touch', pointerId: 9});
+    loop.click();
+    await settle();
+    expect(b.runs).toEqual(['loop.card']);
+    loop.click();   // the next tap is a tap
+    await settle();
+    expect(b.runs).toEqual(['loop.card', 'transport.loopToggle']);
   });
 
   test('the ⌃ zone opens the Mix sheet anchored to the Mix control', async () => {
@@ -436,6 +537,22 @@ describe('anchors, dim and lifecycle', () => {
     b.controls.destroy();
     expect(b.anchors.size).toBe(0);
     expect(b.host.children).toHaveLength(0);
+  });
+
+  test('destroy removes its anchors from a map whose get() skips detached nodes (stage.js\'s AnchorMap)', async () => {
+    class AnchorMap extends Map {
+      constructor(fallback) { super(); this.fallback = fallback; }
+      get(name) { const own = super.get(name); return own?.isConnected ? own : this.fallback; }
+    }
+    const fallback = document.createElement('div');
+    const anchors = new AnchorMap(fallback);
+    const b = await bed({variant: 'rail', practice: FRESH()});
+    const host = document.body.appendChild(document.createElement('div'));
+    const controls = mountControls(host, {session: b.ts.session, variant: 'mini', stage: {anchors, openSheet() {}}, registry: b.reg});
+    expect([...anchors.keys()].sort()).toEqual(['play', 'speed']);
+    expect(ownAnchor(anchors, 'play')).toBe(host.querySelector('[data-ctl=play] button'));
+    controls.destroy();
+    expect(anchors.size).toBe(0);
   });
 
   test('the dock anchors Click sheets to Count-in (no Click control there)', async () => {

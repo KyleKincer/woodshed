@@ -199,4 +199,6 @@
   .ctl-pos-sep { padding: 0 .12em; color: var(--ink-3); font-family: var(--font-ui); }
   .ctl-pos-sub { color: var(--ink-3); font: var(--fw-semibold) var(--fs-16)/1 var(--font-mono); font-variant-numeric: tabular-nums; }
   .ctl-set[data-variant=slim] .ui-stepper { min-block-size: var(--h-md); }
+  /* A load error (spec §4.12): the Speed stepper reads disabled like the buttons (controls.js lockStepper). */
+  .ctl-set .ui-stepper[data-disabled] .ui-stepper-value { color: var(--ink-3); cursor: not-allowed; }
 }

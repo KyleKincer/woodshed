@@ -21,6 +21,7 @@
 // While playing the controls dim to 70% and stay fully live (controls.css).
 import '../styles/views/stage/controls.css';
 import {registry as appRegistry} from '../app/commands.js';
+import {now as clockNow} from '../app/clock.js';
 import {effect, untracked} from '../app/store.js';
 import {Button, IconButton} from '../ui/button.js';
 import {h} from '../ui/h.js';
@@ -56,8 +57,12 @@ export const LAYOUT = Object.freeze({
 });
 /** Long-press on a control (the Menu primitive's card long-press; music surfaces use 350 ms). */
 export const LONG_PRESS_MS = 500;
+/** A contextmenu this soon after a touch long-press that ran its command belongs to that press. */
+export const LATE_CONTEXTMENU_MS = 600;
 
 const row = (id) => CONTROL_SET.find((r) => r.id === id);
+/** The entry `name` itself holds, past any get() override (a Map subclass that falls back for detached nodes). */
+export const ownAnchor = (anchors, name) => (anchors instanceof Map ? Map.prototype.get.call(anchors, name) : anchors?.get?.(name));
 const pct = (rate) => Math.round((Number.isFinite(rate) ? rate : 1) * 100);
 const PCT_MIN = Math.round(MIN_RATE * 100);
 const PCT_MAX = Math.round(MAX_RATE * 100);
@@ -138,13 +143,64 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
   const root = h('div', {class: 'ctl-set', role: 'toolbar', 'aria-label': COPY.transport, dataset: {variant}});
   el.append(root);
 
-  /** Long-press, right-click, Shift+F10 and ContextMenu on `target` run `command`. */
-  function bindLongPress(target, command) {
-    target.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      if (target.getAttribute('aria-disabled') === 'true') return;
+  /**
+   * Long-press, right-click, Shift+F10 and ContextMenu run `command`, once per gesture. Returns
+   * {timer, bind(target)}: `timer` is the primitive's own 500 ms long-press callback (Button's
+   * onLongPress, Stepper's onValueLongPress) and `bind` adds the contextmenu side. A touch or pen
+   * long-press can raise contextmenu as well (Android Chrome, Windows touch, often around the 500 ms
+   * mark, or just after the release): whichever of the two comes first runs the command and the
+   * other is ignored, like the Menu primitive's bindContextMenu.
+   */
+  function longPress(command) {
+    let target = null;
+    let press = null;               // the current touch/pen press: {handled}
+    let handledAt = -Infinity;      // when a touch long-press that ran the command ended
+    let swallowClick = false;       // a contextmenu ran the command before the timer; eat the tap's click
+    const fire = (e) => {
+      if (target?.getAttribute('aria-disabled') === 'true') return;
       run(command, {event: e});
-    }, listen);
+    };
+    return {
+      timer(e) {
+        if (press) {
+          if (press.handled) { swallowClick = false; return; }   // the primitive suppresses the click itself
+          press.handled = true;
+        }
+        fire(e);
+      },
+      bind(node) {
+        target = node;
+        node.addEventListener('pointerdown', (e) => {
+          swallowClick = false;
+          handledAt = -Infinity;
+          press = e.isPrimary && e.pointerType && e.pointerType !== 'mouse' ? {handled: false} : null;
+        }, listen);
+        const end = () => { if (press?.handled) handledAt = clockNow(); press = null; };
+        node.addEventListener('pointerup', end, listen);
+        node.addEventListener('pointercancel', end, listen);
+        node.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (press) {
+            if (press.handled) return;
+            press.handled = true;
+            swallowClick = true;
+            fire(e);
+            return;
+          }
+          // The contextmenu some platforms raise just after a touch long-press is released.
+          if (clockNow() - handledAt <= LATE_CONTEXTMENU_MS) { handledAt = -Infinity; return; }
+          fire(e);
+        }, listen);
+        // Capture on the set, so the tap's click never reaches the control's own handler.
+        root.addEventListener('click', (e) => {
+          if (!swallowClick || !node.contains(e.target)) return;
+          swallowClick = false;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }, {signal: ac.signal, capture: true});
+        return node;
+      },
+    };
   }
 
   function control(id, node, extraClass = '') {
@@ -166,9 +222,10 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
 
   function buildPlay() {
     const def = row('play');
+    const lp = longPress(def.longPress);
     const b = Button({label: COPY.play, icon: 'play', command: def.command, registry, size: slim ? 'sm' : 'play', variant: 'primary',
-      iconOnly: slim, longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.longPress, {event: e})});
-    bindLongPress(b.el, def.longPress);
+      iconOnly: slim, longPressMs: LONG_PRESS_MS, onLongPress: lp.timer});
+    lp.bind(b.el);
     const ring = ProgressRing({value: null, size: slim ? 'sm' : 'md'});
     ring.el.classList.add('ctl-ring');
     ring.el.setAttribute('aria-hidden', 'true');
@@ -202,9 +259,10 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
 
   function buildLoop() {
     const def = row('loop');
+    const lp = longPress(def.longPress);
     const b = Button({label: COPY.loopControl, icon: slim ? undefined : 'repeat', command: def.command, registry, size,
-      longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.longPress, {event: e}), pressed: false});
-    bindLongPress(b.el, def.longPress);
+      longPressMs: LONG_PRESS_MS, onLongPress: lp.timer, pressed: false});
+    lp.bind(b.el);
     destroyers.push(() => b.destroy());
     parts.loop = b;
     control('loop', b.el);
@@ -213,19 +271,22 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
   function buildSpeed() {
     const def = row('speed');
     if (slim) {
+      const lp = longPress(def.valueLongPress);
       const b = Button({label: COPY.speedChip(100), size, command: def.value, registry, icon: 'gauge',
-        longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.valueLongPress, {event: e}), attrs: {'aria-label': `${COPY.speed} 100%`}});
-      bindLongPress(b.el, def.valueLongPress);
+        longPressMs: LONG_PRESS_MS, onLongPress: lp.timer, attrs: {'aria-label': `${COPY.speed} 100%`}});
+      lp.bind(b.el);
       destroyers.push(() => b.destroy());
       parts.speedChip = b;
       control('speed', b.el);
       return;
     }
     let value = pct(snap().rate);
+    const lp = longPress(def.valueLongPress);
     const stepper = Stepper({
       label: COPY.speed, decLabel: COPY.slower, incLabel: COPY.faster, value, min: PCT_MIN, max: PCT_MAX, step: 1, bigStep: 5,
       size: 'dock', format: (v) => COPY.percent(v),
       onChange: (v, {source}) => {
+        if (failed()) { stepper.set({value}); lockStepper(); return; }
         const delta = v - value;
         if (source === 'key' && Math.abs(delta) !== 1 && Math.abs(delta) !== 5) {
           run('speed.set', {args: {rate: v / 100}, source: 'key'});
@@ -237,22 +298,23 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
         value = pct(snap().rate);
         stepper.set({value});
       },
-      onValueClick: (e) => run(def.value, {event: e}),
-      onValueLongPress: (e) => run(def.valueLongPress, {event: e}),
+      onValueClick: (e) => { if (!failed()) run(def.value, {event: e}); },
+      onValueLongPress: lp.timer,
     });
     const valueEl = stepper.el.querySelector('.ui-stepper-value');
-    if (valueEl) bindLongPress(valueEl, def.valueLongPress);
+    if (valueEl) lp.bind(valueEl);
     destroyers.push(() => stepper.destroy());
-    parts.speed = {stepper, get value() { return value; }, set(v) { value = v; stepper.set({value: v}); }};
+    parts.speed = {stepper, get value() { return value; }, set(v) { value = v; stepper.set({value: v}); lockStepper(); }};
     control('speed', stepper.el);
   }
 
   function buildCountIn() {
     const def = row('countIn');
+    const lp = longPress(def.longPress);
     const b = Button({label: COPY.countIn, sublabel: slim ? undefined : COPY.countLength(1, 'bars'), icon: variant === 'dock' ? 'count-in' : undefined,
       command: def.command, registry, size, pressed: false,
-      longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.longPress, {event: e})});
-    bindLongPress(b.el, def.longPress);
+      longPressMs: LONG_PRESS_MS, onLongPress: lp.timer});
+    lp.bind(b.el);
     destroyers.push(() => b.destroy());
     parts.countIn = b;
     control('countIn', b.el);
@@ -260,9 +322,10 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
 
   function buildClick() {
     const def = row('click');
+    const lp = longPress(def.longPress);
     const b = Button({label: COPY.click, icon: slim ? undefined : undefined, command: def.command, registry, size, pressed: false,
-      longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.longPress, {event: e})});
-    bindLongPress(b.el, def.longPress);
+      longPressMs: LONG_PRESS_MS, onLongPress: lp.timer});
+    lp.bind(b.el);
     destroyers.push(() => b.destroy());
     parts.click = b;
     control('click', b.el);
@@ -270,10 +333,11 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
 
   function buildMix() {
     const def = row('mix');
+    const lp = longPress(def.longPress);
     const main = Button({label: COPY.mixControl, icon: variant === 'dock' ? 'minus-me' : undefined, command: def.command, registry, size,
-      pressed: false, longPressMs: LONG_PRESS_MS, onLongPress: (e) => run(def.longPress, {event: e}),
+      pressed: false, longPressMs: LONG_PRESS_MS, onLongPress: lp.timer,
       className: 'ctl-mix-main', attrs: {'aria-label': COPY.minusMeName(COPY.mixControl)}});
-    bindLongPress(main.el, def.longPress);
+    lp.bind(main.el);
     const caret = IconButton({label: COPY.mixSheet, icon: 'chevron-up', command: def.caret, registry, size, variant: 'secondary', className: 'ctl-mix-caret'});
     destroyers.push(() => main.destroy(), () => caret.destroy());
     parts.mix = {main, caret, key: ''};
@@ -321,6 +385,31 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
     mix: buildMix, pause: buildPause, position: buildPosition};
   for (const id of LAYOUT[variant]) BUILD[id]();
 
+  // ---- a load error (spec §4.12): no live transport behind the error; every control is aria-disabled ----------
+  const failed = () => (session.load?.peek?.() ?? null)?.phase === 'error';
+  /** The Stepper has no disabled state of its own: its value and − / + carry the reason while the load failed. */
+  function lockStepper() {
+    const st = parts.speed?.stepper;
+    if (!st) return;
+    const on = failed();
+    if (!on && !st.el.hasAttribute('data-disabled')) return;
+    st.el.toggleAttribute('data-disabled', on);
+    for (const node of st.el.querySelectorAll('.ui-stepper-value, button')) {
+      if (on) { node.setAttribute('aria-disabled', 'true'); node.title = COPY.loadError; continue; }
+      node.removeAttribute('aria-disabled');
+      if (node.title === COPY.loadError) node.removeAttribute('title');
+    }
+    if (!on) st.set({});   // the Stepper repaints its own end-of-range state on − / +
+  }
+  function paintLock() {
+    const on = failed();
+    if (last.failed === on) return;
+    last.failed = on;
+    const lock = on ? {disabled: true, disabledReason: COPY.loadError} : {disabled: undefined, disabledReason: undefined};
+    for (const b of [parts.again, parts.pause, parts.loop, parts.countIn, parts.click, parts.speedChip, parts.mix?.main, parts.mix?.caret]) b?.set(lock);
+    lockStepper();
+  }
+
   // ---- painting -----------------------------------------------------------------------------------------------
   const last = {};
   function paint() {
@@ -329,6 +418,7 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
     root.toggleAttribute('data-playing', s.phase === 'playing' || s.phase === 'counting');
     root.dataset.phase = s.phase;
     paintPlay(s, load);
+    paintLock();
     if (parts.loop && last.loop !== !!s.loop?.on) {
       last.loop = !!s.loop?.on;
       parts.loop.set({pressed: last.loop});
@@ -405,9 +495,10 @@ export function mountControls(el, {session, variant = 'dock', stage = null, regi
     destroy() {
       ac.abort();
       for (const off of offs.splice(0)) { try { off?.(); } catch (err) { console.warn('[controls] cleanup failed', err); } }
-      for (const fn of destroyers.splice(0)) { try { fn(); } catch (err) { console.warn('[controls] cleanup failed', err); } }
-      for (const [name, node] of mine) if (anchors.get(name) === node) anchors.delete(name);
+      // Before the controls leave the DOM: an anchors map whose get() skips detached nodes (stage.js) would hide them.
+      for (const [name, node] of mine) if (ownAnchor(anchors, name) === node) anchors.delete(name);
       mine.length = 0;
+      for (const fn of destroyers.splice(0)) { try { fn(); } catch (err) { console.warn('[controls] cleanup failed', err); } }
       root.remove();
     },
   };

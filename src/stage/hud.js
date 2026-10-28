@@ -182,14 +182,25 @@ export function plateText(countdown) {
   return {number: String(countdown.current), label: String(countdown.label ?? '')};
 }
 
-/** The meter unit the lamps light for a count-in beat: the counted beats of the target bar, in turn. */
-export function countUnit(countdown, bar) {
+/**
+ * The meter unit the lamps light for a count-in beat. The counted beats are the ones that end at the
+ * target (the metronome's count-in plan), so the plate's `current` counts back from the target:
+ * `beats` (that plan's `{unit}` beats, when known) gives the unit directly, `beats[length − current]`
+ * (a loop-gap count whose start the gap cut keeps its last beats, so this holds there too). Without
+ * the plan, the counts run back from a target on the bar's downbeat through the bar's groups.
+ */
+export function countUnit(countdown, bar, beats = null) {
   if (!countdown || !bar) return -1;
+  const current = Math.max(1, Math.round(countdown.current ?? 1));
+  if (Array.isArray(beats) && beats.length) {
+    const beat = beats[beats.length - current];
+    if (beat && Number.isFinite(beat.unit)) return beat.unit;
+  }
   const groups = Array.isArray(bar.groups) && bar.groups.length ? bar.groups : [1];
-  const beat = Math.max(0, (countdown.of ?? 1) - (countdown.current ?? 1)) % groups.length;
+  const starts = [];
   let unit = 0;
-  for (let i = 0; i < beat; i++) unit += groups[i];
-  return unit;
+  for (const g of groups) { starts.push(unit); unit += g; }
+  return starts[(starts.length - (current % starts.length)) % starts.length];
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -250,7 +261,11 @@ export function mountHud(el, {
   // The ⋯ menu anchors to its button (the 'stage' context's anchors Map, while mounted).
   const anchors = stage?.anchors && typeof stage.anchors.set === 'function' ? stage.anchors : null;
   anchors?.set('menu', more.el);
-  destroyers.push(() => { if (anchors?.get('menu') === more.el) anchors.delete('menu'); });
+  destroyers.push(() => {
+    // The entry itself, past a get() override that skips detached nodes (stage.js's anchors map).
+    const own = anchors instanceof Map ? Map.prototype.get.call(anchors, 'menu') : anchors?.get('menu');
+    if (own === more.el) anchors.delete('menu');
+  });
   destroyers.push(() => more.destroy());
 
   const setText = h('span', {class: 'hud-set-text'});
@@ -395,6 +410,19 @@ export function mountHud(el, {
     speed.set({value: sp.value, tone: sp.tone, sub: sp.sub ?? ''});
   }
 
+  /** The beats of the count running at audio time `now`: the engine's count-in, or a loop gap's count. */
+  function countBeats(at) {
+    const engine = session.engine;
+    if (!engine) return null;
+    if (engine.countingIn && Array.isArray(engine.countIn?.beats)) return engine.countIn.beats;
+    const t = Number.isFinite(at) ? at : engine.ctx?.currentTime ?? 0;
+    for (const g of engine.gapsBetween?.(t, t + 1e-3) ?? []) {
+      if (g.when > t + 1e-9 || t >= g.end - 1e-9) continue;
+      return session.metronome?.countInPlanAt?.(g.target)?.beats ?? null;
+    }
+    return null;
+  }
+
   let lampKey = '';
   let lastBeatKey = '';
   let lastCount = null;
@@ -408,7 +436,7 @@ export function mountHud(el, {
     const countdown = snap().countdown;
     if (countdown) {
       const countKey = `${countdown.of}:${countdown.current}`;
-      lamps.frame(countUnit(countdown, bar), countKey !== lastCount);
+      lamps.frame(countUnit(countdown, bar, countBeats(frame.now)), countKey !== lastCount);
       lastCount = countKey;
       lastBeatKey = '';
       return;
@@ -567,6 +595,8 @@ export function mountHud(el, {
   }
 
   // ---- speed drag (±1% per 12 px, pointer capture, one coalesced undo step) ----------------------------------
+  // The steps coalesce through the practice undo's 1 s 'speed' window; a gesture-bounded step (a pause
+  // over 1 s mid-drag, or a tap just before it) needs an undo/transport gesture API (handoff ticket).
   let drag = null;
   speed.el.addEventListener('pointerdown', (e) => {
     if (!e.isPrimary || e.button !== 0) return;
@@ -585,7 +615,7 @@ export function mountHud(el, {
   }, listen);
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    if (drag.moved) suppressTap = true;
+    if (drag.moved && e.type === 'pointerup') suppressTap = true;   // the readouts' pointerup that follows clears it
     drag = null;
     root.removeAttribute('data-speed-drag');
     speed.el.releasePointerCapture?.(e.pointerId);
@@ -599,6 +629,7 @@ export function mountHud(el, {
   let lastTap = null;
   let downAt = null;
   readouts.addEventListener('pointerdown', (e) => {
+    suppressTap = false;   // never carried past the gesture that set it
     downAt = e.isPrimary ? {x: e.clientX, y: e.clientY} : null;
   }, listen);
   readouts.addEventListener('pointerup', (e) => {

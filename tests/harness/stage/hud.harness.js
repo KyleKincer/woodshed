@@ -15,11 +15,18 @@
 //                         trainer (a trainer on the Bridge loop) | solo (bass solo) | countin (count-in on) |
 //                         marked (unmapped markers) | shared (read-only, Shared by …) | setlist
 //   load=hold             the audio never finishes loading (the Play ring; Play arms "Play when ready")
+//   load=error            the audio fails to load (every control aria-disabled with the reason)
 //   ready=1               a `1 ready` chip (a song finished processing)
 //   wake=1 / pedal=1      the ☼ and ⎍ indicators
 //   cue=<s>               the cue (default 0)
-// window.__hud = {ts, session, hud, controls, sheets: [names opened]} for the states.
+// window.__hud = {ts, session, hud, controls, sheets: [names opened], calls: [Stage methods run]} for the states.
+//
+// The Stage's own commands (stage.leave, stage.notes, stage.menu, view.focus, setlist.prev/next) are
+// ST4's src/stage/commands.js, imported here so the identity row's controls are live; the stand-in
+// Stage object below records what they ask of the Stage. Every ST5 state lists that module in
+// opts.requires (architecture §9.0: skipped until ST4 merges, strict at integration).
 import {registry} from '../../../src/app/commands.js';
+import '../../../src/stage/commands.js';
 import {signal} from '../../../src/app/store.js';
 import {mountHud} from '../../../src/stage/hud.js';
 import {mountControls} from '../../../src/stage/controls.js';
@@ -71,6 +78,7 @@ export default async function mount(el, {query, h}) {
     shared: scenario === 'shared' ? {token: 'harness-share'} : null,
     // load=hold: the stems are never signed, so the audio stays loading (the Play ring).
     ...(query.get('load') === 'hold' ? {media: {signKeys: () => new Promise(() => {})}} : {}),
+    ...(query.get('load') === 'error' ? {media: {signKeys: async () => { throw new Error('harness: storage down'); }}} : {}),
     load: false,
   });
   const session = ts.session;
@@ -86,12 +94,18 @@ export default async function mount(el, {query, h}) {
   const anchors = new Map();
   const wake = signal(query.get('wake') === '1');
   const pedal = signal(query.get('pedal') === '1');
-  const setlist = signal(scenario === 'setlist' ? {id: 'set-1', name: 'Friday gig', index: 1, count: 5, next: {title: 'Second Wind'}} : null);
+  const setlist = signal(scenario === 'setlist' ? {id: 'set-1', name: 'Friday gig', index: 1, count: 5, prev: {title: 'Low Tide'}, next: {title: 'Second Wind'}} : null);
   const ready = signal(query.get('ready') === '1' ? [{id: 'lowtide', title: 'Low Tide'}] : []);
+  const calls = [];
+  const focusSig = signal(focus);
   const stage = {
-    layout, anchors, wakeLock: {held: wake}, pedalMode: pedal, setlist,
+    session, layout, anchors, wakeLock: {held: wake}, pedalMode: pedal, setlist, focus: focusSig, menuAvailable: true,
     openSheet(name) { sheets.push(name); frame.dataset.sheet = name; return {close() {}}; },
     closeSheets() {},
+    openMenu(name) { calls.push(`openMenu:${name}`); return {close() {}}; },
+    leave() { calls.push('leave'); },
+    toggleFocus() { calls.push('toggleFocus'); focusSig.value = !focusSig.peek(); },
+    goSetlist(dir) { calls.push(`goSetlist:${dir}`); },
   };
   registry.provide('session', () => session);
   registry.provide('transport', () => session.transport);
@@ -140,7 +154,7 @@ export default async function mount(el, {query, h}) {
   el.append(frame);
   session.frame.start();
 
-  window.__hud = {ts, session, hud, controls, sheets, stage, wake, pedal, setlist, ready};
+  window.__hud = {ts, session, hud, controls, sheets, calls, stage, wake, pedal, setlist, ready};
   if (query.get('load') !== 'hold') {
     await waitForLoad(session);
     if (scenario === 'trainer') session.transport.startTrainer();
