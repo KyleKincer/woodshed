@@ -12,7 +12,6 @@
 // Shared helpers (used by menu, sheet, dialog, toast, status, banner and coachmark):
 //   withDefaults(defaults, props)   props over defaults, ignoring undefined values
 //   applyCommon(el, next, prev)     the common props of §2.12: className, id, attrs, dataset, testid
-//   glyph(name, {size})             an <svg class="ui-icon"> using the sprite symbol #i-<name>
 //   setContent(el, content)         content: a Node, a string, an array of them, or null
 //   supportsPopover(win)            the Popover API exists
 //   showLayer(el, kind) / hideLayer(el)   put an overlay in the top layer (or the fallback layer, data-layer=<kind>);
@@ -71,13 +70,6 @@ export function applyCommon(el, next = {}, prev = {}) {
       if (v == null || v === false) delete el.dataset[k]; else el.dataset[k] = v === true ? '' : String(v);
     });
   }
-}
-
-/** An icon from the sprite (§7.4): <svg class="ui-icon" aria-hidden="true"><use href="#i-name"/></svg>. */
-export function glyph(name, {size = 20, className = ''} = {}) {
-  return h('svg', {
-    class: ['ui-icon', className], width: size, height: size, 'aria-hidden': 'true', focusable: 'false',
-  }, h('use', {href: `#i-${name}`}));
 }
 
 /** Replaces el's children with content: a Node, a string, a number, an array of them, or null. */

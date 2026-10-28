@@ -32,8 +32,9 @@ import {registry as appRegistry} from '../app/commands.js';
 import {pushOverlay} from '../app/dispatch.js';
 import {aria as keyAria, label as keyLabel} from '../app/keys.js';
 import {h} from './h.js';
+import {icon} from './icon.js';
 import {anchorTo} from './position.js';
-import {applyCommon, glyph, hideLayer, onOutside, showLayer, withDefaults} from './popover.js';
+import {applyCommon, hideLayer, onOutside, showLayer, withDefaults} from './popover.js';
 import {Sheet} from './sheet.js';
 import '../styles/primitives/menu.css';
 
@@ -125,14 +126,14 @@ export function Menu(props = {}) {
     row.setAttribute('aria-labelledby', labelId);
     if (r.reason) row.setAttribute('aria-describedby', reasonId); else row.removeAttribute('aria-describedby');
     const parts = [];
-    const mark = !r.checked ? null : r.type === 'radio' ? h('span', {class: 'ui-menu-dot'}) : glyph('check', {size: 16});
+    const mark = !r.checked ? null : r.type === 'radio' ? h('span', {class: 'ui-menu-dot'}) : icon('check', {size: 16});
     if (level.hasChecks) parts.push(h('span', {class: 'ui-menu-check', 'aria-hidden': 'true'}, mark));
-    if (level.hasIcons) parts.push(h('span', {class: 'ui-menu-icon', 'aria-hidden': 'true'}, r.icon ? glyph(r.icon) : null));
+    if (level.hasIcons) parts.push(h('span', {class: 'ui-menu-icon', 'aria-hidden': 'true'}, r.icon ? icon(r.icon) : null));
     parts.push(h('span', {class: 'ui-menu-text'},
       h('span', {class: 'ui-menu-label', id: labelId}, r.label),
       r.reason ? h('span', {class: 'ui-menu-reason', id: reasonId}, r.reason) : null));
     if (r.kbd) parts.push(h('kbd', {class: 'ui-menu-kbd', 'aria-hidden': 'true'}, keyLabel(r.kbd)));
-    if (r.type === 'submenu') parts.push(h('span', {class: 'ui-menu-chevron', 'aria-hidden': 'true'}, glyph('chevron-right', {size: 16})));
+    if (r.type === 'submenu') parts.push(h('span', {class: 'ui-menu-chevron', 'aria-hidden': 'true'}, icon('chevron-right', {size: 16})));
     row.replaceChildren(...parts);
   }
 
@@ -180,7 +181,7 @@ export function Menu(props = {}) {
     const level = {items, parent, parentIndex, depth, el, rows: [], resolved: [], child: null, back: null, positioner: null, pop: null};
     if (parent && presentation === 'sheet') {
       level.back = h('div', {class: 'ui-menu-item ui-menu-back', role: 'menuitem', tabIndex: -1, id: `ui-menu-${seq}-${depth}-back`},
-        h('span', {class: 'ui-menu-icon', 'aria-hidden': 'true'}, glyph('chevron-left')),
+        h('span', {class: 'ui-menu-icon', 'aria-hidden': 'true'}, icon('chevron-left')),
         h('span', {class: 'ui-menu-text'}, h('span', {class: 'ui-menu-label'}, 'Back')));
       info.set(level.back, {level, index: 'back'});
     }

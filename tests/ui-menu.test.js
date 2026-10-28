@@ -397,6 +397,46 @@ describe('coarse pointers: a bottom sheet with drill-in submenus', () => {
   });
 });
 
+// I0B-12: menu icons are U1's icon() (src/ui/icon.js), at the sizes U2's old glyph() drew them.
+describe('icons come from icon()', () => {
+  const iconOf = slot => {
+    const svg = slot.querySelector(':scope > svg');
+    expect(svg.namespaceURI).toBe('http://www.w3.org/2000/svg');
+    expect(svg.getAttribute('class')).toBe('ui-icon');
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
+    expect(svg.getAttribute('focusable')).toBe('false');
+    expect(svg.getAttribute('height')).toBe(svg.getAttribute('width'));
+    expect(svg.querySelector('use').getAttribute('href')).toBe(`#i-${svg.dataset.icon}`);
+    return {name: svg.dataset.icon, size: Number(svg.getAttribute('width'))};
+  };
+
+  test('item icons 20 px, the checkbox check and the submenu chevron 16 px', () => {
+    const m = open({items: [
+      {label: 'Loop', icon: 'repeat'},
+      {label: 'Pin', type: 'checkbox', checked: true},
+      {label: 'View', items: [{label: 'Stems'}]},
+    ]});
+    const [loop, pin, view] = rows(m);
+    expect(iconOf(loop.querySelector('.ui-menu-icon'))).toEqual({name: 'repeat', size: 20});
+    expect(pin.querySelector('.ui-menu-icon').childElementCount).toBe(0);   // a slot kept for alignment
+    expect(iconOf(pin.querySelector('.ui-menu-check'))).toEqual({name: 'check', size: 16});
+    expect(iconOf(view.querySelector('.ui-menu-chevron'))).toEqual({name: 'chevron-right', size: 16});
+  });
+
+  test('an unknown icon name is refused, not drawn as a broken <use>', () => {
+    expect(() => open({items: [{label: 'Bad', icon: 'Not An Icon'}]})).toThrow(TypeError);
+  });
+
+  test('the sheet Back row has a 20 px chevron-left', () => {
+    setMedia({coarse: true});
+    const m = open({items: [{label: 'View', items: [{label: 'Stems'}]}]});
+    keydown('Enter');
+    const back = active().closest('[role=menu]').querySelector('.ui-menu-back');
+    expect(iconOf(back.querySelector('.ui-menu-icon'))).toEqual({name: 'chevron-left', size: 20});
+    m.destroy();
+  });
+});
+
 describe('bindContextMenu', () => {
   let card, items, menus, off;
   beforeEach(() => {
