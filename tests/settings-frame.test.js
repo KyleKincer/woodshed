@@ -183,6 +183,32 @@ describe('laptop: 200 px nav + content (split)', () => {
     expect(log.filter(e => e === 'load:device')).toHaveLength(2);
   });
 
+  test('a section whose render throws, or with no default export, shows the alert; mount/update never reject', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let renders = 0;
+    const {modules: base, log} = fakeModules();
+    const modules = {
+      ...base,
+      [sectionPath('practice')]: async () => ({default: {id: 'practice', title: 'Practice', render() { renders++; if (renders === 1) throw new Error('boom'); return {destroy() {}}; }}}),
+      [sectionPath('device')]: async () => ({}),
+    };
+    const {view} = await open('practice', {modules});
+    let alert = host.querySelector('.settings-section-body [role=alert]');
+    expect(alert.textContent).toContain(COPY.loadFailed);
+    expect(links()).toHaveLength(6);   // the nav stays usable
+    alert.querySelector('button').click();
+    await flush();
+    expect(renders).toBe(2);
+    expect(host.querySelector('.settings-section-body [role=alert]')).toBeNull();
+
+    await expect(view.update(matchOf('device'))).resolves.toBeUndefined();
+    alert = host.querySelector('.settings-section-body [role=alert]');
+    expect(alert.textContent).toContain(COPY.loadFailed);
+    await view.update(matchOf('account'));
+    expect(host.querySelector('.fake-section').textContent).toBe('account body');
+    expect(log).toContain('render:account');
+  });
+
   test('a slow section never renders over a later one', async () => {
     let release;
     const hold = {practice: new Promise(resolve => { release = resolve; })};

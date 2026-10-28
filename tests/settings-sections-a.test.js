@@ -196,6 +196,8 @@ describe('spec §6.2 controls, as a table (role + accessible name; nothing else)
       if (r.role === 'radiogroup') expect(findGroup(body, r.name)).toBeTruthy();
       else expect(find(body, r.role, r.name, r.group ?? null)).toBeTruthy();
     }
+    // Pedals & keys is a stub that PD1 completes in pedals.js: only its own controls must be there.
+    if (section === 'pedals') return;
     const expected = rows.filter(r => r.role !== 'radiogroup').length;
     expect(exposedControls(body).map(el => `${roleOf(el)}:${accName(el)}`)).toHaveLength(expected);
   });
@@ -220,6 +222,14 @@ describe('rows and where they are kept (D40)', () => {
     // Only device rows carry the "This device" tag.
     expect(!!row.querySelector('.settings-scope')).toBe(r.scope === 'device');
     if (r.scope === 'device') expect(row.querySelector('.settings-scope').textContent).toBe(COPY.thisDevice);
+  });
+
+  test('Practice rows follow spec §6.2 order (Classic keys dropped)', () => {
+    const {body} = render('practice', env());
+    expect([...body.querySelectorAll('[data-row]')].map(r => r.dataset.row))
+      .toEqual(['stop', 'countIn', 'click', 'eachPassCount', 'keepPitch', 'distance', 'follow', 'wake', 'edgeFlash']);
+    expect(ROWS.filter(r => r.section === 'practice').map(r => r.row).sort())
+      .toEqual(['click', 'countIn', 'distance', 'eachPassCount', 'edgeFlash', 'follow', 'keepPitch', 'stop', 'wake']);
   });
 
   test('account rows write only the account; device rows write only this device', async () => {
@@ -318,6 +328,49 @@ describe('Practice', () => {
     await flush();
     expect(e.acct.patches.at(-1)).toEqual({practice: {countIn: {on: false, length: len, unit: 'beats'}}});
     expect(rowEl(body, 'countIn').querySelector('.settings-countin-custom').hidden).toBe(true);
+  });
+
+  test('a custom count-in changed elsewhere to a preset shows the preset; to another custom stays Custom', () => {
+    const e = env({settings: {practice: {countIn: {on: true, length: 3, unit: 'beats'}}}});
+    const {body} = render('practice', e);
+    const group = COPY.practice.countIn.label;
+    const panel = () => rowEl(body, 'countIn').querySelector('.settings-countin-custom');
+    expect(checkedIn(body, group)).toBe('Custom');
+    e.acct.remote({practice: {countIn: {on: true, length: 1, unit: 'bars'}}});
+    expect(checkedIn(body, group)).toBe('1 bar');
+    expect(panel().hidden).toBe(true);
+    e.acct.remote({practice: {countIn: {on: true, length: 5, unit: 'bars'}}});
+    expect(checkedIn(body, group)).toBe('Custom');
+    expect(panel().hidden).toBe(false);
+  });
+
+  test('Custom picked on a preset-shaped value stays Custom while other settings change', async () => {
+    const e = env({settings: {practice: {countIn: {on: true, length: 1, unit: 'bars'}}}});
+    const {body} = render('practice', e);
+    const group = COPY.practice.countIn.label;
+    find(body, 'radio', 'Custom', group).click();
+    await flush();
+    e.acct.remote({practice: {stop: 'stay'}});
+    expect(checkedIn(body, group)).toBe('Custom');
+    expect(rowEl(body, 'countIn').querySelector('.settings-countin-custom').hidden).toBe(false);
+  });
+
+  test('Off → Custom that fails reverts to Off; a Retry that saves shows Custom again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const e = env();
+    const {body} = render('practice', e);
+    const group = COPY.practice.countIn.label;
+    const panel = () => rowEl(body, 'countIn').querySelector('.settings-countin-custom');
+    e.acct.failNext(1);
+    find(body, 'radio', 'Custom', group).click();
+    await flush();
+    expect(checkedIn(body, group)).toBe('Off');
+    expect(panel().hidden).toBe(true);
+    rowEl(body, 'countIn').querySelector('.settings-save-retry').click();
+    await flush();
+    expect(e.acct.patches.at(-1)).toEqual({practice: {countIn: {on: true, length: 1, unit: 'bars'}}});
+    expect(checkedIn(body, group)).toBe('Custom');
+    expect(panel().hidden).toBe(false);
   });
 
   test('a stored custom count-in opens on Custom', () => {

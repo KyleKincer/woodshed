@@ -74,10 +74,24 @@ function render(el, ctx) {
 
   // ---- Default count-in
   let countSeg, lengthStepper, unitSeg;
+  // Custom stays open while the stored countIn is the one this control last showed or wrote, so a
+  // Custom pick of a preset-shaped value (Off → Custom writes 1 bar) keeps the stepper. A countIn
+  // that arrives from elsewhere (another device or tab, or a failed write's revert) shows as what
+  // it is. Each write attempt, a Retry included, marks its own value and Custom state first.
+  const countKey = c => JSON.stringify([!!c?.on, c?.length ?? null, c?.unit ?? null]);
   let customOpen = countInChoice(practice().countIn) === 'custom';
+  let shownCountIn = countKey(practice().countIn);
   const countSaver = accountSaver(() => countSeg.el.querySelector('[aria-checked=true]'));
   const countRow = settingRow({row: 'countIn', label: C.countIn.label, hint: C.countIn.hint, scope: 'account', saver: countSaver});
-  const writeCountIn = next => patchPractice(countSaver, {countIn: next});
+  const writeCountIn = next => {
+    const keepCustom = customOpen;
+    return countSaver.run(() => {
+      shownCountIn = countKey(next);
+      customOpen = keepCustom;
+      renderCustom();
+      return account.patch({practice: {countIn: next}});
+    });
+  };
   countSeg = keep(Segmented({
     attrs: {'aria-labelledby': countRow.labelId},
     options: ['off', 'oneBar', 'twoBars', 'twoBeats', 'custom'].map(value => ({value, label: C.countIn[value]})),
@@ -87,7 +101,7 @@ function render(el, ctx) {
       renderCustom();
       const current = practice().countIn;
       const next = countInFor(choice, current);
-      if (JSON.stringify(next) !== JSON.stringify(current)) writeCountIn(next);
+      if (countKey(next) !== countKey(current)) writeCountIn(next);
     },
   }));
   const unitId = `${countRow.labelId}-unit`;
@@ -198,8 +212,9 @@ function render(el, ctx) {
     const p = value.practice;
     stopSeg.set({value: p.stop});
     const choice = countInChoice(p.countIn);
-    if (choice === 'custom') customOpen = true;
-    else if (choice === 'off') customOpen = false;
+    const key = countKey(p.countIn);
+    if (key !== shownCountIn || choice === 'custom') customOpen = choice === 'custom';
+    shownCountIn = key;
     countSeg.set({value: customOpen ? 'custom' : choice});
     lengthStepper.set({value: p.countIn.length});
     unitSeg.set({value: p.countIn.unit});
@@ -219,8 +234,7 @@ function render(el, ctx) {
 
   const group = (rows, label) => h('div', {class: 'settings-group', role: label ? 'group' : null, 'aria-label': label ?? null}, rows.map(r => r.el));
   const page = h('div', {class: 'settings-section', dataset: {section: 'practice'}},
-    group([stopRow, countRow, clickRow, eachPass.row, keepPitch.row, wakeRow]),
-    group([distanceRow, followRow, edgeRow]));
+    group([stopRow, countRow, clickRow, eachPass.row, keepPitch.row, distanceRow, followRow, wakeRow, edgeRow]));
   el.replaceChildren(page);
 
   return {

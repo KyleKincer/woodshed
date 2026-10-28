@@ -291,23 +291,33 @@ export async function mount(el, match, ctx = {}) {
     }
     doc.title = COPY.sectionDocumentTitle(meta.title);
     frame.body.replaceChildren(h('p', {class: 'settings-loading', role: 'status'}, COPY.loading));
-    let def;
-    try {
-      def = (await modules[sectionPath(id)]()).default;
-    } catch (err) {
-      if (token !== loadSeq || destroyed) return;
+    // One broken section (a failed import, no default export, or a render that throws) shows the
+    // load-error alert with Try again; it never rejects mount/update, so the nav stays usable.
+    const failed = err => {
       console.error(`[settings] the ${id} section could not load`, err);
       const retry = Button({label: COPY.loadRetry, onClick: () => openSection(id)});
       frame.body.replaceChildren(h('div', {class: 'settings-load-error', role: 'alert'}, h('p', {}, COPY.loadFailed), retry.el));
       section = {id, handle: {destroy: () => retry.destroy()}};
+    };
+    let def;
+    try {
+      def = (await modules[sectionPath(id)]()).default;
+      if (typeof def?.render !== 'function') throw new Error(`${sectionPath(id)} has no default export with render()`);
+    } catch (err) {
+      if (token !== loadSeq || destroyed) return;
+      failed(err);
       return;
     }
     if (token !== loadSeq || destroyed) return;
-    if (def?.desktopOnly && !desktopApp) { navigate('/settings', {replace: true}); return; }
-    frame.heading.textContent = def?.title ?? meta.title;
+    if (def.desktopOnly && !desktopApp) { navigate('/settings', {replace: true}); return; }
+    frame.heading.textContent = def.title ?? meta.title;
     frame.body.replaceChildren();
-    const handle = def.render(frame.body, {...env, layout: frame.layout, headingId: frame.headingId});
-    section = {id, handle};
+    try {
+      const handle = def.render(frame.body, {...env, layout: frame.layout, headingId: frame.headingId});
+      section = {id, handle};
+    } catch (err) {
+      failed(err);
+    }
   }
 
   async function show(m, {focus = false} = {}) {
