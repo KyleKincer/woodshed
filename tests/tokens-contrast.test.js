@@ -187,6 +187,11 @@ describe('tokens: set-independent', () => {
     expect(declsFor(':root[data-place=stage]').get('--icon-stroke')).toBe('2');
   });
 
+  it('Stage handles take a 44px hit area on fine pointers too (spec §8.2 Stage column)', () => {
+    expect(rootDecls.get('--hit-handle')).toBe('24px');
+    expect(declsFor(':root[data-place=stage]').get('--hit-handle')).toBe('44px');
+  });
+
   it('only tokens.css and fonts.css hold colour literals (guard)', async () => {
     const {checkCss} = await import('../scripts/check-css.mjs');
     expect(checkCss({root}).filter(v => v.rule === 'colour')).toEqual([]);

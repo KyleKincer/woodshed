@@ -104,7 +104,9 @@ describe('check-css rules', () => {
       .f { font: var(--fs-16)/1.4 var(--font-ui); }
       .g { font: var(--fw-semibold) var(--fs-12)/1.2 var(--font-mono); }
       .h { font: inherit; }
-      .i { font-size: calc(var(--fs-14) * 1.5); }`))).toEqual([]);
+      .i { font-size: calc(var(--fs-14) * 1.5); }
+      .j { font: var(--fs-14)/20px var(--font-mono); }
+      .k { font: var(--fw-bold) var(--fs-16)/24px var(--font-ui); }`))).toEqual([]);
   });
 
   it('font-family: flags literal families', () => {
@@ -186,6 +188,8 @@ describe('check-source rules', () => {
     expect(src(LIB, "const n = prompt('Name');")).toEqual(['dialogs']);
     expect(src(LIB, "window.confirm('x');")).toEqual(['dialogs']);
     expect(src(LIB, "globalThis.alert('x');")).toEqual(['dialogs']);
+    expect(src(LIB, "if (window?.confirm('x')) go();")).toEqual(['dialogs']);
+    expect(src(LIB, "self?.prompt('x');")).toEqual(['dialogs']);
   });
   it('dialogs: allows feedback.confirm, an imported confirm, definitions, comments and strings', () => {
     expect(src(LIB, "await feedback.confirm({title: 'Delete?'});")).toEqual([]);
@@ -201,6 +205,19 @@ describe('check-source rules', () => {
     expect(src(LIB, "el.ownerDocument.addEventListener('keydown', onKey);")).toEqual(['keyboard']);
     expect(src(LIB, 'document.onkeydown = onKey;')).toEqual(['keyboard']);
   });
+  it('keyboard: flags a bare addEventListener, window.document / self.document and optional chaining', () => {
+    expect(src(LIB, "addEventListener('keydown', onKey);")).toEqual(['keyboard']);
+    expect(src(LIB, "const off = () => addEventListener('keyup', f);")).toEqual(['keyboard']);
+    expect(src(LIB, "window.document.addEventListener('keyup', f);")).toEqual(['keyboard']);
+    expect(src(LIB, "self.document.addEventListener('keydown', f);")).toEqual(['keyboard']);
+    expect(src(LIB, "globalThis.document.body.addEventListener('keydown', f);")).toEqual(['keyboard']);
+    expect(src(LIB, "window?.addEventListener('keydown', f);")).toEqual(['keyboard']);
+    expect(src(LIB, "el.ownerDocument?.addEventListener('keydown', f);")).toEqual(['keyboard']);
+    expect(src(LIB, 'window.document.onkeyup = f;')).toEqual(['keyboard']);
+  });
+  it('keyboard: a method named addEventListener or a member call is not the bare form', () => {
+    expect(src(LIB, "this.addEventListener('keydown', f);\nhost.addEventListener('keyup', f);\nconst s = \"addEventListener('keydown'\";")).toEqual([]);
+  });
   it('keyboard: allows element listeners, other events and the dispatcher itself', () => {
     expect(src(LIB, "el.addEventListener('keydown', onKey);\nwindow.addEventListener('resize', f);")).toEqual([]);
     expect(src('src/app/dispatch.js', "window.addEventListener('keydown', onKey, true);\nwindow.addEventListener('keyup', onUp, true);")).toEqual([]);
@@ -215,6 +232,21 @@ describe('check-source rules', () => {
     expect(src('src/app/prefs.js', "localStorage.getItem('ws.prefs');")).toEqual([]);
     expect(src('src/app/router.js', "sessionStorage.getItem('ws.intendedRoute');")).toEqual([]);
     expect(src(LIB, "indexedDB.open('woodshed');\n// localStorage is not used here")).toEqual([]);
+  });
+  it('storage: router.js may use sessionStorage only for ws.intendedRoute', () => {
+    const router = 'src/app/router.js';
+    expect(src(router, "sessionStorage.setItem('ws.anything', x);")).toEqual(['storage']);
+    expect(src(router, "const KEY = 'ws.other';\nsessionStorage.getItem(KEY);")).toEqual(['storage']);
+    expect(src(router, 'sessionStorage.getItem(key);')).toEqual(['storage']);
+    expect(src(router, 'sessionStorage.clear();')).toEqual(['storage']);
+    expect(src(router, "sessionStorage['ws.intendedRoute'] = x;")).toEqual(['storage']);
+    expect(src(router, [
+      "const KEY = 'ws.intendedRoute';",
+      'sessionStorage.setItem(KEY, path);',
+      "const back = globalThis.sessionStorage?.getItem('ws.intendedRoute');",
+      'sessionStorage.removeItem("ws.intendedRoute");',
+      "if (typeof sessionStorage === 'undefined') return;",
+    ].join('\n'))).toEqual([]);
   });
 
   it('backend: flags importing src/js/backend.js, statically or dynamically', () => {
@@ -236,6 +268,12 @@ describe('check-source rules', () => {
     expect(src('src/download/download.js', 'el.innerHTML = `<b>${x}</b>`;')).toEqual([]);
     expect(src(LIB, 'if (el.innerHTML === `${x}`) go();')).toEqual([]);
   });
+  it('inner-html: flags a right-hand side that starts on the next line', () => {
+    expect(src(LIB, 'el.innerHTML =\n  `<b>${name}</b>`;\n')).toEqual(['inner-html']);
+    expect(src(LIB, "el.innerHTML =\n  '<b>' + name;\n")).toEqual(['inner-html']);
+    expect(src(LIB, "el.innerHTML =\n\n    '<b>' +\n    name;\n")).toEqual(['inner-html']);
+    expect(src(LIB, "el.innerHTML =\n  '';\nlog('a' + b);\n")).toEqual([]);
+  });
 
   it('inline-z: flags z-index in inline styles', () => {
     expect(src(LIB, 'el.style.zIndex = 5;')).toEqual(['inline-z']);
@@ -245,6 +283,11 @@ describe('check-source rules', () => {
   });
   it('inline-z: allows classes and other inline styles', () => {
     expect(src(LIB, "el.classList.add('is-raised');\nel.style.transform = 'translateX(4px)';\n// z-index lives in CSS")).toEqual([]);
+  });
+  it('inline-z: flags compound assignment and Object.assign styles, allows reads', () => {
+    expect(src(LIB, 'el.style.zIndex += 1;')).toEqual(['inline-z']);
+    expect(src(LIB, 'Object.assign(el.style, {position: "fixed", zIndex: 9});')).toEqual(['inline-z']);
+    expect(src(LIB, 'const z = getComputedStyle(el).zIndex;\nif (el.style.zIndex === "") go();')).toEqual([]);
   });
 
   it('commands: a commands module may not import views, sessions or packages statically', () => {
@@ -284,11 +327,30 @@ describe('check-source rules', () => {
   it('reserved: allows ordinary bindings', () => {
     expect(src('src/app/global-commands.js', "register({id: 'palette.open', keys: ['Mod+KeyK', 'Shift+Space', 'Mod+Shift+KeyN']});")).toEqual([]);
   });
+  it('reserved: a "]" key string does not end the keys array', () => {
+    expect(src('src/stage/commands.js', "register({id: 'a.b', keys: [']', 'Mod+KeyW'], run() {}});")).toEqual(['reserved']);
+    expect(src('src/stage/commands.js', "register({id: 'a.b', keys: ['[', ']', 'Mod+[']});\nregister({id: 'a.c', key: 'Mod+KeyT'});")).toEqual(['reserved']);
+    expect(src('src/stage/commands.js', "register({id: 'a.b', keys: [']', '['], title: 'Mod+KeyW'});")).toEqual([]);
+  });
 
   it('colour: flags colour literals in strings', () => {
     expect(src('src/stage/wave-render.js', "ctx.fillStyle = '#ff8800';")).toEqual(['colour']);
     expect(src('src/stage/wave-render.js', 'ctx.strokeStyle = `rgba(0, 0, 0, ${a})`;')).toEqual(['colour']);
     expect(src('src/ui/fader.js', "const c = 'color-mix(in srgb, red 5%, blue)';")).toEqual(['colour']);
+    expect(src('src/ui/a.js', "const c = '#333';\nconst d = 'border: 1px solid #111';\nconst g = 'linear-gradient(#fff, #000)';")).toEqual(['colour', 'colour', 'colour']);
+  });
+  it('colour: sees multi-line template literals', () => {
+    expect(src('src/ui/a.js', 'el.style.cssText = `\n  color: #ff0000;\n`;\n')).toEqual(['colour']);
+    expect(src('src/ui/a.js', 'const css = `\n  .a { width: ${w}px; }\n  .b { background: rgb(0 0 0); }\n`;')).toEqual(['colour']);
+  });
+  it('colour: allows url(#id), /#fragments and numbered prose', () => {
+    expect(src('src/ui/a.js', [
+      "const u = 'https://x.y/#abc';",
+      "el.setAttribute('mask', 'url(#fade)');",
+      "const s = 'Take #123';",
+      'const t = `Bar #120 of ${n}`;',
+      "const e = '&#123;';",
+    ].join('\n'))).toEqual([]);
   });
   it('colour: allows token reads, icon ids and URL fragments', () => {
     expect(src('src/stage/wave-render.js', "const ink = getComputedStyle(root).getPropertyValue('--ink');\nuse.setAttribute('href', '#i-play');\nrouter.navigate('/s/1/edit/details#match');")).toEqual([]);

@@ -66,6 +66,11 @@ describe('build-icons', () => {
     expect(() => buildSprite({icons: ['a', 'a'], customNames: [], read: () => svg})).toThrow(/twice/);
   });
 
+  it('parseIcon keeps a space between attributes written on several lines', () => {
+    const svg = '<svg viewBox="0 0 24 24">\n  <path\n    d="M1 1"\n    fill="none"\n  />\n  <circle\n    cx="12" cy="12" r="2"/>\n</svg>';
+    expect(parseIcon(svg).body).toBe('<path d="M1 1" fill="none"/><circle cx="12" cy="12" r="2"/>');
+  });
+
   it('is idempotent: a second run leaves the file untouched', async () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'ws-icons-'));
     scratch.push(tmp);

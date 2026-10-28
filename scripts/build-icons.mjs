@@ -51,7 +51,8 @@ export function parseIcon(svg, name = 'icon') {
   const viewBox = attrs.find(([k]) => k === 'viewBox')?.[1];
   if (viewBox !== '0 0 24 24') throw new Error(`${name}: viewBox must be "0 0 24 24" (got ${JSON.stringify(viewBox)})`);
   const body = text.slice(open[0].length, close)
-    .split('\n').map(l => l.trim()).filter(Boolean).join('')
+    .split('\n').map(l => l.trim()).filter(Boolean).join(' ')
+    .replace(/>\s+</g, '><')   // whitespace between elements goes; inside a tag it stays one space
     .replace(/\s*\/>/g, '/>');
   if (!body) throw new Error(`${name}: empty icon`);
   if (/<(script|style|foreignObject)\b/i.test(body) || /\son\w+\s*=/i.test(body)) throw new Error(`${name}: scripts, styles and handlers are not allowed`);

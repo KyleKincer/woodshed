@@ -178,11 +178,12 @@ export function fontSizeOk(value) {
 const FAMILY_OK = /^(var\(--font-(ui|mono)\)|inherit)$/;
 export function fontFamilyOk(value) { return FAMILY_OK.test(value.trim()); }
 
-/** The font shorthand: inherit, or a size from fontSizeOk and a family from var(--font-ui|mono). */
+/** The font shorthand: inherit, or a size from fontSizeOk (any line-height) and a family from var(--font-ui|mono). */
 export function fontShorthandOk(value) {
   const v = value.trim();
   if (['inherit', 'initial', 'unset', 'revert', 'revert-layer'].includes(v)) return true;
-  if (/["']/.test(v) || /\d(\.\d+)?px\b/i.test(v)) return false;
+  if (/["']/.test(v)) return false;
+  // Only the size is checked for px (fontSizeOk below); a px line-height after '/' is allowed.
   if (!/var\(--font-(ui|mono)\)\s*$/.test(v)) return false;
   const beforeFamily = v.replace(/var\(--font-(ui|mono)\)\s*$/, '').trim();
   const tokens = beforeFamily.split(/\s+/).filter(Boolean);

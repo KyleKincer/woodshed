@@ -172,7 +172,8 @@
   :root { --h-sm: 44px; --h-md: 48px; --h-lg: 56px; --hit-handle: 44px; --hit-handle-visual: 20px; }
 }
 
-:root[data-place=stage] { --icon-stroke: 2; }
+/* The Stage's handles take 44px hit areas on every pointer (spec §8.2 Stage column). */
+:root[data-place=stage] { --icon-stroke: 2; --hit-handle: 44px; }
 
 /* Distance-derived sizes, declared again on the element that carries the
  * Stage attributes: a custom property's var() is resolved where it is
