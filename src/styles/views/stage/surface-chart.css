@@ -1,0 +1,107 @@
+/* The Chart surface (src/stage/surfaces/chart-surface.js, spec §4.4A, §4.9): the drum chart fills
+ * the Stage's music area on the Stage tokens (D3). Over it: the "⤓ Back to playhead" pill (56 px,
+ * bottom centre, only while Follow is paused), the bar list's focus card (keyboard only), and the
+ * opening / error note. The chart's own rules are notation/chart.css. */
+@layer views {
+  .chart-surface {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .chart-surface-chart {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .chart-surface-chart[hidden] { display: none; }
+
+  /* ---- opening and error ---- */
+  .chart-surface-note {
+    align-self: center;
+    margin: auto;
+    display: grid;
+    justify-items: center;
+    gap: var(--s4);
+    max-width: 480px;
+    padding: var(--s6) var(--s5);
+    text-align: center;
+  }
+  .chart-surface-note[hidden] { display: none; }
+  .chart-surface-note-text {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-20)/1.3 var(--font-ui);
+  }
+  .chart-surface[data-state=error] .chart-surface-note-text { color: var(--ink); }
+  .chart-surface-note-actions:empty { display: none; }
+
+  /* ---- ⤓ Back to playhead (spec §4.9): 56 px, bottom centre of the music ---- */
+  .chart-surface-follow {
+    position: absolute;
+    left: 50%;
+    bottom: var(--s5);
+    z-index: var(--z-local);
+    translate: -50% 0;
+    pointer-events: none;
+  }
+  .chart-surface-follow[hidden] { display: none; }
+  .chart-surface-follow-pill {
+    min-height: 56px;
+    padding: 0 var(--s5);
+    border-radius: var(--r-pill);
+    font-size: var(--fs-16);
+    box-shadow: var(--shadow-popover);
+    pointer-events: auto;
+  }
+
+  /* ---- the bar list (stage.bars): the scroller's first child, sticky at its top and 0 px tall, so the
+   * score never moves; its card shows only while it has keyboard focus ---- */
+  .chart-bars {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);   /* above the engraving and the loop handles (score-view.css) */
+    width: 0;
+    height: 0;
+    overflow: visible;
+    outline: none;
+  }
+  .chart-bars[hidden] { display: none; }
+  /* The option carries the accessible text (aria-activedescendant); the card shows it. */
+  .chart-bars-option {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .chart-bars-card {
+    position: absolute;
+    top: var(--s3);
+    left: var(--s3);
+    display: none;
+    gap: var(--s1);
+    padding: var(--s2) var(--s4);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .chart-bars:focus .chart-bars-card { display: grid; }
+  .chart-bars-card-name {
+    font: var(--fw-bold) var(--fs-20)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .chart-bars-card-hint {
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui);
+    white-space: nowrap;
+  }
+}
