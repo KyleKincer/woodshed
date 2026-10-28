@@ -8,6 +8,9 @@ for module in ['process','pipeline','separator','gpu_runtime','fingerprint','bea
     args += ['--hidden-import', module]
 for package in ['demucs','torch','torchaudio','numpy','yt-dlp','einops','julius','dora-search','openunmix','lameenc','omegaconf','treetable','tqdm','requests','soundfile','librosa']:
     args += ['--copy-metadata', package]
+# pipeline.py loads the yt-dlp arguments it shares with companion/lookup.mjs
+# from the bundle root (sys._MEIPASS); desktop_entry.py --self-check fails without it.
+args += ['--add-data', f"{root/'companion/ytdlp-args.json'}{os.pathsep}."]
 # Demucs uses eager inference, never Triton/JIT compilation. Its CUDA kernels
 # come from PyTorch/cuDNN; omit the separate training/compiler toolchain.
 args += ['--exclude-module','triton','--exclude-module','tkinter','--exclude-module','IPython','--exclude-module','pytest',str(root/'companion/desktop_entry.py')]

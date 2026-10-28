@@ -9,24 +9,33 @@ import json, os, pathlib, re, subprocess, sys
 FALLBACK_YTDLP_ARGS = ["--js-runtimes", "node", "--remote-components", "ejs:github", "--ignore-config", "--no-playlist"]
 
 
-def _load_ytdlp_args() -> list[str]:
-    """The base yt-dlp arguments, shared with companion/lookup.mjs through ytdlp-args.json.
-
-    Frozen builds carry the file next to the bundled modules (sys._MEIPASS). A missing
-    file falls back to FALLBACK_YTDLP_ARGS with a warning; an unreadable one still raises.
-    """
+def ytdlp_args_file() -> pathlib.Path | None:
+    """Where ytdlp-args.json is: next to this module, or in a frozen build's bundle
+    (sys._MEIPASS, via build-processor.py's --add-data). None when it was not shipped;
+    desktop_entry.py --self-check fails the build on that."""
     roots = [pathlib.Path(__file__).resolve().parent]
     if getattr(sys, "_MEIPASS", None):
         roots.append(pathlib.Path(sys._MEIPASS))
     for root in roots:
         path = root / "ytdlp-args.json"
         if path.is_file():
-            args = json.loads(path.read_text(encoding="utf-8")).get("base")
-            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
-                raise RuntimeError(f"{path} has no valid 'base' argument list.")
-            return args
-    print("Warning: ytdlp-args.json is missing from the processor; using the built-in yt-dlp arguments.", file=sys.stderr)
-    return list(FALLBACK_YTDLP_ARGS)
+            return path
+    return None
+
+
+def _load_ytdlp_args() -> list[str]:
+    """The base yt-dlp arguments, shared with companion/lookup.mjs through ytdlp-args.json.
+
+    A missing file falls back to FALLBACK_YTDLP_ARGS with a warning; an unreadable one still raises.
+    """
+    path = ytdlp_args_file()
+    if path is None:
+        print("Warning: ytdlp-args.json is missing from the processor; using the built-in yt-dlp arguments.", file=sys.stderr)
+        return list(FALLBACK_YTDLP_ARGS)
+    args = json.loads(path.read_text(encoding="utf-8")).get("base")
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        raise RuntimeError(f"{path} has no valid 'base' argument list.")
+    return args
 
 
 YTDLP_ARGS = _load_ytdlp_args()

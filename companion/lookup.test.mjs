@@ -8,7 +8,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, copyFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -93,6 +93,93 @@ describe('shared yt-dlp arguments', () => {
     assert.ok(one.includes('--flat-playlist'), 'a collection page must come back as a flat playlist (→ 422), not resolve every entry');
     assert.ok(one.includes('--no-playlist') && one.includes('--ignore-no-formats-error'));
     assert.deepEqual(one.slice(-2), ['--', 'https://youtu.be/hL7aQ2mR9sE']);
+  });
+});
+
+// I0B-10: the packaged processor must ship ytdlp-args.json, fail its build-time
+// self-check without it, and rebuild when it changes.
+describe('processor packaging of ytdlp-args.json', () => {
+  const repo = path.resolve(here, '..');
+  const noPython = spawnSync('python3', ['--version']).status !== 0 && 'python3 not available';
+
+  /** The PyInstaller argv build-processor.py would run, captured without running it. */
+  function pyinstallerArgs() {
+    const capture = [
+      'import json, runpy, subprocess, sys',
+      'class Captured(Exception): pass',
+      'def run(args, **kw):',
+      '    print(json.dumps([str(a) for a in args])); raise Captured()',
+      'subprocess.run = run',
+      'try: runpy.run_path(sys.argv[1], run_name="__main__")',
+      'except Captured: pass',
+    ].join('\n');
+    const run = spawnSync('python3', ['-I', '-c', capture, path.join(repo, 'scripts', 'build-processor.py')], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout);
+  }
+  const addData = args => args.flatMap((a, i) => a === '--add-data' ? [args[i + 1]] : []);
+
+  test('build-processor.py bundles companion/ytdlp-args.json at the bundle root', { skip: noPython }, () => {
+    const pathsep = process.platform === 'win32' ? ';' : ':';
+    const data = addData(pyinstallerArgs());
+    assert.ok(data.includes(`${path.join(repo, 'companion', 'ytdlp-args.json')}${pathsep}.`),
+      `--add-data must place ytdlp-args.json where pipeline.py looks (sys._MEIPASS); got ${JSON.stringify(data)}`);
+    for (const entry of data) {
+      const source = entry.slice(0, entry.lastIndexOf(pathsep));
+      assert.ok(readFileSync(source), `bundled file ${source} exists`);
+    }
+  });
+
+  test('release.yml processor cache keys hash every bundled data file', { skip: noPython }, () => {
+    const workflow = readFileSync(path.join(repo, '.github', 'workflows', 'release.yml'), 'utf8');
+    const keys = [...workflow.matchAll(/key: processor-[^\n]*hashFiles\(([^)]*)\)/g)].map(m => [...m[1].matchAll(/'([^']+)'/g)].map(g => g[1]));
+    assert.equal(keys.length, 2, 'the CUDA and CPU processor caches');
+    const glob = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\0/g, '.*') + '$');
+    const sources = addData(pyinstallerArgs()).map(entry => path.relative(repo, entry.slice(0, entry.lastIndexOf(process.platform === 'win32' ? ';' : ':'))).split(path.sep).join('/'));
+    assert.ok(sources.includes('companion/ytdlp-args.json'));
+    for (const files of keys) {
+      for (const source of [...sources, 'scripts/build-processor.py', 'companion/pipeline.py', 'companion/desktop_entry.py']) {
+        assert.ok(files.some(p => glob(p).test(source)), `processor cache key ${JSON.stringify(files)} must include ${source}`);
+      }
+    }
+  });
+
+  /** A stand-in bundle: desktop_entry.py and pipeline.py with stub heavy runtime modules. */
+  function bundle({ withArgs }) {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cpa-selfcheck-'));
+    for (const file of ['desktop_entry.py', 'pipeline.py', ...(withArgs ? ['ytdlp-args.json'] : [])]) copyFileSync(path.join(here, file), path.join(dir, file));
+    for (const stub of ['torch', 'torchaudio', 'demucs', 'yt_dlp', 'soundfile', 'librosa']) writeFileSync(path.join(dir, `${stub}.py`), '');
+    writeFileSync(path.join(dir, 'beats.py'), 'def detect(*a, **k): pass\n');
+    return dir;
+  }
+  const selfCheck = (dir, meipass) => spawnSync('python3', ['-E', '-s', '-c',
+    'import runpy, sys; sys.path.insert(0, sys.argv[1]); m = sys.argv[2]\n' +
+    'if m: sys._MEIPASS = m\n' +
+    'sys.argv = ["woodshed-processor", "--self-check"]; runpy.run_path(sys.path[0] + "/desktop_entry.py", run_name="__main__")',
+    dir, meipass || ''], { encoding: 'utf8' });
+
+  test('desktop_entry.py --self-check fails a build that is missing ytdlp-args.json', { skip: noPython }, () => {
+    const dir = bundle({ withArgs: false });
+    try {
+      const run = selfCheck(dir);
+      assert.notEqual(run.status, 0, 'a processor without ytdlp-args.json must not pass its self-check');
+      assert.match(run.stderr, /self-check failed: ytdlp-args\.json is not bundled/);
+      assert.doesNotMatch(run.stdout, /runtime ready/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('desktop_entry.py --self-check passes with ytdlp-args.json beside pipeline or in sys._MEIPASS, without the fallback warning', { skip: noPython }, () => {
+    const beside = bundle({ withArgs: true });
+    const code = bundle({ withArgs: false });
+    const meipass = mkdtempSync(path.join(tmpdir(), 'cpa-meipass-'));
+    try {
+      copyFileSync(path.join(here, 'ytdlp-args.json'), path.join(meipass, 'ytdlp-args.json'));
+      for (const run of [selfCheck(beside), selfCheck(code, meipass)]) {
+        assert.equal(run.status, 0, run.stderr);
+        assert.match(run.stdout, /Woodshed processing runtime ready/);
+        assert.doesNotMatch(run.stderr, /missing/);
+      }
+    } finally { for (const d of [beside, code, meipass]) rmSync(d, { recursive: true, force: true }); }
   });
 });
 
