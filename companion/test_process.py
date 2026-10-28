@@ -1,4 +1,5 @@
 """process.py: job kinds (beats, sections, separate), resume, meta and the error line."""
+import importlib.util
 import io
 import json
 import pathlib
@@ -13,6 +14,7 @@ from unittest.mock import patch
 import process
 
 HAS_FFMPEG = bool(shutil.which('ffmpeg') and shutil.which('ffprobe'))
+HAS_LIBROSA = importlib.util.find_spec('librosa') is not None
 
 
 def tone(path: pathlib.Path, seconds=2, rate=44100, channels=2):
@@ -103,14 +105,8 @@ class DetectionTests(Workspace):
         self.assertEqual(calls, [('samples', 22050, [0.5, 2.5], 201.5)])
         result = json.loads((self.root / 'result.json').read_text())
         self.assertEqual(result['sections'], [{'t0': 0.5, 'label': 'Verse', 'confidence': 0.8}, {'t0': 2.5, 'label': 'Chorus', 'confidence': 1.0}])
-
-    def test_until_sections_exists_a_beats_job_reports_no_sections(self):
-        source = self.root / 'source.wav'
-        tone(source)
-        with patch.dict(sys.modules, {'beats': beats_module(lambda mix: self.BEATS)}), \
-                patch.object(process, 'section_suggester', lambda: None):
-            self.run_main({'kind': 'beats', 'localMix': str(source), 'settings': {'sections': True}})
-        self.assertEqual(json.loads((self.root / 'result.json').read_text()), {'beats': self.BEATS, 'sections': []})
+        self.assertEqual([(e['percent'], e['message']) for e in lines(self.out) if 'stage' in e],
+                         [(20, 'Building a mix locally…'), (50, 'Finding bars…'), (80, 'Finding sections…'), (95, 'Saving bars…')])
 
     def test_a_failing_suggester_never_costs_the_bars(self):
         source = self.root / 'source.wav'
@@ -124,8 +120,19 @@ class DetectionTests(Workspace):
                 patch.object(process, 'load_audio', lambda path: ('samples', 22050)), patch.object(sys, 'stderr', stderr):
             code = self.run_main({'kind': 'beats', 'localMix': str(source), 'settings': {'sections': True}})
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads((self.root / 'result.json').read_text())['sections'], [])
+        self.assertEqual(json.loads((self.root / 'result.json').read_text()), {'beats': self.BEATS, 'sections': []})
         self.assertIn('Section suggestions unavailable: ValueError: too short', stderr.getvalue())
+
+    def test_a_suggester_that_cannot_load_never_costs_the_bars(self):
+        source = self.root / 'source.wav'
+        tone(source)
+        stderr = io.StringIO()
+        # `None` in sys.modules makes `from sections import suggest` raise ImportError.
+        with patch.dict(sys.modules, {'beats': beats_module(lambda mix: self.BEATS), 'sections': None}), patch.object(sys, 'stderr', stderr):
+            code = self.run_main({'kind': 'beats', 'localMix': str(source), 'settings': {'sections': True}})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.root / 'result.json').read_text()), {'beats': self.BEATS, 'sections': []})
+        self.assertIn('Section suggestions unavailable', stderr.getvalue())
 
     def test_a_sections_job_uses_the_claimed_downbeats(self):
         source = self.root / 'source.wav'
@@ -137,13 +144,39 @@ class DetectionTests(Workspace):
         self.assertEqual(code, 0)
         self.assertEqual(calls, [([0.0, 2.0, 4.0, 6.0], 8.0)])
         self.assertEqual(json.loads((self.root / 'result.json').read_text()), {'sections': [{'t0': 4.0, 'label': 'Part A', 'confidence': 0.4}]})
+        self.assertEqual([(e['percent'], e['message']) for e in lines(self.out) if 'stage' in e],
+                         [(20, 'Building a mix locally…'), (50, 'Finding sections…'), (95, 'Saving sections…')])
 
-    def test_a_sections_job_without_the_module_reports_none(self):
+    def test_a_sections_job_whose_suggester_fails_reports_the_error(self):
         source = self.root / 'source.wav'
         tone(source)
-        with patch.object(process, 'section_suggester', lambda: None):
-            self.assertEqual(self.run_main({'kind': 'sections', 'localMix': str(source), 'downbeats': [0, 2]}), 0)
-        self.assertEqual(json.loads((self.root / 'result.json').read_text()), {'sections': []})
+
+        def suggest(*args, **kwargs):
+            raise ModuleNotFoundError("No module named 'librosa'", name='librosa')
+
+        with patch.dict(sys.modules, {'sections': sections_module(suggest)}), patch.object(process, 'load_audio', lambda path: ('samples', 22050)):
+            code = self.run_main({'kind': 'sections', 'localMix': str(source), 'downbeats': [0, 2]})
+        self.assertEqual(code, 1)
+        self.assertEqual(lines(self.out)[-1], {'error': "ModuleNotFoundError: No module named 'librosa'", 'code': 'beats_unavailable'})
+        self.assertFalse((self.root / 'result.json').exists())
+
+    @unittest.skipUnless(HAS_LIBROSA, 'librosa is not installed')
+    def test_a_sections_job_runs_the_real_suggester_on_the_mix(self):
+        import numpy as np
+        import test_sections
+        source = pathlib.Path(self._td.name) / 'song.wav'
+        audio = test_sections.synthetic_audio(test_sections.FORM)
+        pcm = (np.clip(audio, -1, 1) * 32767).astype('<i2').tobytes()
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 's16le', '-ar', '22050', '-ac', '1', '-i', '-', str(source)], input=pcm, check=True)
+        downbeats = test_sections.downbeats(48)
+        code = self.run_main({'kind': 'sections', 'localMix': str(source), 'downbeats': downbeats, 'song': {'duration': 96}})
+        self.assertEqual(code, 0)
+        result = json.loads((self.root / 'result.json').read_text())['sections']
+        self.assertEqual([s['label'] for s in result], test_sections.FORM_LABELS)
+        test_sections.assert_near_bars(self, [s['t0'] for s in result[1:]], test_sections.FORM_BOUNDARIES)
+        for s in result:
+            self.assertEqual(set(s), {'t0', 'label', 'confidence'})
+            self.assertTrue(0 <= s['confidence'] <= 1)
 
     def test_bar_detection_not_installed_reports_beats_unavailable(self):
         source = self.root / 'source.wav'
@@ -157,23 +190,6 @@ class DetectionTests(Workspace):
         self.assertEqual(code, 1)
         self.assertEqual(lines(self.out)[-1], {'error': "ModuleNotFoundError: No module named 'BeatNet'", 'code': 'beats_unavailable'})
         self.assertFalse((self.root / 'result.json').exists())
-
-
-class SuggesterImportTests(unittest.TestCase):
-    def test_only_a_missing_sections_module_means_not_built(self):
-        with patch.dict(sys.modules, {'sections': None}):
-            # `None` in sys.modules makes `import sections` raise ModuleNotFoundError(name='sections').
-            self.assertIsNone(process.section_suggester())
-        real_import = __import__
-
-        def broken(name, *args, **kwargs):
-            if name == 'sections':
-                raise ModuleNotFoundError("No module named 'librosa'", name='librosa')
-            return real_import(name, *args, **kwargs)
-
-        # A sections module that is there but cannot load is a real failure.
-        with patch('builtins.__import__', broken), self.assertRaises(ModuleNotFoundError):
-            process.section_suggester()
 
 
 class SeparationJobTests(Workspace):

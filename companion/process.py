@@ -55,21 +55,6 @@ def song_duration(job, mix) -> float:
     return float(probe_duration(mix))
 
 
-def section_suggester():
-    """companion/sections.py `suggest` (CPC, B7), or None while it is not installed.
-
-    Only a missing sections module means "not built yet"; an import error from
-    inside it (a missing librosa, say) is a real failure and propagates.
-    """
-    try:
-        from sections import suggest
-    except ModuleNotFoundError as error:
-        if error.name == 'sections':
-            return None
-        raise
-    return suggest
-
-
 def load_audio(path):
     """(samples, rate) of a mono WAV as float32 numpy, for sections.suggest."""
     try:
@@ -97,7 +82,9 @@ def clean_sections(raw) -> list:
     return out
 
 
-def suggest_sections(mix, downbeats, duration, suggest) -> list:
+def suggest_sections(mix, downbeats, duration) -> list:
+    """companion/sections.py's suggestions (B7) for the mix along these downbeats."""
+    from sections import suggest
     audio, rate = load_audio(mix)
     return clean_sections(suggest(audio, rate, [float(t) for t in downbeats], duration=duration))
 
@@ -110,11 +97,11 @@ def detect_beats(job, root, rep) -> dict:
     beats = detect(mix)
     result = {'beats': beats}
     if (job.get('settings') or {}).get('sections'):
+        rep.progress('detect', 80, 'Finding sections…')
         # Suggestions are a bonus on a beats job: a failure there never costs the bars.
         try:
-            suggest = section_suggester()
             downbeats = [t for t, beat in beats if round(beat) == 1]
-            result['sections'] = suggest_sections(mix, downbeats, song_duration(job, mix), suggest) if suggest else []
+            result['sections'] = suggest_sections(mix, downbeats, song_duration(job, mix))
         except Exception as error:
             print(f'Section suggestions unavailable: {describe(error)}', file=sys.stderr, flush=True)
             result['sections'] = []
@@ -126,8 +113,7 @@ def detect_sections(job, root, rep) -> dict:
     """A sections job (D47): suggestions along the song's current bar starts (claim's downbeats)."""
     mix = detection_mix(job, root, rep)
     rep.progress('detect', 50, 'Finding sections…')
-    suggest = section_suggester()
-    sections = suggest_sections(mix, job.get('downbeats') or [], song_duration(job, mix), suggest) if suggest else []
+    sections = suggest_sections(mix, job.get('downbeats') or [], song_duration(job, mix))
     rep.progress('detect', 95, 'Saving sections…')
     return {'sections': sections}
 
