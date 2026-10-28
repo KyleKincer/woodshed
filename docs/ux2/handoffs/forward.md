@@ -137,7 +137,7 @@ Contract details are in Appendix C items 22–50; this list names only what each
 - Admin (BK3): `admin.account` device rows are `{id, name, revoked, revokedBy: 'user'|'admin'|null, lastSeenAt}`; a re-pair can be refused with `device_limit` (`data.limit`).
 
 ### SH1
-- Sharing (BK5, Appendix C items 30, 31, 33): do not use `sharing.playback` before ticket I0B-8 (`publicClient().action`) has landed; the dialog's "Sections and tempo map" toggle sends `includeMap` (ticket I0B-7). `view` returns `ownerName` and a sanitised v2 practice; errors are coded.
+- Sharing (BK5, Appendix C items 30, 31, 33): signed-out visitors call `sharing.playback` through `publicClient().action` (landed in 0Bx, ticket I0B-8); the dialog's "Sections and tempo map" toggle sends `includeMap` (`sharing.create`/`status`, landed in 0Bx, ticket I0B-7). `view` returns `ownerName` and a sanitised v2 practice; errors are coded.
 
 ### DL1
 - Downloads (PL1): use `fetchRelease({fetch, sources, timeoutMs, signal})` from `src/js/download-release.js`.
@@ -152,4 +152,4 @@ Contract details are in Appendix C items 22–50; this list names only what each
 - Old chart callers (ST3): `src/js/notation/launcher.js`, `notation-demo.html` and `tests/notation-demo.js` go with the 1.9 player.
 - Pairing (CPA): `initializeLocalDesktop` in `src/js/companion.js` still pairs through the 1.9 `./auth.js` client; when I1 deletes `src/js/auth.js`, ticket CPA to switch it to `src/api`.
 - Auth (AU1): `signOut` finds the session through `import.meta.glob('../stage/session.js')` unless `configure({activeSession})` is called; wire `configure({activeSession: getSession})` in `main.js` (S1) once ST1b has landed.
-- Run the runner with `--strict-requires` (§9.0, ticket I0B-4) once FX1 has added it.
+- Run the runner with `--strict-requires` (§9.0; FX1 added it in 0Bx, ticket I0B-4).
