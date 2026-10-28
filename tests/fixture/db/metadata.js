@@ -1,28 +1,216 @@
-// Fixture handlers for convex/metadata.ts, metadataLookup.ts and artworkUpload.ts.
-// Created by FX1 with the 1.9 fixture's handlers moved verbatim; BK7 (wave 0B)
-// owns the bodies from here on (§6.9). The seed's `counting` song carries a
-// `metadataSuggestion` with metadataStatus 'uncertain'; `jam03` has `needsReview`.
+// Fixture handlers for convex/metadata.ts, metadataLookup.ts and artworkUpload.ts
+// (architecture §6.9; BK7 owns the bodies). They follow the server's rules with
+// the shared field rules (shared/metadata.ts):
+//   - `update`/`updateEach` are atomic, skip unchanged keys (no write, no lock,
+//     no id clearing), lock changed keys, then unlock `unlock`; a title or artist
+//     change clears the ids and the suggestion (a title change also needsReview),
+//     album/albumArtist clears the release id; `match` sets 'matched' and the ids;
+//   - `confirm` sets 'matched', locks the identity fields present, clears the
+//     suggestion and needsReview (never recordingUnconfirmed), and keeps the
+//     suggestion's ids when it names the song's current title and artist;
+//   - cleared ids are deleted (absent), as on the server;
+//   - field errors are coded {code: 'invalid', message, field}.
+// Seed: the `counting` song carries a `metadataSuggestion` (metadataStatus
+// 'uncertain'); `jam03` has `needsReview`.
+//
+// `metadataLookup:retry` marks the song 'pending' and finishes the lookup 1.2 s
+// later (a song with an artist matches; one without stays 'uncertain', no
+// suggestion). The due time lives in `db.metadataLookups` ({songId: dueAt}) so a
+// reload finishes it (`settle`/`resume`). A song 'pending' with no entry there
+// (a lookup that died) is queued again; a confirm or match meanwhile wins. The fixture has no artwork storage:
+// `artworkUpload:prepare` fails (coded `account_export_only` on such accounts).
 import {db, changed, convexError, wait, findSong} from './runtime.js';
 import {COVERS} from './seed.js';
+import {IDENTITY_KEYS, LIMITS, MBID, RECORDING_KEYS, RELEASE_KEYS, changedKeys, hasValue, isFieldKey, validatePatch} from '../../../shared/metadata.ts';
+
+export const LOOKUP_MS = 1200;
+const UNAVAILABLE = 'Song unavailable.';
+
+/** convex/lib/musicBrainz.ts#normalize (the server's title comparison). */
+const normalize = s => String(s ?? '').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+const invalid = (message, extra = {}) => convexError({code: 'invalid', message, ...extra});
+const notFound = () => convexError({code: 'not_found', message: UNAVAILABLE});
+
+function owned(id) {
+  const song = findSong(id);
+  if (!song) throw notFound();
+  return song;
+}
+
+function clean(changes) {
+  const result = validatePatch(changes ?? {});
+  if ('error' in result) throw invalid(result.error, {field: result.field});
+  return result.value;
+}
+
+function cleanUnlock(unlock) {
+  const keys = [...new Set(unlock ?? [])];
+  for (const key of keys) if (!isFieldKey(key)) throw invalid('Unknown field.', {field: key});
+  return keys;
+}
+
+function cleanMatch(match, count) {
+  if (!match) return undefined;
+  if (count !== 1) throw invalid('Apply a match to one song at a time.');
+  if (!MBID.test(match.recordingId ?? '') || (match.releaseId != null && !MBID.test(match.releaseId))) throw invalid('Invalid match.');
+  return match;
+}
+
+/** What a song shows for its artwork (the fixture keeps `coverUrl` in step with `artwork`). */
+function showArtwork(song, artwork) {
+  if (artwork.kind === 'removed') { song.coverUrl = null; song.coverKey = null; }
+  if (artwork.kind === 'release') song.coverUrl = COVERS.harbor;
+}
+
+/** The server's edit rules on one fixture song (convex/metadata.ts#applyEdit). */
+function applyEdit(song, patch, unlock, match) {
+  const keys = changedKeys(patch, song);
+  for (const key of keys) {
+    song[key] = structuredClone(patch[key]);
+    if (key === 'artwork') showArtwork(song, patch.artwork);
+  }
+  if (RECORDING_KEYS.some(k => keys.includes(k))) {
+    delete song.metadataRecordingId;
+    delete song.metadataReleaseId;
+    delete song.metadataSuggestion;
+  } else if (RELEASE_KEYS.some(k => keys.includes(k))) delete song.metadataReleaseId;
+  if (keys.includes('title')) delete song.needsReview;
+  song.metadataLocks = [...new Set([...(song.metadataLocks ?? []), ...keys])].filter(k => !unlock.includes(k));
+  if (match) {
+    song.metadataStatus = 'matched';
+    song.metadataRecordingId = match.recordingId;
+    if (match.releaseId) song.metadataReleaseId = match.releaseId;
+    else delete song.metadataReleaseId;
+    delete song.metadataSuggestion;
+    delete song.needsReview;
+  }
+}
+
+// ---- lookups ----------------------------------------------------------------------
+
+const REC = n => `5e1f0000-0000-4000-8000-00000000000${n}`;
+const REL = n => `7e1e0000-0000-4000-8000-00000000000${n}`;
+
+/** Recordings for a search, shaped like `lib/musicBrainz.ts#candidate()`. */
+function candidates({title, artist}) {
+  const t = title || 'Glasshouse', a = artist || 'Northbound';
+  const base = {albumArtist: a, trackNumber: '3', discNumber: '1', score: 100, disambiguation: ''};
+  return [
+    {...base, recordingId: REC(1), releaseId: REL(1), title: t, artist: a, album: 'Weather Systems', year: '2021', duration: 64},
+    {...base, recordingId: REC(2), releaseId: REL(4), title: t, artist: a, album: `${t} (Single)`, year: '2020', duration: 63, trackNumber: '1', disambiguation: 'radio edit', score: 88},
+    {...base, recordingId: REC(3), title: `${t} (Live)`, artist: a, album: '', albumArtist: '', year: '', duration: 71, trackNumber: '', discNumber: '', disambiguation: 'live, 2022-05-14: The Grange', score: 71},
+  ];
+}
+
+/** The releases of one recording (Albums/covers). */
+function releasesOf(recordingId, {title, artist}) {
+  const t = title || 'Glasshouse', a = artist || 'Northbound';
+  const base = {recordingId, title: t, artist: a, albumArtist: a, discNumber: '1', duration: 64, disambiguation: '', score: 100};
+  return [
+    {...base, releaseId: REL(1), album: 'Weather Systems', year: '2021', trackNumber: '3'},
+    {...base, releaseId: REL(2), album: 'Weather Systems (Deluxe)', year: '2022', trackNumber: '3'},
+    {...base, releaseId: REL(3), album: 'Songs from the Shed: A Compilation', year: '2023', trackNumber: '11', albumArtist: 'Various Artists', duration: 65},
+  ];
+}
+
+function finishLookup(song) {
+  delete song.metadataSuggestion;
+  if (song.artist) Object.assign(song, {metadataStatus: 'matched', metadataRecordingId: candidates(song)[0].recordingId});
+  else song.metadataStatus = 'uncertain';
+}
+
+/** Finish every retried lookup that is due; returns whether anything changed. */
+export function settle(now = Date.now()) {
+  const due = db?.metadataLookups;
+  if (!due) return false;
+  let any = false;
+  for (const [id, at] of Object.entries(due)) {
+    if (at > now) continue;
+    delete due[id];
+    const song = findSong(id);
+    if (song && song.metadataStatus === 'pending') finishLookup(song);
+    any = true;
+  }
+  return any;
+}
+
+/** After a reload: re-arm the timer of every retried lookup that is not due yet. */
+export function resume(now = Date.now()) {
+  for (const at of Object.values(db?.metadataLookups ?? {}))
+    if (at > now) setTimeout(() => { if (settle()) changed(); }, at - now);
+}
 
 export const handlers = {
-  'metadata:update': ({ids, changes}) => {
-    for (const id of ids) { const s = findSong(id); if (!s) continue; const {artwork, ...rest} = changes; Object.assign(s, rest); if (artwork?.kind === 'removed') { s.coverUrl = null; s.coverKey = null; } if (artwork?.kind === 'release') s.coverUrl = COVERS.harbor; }
-    changed(); return null;
+  'metadata:update': ({ids, changes, unlock, match}) => {
+    const unique = [...new Set(ids ?? [])];
+    if (!unique.length || unique.length > LIMITS.bulk) throw invalid(`Select between 1 and ${LIMITS.bulk} songs.`);
+    const patch = clean(changes), keys = cleanUnlock(unlock), chosen = cleanMatch(match, unique.length);
+    if (patch.artwork?.kind === 'upload' && unique.length !== 1) throw invalid('Upload artwork for one song at a time.', {field: 'artwork'});
+    // Ownership first: a missing id fails even an empty patch.
+    const songs = unique.map(owned);
+    if (!Object.keys(patch).length && !keys.length && !chosen) return null;
+    for (const song of songs) applyEdit(song, patch, keys, chosen);
+    changed();
+    return null;
   },
-  'metadataLookup:find': async ({title, artist, recordingId}) => {
+  'metadata:updateEach': ({items}) => {
+    if (!items?.length || items.length > LIMITS.bulk) throw invalid(`Select between 1 and ${LIMITS.bulk} songs.`);
+    if (new Set(items.map(item => item.id)).size !== items.length) throw invalid('Each song can appear only once.');
+    const prepared = items.map(item => ({song: owned(item.id), patch: clean(item.changes), unlock: cleanUnlock(item.unlock)}));
+    for (const {song, patch, unlock} of prepared) applyEdit(song, patch, unlock, undefined);
+    changed();
+    return null;
+  },
+  'metadata:confirm': ({id}) => {
+    const song = owned(id);
+    const identity = [...IDENTITY_KEYS.filter(k => hasValue(song, k)), ...(hasValue(song, 'artwork') ? ['artwork'] : [])];
+    song.metadataStatus = 'matched';
+    song.metadataLocks = [...new Set([...(song.metadataLocks ?? []), ...identity])];
+    const s = song.metadataSuggestion;
+    if (s && !song.metadataRecordingId && MBID.test(s.recordingId ?? '') &&
+        normalize(s.title) === normalize(song.title) && normalize(s.artist) === normalize(song.artist)) {
+      song.metadataRecordingId = s.recordingId;
+      if (s.releaseId && MBID.test(s.releaseId) && s.album && normalize(s.album) === normalize(song.album))
+        song.metadataReleaseId = s.releaseId;
+    }
+    delete song.metadataSuggestion;
+    delete song.needsReview;
+    changed();
+    return null;
+  },
+  'metadataLookup:find': async ({id, title = '', artist = '', recordingId}) => {
+    owned(id);
+    if (title.length > LIMITS.search || artist.length > LIMITS.search)
+      throw invalid('Search text is too long.', {field: title.length > LIMITS.search ? 'title' : 'artist'});
+    if (recordingId && !MBID.test(recordingId)) throw invalid('Invalid recording.');
     await wait(500);
-    if (recordingId) return [
-      {recordingId, releaseId: 'rel-1', title, artist: artist || 'Northbound', album: 'Weather Systems', year: '2021', duration: 64},
-      {recordingId, releaseId: 'rel-2', title, artist: artist || 'Northbound', album: 'Weather Systems (Deluxe)', year: '2022', duration: 64},
-      {recordingId, releaseId: 'rel-3', title, artist: artist || 'Northbound', album: 'Songs from the Shed: A Compilation', year: '2023', duration: 65},
-    ];
-    return [
-      {recordingId: 'rec-1', releaseId: 'rel-1', title: title || 'Glasshouse', artist: artist || 'Northbound', album: 'Weather Systems', year: '2021', duration: 64},
-      {recordingId: 'rec-2', releaseId: 'rel-4', title: title || 'Glasshouse', artist: artist || 'Northbound', album: 'Glasshouse (Single)', year: '2020', duration: 63, disambiguation: 'radio edit'},
-      {recordingId: 'rec-3', releaseId: null, title: `${title || 'Glasshouse'} (Live)`, artist: artist || 'Northbound', album: '', year: '', duration: 71, disambiguation: 'live, 2022-05-14: The Grange'},
-    ];
+    if (recordingId) return releasesOf(recordingId, {title, artist});
+    return title.trim() ? candidates({title, artist}) : [];
   },
-  'metadataLookup:detail': async () => { await wait(300); return {title: 'Glasshouse', artist: 'Northbound', album: 'Weather Systems', albumArtist: 'Northbound', year: '2021', genre: 'Alternative rock', trackNumber: '3', discNumber: '1'}; },
-  'artworkUpload:prepare': () => { throw convexError('Artwork upload is not available in the fixture.'); },
+  'metadataLookup:detail': async ({id, recordingId, releaseId}) => {
+    const song = owned(id);
+    if (!MBID.test(recordingId ?? '') || (releaseId && !MBID.test(releaseId))) throw invalid('Invalid match.');
+    await wait(300);
+    const pool = [...candidates(song), ...releasesOf(recordingId, song)];
+    const hit = pool.find(c => c.recordingId === recordingId && (c.releaseId ?? null) === (releaseId ?? null))
+      ?? pool.find(c => c.recordingId === recordingId) ?? candidates(song)[0];
+    const {releaseId: _drop, ...rest} = hit;
+    return releaseId ? {...rest, recordingId, releaseId} : {...rest, recordingId};
+  },
+  'metadataLookup:retry': ({id}) => {
+    const song = owned(id);
+    if (song.metadataStatus === 'pending' && db.metadataLookups?.[song.id]) return null;
+    if (song.metadataStatus === 'matched') throw invalid('This song is already matched.');
+    song.metadataStatus = 'pending';
+    (db.metadataLookups ??= {})[song.id] = Date.now() + LOOKUP_MS;
+    setTimeout(() => { if (settle()) changed(); }, LOOKUP_MS);
+    changed();
+    return null;
+  },
+  'artworkUpload:prepare': () => {
+    if (db.user?.status === 'export_only')
+      throw convexError({code: 'account_export_only', message: 'Your account is in export-only mode. Playback and library export remain available.'});
+    throw convexError({code: 'invalid', message: 'Artwork upload is not available in the fixture.', field: 'artwork'});
+  },
 };
