@@ -90,7 +90,7 @@ describe('configure: the D14 truth table', () => {
     expect(metro.settings()).toMatchObject({countInLength: 1, volume: 0});
   });
 
-  test('the 1.9 setters go through configure and notify onChange', () => {
+  test('setEnabled turns the continuous click on and back to the last other mode; configure is the only other setter', () => {
     const changed = vi.fn();
     metro.onChange = changed;
     metro.configure({mode: 'off'});
@@ -98,10 +98,14 @@ describe('configure: the D14 truth table', () => {
     expect([metro.mode, metro.enabled]).toEqual(['always', true]);
     metro.setEnabled(false);
     expect([metro.mode, metro.enabled, metro.countInAudible]).toEqual(['off', false, false]);
-    metro.setCountIn(true); metro.setCountInLength(3); metro.setCountInUnit('beats');
-    metro.setAudiblePreRoll(true); metro.setAccent(false); metro.setVolume(0.25);
-    expect(metro.settings()).toEqual({countIn: true, countInLength: 3, countInUnit: 'beats', mode: 'off', accent: false, volume: 0.25, audiblePreRoll: true});
-    expect(changed).toHaveBeenCalledTimes(8);
+    metro.configure({mode: 'countin'});
+    metro.setEnabled(true); metro.setEnabled(false);
+    expect([metro.mode, metro.enabled, metro.countInAudible]).toEqual(['countin', false, true]);
+    // Click settings live in practice.click, not in tempo: onChange is for map changes only.
+    expect(changed).not.toHaveBeenCalled();
+    for (const name of ['setAccent', 'setVolume', 'setCountIn', 'setCountInLength', 'setCountInUnit', 'setAudiblePreRoll', 'load', '_legacySet']) {
+      expect(metro[name]).toBeUndefined();
+    }
   });
 });
 
@@ -265,10 +269,9 @@ describe('countInPlanAt', () => {
 
   // The 1.9 count-in behaviours, now at an explicit target.
   test('a legacy section map: 3/4 at 120 bpm counts three beats', async () => {
-    await setup(sectioned, {store: new SongMapStore(defaultSongMap(100), 100)});
-    metro.load({countIn: true, map: [{t: 0, bpm: 120, beatsPerBar: 3, unit: 4}]});
+    await setup(sectioned, {store: SongMapStore.fromTempo({countIn: true, map: [{t: 0, bpm: 120, beatsPerBar: 3, unit: 4}]}, 100)});
     expect(metro.countInPlanAt(0)).toEqual({duration: 1.5, beats: [{offset: 0, downbeat: true, unit: 0}, {offset: 0.5, downbeat: false, unit: 1}, {offset: 1, downbeat: false, unit: 2}]});
-    // load() reads only the map: the old click fields stay in practice (D51).
+    // The store reads only the map: the old click fields stay in practice (D51).
     expect(metro.countIn).toBe(false);
   });
 
@@ -284,14 +287,14 @@ describe('countInPlanAt', () => {
 });
 
 describe('serialisation (D51)', () => {
-  test('serialize() is the map only; load() reads only the map', async () => {
+  test('serialize() is the map only; a store read from a stored tempo takes only its map', async () => {
     await setup(sectioned);
     metro.configure({countIn: true, countInLength: 3, mode: 'always', accent: false});
     const saved = metro.serialize();
     expect(Object.keys(saved)).toEqual(['songMap']);
     expect(saved.songMap).toEqual(metro.songMap.serialize());
-    const other = new Metronome(engine, new SongMapStore(defaultSongMap(128), 128));
-    other.load({...saved, countIn: true, enabled: true, accent: false, volume: 0.1, countInLength: 4, source: 'detected', detected: [], map: []});
+    const stored = {...saved, countIn: true, enabled: true, accent: false, volume: 0.1, countInLength: 4, source: 'detected', detected: [], map: []};
+    const other = new Metronome(engine, SongMapStore.fromTempo(stored, 128));
     expect(other.settings()).toEqual({countIn: false, countInLength: 1, countInUnit: 'bars', mode: 'countin', accent: true, volume: 0.7, audiblePreRoll: false});
     expect(other.songMap.serialize()).toEqual(saved.songMap);
     other.destroy();

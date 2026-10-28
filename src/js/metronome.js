@@ -81,12 +81,6 @@ export class Metronome {
     this.recompute();
   }
 
-  /** Load a stored `tempo` object: only its map (D51; old click fields are read by `upgradePractice`). */
-  load(tempo) {
-    if (!tempo) return;
-    this.songMap.load(tempo);
-  }
-
   /** What `tempo` stores: the map, nothing else (D51). */
   serialize() {
     return {songMap: this.songMap.serialize()};
@@ -148,17 +142,8 @@ export class Metronome {
       accent: this.accent, volume: this.volume, audiblePreRoll: this.audiblePreRoll};
   }
 
-  // The 1.9 player's and map mode's controls (deprecated; the transport calls
-  // configure()). They notify `onChange` as before.
-  setAccent(b) { this._legacySet({accent: !!b}); }
-  setVolume(v) { this._legacySet({volume: +v}); }
-  setCountIn(b) { this._legacySet({countIn: !!b}); }
-  setCountInLength(n) { this._legacySet({countInLength: n}); }
-  setCountInUnit(unit) { this._legacySet({countInUnit: unit}); }
-  setAudiblePreRoll(b) { this._legacySet({audiblePreRoll: !!b}); }
-  /** The continuous click on or off: `mode` 'always', or back to the last other mode. */
-  setEnabled(b) { this._legacySet({mode: b ? 'always' : this._lastMode}); }
-  _legacySet(fields) { this.configure(fields); this.onChange?.(); }
+  /** The continuous click on or off (map mode's preview click): `mode` 'always', or back to the last other mode. */
+  setEnabled(b) { this.configure({mode: b ? 'always' : this._lastMode}); }
 
   // ---- visual click -----------------------------------------------------------
   /**

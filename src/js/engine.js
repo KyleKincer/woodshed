@@ -14,6 +14,8 @@ export const MAX_RATE = 1.5;
 const TICK_MS = 25;
 /** A position projected within this of a loop end reads as the loop start. */
 const WRAP_EPS = 1e-6;
+/** A boundary (wrap, gap start) this close after now is due now: the ticker emits it on this tick. */
+const BOUNDARY_EPS = 1e-9;
 /** After pause/stop the aux bus is muted, then reopened for previews and calibration clicks. */
 const AUX_RELEASE = 0.05;
 const EVENTS = new Set(['wrap', 'gap', 'ended', 'interrupted', 'state', 'plan', 'transport']);
@@ -326,16 +328,21 @@ export class MultitrackEngine {
     return n;
   }
 
-  /** The audio time of the next arrival at `loop.b` in the plan; null when not looping or not playing. */
+  /**
+   * The audio time of the next arrival at `loop.b` in the plan, strictly
+   * after now; null when not looping or not playing. A wrap within
+   * BOUNDARY_EPS after now is the one the ticker emits now (inside a 'wrap'
+   * handler it is the wrap being emitted), so it is skipped too.
+   */
   nextWrapAt() {
     if (!this.playing) return null;
-    const now = this.ctx.currentTime;
+    const after = this.ctx.currentTime + BOUNDARY_EPS;
     for (let i = 0; i < this.plan.length; i++) {
       const seg = this.plan[i], end = this.plan[i + 1]?.when ?? Infinity;
-      if (end <= now) continue;
-      if (seg.kind === 'pass') { if (seg.until > now && seg.until <= end + 1e-9) return seg.until; continue; }
+      if (end <= after) continue;
+      if (seg.kind === 'pass') { if (seg.until > after && seg.until <= end + 1e-9) return seg.until; continue; }
       if (seg.kind === 'gap' || !seg.loop.enabled) continue;
-      const when = this._wrapTime(seg, this._wrapAfter(seg, Math.max(now, seg.when)));
+      const when = this._wrapTime(seg, this._wrapAfter(seg, Math.max(after, seg.when)));
       if (when <= end + 1e-9) return when;
     }
     return null;
@@ -922,7 +929,7 @@ export class MultitrackEngine {
   /**
    * Silence the stems and the aux bus at `when`; the ticker then pauses with
    * the position just before `when` and emits `ended {reason: 'stopAt'}`.
-   * A discontinuity clears it.
+   * A discontinuity clears it; so does cancelStopAt().
    */
   stopAt(when) {
     if (!this.playing || !Number.isFinite(when)) return;
@@ -933,6 +940,16 @@ export class MultitrackEngine {
     this.aux.gain.setValueAtTime(0, at);
     // A later gap must not reopen the master.
     if (this._segmented()) this._automateMaster(at);
+  }
+
+  /**
+   * Cancel a pending stopAt: the stems and the aux bus play on through it.
+   * Returns false when none was pending.
+   */
+  cancelStopAt() {
+    if (this.stopAtWhen == null) return false;
+    this._clearStopAt();
+    return true;
   }
 
   _clearStopAt() {

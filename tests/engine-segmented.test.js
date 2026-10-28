@@ -387,6 +387,38 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
     expectAudibleAt(path, until + G + 0.1, 10 + 0.1 * rate);
   });
 
+  test('cancelStopAt lifts a pending stopAt; the gaps keep their automation and play goes on', async () => {
+    const ended = [];
+    engine.on('ended', (e) => ended.push(e));
+    const {P, G} = await playSegmented(rate);
+    clock.advance(0.5);
+    expect(engine.cancelStopAt()).toBe(false);
+    const W = engine.nextWrapAt();
+    engine.stopAt(W);
+    expect(engine.cancelStopAt()).toBe(true);
+    expect(engine.stopAtWhen).toBeNull();
+    expect(engine.cancelStopAt()).toBe(false);
+    expect(engine.aux.gain.valueAt(W + G + 1)).toBe(1);
+    expectSilentAt(W + G / 2);
+    expectAudibleAt(path, W + G + 0.1, 10 + 0.1 * rate);
+    advanceTo(W + G + P / 2);
+    expect(ended).toEqual([]);
+    expect(engine.playing).toBe(true);
+  });
+
+  test('nextWrapAt is strictly after now: inside a wrap handler it names the next pass end', async () => {
+    const {P, G} = await playSegmented(rate);
+    clock.advance(0.5);
+    const W = engine.nextWrapAt(), seen = [];
+    engine.on('wrap', (w) => seen.push([w.when, engine.nextWrapAt()]));
+    // The ticker emits a wrap within its tolerance after now on this tick.
+    vi.clearAllTimers();
+    engine.ctx._advanceTo(W - 5e-10);
+    expect(engine.nextWrapAt()).toBeCloseTo(W + G + P, 9);
+    engine._tick();
+    expect(seen).toEqual([[W, expect.closeTo(W + G + P, 9)]]);
+  });
+
   test('pausing in a gap rests at a; play resumes with a pass from a', async () => {
     const {L, P, G} = await playSegmented(rate);
     advanceTo(L + P + G / 2);
@@ -510,5 +542,50 @@ describe.each(PATHS)('$path path', ({path, rate, preservePitch}) => {
     expect(engine.master.gain.valueAt(L + 1)).toBe(0);
     expectAudibleAt(path, start + 0.1, 10 + 0.1 * rate);
     expectSilentAt(until + 1);
+  });
+});
+
+describe.each(PATHS)('plain loop, $path path', ({rate, preservePitch}) => {
+  beforeEach(() => setup({rate, preservePitch}));
+
+  async function playLoop() {
+    engine.setLoop(true, 10, 14);
+    engine.seek(10);
+    await engine.play();
+    clock.advance(0.5);
+    return 4 / rate;
+  }
+
+  test('nextWrapAt skips a wrap at now or within the tolerance after it, and names the one a pass later', async () => {
+    const P = await playLoop(), seen = [];
+    const W = engine.nextWrapAt();
+    expect(W).toBeCloseTo(engine.lookahead + P, 9);
+    engine.on('wrap', (w) => seen.push([w.when, engine.nextWrapAt()]));
+    vi.clearAllTimers();
+    for (const t of [W - 5e-10, W, W + 5e-10]) {
+      engine.ctx._advanceTo(t);
+      expect(engine.nextWrapAt()).toBeCloseTo(W + P, 9);
+    }
+    engine.ctx._advanceTo(W - 5e-10);
+    engine._tick();
+    expect(seen).toEqual([[expect.closeTo(W, 12), expect.closeTo(W + P, 9)]]);
+    // Before the tolerance the wrap is still ahead.
+    engine.ctx._advanceTo(W + P - 1e-6);
+    expect(engine.nextWrapAt()).toBeCloseTo(W + P, 9);
+  });
+
+  test('cancelStopAt lifts a pending stopAt: both buses stay open through it and no ended fires', async () => {
+    const ended = [];
+    engine.on('ended', (e) => ended.push(e));
+    const P = await playLoop();
+    const W = engine.nextWrapAt();
+    engine.stopAt(W);
+    expect(engine.master.gain.valueAt(W)).toBe(0);
+    expect(engine.cancelStopAt()).toBe(true);
+    for (const bus of [engine.master, engine.aux]) expect(bus.gain.valueAt(W + 0.1)).toBe(1);
+    advanceTo(W + P / 2);
+    expect(ended).toEqual([]);
+    expect(engine.playing).toBe(true);
+    expect(engine.getPosition()).toBeCloseTo(10 + (now() - W) * rate, 6);
   });
 });
