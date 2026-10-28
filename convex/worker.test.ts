@@ -239,6 +239,30 @@ describe('worker.progress', () => {
     expect(await s.t.mutation(internal.worker.autoRetry, { jobId: dismissed, attempts: 1 })).toBe(false);
   });
 
+  test('autoRetry leaves the job failed (no retry time) when its computer was revoked or the account paused during the backoff', async () => {
+    const s = await setup();
+    const botChecked = async () => {
+      const jobId = await s.job();
+      await s.t.mutation(api.worker.claim, { token: TOKEN, jobId });
+      await s.t.mutation(api.worker.progress, { token: TOKEN, jobId, stage: 'error', percent: 0, error: 'bot', errorCode: 'bot_check' });
+      expect((await s.getJob(jobId))!.retryAt).toBeTypeOf('number');
+      return jobId;
+    };
+    const paused = await botChecked();
+    await s.t.run(ctx => ctx.db.insert('accountControls', { userId: 'alice', status: 'export_only', notes: '' }));
+    expect(await s.t.mutation(internal.worker.autoRetry, { jobId: paused, attempts: 1 })).toBe(false);
+    expect(await s.getJob(paused)).toMatchObject({ status: 'error', errorCode: 'bot_check' });
+    expect((await s.getJob(paused))!.retryAt).toBeUndefined();
+    await s.t.run(async ctx => { for (const row of await ctx.db.query('accountControls').collect()) await ctx.db.delete('accountControls', row._id); });
+
+    const revoked = await botChecked();
+    await s.alice.mutation(api.devices.revoke, { deviceId: s.deviceId });
+    expect(await s.t.mutation(internal.worker.autoRetry, { jobId: revoked, attempts: 1 })).toBe(false);
+    const row = (await s.getJob(revoked))!;
+    expect(row).toMatchObject({ status: 'error', errorCode: 'bot_check', attempts: 1 });
+    expect(row.retryAt).toBeUndefined();
+  });
+
   test('progress on a canceled job returns false and changes nothing', async () => {
     const s = await setup();
     const jobId = await s.job({ status: 'canceled' });
@@ -422,6 +446,9 @@ describe('worker.beatsDone (D44, D47)', () => {
       await s.t.mutation(api.worker.beatsDone, { token: TOKEN, jobId, beats });
       const job = (await s.getJob(jobId))!;
       expect(job).toMatchObject({ status: 'done', stage: 'done', percent: 100, result: { beats, sections: [] } });
+      // D44: the server applied it, so jobs.latestDetection (done, user-started,
+      // result, no appliedAt) never offers it to the client again.
+      expect(job.appliedAt).toBe(job.updatedAt);
       const song = (await s.getSong(songId))!;
       expect(song.tempoRev).toBe(5);
       expect(song.tempoSaveId).toBeUndefined();
@@ -445,6 +472,7 @@ describe('worker.beatsDone (D44, D47)', () => {
     const beats = beatPairs(120, 0, 60);
     await s.t.mutation(api.worker.beatsDone, { token: TOKEN, jobId, beats });
     expect((await s.getJob(jobId))!.result.beats).toEqual(beats);
+    expect((await s.getJob(jobId))!.appliedAt).toBeUndefined(); // the session's to apply (latestDetection offers it)
     expect(await s.getSong(songId)).toMatchObject({ tempo, tempoRev: 2, tempoSaveId: 'mine' });
   });
 
@@ -534,9 +562,9 @@ describe('worker.heartbeat (D11)', () => {
     await s.t.mutation(api.worker.heartbeat, { token: TOKEN, state: 'idle', appVersion: '2.0.1' });
     const after = await rows();
     expect(after).toHaveLength(1);
-    expect(after[0]).toMatchObject({ state: 'idle', appVersion: '2.0.1' });
+    // Upsert: a beat that leaves the descriptive fields out keeps the stored ones.
+    expect(after[0]).toMatchObject({ state: 'idle', appVersion: '2.0.1', platform: 'darwin-arm64', accelerator: 'Apple GPU' });
     expect(after[0].currentJobId).toBeUndefined();
-    expect(after[0].platform).toBeUndefined();
     expect(after[0].lastSeenAt).toBeGreaterThan(first.lastSeenAt);
   });
 

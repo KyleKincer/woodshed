@@ -5,6 +5,7 @@ import { query, mutation, internalMutation, internalQuery } from './_generated/s
 import type { MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { requireDevice } from './devices';
+import { assertAccountAccess } from './lib/auth';
 import { resolveQuality, withDefaults } from './lib/presets';
 import { retireKey } from './storage';
 import { qualityValidator, stemValidator } from './schema';
@@ -202,6 +203,17 @@ export const autoRetry = internalMutation({
   handler: async (ctx, { jobId, attempts }) => {
     const job = await ctx.db.get('jobs', jobId);
     if (!job || job.status !== 'error' || (job.attempts ?? 0) !== attempts || job.errorCode !== 'bot_check') return false;
+    // A computer revoked, or an account paused, during the backoff could never
+    // claim the job: it stays failed, with the normal Retry path instead.
+    const device = job.deviceId ? await ctx.db.get('devices', job.deviceId) : null;
+    let canProcess = !!device && !device.revoked && device.userId === job.userId;
+    if (canProcess) {
+      try { await assertAccountAccess(ctx, job.userId, true); } catch { canProcess = false; }
+    }
+    if (!canProcess) {
+      await ctx.db.patch('jobs', jobId, { retryAt: undefined, updatedAt: Date.now() });
+      return false;
+    }
     await ctx.db.patch('jobs', jobId, {
       status: 'queued', stage: 'queued', percent: 0, error: undefined, errorCode: undefined, retryAt: undefined,
       message: RESUME_MESSAGE, updatedAt: Date.now(),
@@ -365,6 +377,9 @@ export const beatsDone = mutation({
           tempo, tempoRev: (song.tempoRev ?? 0) + 1, tempoSaveId: undefined,
           mapSummary: mapSummaryOf(tempo, song.duration, { hasPart }),
         });
+        // D44: one applier per case. The server applied it, so latestDetection
+        // never offers it again; the open song sees it as an external change.
+        await ctx.db.patch('jobs', j._id, { appliedAt: now });
         map = detected;
       }
     }
@@ -410,10 +425,18 @@ export const heartbeat = mutation({
       currentJobId: current && current.deviceId === d._id && current.userId === d.userId ? current._id : undefined,
       appVersion: text(a.appVersion, 40), platform: text(a.platform, 60), accelerator: text(a.accelerator, 100),
     };
-    const row = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as typeof fields;
     const existing = await ctx.db.query('devicePresence').withIndex('by_deviceId', q => q.eq('deviceId', d._id)).unique();
-    if (existing) await ctx.db.replace('devicePresence', existing._id, row);
-    else await ctx.db.insert('devicePresence', row);
+    if (existing) {
+      // Upsert: state, lastSeenAt and currentJobId follow every beat (an absent
+      // job clears it); the descriptive fields keep their stored values when a
+      // beat leaves them out.
+      const { appVersion, platform, accelerator, ...always } = fields;
+      const described = Object.fromEntries(Object.entries({ appVersion, platform, accelerator }).filter(([, value]) => value !== undefined));
+      await ctx.db.patch('devicePresence', existing._id, { ...always, ...described });
+    } else {
+      const row = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as typeof fields;
+      await ctx.db.insert('devicePresence', row);
+    }
     return null;
   },
 });

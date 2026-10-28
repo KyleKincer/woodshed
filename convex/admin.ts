@@ -48,7 +48,7 @@ export const account = query({
     const control = await accountControl(ctx, id);
     const devices = await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', id)).take(MAX_DEVICE_ROWS);
     const presence = await Promise.all(devices.map(d => ctx.db.query('devicePresence').withIndex('by_deviceId', q => q.eq('deviceId', d._id)).unique()));
-    const revokedBy = await Promise.all(devices.map(d => (d.revoked ? revokedByOf(ctx, d) : null)));
+    const revokedBy = devices.map(d => (d.revoked ? revokedByOf(d) : null));
     const jobs = await ctx.db.query('jobs').withIndex('by_user', q => q.eq('userId', id)).order('desc').take(30);
     return { id, name: user.name, email: user.email, createdAt: user.createdAt, emailVerified: user.emailVerified,
       status: control?.status ?? 'active', byteLimit: control?.byteLimit ?? null, notes: control?.notes ?? '',

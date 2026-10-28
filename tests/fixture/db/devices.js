@@ -48,6 +48,7 @@ export const handlers = {
     if (device) {
       if (device.userId !== userId()) throw convexError({code: 'device_other_account', message: 'This companion belongs to another account. Reset its pairing locally first.'});
       if (device.revoked && device.revokedBy === 'admin') throw convexError({code: 'device_revoked_admin', message: 'This computer was disconnected by an administrator.'});
+      if (device.revoked && devices().filter(d => d.userId === userId() && !d.revoked).length >= MAX_DEVICES) throw convexError({code: 'device_limit', message: 'Device limit reached.', limit: MAX_DEVICES});
       Object.assign(device, {tokenHash, name: friendly, revoked: false});
       delete device.revokedBy;
       return device.id;

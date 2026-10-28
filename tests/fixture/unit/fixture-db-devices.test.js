@@ -70,6 +70,17 @@ describe('rename, revoke, pair', () => {
     expect(await codeOf(call('mutation', 'devices:pair', {tokenHash: 'bad', name: 'x'}))).toBe('invalid');
   });
 
+  it('re-pairing a user-revoked computer is refused at the limit, like the server', async () => {
+    const tokenHash = 'c'.repeat(64);
+    await call('mutation', 'devices:pair', {tokenHash, name: 'Studio MacBook'});
+    await call('mutation', 'devices:revoke', {deviceId: 'dev1'});
+    const active = () => runtime.db.devices.filter(d => !d.revoked).length;
+    for (let n = 0; active() < 20; n++) await call('mutation', 'devices:pair', {tokenHash: n.toString(16).padStart(64, 'e'), name: `PC ${n}`});
+    expect(await call('mutation', 'devices:pair', {tokenHash, name: 'x'}).catch(e => e.data)).toMatchObject({code: 'device_limit', limit: 20});
+    expect(runtime.db.devices.find(d => d.id === 'dev1').revoked).toBe(true);
+    expect(await call('query', 'devices:list')).toHaveLength(20);
+  });
+
   it('pairing with no computers creates the fake processor’s device', async () => {
     start('?fx-devices=none');
     expect(await call('mutation', 'devices:pair', {tokenHash: 'd'.repeat(64), name: '  Studio  Mac '})).toBe('dev1');

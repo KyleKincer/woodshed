@@ -99,6 +99,20 @@ describe('devices.list', () => {
     expect(rows[0].lastSeenAt).toBeGreaterThan(0);
     expect(await s.t.query(api.devices.list, {})).toEqual([]);
   });
+
+  test('re-pairing a user-revoked computer takes a place again, so the limit applies', async () => {
+    const s = await setup();
+    const first = await s.pair(s.alice, 1);
+    for (let n = 2; n <= MAX_DEVICES; n++) await s.pair(s.alice, n);
+    await s.alice.mutation(api.devices.revoke, { deviceId: first });
+    await s.pair(s.alice, 99); // the freed place
+    expect(await caught(s.pair(s.alice, 1))).toMatchObject({ code: 'device_limit', limit: MAX_DEVICES });
+    expect((await s.getDevice(first))!.revoked).toBe(true);
+    const listed = await s.alice.query(api.devices.list, {});
+    expect(listed).toHaveLength(MAX_DEVICES);
+    // An active computer re-pairing (a name refresh) never counts against itself.
+    expect(await s.pair(s.alice, 2, 'Renamed')).toBeDefined();
+  });
 });
 
 describe('devices.rename', () => {
@@ -148,20 +162,20 @@ describe('revoking (B5)', () => {
     expect(audit).toMatchObject({ action: 'device.revoke', before: { revoked: false, revokedBy: null }, after: { revoked: true, revokedBy: 'admin' } });
   });
 
-  test('1.9 revoked rows (no revokedBy) read who revoked them from the admin audit log', async () => {
+  test('1.9 revoked rows (no revokedBy) read as user revokes, whatever the audit log says, and pair again', async () => {
     const s = await setup();
-    const byAdmin = await s.pair(s.alice, 1);
-    const byUser = await s.pair(s.alice, 2);
+    // 1.9 let any revoked computer pair again, so an old admin audit entry may
+    // be one the user since paired over and revoked themselves.
+    const id = await s.pair(s.alice, 1);
     await s.t.run(async ctx => {
-      await ctx.db.patch('devices', byAdmin, { revoked: true });
-      await ctx.db.patch('devices', byUser, { revoked: true });
-      await ctx.db.insert('adminAudit', { actorId: s.ownerId, targetId: s.aliceId, action: 'device.revoke', reason: 'Lost computer', before: { id: byAdmin, revoked: false }, after: { revoked: true }, at: 1 });
+      await ctx.db.insert('adminAudit', { actorId: s.ownerId, targetId: s.aliceId, action: 'device.revoke', reason: 'Lost computer', before: { id, revoked: false }, after: { revoked: true }, at: 1 });
+      await ctx.db.patch('devices', id, { revoked: true });
     });
-    expect((await caught(s.pair(s.alice, 1))).code).toBe('device_revoked_admin');
-    expect((await caught(s.t.query(api.worker.next, { token: tokenOf(1) }))).code).toBe('device_revoked_admin');
-    expect((await caught(s.t.query(api.worker.next, { token: tokenOf(2) }))).code).toBe('device_unpaired');
-    expect(await s.pair(s.alice, 2)).toBe(byUser);
-    expect((await s.getDevice(byUser))!.revoked).toBe(false);
+    expect((await caught(s.t.query(api.worker.next, { token: tokenOf(1) }))).code).toBe('device_unpaired');
+    const account = await s.owner.query(api.admin.account, { id: s.aliceId as Id<'users'> });
+    expect(account.devices[0]).toMatchObject({ id, revoked: true, revokedBy: 'user' });
+    expect(await s.pair(s.alice, 1)).toBe(id);
+    expect((await s.getDevice(id))!.revoked).toBe(false);
   });
 
   test('admin.account device rows carry lastSeenAt and revokedBy', async () => {

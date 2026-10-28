@@ -31,11 +31,7 @@ export const NAME_MAX = 80;
 /** Queued jobs counted per device in `list` (more than 20 reads as "20+"). */
 export const QUEUED_COUNT_CAP = 21;
 
-/** Audit entries scanned for a 1.9 admin revoke (newest first). */
-const AUDIT_SCAN = 200;
-
 const TOKEN_RE = /^[a-f0-9]{64}$/;
-const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const UNPAIRED = 'Companion is not paired. Connect it in Settings.';
 
 export async function hashToken(token: string) {
@@ -45,17 +41,19 @@ export async function hashToken(token: string) {
 }
 
 /**
- * Who revoked a revoked device. 1.9 rows carry no `revokedBy`; for those the
- * admin audit log decides (an admin revoke always wrote a `device.revoke`
- * entry naming the device), so an administrator's 1.9 revoke keeps blocking
- * re-pairing. The lookup runs only for revoked rows without the field, and a
- * read never writes, so nothing needs a backfill.
+ * Who revoked a revoked device. 1.9 rows carry no `revokedBy` and read as a
+ * user revoke (contract §6.6 refuses only `revokedBy === 'admin'`): 1.9 let
+ * any revoked computer pair again, and neither the row nor the 1.9 audit log
+ * can tell an admin revoke that is still in effect from one the user later
+ * paired over and revoked themselves. A pure read, so nothing needs a backfill.
  */
-export async function revokedByOf(ctx: QueryCtx | MutationCtx, device: Doc<'devices'>): Promise<'user' | 'admin'> {
-  if (device.revokedBy) return device.revokedBy;
-  const entries = await ctx.db.query('adminAudit').withIndex('by_targetId', q => q.eq('targetId', device.userId)).order('desc').take(AUDIT_SCAN);
-  const admin = entries.some(e => e.action === 'device.revoke' && isObject(e.before) && e.before.id === device._id);
-  return admin ? 'admin' : 'user';
+export function revokedByOf(device: Doc<'devices'>): 'user' | 'admin' {
+  return device.revokedBy ?? 'user';
+}
+
+/** The account's device rows, revoked included, oldest first (at most MAX_DEVICE_ROWS). */
+async function deviceRows(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', userId)).take(MAX_DEVICE_ROWS);
 }
 
 /** The device a companion token belongs to; refuses unknown, revoked and paused devices. */
@@ -64,7 +62,7 @@ export async function requireDevice(ctx: QueryCtx | MutationCtx, token: string) 
   const device = await ctx.db.query('devices').withIndex('by_token', q => q.eq('tokenHash', hash)).unique();
   if (!device) fail('device_unpaired', UNPAIRED);
   if (device.revoked) {
-    if (await revokedByOf(ctx, device) === 'admin') fail('device_revoked_admin', 'Companion is not paired. This computer was disconnected by an administrator.');
+    if (revokedByOf(device) === 'admin') fail('device_revoked_admin', 'Companion is not paired. This computer was disconnected by an administrator.');
     fail('device_unpaired', UNPAIRED);
   }
   await assertAccountAccess(ctx, device.userId, true);
@@ -89,12 +87,16 @@ export const pair = mutation({
     const existing = await ctx.db.query('devices').withIndex('by_token', q => q.eq('tokenHash', args.tokenHash)).unique();
     if (existing) {
       if (existing.userId !== userId) fail('device_other_account', 'This companion belongs to another account. Reset its pairing locally first.');
-      if (existing.revoked && await revokedByOf(ctx, existing) === 'admin') fail('device_revoked_admin', 'This computer was disconnected by an administrator.');
-      // A user-revoked computer re-pairs; the friendly name follows the computer.
+      if (existing.revoked && revokedByOf(existing) === 'admin') fail('device_revoked_admin', 'This computer was disconnected by an administrator.');
+      // A user-revoked computer re-pairs (taking a place again, so the limit
+      // applies); the friendly name follows the computer.
+      if (existing.revoked && (await deviceRows(ctx, userId)).filter(d => !d.revoked).length >= MAX_DEVICES) {
+        fail('device_limit', 'Device limit reached.', { limit: MAX_DEVICES });
+      }
       await ctx.db.patch('devices', existing._id, { revoked: false, revokedBy: undefined, name });
       return existing._id;
     }
-    const rows = await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', userId)).take(MAX_DEVICE_ROWS);
+    const rows = await deviceRows(ctx, userId);
     if (rows.length >= MAX_DEVICE_ROWS || rows.filter(d => !d.revoked).length >= MAX_DEVICES) {
       fail('device_limit', 'Device limit reached.', { limit: MAX_DEVICES });
     }
@@ -132,7 +134,7 @@ export const list = query({
   handler: async (ctx) => {
     const userId = await getUserId(ctx);
     if (!userId) return [];
-    const devices = (await ctx.db.query('devices').withIndex('by_user', q => q.eq('userId', userId)).take(MAX_DEVICE_ROWS))
+    const devices = (await deviceRows(ctx, userId))
       .filter(d => !d.revoked).slice(0, MAX_DEVICES);
     const rows = await Promise.all(devices.map(async d => {
       const presence = await ctx.db.query('devicePresence').withIndex('by_deviceId', q => q.eq('deviceId', d._id)).unique();
