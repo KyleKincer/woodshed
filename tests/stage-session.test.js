@@ -39,10 +39,10 @@ vi.mock('./transport.js', () => ({createTransport: vi.fn((options) => peers.make
 vi.mock('../src/app/feedback.js', () => ({status: vi.fn(), toast: vi.fn()}));
 vi.mock('../app/feedback.js', () => ({status: vi.fn(), toast: vi.fn()}));
 
-import {openSession, getSession, disposeSession, activeSession, clickOf, COPY, TEMPO_DEBOUNCE_MS, OWN_SAVE_IDS} from '../src/stage/session.js';
+import {openSession, getSession, disposeSession, activeSession, clickOf, COPY, TEMPO_DEBOUNCE_MS, OWN_SAVE_IDS, ACCOUNT_WAIT_MS} from '../src/stage/session.js';
 import {MultitrackEngine} from '../src/js/engine.js';
 import {SongMapStore} from '../src/js/song-map.js';
-import {signal} from '../src/app/store.js';
+import {signal, store as appStore} from '../src/app/store.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {ApiError} from '../src/api/client.js';
 import * as profile from '../src/app/profile.js';
@@ -105,7 +105,8 @@ function fakeSongs(song, practice) {
     savePractice: vi.fn(async () => null),
     saveTempo: vi.fn(async () => { rev += 1; return {tempoRev: rev, conflict: false}; }),
     dismissSectionSuggestion: vi.fn(async () => null),
-    pushSong: (next) => subs.song.onValue(structuredClone(next)),
+    // A pushed row is the server's latest: later saves build on its revision.
+    pushSong: (next) => { if (Number.isFinite(next?.tempoRev)) rev = Math.max(rev, next.tempoRev); subs.song.onValue(structuredClone(next)); },
     pushPractice: (next) => subs.practice.onValue(structuredClone(next)),
     get rev() { return rev; },
   };
@@ -249,6 +250,38 @@ describe('open order (spec §4.12: interactive before decode)', () => {
     expect(session.engine.tracks.find((t) => t.name === 'drums').muted).toBe(true);
     const saved = await open({practice: {...emptyPractice(), v: 2}, account: {profile: {instruments: ['drums'], primary: 'drums', openWithMyPart: 'out'}}});
     expect(saved.session.practice.value.peek().minusMe).toBe(false);
+  });
+
+  test('a deep link at boot waits briefly for the account settings, so "my part Out" still applies', async () => {
+    const song = makeSong();
+    const songs = fakeSongs(song, null);
+    const value = signal({practice: {}, profile: {instruments: [], primary: null, openWithMyPart: 'in'}});
+    const loaded = signal(false);
+    const opening = openSession(song.id, {songs, status: vi.fn(), window: null, document: null, account: {value, loaded},
+      createEngine: () => { const e = new MultitrackEngine(); e.ctx.decodeDuration = 128; return e; },
+      media: {signKeys: vi.fn(async (keys) => Object.fromEntries(keys.map((k) => [k, `https://stems.invalid/${k}`])))},
+      jobs: {latestDetection: vi.fn(async () => null), subscribeJob: vi.fn(() => vi.fn())},
+      detect: {library: {jobs: signal([]), devices: signal([])}, accountSession: signal({status: 'active'}), navigate: vi.fn()}});
+    await tick();
+    // The first settings.config arrives after songs.get.
+    value.value = {practice: {}, profile: {instruments: ['drums'], primary: 'drums', openWithMyPart: 'out'}};
+    loaded.value = true;
+    const session = await opening;
+    expect(session.practice.value.peek().minusMe).toBe(true);
+    expect(session.practice.value.peek().tracks.find((t) => t.name === 'drums').muted).toBe(true);
+
+    // Settings that never arrive do not hold the song: the open goes ahead after ACCOUNT_WAIT_MS.
+    const late = openSession(song.id, {songs: fakeSongs(song, null), status: vi.fn(), window: null, document: null,
+      account: {value: signal({practice: {}, profile: {instruments: [], primary: null, openWithMyPart: 'in'}}), loaded: signal(false)},
+      createEngine: () => new MultitrackEngine(), media: {signKeys: vi.fn(() => new Promise(() => {}))},
+      detect: {library: {jobs: signal([]), devices: signal([])}, accountSession: signal({status: 'active'}), navigate: vi.fn()}});
+    let settled = false;
+    void late.then(() => { settled = true; });
+    await tick();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(ACCOUNT_WAIT_MS);
+    await tick();
+    expect(settled).toBe(true);
   });
 
   test('a song that no longer exists rejects with not_found', async () => {
@@ -480,6 +513,101 @@ describe('tempo persistence and adoption (D53)', () => {
     expect(songs.saveTempo.mock.calls[0][0].baseRev).toBe(3);
   });
 
+  test('a foreign change that arrives while our save is in flight is adopted once the save resolves', async () => {
+    const {session, songs, song} = await open();
+    await ready(session);
+    const pending = deferred();
+    songs.saveTempo.mockImplementationOnce(() => pending.promise);
+    editLabel(session, 'Mine');
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS);
+    await tick();
+    expect(songs.saveTempo).toHaveBeenCalledOnce();
+    // The server applied ours as rev 4, then the other device's as rev 5; rev 5 reaches us first.
+    const theirs = structuredClone(songs.saveTempo.mock.calls[0][0].tempo);
+    theirs.songMap.measures[5].label = 'Theirs';
+    songs.pushSong({...song, tempo: theirs, tempoRev: 5, tempoSaveId: 'other-device'});
+    expect(session.map.data.measures[5].label).not.toBe('Theirs');   // held while our save is in flight
+    pending.resolve({tempoRev: 4, conflict: false});
+    await tick();
+    expect(session.map.data.measures[5].label).toBe('Theirs');
+    expect(session.map.data.measures[3].label).toBe('Mine');
+    expect(session.pending).toBe(false);
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS * 2);
+    await tick();
+    expect(songs.saveTempo).toHaveBeenCalledOnce();
+    // Our next edit builds on their revision.
+    editLabel(session, 'Mine again');
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS);
+    await tick();
+    expect(songs.saveTempo.mock.calls[1][0].baseRev).toBe(5);
+  });
+
+  test('a foreign change held back by a local edit is adopted when that edit is undone inside the debounce', async () => {
+    const {session, songs, song} = await open();
+    await ready(session);
+    session.mapChange('Rename', (m) => m.edit((d) => { d.measures[3].label = 'Mine'; }, 'label'));
+    const theirs = structuredClone(song.tempo);
+    theirs.songMap.measures[5].label = 'Theirs';
+    songs.pushSong({...song, tempo: theirs, tempoRev: 6});
+    expect(session.map.data.measures[5].label).not.toBe('Theirs');
+    session.undo.undo();
+    expect(session.map.data.measures[5].label).toBe('Theirs');
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS * 2);
+    await tick();
+    expect(songs.saveTempo).not.toHaveBeenCalled();
+    expect(session.pending).toBe(false);
+  });
+
+  test('a foreign real map arriving during a Find a chart audition waits; after Keep my map it is adopted', async () => {
+    const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
+    const {session, songs, status} = await open({song, duration: 72});
+    await ready(session);
+    const auditioning = signal(true);
+    session.mapEditor.value = {auditioning, undo: vi.fn()};
+    songs.pushSong({...song, tempo: detectedTempo(72), tempoRev: 4});
+    expect(session.map.isReal).toBe(false);
+    // Keep my map: the batch is aborted and the audition ends with the map unchanged.
+    session.map.beginBatch();
+    session.map.abortBatch();
+    auditioning.value = false;
+    expect(session.map.isReal).toBe(true);
+    expect(session.map.data.origin).toBe('detected');
+    expect(session.map.undoStack).toHaveLength(1);   // one map-stack step (Edit · Map is mounted)
+    expect(status.mock.calls.some(([t]) => t === COPY.barsFound)).toBe(true);
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS * 2);
+    await tick();
+    expect(songs.saveTempo).not.toHaveBeenCalled();
+    expect(session.pending).toBe(false);
+  });
+
+  test('a conflict answer during an audition is not dropped: the save after the audition meets it again and adopts', async () => {
+    const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
+    const {session, songs, status} = await open({song, duration: 72});
+    await ready(session);
+    const stored = detectedTempo(72);
+    const first = deferred();
+    songs.saveTempo.mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async () => ({tempoRev: 9, conflict: true, tempo: stored}));
+    session.map.edit((d) => { d.measures[1].label = 'Verse'; }, 'restore');
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS);
+    await tick();
+    const auditioning = signal(true);
+    session.mapEditor.value = {auditioning, undo: vi.fn()};
+    first.resolve({tempoRev: 9, conflict: true, tempo: stored});
+    await tick();
+    expect(session.map.isReal).toBe(false);
+    expect(session.pending).toBe(true);   // the server holds a different map
+    auditioning.value = false;
+    session.mapEditor.value = null;
+    vi.advanceTimersByTime(TEMPO_DEBOUNCE_MS);
+    await tick();
+    expect(songs.saveTempo).toHaveBeenCalledTimes(2);
+    expect(songs.saveTempo.mock.calls[1][0].baseRev).toBe(3);   // still the stale revision: the server reports the conflict
+    expect(session.map.data.origin).toBe('detected');
+    expect(status.mock.calls.some(([t]) => t === COPY.keptMap)).toBe(true);
+    expect(session.pending).toBe(false);
+  });
+
   test('the tempo conflict answer adopts the stored map as one undo step: "Kept the map from your other device · Undo"', async () => {
     const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
     const {session, songs, status} = await open({song, duration: 72});
@@ -615,6 +743,20 @@ describe('not real → real: the markers offer with an amended undo entry', () =
     expect(session.practice.value.peek().markers.filter((m) => !m.deleted)).toHaveLength(0);
   });
 
+  test('redoing the amended entry restores map and markers without offering the markers again', async () => {
+    const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
+    const {session, songs, status} = await open({song, duration: 72, practice: {...emptyPractice(), v: 2, markers}});
+    await ready(session);
+    songs.pushSong({...song, tempo: detectedTempo(72), tempoRev: 4});
+    status.mock.calls.find(([t]) => t === COPY.turnMarkers(2))[1].action.run();
+    session.undo.undo();
+    status.mockClear();
+    session.undo.redo();
+    expect(session.map.isReal).toBe(true);
+    expect(session.practice.value.peek().markers.filter((m) => !m.deleted)).toHaveLength(0);
+    expect(status.mock.calls.some(([t]) => /marker/i.test(t))).toBe(false);
+  });
+
   test('no offer without live markers; a later conversion after other edits is its own step', async () => {
     const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
     const quiet = await open({song, duration: 72});
@@ -720,6 +862,7 @@ describe('the cache: getSession, disposeSession, activeSession', () => {
     vi.spyOn(songsModule, 'subscribePractice').mockImplementation(songs.subscribePractice);
     vi.spyOn(songsModule, 'savePractice').mockImplementation(songs.savePractice);
     vi.spyOn(media, 'signKeys').mockImplementation(async (keys) => Object.fromEntries(keys.map((k) => [k, `https://stems.invalid/${k}`])));
+    appStore.account.value = {};   // the account settings have arrived (the open waits for them briefly)
     const first = getSession(song.id);
     expect(getSession(song.id)).toBe(first);
     const session = await first;
@@ -739,6 +882,7 @@ describe('the cache: getSession, disposeSession, activeSession', () => {
     const again = getSession(song.id);
     expect(again).not.toBe(first);
     await disposeSession(song.id);
+    appStore.account.value = null;
   });
 
   test('a failed open is not cached', async () => {
@@ -758,7 +902,11 @@ describe('shared (read-only) sessions (§2.18 step 9)', () => {
     const storage = new Map();
     vi.stubGlobal('localStorage', {getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k)});
     const snapshot = {...makeSong({id: 'shared-song'}), practice: {...emptyPractice(), v: 2, rate: 0.7}};
-    const resolveUrls = vi.fn(async () => Object.fromEntries(snapshot.stems.map((s) => [s.key, `https://share.invalid/${s.key}`])));
+    // sharing.playback's shape (§2.18: resolveUrls is shareAudio.playback): ({token}) → {key: url}.
+    const resolveUrls = vi.fn(async ({token}) => {
+      if (token !== 'tok-1') throw new Error('no token');
+      return Object.fromEntries(snapshot.stems.map((s) => [s.key, `https://share.invalid/${s.key}`]));
+    });
     const songs = fakeSongs(snapshot, null);
     const session = await openSession('shared-song', {songs, status: vi.fn(), window: null, document: null,
       account: {value: signal({practice: {}, profile: {instruments: [], primary: null, openWithMyPart: 'in'}})},
@@ -769,6 +917,8 @@ describe('shared (read-only) sessions (§2.18 step 9)', () => {
     expect('practice' in session.song.peek()).toBe(false);
     await ready(session);
     expect(resolveUrls).toHaveBeenCalledOnce();
+    expect(resolveUrls).toHaveBeenCalledWith({token: 'tok-1'});
+    expect(session.load.peek().phase).toBe('ready');
     expect(session.mapChange('No', (m) => m.edit((d) => { d.measures[0].label = 'X'; }, 'label'))).toBeNull();
     session.practice.patch({rate: 0.6});
     await session.flush({final: true});

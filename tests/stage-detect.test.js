@@ -262,6 +262,24 @@ describe('starting and watching a detection', () => {
     expect(mapped.jobs.markApplied).not.toHaveBeenCalled();
     await expect(mapped.session.detect.start({kind: 'chords'})).rejects.toThrow(TypeError);
   });
+
+  test('one detection at a time: a second kind while one is live is refused, so the first result still applies', async () => {
+    const {session, jobs, status} = await open({devices: [online()]});
+    await session.detect.start();
+    jobs.emit('job-1', {status: 'running', percent: 20});
+    await session.detect.start({kind: 'sections'});
+    expect(jobs.createSectionDetection).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(COPY.busy, expect.objectContaining({key: 'detect'}));
+    expect(jobs.watchers.has('job-1')).toBe(true);
+    jobs.emit('job-1', {status: 'done', result: {beats: rawBeats()}});
+    expect(session.map.data.origin).toBe('detected');
+    expect(jobs.markApplied).toHaveBeenCalledWith({jobId: 'job-1'});
+    // Once it has finished, the other kind can start.
+    await session.detect.start({kind: 'sections'});
+    expect(jobs.createSectionDetection).toHaveBeenCalledOnce();
+    await session.detect.start();
+    expect(status).toHaveBeenCalledWith(COPY.busySections, expect.objectContaining({key: 'detect'}));
+  });
 });
 
 describe('errors (describeError, context detect)', () => {
@@ -282,11 +300,16 @@ describe('errors (describeError, context detect)', () => {
   });
 
   test('retry: same job on its device; a newer live detection (job_live) is followed instead', async () => {
-    const {session, jobs} = await open({devices: [online('dev-1')]});
+    const {session, jobs, library} = await open({devices: [online('dev-1')]});
     await session.detect.start();
+    expect(jobs.createBeatDetection).toHaveBeenCalledWith({songId: session.id, deviceId: 'dev-1'});
     jobs.emit('job-1', {status: 'error', errorCode: 'unknown', error: 'crash'});
+    // Another paired computer is now the most recently seen one: the retry still goes to the job's
+    // own computer, so no deviceId is sent (jobs.retry refuses any other id: retry_wrong_device).
+    library.devices.value = [{...online('dev-2', 'Studio PC'), lastSeenAt: T0 - 10}, online('dev-1')];
+    expect(session.detect.canDetect.peek()).toMatchObject({ok: true, deviceId: 'dev-2'});
     await session.detect.retry();
-    expect(jobs.retry).toHaveBeenCalledWith({jobId: 'job-1', deviceId: 'dev-1'});
+    expect(jobs.retry).toHaveBeenCalledWith({jobId: 'job-1'});
     expect(session.detect.state.peek()).toMatchObject({phase: 'running', jobId: 'job-1'});
     jobs.emit('job-1', {status: 'error', errorCode: 'unknown', error: 'crash again'});
     jobs.retry.mockRejectedValueOnce(new ApiError({code: 'job_live', message: 'busy', data: {code: 'job_live', jobId: 'job-9'}}));
@@ -358,6 +381,21 @@ describe('section suggestions (D47)', () => {
     expect(session.detect.suggestion.value).toBeNull();   // the map has sections now
     session.undo.undo();
     expect(session.map.hasSections).toBe(false);
+  });
+
+  test('Keep all during a Find a chart audition is refused and keeps the suggestion', async () => {
+    const {session, songs, status} = await open({song: plainSong()});
+    const auditioning = signal(true);
+    session.mapEditor.value = {auditioning, undo: vi.fn()};
+    expect(session.detect.keepAll()).toBeNull();
+    expect(status).toHaveBeenCalledWith(COPY.auditioning, expect.objectContaining({key: 'detect'}));
+    expect(status).not.toHaveBeenCalledWith(COPY.noneAdded, expect.anything());
+    expect(songs.dismissSectionSuggestion).not.toHaveBeenCalled();
+    expect(session.detect.suggestion.value).toEqual({sections: suggestion.sections});
+    auditioning.value = false;
+    session.mapEditor.value = null;
+    expect(session.detect.keepAll().entry).toBeTruthy();
+    expect(songs.dismissSectionSuggestion).toHaveBeenCalledOnce();
   });
 
   test('dismiss hides it at once; review opens Edit · Map with the review; mapped songs with sections show none', async () => {

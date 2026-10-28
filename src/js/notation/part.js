@@ -7,7 +7,7 @@
 // - legacy timeline adoption (`adoptLegacy`: the song's stored tempo has no
 //   `songMap`, so the drum part's timeline is the better map) runs inside
 //   `songMap.withoutUndo(...)` with the store's reason 'adopt', before the
-//   part is fitted to the map;
+//   part is fitted to the map (owner parts only: a read-only part never adopts);
 // - a stored part that does not fit the map rebuilds the map from the part's
 //   timeline with the explicit reason 'part-fit', also without an undo step.
 // Either only changes the map when the result differs, so the session saves
@@ -53,7 +53,7 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
   };
   // A stored map that predates `songMap` takes the drum part's timeline (1.9 adoptDrumPart, kept as a one-way upgrade).
   const adopt = input => {
-    if (!songMap || !adoptLegacy || !input?.timeline) return;
+    if (!songMap || !adoptLegacy || readOnly || !input?.timeline) return;
     try { songMap.withoutUndo(() => songMap.adopt(fromTimeline(upgradeScore(input).timeline, songMap.duration))); } catch { /* an unusable timeline leaves the map alone */ }
   };
   const newScore = () => songMap ? {version: 2, title: 'Drums', timeline: structuredClone(songMap.timeline()), bars: []} : scoreFromTiming(engine.duration, metronome);

@@ -62,6 +62,8 @@ export const COPY = Object.freeze({
   exportOnly: 'Finding bars is paused on this account.',
   needsMap: 'Needs a bar grid first.',
   auditioning: 'Finish with Find a chart first: Use their map or Keep my map.',
+  busy: 'Wait for Finding bars to finish first.',
+  busySections: 'Wait for Finding sections to finish first.',
 });
 
 const KINDS = Object.freeze(['beats', 'sections']);
@@ -248,7 +250,12 @@ export function createDetectFlow({
     if (!KINDS.includes(kind)) throw new TypeError(`Unknown detection kind: ${kind}`);
     const live = state.peek();
     if (starting) return starting;
-    if ((live.phase === 'running' || live.phase === 'starting') && live.kind === kind) return;
+    if (live.phase === 'running' || live.phase === 'starting') {
+      if (live.kind === kind) return;
+      // One detection at a time: the flow follows one job, and a second kind would drop the first one's result.
+      status(live.kind === 'sections' ? COPY.busySections : COPY.busy, {key: 'detect'});
+      return;
+    }
     const target = canDetect.peek();
     if (!target.ok) { status(target.reason, {key: 'detect'}); return; }
     if (kind === 'sections' && !map()?.isReal) { status(COPY.needsMap, {key: 'detect'}); return; }
@@ -274,15 +281,19 @@ export function createDetectFlow({
     return starting;
   }
 
-  /** Try a failed detection again on its device; a newer live detection (`job_live`) is followed instead. */
+  /**
+   * Try a failed detection again on its own device; a newer live detection (`job_live`) is
+   * followed instead. No deviceId is sent: `jobs.retry` re-queues the job on the computer it
+   * ran on and refuses any other id (`retry_wrong_device`, App. C item 26), while `canDetect`
+   * names whichever computer is best now.
+   */
   async function retry() {
     const failed = state.peek();
     if (failed.phase !== 'error' || !failed.jobId) return start({kind: failed.kind ?? 'beats'});
-    const target = canDetect.peek();
     const kind = failed.kind ?? 'beats';
     state.value = {phase: 'starting', kind, jobId: failed.jobId};
     try {
-      await jobs.retry({jobId: failed.jobId, ...(target.deviceId ? {deviceId: target.deviceId} : {})});
+      await jobs.retry({jobId: failed.jobId});
       if (destroyed) return;
       if (kind === 'beats' && !map()?.isReal) serverApplyExpected = true;
       watch = null;
@@ -335,6 +346,8 @@ export function createDetectFlow({
   function keepAll() {
     const s = suggestion.peek();
     if (!s || session.readOnly) return null;
+    // mapChange refuses during a Find a chart audition: keep the suggestion for afterwards.
+    if (auditioning()) { status(COPY.auditioning, {key: 'detect'}); return null; }
     let added = 0;
     const result = session.mapChange(COPY.keepAllLabel, (m) => {
       const {change, added: n} = applySuggestion(m.data, s, m.duration);

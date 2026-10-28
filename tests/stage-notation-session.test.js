@@ -50,11 +50,48 @@ function sessionOver({tempo = tempoOf(sectioned), duration = 128, hasChart = fal
 }
 
 describe('opening the part', () => {
-  test('needsPartAtOpen: a chart, or a tempo with no songMap (legacy adoption)', () => {
+  test('needsPartAtOpen: a chart, or a stored tempo with no songMap (legacy adoption)', () => {
     expect(needsPartAtOpen({hasChart: true, tempo: tempoOf(sectioned)})).toBe(true);
     expect(needsPartAtOpen({hasChart: false, tempo: tempoOf(legacyTempoMap)})).toBe(true);
-    expect(needsPartAtOpen({hasChart: false, tempo: undefined})).toBe(true);
     expect(needsPartAtOpen({hasChart: false, tempo: tempoOf(sectioned)})).toBe(false);
+    // A never-mapped song stores no tempo (songs.get → null): nothing to adopt, no part fetched.
+    expect(needsPartAtOpen({hasChart: false, tempo: undefined})).toBe(false);
+    expect(needsPartAtOpen({hasChart: false, tempo: null})).toBe(false);
+    // Read-only (shared) sessions never adopt: only a chart opens the part.
+    expect(needsPartAtOpen({hasChart: false, tempo: tempoOf(legacyTempoMap)}, {readOnly: true})).toBe(false);
+    expect(needsPartAtOpen({hasChart: true, tempo: undefined}, {readOnly: true})).toBe(true);
+  });
+
+  test('a never-mapped song with no chart fetches no part at open', async () => {
+    const fakeOpen = vi.fn();
+    const notation = createNotationSession({session: sessionOver({tempo: null, duration: 30}), openPart: fakeOpen});
+    await notation.start();
+    await notation.ready;
+    expect(fakeOpen).not.toHaveBeenCalled();
+    expect(notation.part).toBeNull();
+    notation.destroy();
+  });
+
+  test('a shared session never adopts the chart timeline into the map (includeMap off: no tempo)', async () => {
+    const calls = [];
+    const fakeOpen = vi.fn(async (options) => { calls.push(options); return {hasNotation: true, score: null, subscribe: () => () => {}, destroy: vi.fn(), flush: vi.fn()}; });
+    const visitor = createNotationSession({session: sessionOver({tempo: undefined, duration: 30, hasChart: true, readOnly: true}), openPart: fakeOpen});
+    await visitor.start();
+    const legacyVisitor = createNotationSession({session: sessionOver({tempo: tempoOf(legacyTempoMap), duration: 30, hasChart: true, readOnly: true}), openPart: fakeOpen});
+    await legacyVisitor.start();
+    expect(calls.map((c) => [c.readOnly, c.adoptLegacy])).toEqual([[true, false], [true, false]]);
+  });
+
+  test('part.js: a read-only part never adopts its timeline, even when asked', async () => {
+    const store = await import('../src/js/notation/store.js');
+    const score = emptyScore(30, 90, 3, 4);
+    store.loadSharedNotation.mockResolvedValueOnce({score});
+    const session = sessionOver({tempo: tempoOf(legacyTempoMap), duration: 30, hasChart: true, readOnly: true});
+    const before = session.map.snapshot();
+    const part = await openPart({song: session.song.peek(), engine: session.engine, metronome: session.metronome, songMap: session.map,
+      readOnly: true, shareToken: 'tok', adoptLegacy: true});
+    expect(session.map.snapshot()).toEqual(before);
+    part.destroy();
   });
 
   test('hasNotation starts from song.hasChart and follows the part once it opens', async () => {

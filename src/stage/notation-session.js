@@ -7,9 +7,10 @@
 //   (`onRealChange()`: the part made the song mapped or unmapped; the session's markers offer)
 //
 // - `start()` (the session's open order, step 5) opens the part when the song
-//   has a chart (`song.hasChart`) or when its stored tempo has no `songMap`
+//   has a chart (`song.hasChart`) or when it stores a tempo with no `songMap`
 //   (a 1.5 song whose drum part may carry the only real timing; the part's
-//   timeline is adopted into the map before the part is fitted to it).
+//   timeline is adopted into the map before the part is fitted to it). A song
+//   with no stored tempo is not legacy, and read-only sessions never adopt.
 //   Otherwise nothing is fetched and `ready` resolves with `part` null.
 //   `open()` opens the part on demand (Edit · Chart writing a new chart, an
 //   import).
@@ -41,10 +42,23 @@ const loadPart = async (options) => (await import('../js/notation/part.js')).ope
 /** Hits in a score (an import's count). */
 const hitCount = (score) => (score?.bars ?? []).reduce((n, bar) => n + (bar.hits?.length ?? 0), 0);
 
-/** True when the song needs its part at open: it has a chart, or its tempo predates `songMap` (legacy adoption). */
-export function needsPartAtOpen(song) {
+/**
+ * True when the song stores a tempo that predates `songMap` (a 1.5–1.9 row): its drum part may
+ * carry the only real timing. A song that was never mapped stores no tempo (`songs.get` → null),
+ * and a shared snapshot without its map carries none: neither is legacy.
+ */
+export function hasLegacyTempo(song) {
+  const tempo = song?.tempo;
+  return !!tempo && typeof tempo === 'object' && !cleanSongMap(tempo.songMap);
+}
+
+/**
+ * True when the song needs its part at open: it has a chart, or (owner sessions only) its stored
+ * tempo predates `songMap` (legacy adoption). Read-only sessions never adopt into the map.
+ */
+export function needsPartAtOpen(song, {readOnly = false} = {}) {
   if (!song) return false;
-  return !!song.hasChart || !cleanSongMap(song.tempo?.songMap);
+  return !!song.hasChart || (!readOnly && hasLegacyTempo(song));
 }
 
 export function createNotationSession({session, openPart = loadPart, persistence = null, onRealChange = null} = {}) {
@@ -106,7 +120,7 @@ export function createNotationSession({session, openPart = loadPart, persistence
       const result = await openPart({
         song, engine: session.engine, metronome: session.metronome, songMap: session.map,
         readOnly: !!session.readOnly, shareToken: session.shareToken ?? null, persistence,
-        adoptLegacy: !cleanSongMap(song?.tempo?.songMap),
+        adoptLegacy: !session.readOnly && hasLegacyTempo(song),
       });
       if (destroyed) { result.destroy(); return; }
       part = result;
@@ -124,7 +138,7 @@ export function createNotationSession({session, openPart = loadPart, persistence
 
   /** The session's open order, step 5: open now when the song needs its part, else settle with no part. */
   function start() {
-    if (!needsPartAtOpen(session.song.peek())) { settle(); return Promise.resolve(); }
+    if (!needsPartAtOpen(session.song.peek(), {readOnly: !!session.readOnly})) { settle(); return Promise.resolve(); }
     return open().catch((err) => { console.warn('The drum part could not be opened.', err); });
   }
 

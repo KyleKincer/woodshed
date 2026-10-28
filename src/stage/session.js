@@ -59,6 +59,8 @@ export const TEMPO_DEBOUNCE_MS = 400;
 export const TEMPO_RETRY_MS = 5000;
 export const OWN_SAVE_IDS = 200;
 export const MARKERS_OFFER_MS = 8000;
+/** How long an open waits for the first account settings (boot does not await them, §2.3.1). */
+export const ACCOUNT_WAIT_MS = 1500;
 /** A loop "is" a spot when both edges agree within 1 ms (spot counters). */
 export const SPOT_EPS = 0.001;
 const MIN_LOOP = 0.02;
@@ -99,6 +101,18 @@ const peekFlag = (value) => (value && typeof value === 'object' && 'value' in va
   ? (typeof value.peek === 'function' ? value.peek() : value.value) : !!value);
 const readFlag = (value) => (value && typeof value === 'object' && 'value' in value ? value.value : !!value);
 const warn = (what, err) => console.warn(`[session] ${what}`, err);
+
+/** Resolves once `account.loaded` is true (at once when it is, or when there is no such flag), or after `ms`. */
+function accountLoaded(account, ms) {
+  const loaded = account?.loaded;
+  if (!loaded || typeof loaded.peek !== 'function' || loaded.peek()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let off = null;
+    const done = () => { clearTimeout(timer); off?.(); resolve(); };
+    const timer = setTimeout(done, ms);
+    off = loaded.subscribe?.((value) => { if (value) done(); }) ?? null;
+  });
+}
 
 /** A subscription whose first value resolves a promise; later values go to `later`. */
 function firstOf(subscribe, args, later) {
@@ -156,6 +170,10 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     const songSub = firstOf(songs.subscribeSong, {id: songId}, (v) => onSongLater(v));
     offs.push(songSub.off);
     let practiceSub;
+    // The account settings decide "Open with my part Out" and the practice defaults: a deep
+    // link at boot can open before the first settings.config arrives, so wait for it briefly
+    // (in parallel with the song; a missing song does not wait).
+    const accountWait = accountLoaded(account, ACCOUNT_WAIT_MS);
     try {
       practiceSub = firstOf(songs.subscribePractice, {id: songId}, (v) => onPracticeLater(v));
       offs.push(practiceSub.off);
@@ -168,6 +186,7 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
       for (const off of offs) off();
       throw new ApiError({code: 'not_found', message: COPY.notFound});
     }
+    await accountWait;
   }
   const song = signal(songValue);
   const serverPractice = signal(practiceRaw ?? null);
@@ -209,16 +228,21 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
       engine, metronome, map, position,
     },
     openPart: deps.openPart, persistence: deps.notationPersistence,
-    onRealChange: () => { if (!inMapChange) noteReal(); },
+    onRealChange: () => { if (!inMapChange && !replaying) noteReal(); },
   });
   const baseUndo = createPracticeUndo({clock});
   let topEntry = null;   // the entry on top of the stack when known (amend and status Undo target only that)
+  let replaying = 0;     // an undo or redo is being applied: it restores state, it is not a new change
+  const replay = (fn) => {
+    replaying++;
+    try { return fn(); } finally { replaying--; lastReal = map.isReal; }
+  };
   const undo = Object.freeze({
     push(fields) { const e = baseUndo.push(fields); if (e) topEntry = e; return e; },
     pushAction(fields) { const e = baseUndo.pushAction(fields); if (e) topEntry = e; return e; },
     amend: (entry, fields) => baseUndo.amend(entry, fields),
-    undo() { const e = baseUndo.undo(); topEntry = null; return e; },
-    redo() { const e = baseUndo.redo(); if (e) topEntry = e; return e; },
+    undo() { const e = replay(() => baseUndo.undo()); topEntry = null; return e; },
+    redo() { const e = replay(() => baseUndo.redo()); if (e) topEntry = e; return e; },
     clear() { baseUndo.clear(); topEntry = null; },
     canUndo: baseUndo.canUndo, canRedo: baseUndo.canRedo,
     get size() { return baseUndo.size; },
@@ -272,7 +296,12 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
   }
 
   function saveTempo(isRetry = false) {
-    if (readOnly || suspended() || !tempoDirty()) return tempoRunning ?? Promise.resolve();
+    if (readOnly || suspended()) return tempoRunning ?? Promise.resolve();
+    if (!tempoDirty()) {
+      // Nothing of ours to send (e.g. an edit undone inside the debounce): catch up with a foreign change instead.
+      if (!tempoRunning) reconcile();
+      return tempoRunning ?? Promise.resolve();
+    }
     if (tempoRunning) { tempoQueued = true; return tempoRunning; }
     if (!isRetry) { clearTimeout(retryTimer); retryTimer = null; }
     const tempo = metronome.serialize();
@@ -282,10 +311,15 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     tempoRunning = (async () => {
       try {
         const result = await songs.saveTempo({id, tempo, baseRev, saveId});
-        if (Number.isFinite(result?.tempoRev)) baseRev = result.tempoRev;
         if (result?.conflict) {
-          adoptConflict(result.tempo);
+          // Their map is real and ours is not. During a Find a chart audition the map cannot change:
+          // keep baseRev and baseline, so the save after the audition meets the conflict again.
+          if (!auditioning() && !disposed) {
+            if (Number.isFinite(result.tempoRev)) baseRev = result.tempoRev;
+            adoptConflict(result.tempo);
+          }
         } else {
+          if (Number.isFinite(result?.tempoRev)) baseRev = result.tempoRev;
           baseline = sent;
         }
       } catch (err) {
@@ -298,6 +332,8 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     })().finally(() => {
       tempoRunning = null;
       if (tempoQueued) { tempoQueued = false; void saveTempo(); }
+      // A foreign change that arrived while this save was in flight was held back: look again.
+      else reconcile();
     });
     return tempoRunning;
   }
@@ -323,26 +359,40 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     if (disposed) return;
     if (!next) { emit('error', {kind: 'missing', message: COPY.notFound}); return; }
     song.value = next;
-    const rev = next.tempoRev ?? 0;
-    if (rev === baseRev) return;
-    if (next.tempoSaveId && sentById.has(next.tempoSaveId)) {
-      // Our own save, echoing (possibly before the mutation resolved).
+    reconcile();
+  }
+
+  /**
+   * Catch up with the latest `songs.get` value. Our own save echoing (possibly before the
+   * mutation resolved) only moves baseRev. A foreign tempo waits while local edits are
+   * pending or a save is in flight (pending local edits win; the next save resolves through
+   * baseRev) and while Edit · Map auditions a chart; every one of those gates calls this
+   * again when it clears, so a held-back change is never lost.
+   */
+  let reconciling = false;
+  function reconcile() {
+    if (readOnly || disposed || reconciling) return;
+    const next = song.peek();
+    const rev = next?.tempoRev ?? 0;
+    if (!next || rev <= baseRev) return;
+    if (next.tempoSaveId && sentById.has(next.tempoSaveId)) { baseRev = rev; return; }
+    if (tempoDirty() || tempoRunning || auditioning()) return;
+    reconciling = true;
+    try {
+      const data = songMapFromTempo(next.tempo, map.duration);
+      const theirsReal = !!data.origin || hasRealMap(next.tempo);
+      if (theirsReal && !map.isReal) {
+        const own = detect.claimServerResult();
+        const text = own ? COPY.gridFound : COPY.barsFound;
+        mapChange(text, (m) => m.adopt(data), {status: {text, undoLabel: COPY.undo}});
+      } else {
+        map.withoutUndo(() => map.adopt(data));
+      }
       baseRev = rev;
-      return;
+      baseline = json(map.serialize());
+    } finally {
+      reconciling = false;
     }
-    // Foreign. Pending local edits win; the next save resolves through baseRev.
-    if (tempoDirty() || tempoRunning) return;
-    const data = songMapFromTempo(next.tempo, map.duration);
-    const theirsReal = !!data.origin || hasRealMap(next.tempo);
-    if (theirsReal && !map.isReal) {
-      const own = detect.claimServerResult();
-      const text = own ? COPY.gridFound : COPY.barsFound;
-      mapChange(text, (m) => m.adopt(data), {status: {text, undoLabel: COPY.undo}});
-    } else {
-      map.withoutUndo(() => map.adopt(data));
-    }
-    baseRev = rev;
-    baseline = json(map.serialize());
     emit('tempo-adopted', {conflict: false});
   }
 
@@ -451,12 +501,14 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
 
   offs.push(map.subscribe((reason) => {
     if (disposed || reason === 'load') return;
-    if (!tempoDirty()) clearTimeout(tempoTimer);
+    if (!tempoDirty()) { clearTimeout(tempoTimer); tempoTimer = null; }
     else scheduleTempoSave();
     if (!inMapChange) {
       practice.reanchor(map, {auditioning: auditioning()});
-      noteReal();
+      if (!replaying) noteReal();
     }
+    // Clean again (an edit undone, Keep my map): a foreign change held back meanwhile is adopted now.
+    if (!tempoDirty() && !inMapChange) reconcile();
   }));
 
   /* ---------- notation and detection ---------- */
@@ -497,7 +549,9 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     if (on === wasAuditioning) return;
     wasAuditioning = on;
     notation.setMapSyncPaused(on || savesSuspended);
-    if (!on && tempoDirty()) scheduleTempoSave();
+    if (on) return;
+    if (tempoDirty()) scheduleTempoSave();
+    else reconcile();
   }));
 
   /* ---------- flush ---------- */
@@ -545,7 +599,8 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     setLoad({phase: 'signing', error: null, loadedBytes: 0, totalBytes: 0, decoded: 0, tracks: stems.length});
     let urls;
     try {
-      urls = shared?.resolveUrls ? await shared.resolveUrls() : await deps.media.signKeys(stems.map((s) => s.key));
+      // §2.18: `resolveUrls` is `sharing.playback`, called as ({token}).
+      urls = shared?.resolveUrls ? await shared.resolveUrls({token: shared.token}) : await deps.media.signKeys(stems.map((s) => s.key));
     } catch (err) {
       if (run === loadRun && !disposed) fail('storage', err);
       return;
@@ -600,6 +655,7 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
       notation.setMapSyncPaused(savesSuspended || auditioning());
       if (!savesSuspended && changed) void flushTempo();
       else if (!savesSuspended && tempoDirty()) scheduleTempoSave();
+      else if (!savesSuspended) reconcile();
     },
     retry() {
       if (disposed || load.peek().phase !== 'error') return Promise.resolve();
