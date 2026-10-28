@@ -5,8 +5,6 @@
 //   showStartup({slowMs = 8000, onRetry})  "Opening Woodshed…"; after slowMs, "Still connecting…" [Retry]
 //   finishStartup()                        html[data-startup=ready]; the status leaves the page
 //   showSignIn()                           html[data-startup=signin]; the status leaves the page
-//   waitForAuthSession(auth, {onSignedOut, onLoading})  resolves once a stored session has settled
-//                                          signed in (src/js/auth.js, the 1.9 client, until I1)
 //
 // The status lives outside #app, so views never replace it; theme-init.js marks /download with
 // data-startup=download, which this module leaves alone.
@@ -94,20 +92,4 @@ export function finishStartup({doc} = {}) {
 /** The sign-in card is on screen: the status goes away. */
 export function showSignIn({doc} = {}) {
   dismiss(docOf(doc), 'signin');
-}
-
-/** Resolves once the auth client's stored session has settled signed in; never shows sign-in while it restores. */
-export function waitForAuthSession(auth, {onSignedOut, onLoading}) {
-  return new Promise(resolve => {
-    let stop = () => {}, settled = false;
-    const update = () => {
-      const state = auth.getSnapshot();
-      if (state.isLoading) { onLoading(); return; }
-      if (!state.isAuthenticated) { onSignedOut(); return; }
-      settled = true; stop(); onLoading(); resolve();
-    };
-    stop = auth.subscribe(update);
-    update();
-    if (settled) stop();
-  });
 }
