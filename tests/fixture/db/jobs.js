@@ -306,7 +306,9 @@ export const handlers = {
       fail('resplit_wrong_device', `Re-split this song on ${name}, which has the original file.`, {deviceName: name});
     }
     if (db.jobs.filter(j => j.deviceId === device.id && j.status === 'queued').length >= QUEUE_CAP) fail('queue_full', 'Process the queued songs before adding more.');
-    const settings = separationSettings(rawSettings), meta = cleanMeta(rawMeta), now = Date.now();
+    const settings = separationSettings(rawSettings), cleaned = cleanMeta(rawMeta), now = Date.now();
+    // I2a-5 (convex/jobs.ts): a new upload's meta.title is the user's title override.
+    const meta = cleaned?.title && source.type === 'upload' && !song ? {...cleaned, titleOverride: true} : cleaned;
     const jobId = newJobId();
     const row = {jobId, kind: 'separate', deviceId: device.id, label, source: clone(source), settings, status: 'queued', stage: 'queued', percent: 0, attempts: 0, createdAt: now, updatedAt: now};
     if (song) row.songId = song.id;

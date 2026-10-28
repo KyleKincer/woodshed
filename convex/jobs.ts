@@ -16,7 +16,8 @@ import { sourceValidator } from './schema';
  *   its own, so done jobs can never push live ones out of the window.
  * - `createSeparation`: a new song (or a re-split) on one of the caller's
  *   computers (B5), with the early card metadata and the "the user chose this
- *   recording" flag (B4, D43).
+ *   recording" flag (B4, D43). A new upload's `meta.title` is the user's title
+ *   override and is marked `meta.titleOverride: true` (ticket I2a-5).
  * - `createBeatDetection` / `createSectionDetection`: one live detection per
  *   song; the device is the one the web chose, else the caller's most recently
  *   seen computer (the desktop app's own).
@@ -60,6 +61,16 @@ const LATEST_SCAN = 5;
 export const UNAPPLIED_MAX = 20;
 /** Done jobs `listUnappliedDetections` scans, newest first, to find them (§6.4). */
 export const UNAPPLIED_SCAN = 200;
+/**
+ * The flag `createSeparation` sets inside a new upload's `meta` when the user
+ * typed its title (ticket I2a-5): `meta.titleOverride === true` marks
+ * `meta.title` as user-chosen, so the processor's metadata must not replace it
+ * and the finished song takes it as its title (`worker.progress` /
+ * `worker.finish`, ticket I2a-6). Clients cannot send it: `jobMetaValidator`
+ * has no such field.
+ */
+export const TITLE_OVERRIDE_FLAG = 'titleOverride';
+
 /** Paired computers scanned for the default detection device. */
 const DEVICE_SCAN = 20;
 /** Presence older than this reads as offline, as the client reads `devices.list` (§6.6). */
@@ -428,7 +439,10 @@ export const createSeparation = mutation({
     if (queued.length >= QUEUE_CAP) fail('queue_full', 'Process the queued songs before adding more.');
 
     const settings = separationSettings(args.settings);
-    const meta = cleanMeta(args.meta);
+    const cleaned = cleanMeta(args.meta);
+    // I2a-5: a new upload's title came from the user (the single-file title field), never from the processor.
+    // A re-split keeps its song's title, so its meta is not an override.
+    const meta = cleaned?.title && source.type === 'upload' && !song ? { ...cleaned, [TITLE_OVERRIDE_FLAG]: true } : cleaned;
     const now = Date.now();
     const jobId = await ctx.db.insert('jobs', {
       userId,
