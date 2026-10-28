@@ -21,6 +21,8 @@ const DEFINITION_MODULES = [
   () => import('../src/library/commands.js'),
   () => import('../src/stage/transport-commands.js'),
   () => import('../src/stage/commands.js'),
+  // The Stems surface registers §3.3 on mount (I2b); defineStemsCommands() registers them once.
+  () => import('../src/stage/surfaces/stems-surface.js').then(m => m.defineStemsCommands()),
 ];
 /** Modules exporting CONTROL_SET or CONTROLS tables whose command fields must exist (e.g. src/stage/controls.js). */
 const CONTROL_MODULES = [
@@ -28,6 +30,15 @@ const CONTROL_MODULES = [
   () => import('../src/stage/hud.js'),
   () => import('../src/stage/stage.copy.js'),
   () => import('../src/stage/strip.js'),
+  // Wave 2b (I2b): sheets, menus, surfaces, Library actions.
+  () => import('../src/stage/sheets/sheets-a.copy.js'),
+  () => import('../src/stage/sheets/sheets-b.copy.js'),
+  () => import('../src/stage/sheets/loop.js'),
+  () => import('../src/stage/menus.js'),
+  () => import('../src/stage/surfaces/chart-surface.js'),
+  () => import('../src/stage/surfaces/roadmap-surface.js'),
+  () => import('../src/stage/surfaces/stems-surface.js'),
+  () => import('../src/library/library-actions.copy.js'),
 ];
 /** Electron menu sources whose fixed command ids must exist (e.g. 'desktop/menu.cjs'). */
 const ELECTRON_MENU_SOURCES = [];
@@ -148,7 +159,8 @@ function checkReferences(reg, refs) {
   return problems;
 }
 
-const CONTROL_FIELDS = ['command', 'longPress', 'dec', 'inc', 'value', 'valueLongPress', 'caret'];
+// `via` (ST8a's menus): a row that runs that command itself rather than binding it; it must still exist (I2b).
+const CONTROL_FIELDS = ['command', 'longPress', 'dec', 'inc', 'value', 'valueLongPress', 'caret', 'via'];
 
 /** Command ids in a CONTROL_SET / CONTROLS table. */
 function controlCommands(table) {
