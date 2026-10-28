@@ -1,0 +1,29 @@
+/* HoldButton (architecture §2.12, spec §4.9): a ring fills around the icon while a required
+ * hold runs. The fill is information (how long is left), so it tracks the hold in JS frames and
+ * does not depend on the motion tokens. */
+@layer primitives {
+  .ui-hold-icon {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+  }
+  .ui-hold-icon > .ui-icon { grid-area: 1 / 1; }
+  .ui-hold-icon > :not(.ui-icon) { grid-area: 1 / 1; }
+  .ui-hold-button:not([data-holding]) .ui-hold-icon[data-empty] { display: none; }
+
+  .ui-hold-ring-svg {
+    transform: rotate(-90deg);
+    overflow: visible;
+  }
+  .ui-hold-ring-track,
+  .ui-hold-ring-fill {
+    fill: none;
+    stroke-width: 3;
+  }
+  .ui-hold-ring-track { stroke: transparent; }
+  .ui-hold-ring-fill { stroke: transparent; stroke-linecap: round; }
+  .ui-hold-button[data-holding] .ui-hold-ring-track { stroke: var(--line-strong); }
+  .ui-hold-button[data-holding] .ui-hold-ring-fill { stroke: var(--accent); }
+  .ui-hold-button[data-holding] { border-color: var(--accent); }
+}

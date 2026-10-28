@@ -1,0 +1,109 @@
+/* Fields (architecture §2.12): TextField, Select, Textarea and ChipInput. Inputs sit on
+ * --surface-2 with a --line-strong edge, at the size tokens' heights; an invalid field takes a
+ * --danger edge and shows its error below in --danger. The inline status ("Saving…", "Saved")
+ * sits after the field; "Saved" fades through the motion tokens. */
+@layer primitives {
+  .ui-field {
+    display: grid;
+    align-content: start;
+    gap: var(--s1);
+    min-width: 0;
+  }
+  .ui-field-label {
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    color: var(--ink);
+  }
+  .ui-field-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+  }
+  .ui-field-input,
+  .ui-chip-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--h-md);
+    padding: 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: var(--fw-regular) var(--fs-16)/1.4 var(--font-ui);
+  }
+  .ui-field[data-size=sm] .ui-field-input { min-height: var(--h-sm); font-size: var(--fs-14); }
+  .ui-field[data-size=lg] .ui-field-input { min-height: var(--h-lg); }
+  .ui-field-input::placeholder,
+  .ui-chip-input-field::placeholder { color: var(--ink-3); }
+  .ui-field-input:disabled { color: var(--ink-3); background: var(--surface); border-color: var(--line); cursor: not-allowed; }
+  .ui-field[data-invalid] .ui-field-input,
+  .ui-field[data-invalid] .ui-chip-input { border-color: var(--danger); border-width: 2px; }
+
+  .ui-field-textarea {
+    min-height: calc(var(--h-md) * 2);
+    padding: var(--s2) var(--s3);
+    resize: vertical;
+  }
+  .ui-field-select {
+    padding-inline-end: var(--s6);
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    cursor: pointer;
+  }
+
+  .ui-field-hint,
+  .ui-field-count,
+  .ui-field-note {
+    font-size: var(--fs-12);
+    color: var(--ink-3);
+  }
+  .ui-field-count { justify-self: end; font-variant-numeric: tabular-nums; }
+  .ui-field-note:empty { display: none; }
+  .ui-field-error {
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    color: var(--danger);
+  }
+
+  .ui-field-status {
+    flex: none;
+    font-size: var(--fs-14);
+    color: var(--ink-2);
+    white-space: nowrap;
+    transition: opacity var(--motion-slow) var(--ease);
+  }
+  .ui-field-status:empty { display: none; }
+  .ui-field-status[data-tone=ok] { color: var(--ok); }
+  .ui-field-status[data-tone=error] { color: var(--danger); white-space: normal; }
+  .ui-field-status[data-fading] { opacity: 0; }
+
+  /* ChipInput: chips and the text input in one field box. */
+  .ui-chip-input {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1);
+    cursor: text;
+  }
+  .ui-chip-input-list {
+    display: contents;
+    list-style: none;
+    padding: 0;
+  }
+  .ui-chip-input-item { display: inline-flex; max-width: 100%; }
+  .ui-chip-input-field {
+    flex: 1 1 8ch;
+    min-width: 8ch;
+    min-height: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+}

@@ -1,0 +1,78 @@
+/* Chip and ChipGroup (architecture §2.12): pills at --h-sm (32 fine, 44 coarse). A pressed chip
+ * is filled with the accent soft surface and an accent edge; tones colour the edge and text. */
+@layer primitives {
+  .ui-chip {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    max-width: 100%;
+    min-height: var(--h-sm);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .ui-chip-main {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: calc(var(--h-sm) - 2px);
+    padding: 0 var(--s3);
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap;
+  }
+  button.ui-chip-main { cursor: pointer; }
+  .ui-chip-badge {
+    padding: 2px var(--s1);
+    border-radius: var(--r-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-bold);
+  }
+  .ui-chip-remove {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: calc(var(--h-sm) - 2px);
+    height: calc(var(--h-sm) - 2px);
+    margin-inline-start: calc(-1 * var(--s2));
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  @media (pointer: coarse) {
+    .ui-chip { min-height: calc(var(--h-sm) + 2px); }
+    .ui-chip-main, .ui-chip-remove { min-height: var(--h-sm); }
+    .ui-chip-remove { width: var(--h-sm); height: var(--h-sm); }
+  }
+  @media (hover: hover) {
+    .ui-chip[data-interactive]:hover { background: var(--surface-2); color: var(--ink); }
+    .ui-chip-remove:hover { background: var(--surface-2); color: var(--ink); }
+  }
+
+  .ui-chip[data-pressed] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .ui-chip[data-pressed]:hover { background: var(--accent-soft); color: var(--accent); }
+  .ui-chip:has(> [aria-disabled=true]) { color: var(--ink-3); border-color: var(--line); background: var(--surface-2); }
+  .ui-chip > [aria-disabled=true] { cursor: not-allowed; }
+
+  .ui-chip[data-tone=accent] { border-color: var(--accent); color: var(--accent); }
+  .ui-chip[data-tone=ok] { border-color: var(--ok); color: var(--ok); }
+  .ui-chip[data-tone=warn] { border-color: var(--warn); color: var(--warn); }
+  .ui-chip[data-tone=danger] { border-color: var(--danger); color: var(--danger); }
+
+  .ui-chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+}
