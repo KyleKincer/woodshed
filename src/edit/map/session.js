@@ -632,10 +632,6 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
 
   // ---- calibration ------------------------------------------------------------------------
-  function click(when, accent) {
-    if (typeof metronome.clickAt === 'function') metronome.clickAt(when, accent);
-    else metronome._click(when, accent, false);
-  }
   /** Stops playback, resumes the AudioContext first, then plays 12 untracked clicks to tap along with. */
   async function startCalibration() {
     if (destroyed || calibration) return false;
@@ -650,7 +646,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     for (let i = 0; i < CALIBRATION.clicks; i++) {
       const when = start + i * CALIBRATION.interval;
       clicks.push(when);
-      click(when, i % CALIBRATION.accentEvery === 0);
+      metronome.clickAt(when, i % CALIBRATION.accentEvery === 0);
     }
     calibration = {clicks, taps: [], end: start + CALIBRATION.clicks * CALIBRATION.interval + CALIBRATION.tail,
       timer: setInterval(() => { if (calibration && engine.ctx.currentTime > calibration.end) finishCalibration(); }, 50)};
