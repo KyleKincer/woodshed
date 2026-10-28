@@ -323,6 +323,25 @@ export function acceleratorOf(runtime) {
   return labels[device] ?? null;
 }
 
+/**
+ * Writes `file` atomically: the bytes go to a temp file in the same directory,
+ * which is then renamed into place, so a reader (or a crash) never sees a
+ * partial or empty file. The temp file is removed if the write fails.
+ * @param {string} file
+ * @param {string | Uint8Array} data
+ * @param {{fs?: Pick<typeof fs, 'writeFile' | 'rename' | 'rm'>}} [deps]
+ */
+export async function writeFileAtomic(file, data, { fs: io = fs } = {}) {
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  try {
+    await io.writeFile(temp, data);
+    await io.rename(temp, file);
+  } catch (error) {
+    await io.rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------- the companion
 
 const safe = value => String(value).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'untitled';
@@ -540,7 +559,7 @@ export async function startCompanion({
       if (convexCode(error)) throw error;
       throw new CodedError('sync_failed', errorText(error));
     }
-    await fs.writeFile(path.join(root, 'synced.json'), JSON.stringify({ songId }));
+    await writeFileAtomic(path.join(root, 'synced.json'), JSON.stringify({ songId }));
   }
 
   async function runJob(queued, run) {
