@@ -8,13 +8,16 @@
 //   (setlist.next / setlist.prev). Opening the page calls setlists.touch.
 // - Reorder by dragging the handle (pointer events: mouse, pen and touch) or with ⌥↑ / ⌥↓ on a focused row; each
 //   move is announced ("Glasshouse moved to 3 of 5") and saved with setlists.setSongs, whose returned order is the
-//   truth (it may be shorter: songs deleted since are dropped). The focused row is never moved in the DOM (its
-//   neighbours move around it), so focus stays put.
+//   truth (it may be shorter: songs deleted since are dropped). Writes are numbered: only the newest one in flight
+//   may put its answer (or, when it fails, its revert) on screen, so an older answer never rolls back a later move or
+//   brings back a removed song. The focused row is never moved in the DOM (its neighbours move around it), so focus
+//   stays put.
 // - Remove: the row goes at once and an 8 s Undo toast puts the song back where it was (spec §7.8).
 // - Rename: inline (Enter saves, Esc cancels; 1–80 characters). Delete setlist… asks first, then returns to the
 //   Library. Export-only and suspended accounts see the list read-only (D10), with a note.
 // - Edge states: loading (a row skeleton), "This setlist isn't here" (deleted, or not this account's) and the empty
-//   list, each with a way back to the Library.
+//   list, each with a way back to the Library. Moving to another setlist (update) waits for its first data like mount,
+//   and the writes still in flight for the previous list are forgotten.
 //
 // Context: ctx {router, store, feedback} (the app's singletons by default) and ctx.api (setlists API, tests).
 
@@ -79,8 +82,11 @@ export async function mount(el, match, ctx = {}) {
   const data = signal(undefined);      // undefined: loading; null: not found; {id, name, songIds}
   const order = signal(null);          // the order shown (optimistic while a write is in flight)
   const renaming = signal(false);
-  let pending = 0;                     // writes in flight: subscription values wait until they settle
+  let pending = 0;                     // writes in flight for this subscription: its values wait until they settle
   let latest = undefined;              // the newest subscription value
+  let generation = 0;                  // one per subscription (a new list id); older writes no longer count
+  let writeSeq = 0;                    // the newest order write's number
+  let storedSeq = 0;                   // the newest write the server has answered (its order is the stored one)
 
   const paused = () => {
     const status = store.session?.peek?.()?.status;
@@ -261,20 +267,23 @@ export async function mount(el, match, ctx = {}) {
     order.value = latest ? [...latest.songIds] : null;
   }
 
-  let firstResolve;
-  const first = new Promise(resolve => { firstResolve = resolve; });
   let off = () => {};
   let touched = null;
 
+  /** Subscribes to the current list; resolves on its first answer. */
   function subscribe() {
     off();
+    generation += 1;
     data.value = undefined;
     order.value = null;
     latest = undefined;
     pending = 0;
     const want = id;
+    const mine = generation;
+    let firstResolve;
+    const first = new Promise(resolve => { firstResolve = resolve; });
     off = api.subscribeGet({id: want}, value => {
-      if (want !== id || ac.signal.aborted) return;
+      if (mine !== generation || ac.signal.aborted) return;
       latest = value ?? null;
       settle();
       firstResolve();
@@ -283,39 +292,63 @@ export async function mount(el, match, ctx = {}) {
         Promise.resolve(api.touch({id: want})).catch(() => {});
       }
     }, err => {
-      if (want !== id || ac.signal.aborted) return;
+      if (mine !== generation || ac.signal.aborted) return;
       console.error('[setlist] could not load the setlist', err);
       latest = null;
       settle();
       firstResolve();
     });
+    return Promise.race([first, new Promise(resolve => setTimeout(resolve, FIRST_DATA_MS))]);
   }
   disposers.push(() => off());
-  subscribe();
+  const firstData = subscribe();
 
-  /** Writes an order: shows it at once, then takes the stored order the server returns. */
-  async function writeOrder(next, {revertTo = order.peek()} = {}) {
-    const listId = id;
-    order.value = next;
+  /**
+   * Runs one write for the current subscription: subscription values wait while it is in flight. `fn(current)` gets
+   * a predicate that is true while this write still belongs to the shown list.
+   */
+  async function guarded(fn) {
+    const mine = generation;
+    const current = () => mine === generation && !ac.signal.aborted;
     pending += 1;
     try {
-      const stored = await api.setSongs({id: listId, songIds: next});
-      if (listId !== id) return null;
-      if (Array.isArray(stored)) {
-        order.value = stored;
-        if (latest) latest = {...latest, songIds: stored};
-      }
-      return stored;
-    } catch (err) {
-      if (listId === id) {
-        order.value = revertTo;
-        feedback.toast(describeError(err, {context: 'save'}).sentence, {tone: 'error'});
-      }
-      return null;
+      return await fn(current);
     } finally {
-      pending -= 1;
-      settle();
+      if (mine === generation) {
+        pending -= 1;
+        settle();
+      }
     }
+  }
+
+  /**
+   * Writes an order: shows it at once, then takes the stored order the server returns. Only the newest write may
+   * change the screen with its answer: an older answer (or failure) is superseded by the writes made after it. An
+   * older answer still becomes the stored order (`latest`) unless a newer one has landed, so if the newest write then
+   * fails, the screen settles on what the server really holds.
+   */
+  function writeOrder(next, {revertTo = order.peek()} = {}) {
+    const listId = id;
+    const seq = ++writeSeq;
+    order.value = next;
+    return guarded(async current => {
+      try {
+        const stored = await api.setSongs({id: listId, songIds: next});
+        if (!current()) return null;
+        if (Array.isArray(stored) && seq > storedSeq) {
+          storedSeq = seq;
+          if (latest) latest = {...latest, songIds: stored};
+          if (seq === writeSeq) order.value = stored;
+        }
+        return Array.isArray(stored) ? stored : next;
+      } catch (err) {
+        if (current()) {
+          if (seq === writeSeq) order.value = revertTo;
+          feedback.toast(describeError(err, {context: 'save'}).sentence, {tone: 'error'});
+        }
+        return null;
+      }
+    });
   }
 
   // ---------- actions ----------
@@ -381,19 +414,19 @@ export async function mount(el, match, ctx = {}) {
     const name = setlistsApi.tidyName(raw);
     if (name === data.peek()?.name) { stopRename({focus: true}); return; }
     renameSave.set({busy: true, disabled: true});
-    pending += 1;
-    try {
-      await api.rename({id, name});
-      if (latest) latest = {...latest, name};
-      data.value = {...data.peek(), name};
-      stopRename({focus: true});
-    } catch (err) {
-      showRenameError(describeError(err, {context: 'save'}).sentence);
-    } finally {
-      pending -= 1;
-      renameSave.set({busy: false, disabled: false});
-      settle();
-    }
+    await guarded(async current => {
+      try {
+        await api.rename({id, name});
+        if (!current()) return;
+        if (latest) latest = {...latest, name};
+        data.value = {...data.peek(), name};
+        stopRename({focus: true});
+      } catch (err) {
+        if (current()) showRenameError(describeError(err, {context: 'save'}).sentence);
+      } finally {
+        renameSave.set({busy: false, disabled: false});
+      }
+    });
   });
   listen(renameInput, 'keydown', e => {
     if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); stopRename({focus: true}); }
@@ -501,16 +534,18 @@ export async function mount(el, match, ctx = {}) {
   listen(list, 'lostpointercapture', e => { if (drag && e.pointerId === drag.pointerId) endDrag(true); });
 
   // ---------- first data ----------
-  await Promise.race([first, new Promise(resolve => setTimeout(resolve, FIRST_DATA_MS))]);
+  await firstData;
 
   return {
-    update(next) {
+    /** Another setlist: resolves once its first data is shown (html[data-view-ready] keeps mount's meaning). */
+    async update(next) {
       const nextId = next?.params?.id ?? null;
       if (nextId === id) return;
       id = nextId;
       touched = null;
+      endDrag(false);
       stopRename();
-      subscribe();
+      await subscribe();
     },
     unmount() {
       ac.abort();

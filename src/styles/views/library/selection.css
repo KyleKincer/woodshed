@@ -48,6 +48,9 @@
   }
   .lib-selbar-action { white-space: nowrap; }
   .lib-selbar-action[hidden] { display: none; }
+  /* A disabled reason ("Paused on this account") would wrap under the label and grow the 56 px bar: it stays the
+     button's description (aria-describedby) and its tooltip. */
+  .lib-selbar-action .ui-button-reason { display: none; }
   .lib-selbar-action[data-tone=danger]:not([aria-disabled=true]) { color: var(--danger); }
   .lib-selbar-done { margin-inline-start: var(--s1); border-radius: var(--r-pill); }
 

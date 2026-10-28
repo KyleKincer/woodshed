@@ -290,4 +290,126 @@ describe('the setlist page', () => {
     view.update({params: {id: 'set-warmup'}});
     expect(api.subscribeGet).toHaveBeenLastCalledWith({id: 'set-warmup'}, expect.any(Function), expect.any(Function));
   });
+
+  // ---- writes in flight: only the newest may change the screen (regressions) ----
+  /** setSongs answers only when the test says so: writes[i].ok(stored?) / .fail(err). */
+  function deferWrites(api) {
+    const writes = [];
+    api.setSongs.mockImplementation(({songIds}) => new Promise((resolve, reject) => {
+      writes.push({songIds, ok: (stored = songIds) => resolve(stored), fail: err => reject(err)});
+    }));
+    return writes;
+  }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+  const handleOf = (el, songId) => el.querySelector(`.set-row[data-song-id="${songId}"] .set-handle`);
+  const removeOf = (el, songId) => el.querySelector(`.set-row[data-song-id="${songId}"] .set-remove`);
+
+  it('an older write’s answer never rolls back a later remove, and the next move builds on the screen', async () => {
+    const {el, api} = await setup();
+    const writes = deferWrites(api);
+    altKey(handleOf(el, 'glasshouse'), 'ArrowDown');                 // w1: lowtide glasshouse secondwind nightbus
+    tap(removeOf(el, 'secondwind'));                                // w2: lowtide glasshouse nightbus
+    expect(rowIds(el)).toEqual(['lowtide', 'glasshouse', 'nightbus']);
+    writes[0].ok();
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'glasshouse', 'nightbus']);   // Second Wind stays removed
+    altKey(handleOf(el, 'lowtide'), 'ArrowDown');                   // w3
+    expect(writes[2].songIds).toEqual(['glasshouse', 'lowtide', 'nightbus']);
+    writes[1].ok();
+    writes[2].ok();
+    await flush();
+    expect(rowIds(el)).toEqual(['glasshouse', 'lowtide', 'nightbus']);
+  });
+
+  it('three quick moves with the first answered in between: every move counts, no flicker', async () => {
+    const {el, api, feedback} = await setup();
+    const writes = deferWrites(api);
+    const handle = handleOf(el, 'glasshouse');
+    altKey(handle, 'ArrowDown');
+    altKey(handle, 'ArrowDown');
+    expect(rowIds(el)).toEqual(['lowtide', 'secondwind', 'glasshouse', 'nightbus']);
+    writes[0].ok();
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'secondwind', 'glasshouse', 'nightbus']);   // not back to w1's order
+    altKey(handle, 'ArrowDown');
+    expect(writes.map(w => w.songIds.indexOf('glasshouse'))).toEqual([1, 2, 3]);
+    expect(feedback.announce).toHaveBeenLastCalledWith('Glasshouse moved to 4 of 4', expect.anything());
+    writes[1].ok();
+    writes[2].ok();
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'secondwind', 'nightbus', 'glasshouse']);
+  });
+
+  it('an older write that fails while a newer one is in flight does not revert the screen; the newest answer decides', async () => {
+    const {el, api, calls} = await setup();
+    const writes = deferWrites(api);
+    const handle = handleOf(el, 'glasshouse');
+    altKey(handle, 'ArrowDown');
+    altKey(handle, 'ArrowDown');
+    writes[0].fail(Object.assign(new Error('x'), {code: 'not_found'}));
+    await flush();
+    expect(calls.at(-1).options.tone).toBe('error');
+    expect(rowIds(el)).toEqual(['lowtide', 'secondwind', 'glasshouse', 'nightbus']);
+    writes[1].ok(['lowtide', 'secondwind', 'glasshouse', 'nightbus']);
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'secondwind', 'glasshouse', 'nightbus']);
+  });
+
+  it('the newest write failing reverts to the order before it (keeping earlier moves)', async () => {
+    const {el, api} = await setup();
+    const writes = deferWrites(api);
+    const handle = handleOf(el, 'glasshouse');
+    altKey(handle, 'ArrowDown');
+    altKey(handle, 'ArrowDown');
+    writes[1].fail(Object.assign(new Error('x'), {code: 'not_found'}));
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'glasshouse', 'secondwind', 'nightbus']);
+    writes[0].ok();
+    await flush();
+    expect(rowIds(el)).toEqual(['lowtide', 'glasshouse', 'secondwind', 'nightbus']);
+  });
+
+  it('moving to another setlist forgets the previous list’s writes and waits for the new list’s first data', async () => {
+    const lists = {
+      L1: {id: 'L1', name: 'One', songIds: SONGS.map(s => s.id)},
+      L2: {id: 'L2', name: 'Two', songIds: SONGS.map(s => s.id)},
+    };
+    const listeners = {};
+    const store = {library: {songs: signal(new Map(SONGS.map(s => [s.id, s]))), loaded: signal(true), setlists: signal([])},
+      session: signal({status: 'active'})};
+    const writes = [];
+    const api = {
+      subscribeGet: vi.fn(({id}, onValue) => {
+        listeners[id] = onValue;
+        if (id === 'L1') onValue(lists.L1);
+        return () => { delete listeners[id]; };
+      }),
+      touch: vi.fn(async () => null),
+      setSongs: vi.fn(({songIds}) => new Promise(resolve => writes.push({songIds, ok: () => resolve(songIds)}))),
+      rename: vi.fn(async () => null),
+      remove: vi.fn(async () => null),
+    };
+    const feedback = {toast: vi.fn(() => ({dismiss() {}, update() {}})), announce: vi.fn(), confirm: vi.fn(async () => true)};
+    const el = document.body.appendChild(document.createElement('div'));
+    const view = await mount(el, {name: 'setlist', params: {id: 'L1'}, query: {}}, {store, api, feedback, router: {navigate: vi.fn()}});
+    altKey(handleOf(el, 'glasshouse'), 'ArrowDown');               // an L1 write in flight
+    let updated = false;
+    const done = view.update({params: {id: 'L2'}}).then(() => { updated = true; });
+    await flush();
+    expect(updated).toBe(false);                                   // still loading L2: not ready yet
+    expect(el.querySelector('.set-page').dataset.state).toBe('loading');
+    listeners.L2(lists.L2);
+    await done;
+    expect(el.querySelector('.set-title').textContent).toBe('Two');
+    writes[0].ok();                                                // L1's answer lands late
+    await flush();
+    expect(rowIds(el)).toEqual(SONGS.map(s => s.id));
+    altKey(handleOf(el, 'glasshouse'), 'ArrowDown');               // an L2 write in flight
+    listeners.L2(lists.L2);                                        // a stale value meanwhile waits for it
+    expect(rowIds(el)[0]).toBe('lowtide');
+    writes[1].ok();
+    await flush();
+    expect(rowIds(el)[0]).toBe('lowtide');
+    view.unmount();
+  });
 });

@@ -3,7 +3,7 @@
 //
 // The app on the fixture database (`/`): LB1a's home already finds card-menu.js by its contract path, so the ⋯ button,
 // right-click and long-press open LB3's menu on the real Library:
-//   lb3-card-menu-desktop        the menu on the desktop app: Select first, every item, Re-split enabled
+//   lb3-card-menu-desktop        the menu on the desktop app: every item (Select first once home renders selection), Re-split enabled
 //   lb3-card-menu-web            the web: right-click (laptop) / long-press (iPad sheet); Re-split shows its reason
 //   lb3-add-to-setlist-undo      Add to setlist ▸ Warm-ups → the 8 s Undo toast; Undo takes the song back out
 //   lb3-new-setlist              Add to setlist ▸ New setlist… → name → the list exists with the song (Setlists row)
@@ -86,6 +86,9 @@ const toastText = page => page.evaluate(() => [...document.querySelectorAll('.ui
 const waitToast = (page, text) => page.waitForFunction(want => [...document.querySelectorAll('.ui-toast')].some(n => n.checkVisibility() && n.textContent.includes(want)), text);
 const clickToastAction = async (page, label) => page.locator('.ui-toast').getByRole('button', {name: label}).click();
 
+// Select (D49) is offered while the view renders the selection (its bar is mounted): home.js's wiring is an I2b
+// handoff, so the app's menu starts with Practice until it lands, then with Select.
+const hostsSelection = page => page.evaluate(() => !!document.querySelector('[data-testid=selection-bar]'));
 const CARD_MENU = ['Select', 'Practice', 'Edit details…', 'Edit chart', 'Edit map', 'Unpin', 'Share…', 'Add to setlist', 'Re-split…', 'Open original source', 'Delete…'];
 
 module.exports = [
@@ -97,12 +100,15 @@ module.exports = [
     async fn(page, t) {
       await openCardMenu(page, t, 'Glasshouse');
       const rows = await page.evaluate(menuRows);
-      t.expect(JSON.stringify(rows.map(r => r.name)) === JSON.stringify(CARD_MENU), `the card menu items ${JSON.stringify(rows.map(r => r.name))}`);
+      const hosted = await hostsSelection(page);
+      const want = hosted ? CARD_MENU : CARD_MENU.slice(1);
+      t.expect(JSON.stringify(rows.map(r => r.name)) === JSON.stringify(want), `the card menu items ${JSON.stringify(rows.map(r => r.name))}`);
       const byName = Object.fromEntries(rows.map(r => [r.name, r]));
       t.expect(!byName['Re-split…'].disabled, 'Re-split is enabled on the desktop app');
       if (t.device === 'laptop') {
         t.expect(byName.Practice.keys === 'Enter' && byName['Edit details…'].keys === 'E', `shortcut hints ${byName.Practice.keys} ${byName['Edit details…'].keys}`);
-        t.expect(await page.evaluate(() => document.activeElement?.textContent.includes('Select')), 'focus starts on Select');
+        const first = hosted ? 'Select' : 'Practice';
+        t.expect(await page.evaluate(name => document.activeElement?.textContent.includes(name), first), `focus starts on ${first}`);
       }
     },
   },
@@ -123,7 +129,8 @@ module.exports = [
       const rows = await page.evaluate(menuRows);
       const resplit = rows.find(r => r.name === 'Re-split…');
       t.expect(resplit?.disabled && resplit.reason === 'Needs Woodshed for desktop', `web Re-split ${JSON.stringify(resplit)}`);
-      t.expect(rows[0].name === 'Select', 'Select is first (D49)');
+      if (await hostsSelection(page)) t.expect(rows[0].name === 'Select', 'Select is first (D49)');
+      else t.expect(rows.every(r => r.name !== 'Select'), 'no Select while nothing renders the selection');
       if (t.device === 'ipad') t.expect(await page.locator('.ui-menu[data-presentation=sheet]').count() > 0, 'coarse pointers get the menu as a sheet');
     },
   },
@@ -427,7 +434,7 @@ module.exports = [
       await card(page, 'Night Bus').locator('.lib-card-cover').click({button: 'right'});
       await page.waitForSelector('[role=menu]');
       const rows = (await page.evaluate(menuRows)).map(r => r.name);
-      t.expect(JSON.stringify(rows) === JSON.stringify(['Edit details of 2 songs…', 'Unpin 2 songs', 'Add to setlist', 'Re-split 2 songs…', 'Done', 'Delete 2 songs…']),
+      t.expect(JSON.stringify(rows) === JSON.stringify(['Edit details of 2 songs…', 'Unpin 2 songs', 'Add to setlist', 'Re-split 2 songs…', 'Deselect', 'Done', 'Delete 2 songs…']),
         `the selection menu ${JSON.stringify(rows)}`);
     },
   },

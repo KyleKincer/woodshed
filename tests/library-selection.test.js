@@ -7,9 +7,9 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {installPopoverShim, restoreDomShims, tap} from './helpers/dom.js';
 
 const peers = vi.hoisted(() => ({resplit: null}));
-vi.mock('../src/library/resplit-dialog.js', () => {
+vi.mock('../src/library/resplit-dialog.js', async importOriginal => {
   peers.resplit = vi.fn(async () => {});
-  return {openResplitDialog: peers.resplit, openResplit: vi.fn()};
+  return {...await importOriginal(), openResplitDialog: peers.resplit, openResplit: vi.fn()};
 });
 
 const {createSelection, sharedSelection, selectionClick, selectionContext, deleteSongs, setPinned, mountSelectionBar, MAX_SELECTION, UNDO_MS}
@@ -290,8 +290,9 @@ describe('setPinned (8 s Undo toast)', () => {
 
 // =====================================================================================================
 describe('the floating bar', () => {
-  function mountBar({desktop = true, pins = [], list} = {}) {
+  function mountBar({desktop = true, pins = [], list, status} = {}) {
     const store = fakeStore(list);
+    if (status) store.session.value = {status};
     const account = fakeAccount(pins);
     const router = {navigate: vi.fn()};
     const {toast, calls} = recorder();
@@ -337,13 +338,49 @@ describe('the floating bar', () => {
     expect(bar.el.querySelector('.lib-selbar-cap').textContent).toBe('Up to 100 at a time');
   });
 
-  it('Edit details opens /edit/details?ids=… in the visible order and ends selection (D34)', () => {
+  it('Edit details opens /edit/details?ids=… in the visible order and keeps the selection to come back to (D34, §2.15)', () => {
     const {bar, selection, router} = mountBar();
     selection.toggle('c');
     selection.toggle('a');
     tap(byRole(bar.el, 'button', 'Edit details'));
     expect(router.navigate).toHaveBeenCalledWith('/edit/details?ids=a,c');
-    expect(selection.active.peek()).toBe(false);
+    expect(selection.active.peek()).toBe(true);
+    expect(selection.list()).toEqual(['a', 'c']);
+    // Leaving the Library unmounts the bar; the selection is still there when it comes back.
+    bar.destroy();
+    expect(selection.list()).toEqual(['a', 'c']);
+  });
+
+  it('`hosted` is true while a bar is mounted (Select is offered only then); destroy is idempotent', () => {
+    const selection = createSelection();
+    expect(selection.hosted.peek()).toBe(false);
+    const store = fakeStore();
+    const deps = {store, account: fakeAccount(), desktop: {available: true}, announce: vi.fn()};
+    const one = selection.mountBar(document.body.appendChild(document.createElement('div')), deps);
+    const two = selection.mountBar(document.body.appendChild(document.createElement('div')), deps);
+    expect(selection.hosted.peek()).toBe(true);
+    one.destroy();
+    one.destroy();
+    expect(selection.hosted.peek()).toBe(true);
+    two.destroy();
+    expect(selection.hosted.peek()).toBe(false);
+  });
+
+  it('Re-split is disabled with "Paused on this account" for export-only and suspended accounts (D10)', () => {
+    for (const status of ['export_only', 'suspended']) {
+      const {bar, selection, store} = mountBar({status});
+      selection.toggle('a');
+      const resplit = [...bar.el.querySelectorAll('button')].find(b => b.querySelector('.ui-button-label')?.textContent === 'Re-split');
+      expect(resplit.getAttribute('aria-disabled'), status).toBe('true');
+      expect(document.getElementById(resplit.getAttribute('aria-describedby')).textContent).toBe(COPY.pausedAccount);
+      peers.resplit.mockClear();
+      tap(resplit);
+      expect(peers.resplit).not.toHaveBeenCalled();
+      store.session.value = {status: 'active'};
+      expect(resplit.getAttribute('aria-disabled')).toBeNull();
+      expect(resplit.hasAttribute('aria-describedby')).toBe(false);
+      bar.destroy();
+    }
   });
 
   it('Pin pins the selection; with every selected song pinned it is Unpin', async () => {

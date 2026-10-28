@@ -21,7 +21,9 @@
 //   processor (the song's own source; the server keeps loops, map, spots and chart). The dialog stays open while it
 //   runs; a refusal is shown inline in the dialog, in error-copy's words (context 'resplit'): D38's "Re-split this song
 //   on <device>, which has the original file.", the processor being offline, an export-only account. With several
-//   songs, the ones that started are kept and a partial failure is reported in a toast.
+//   songs, the ones that started are kept and a partial failure is reported in a toast that names the songs left out,
+//   with Details (each song and its reason). A full queue (`queue_full`) stops the run: the rest would be refused too.
+//   failureReport(failed, {title, context}) is that Details dialog; selection.js's bulk delete uses it too.
 // - Desktop only. On the web the dialog does not open: a toast says "Needs Woodshed for desktop" (the card menu and
 //   song.resplit already disable the item with that reason).
 
@@ -72,6 +74,21 @@ export function costLine({device, preset, seconds, stats, many = false}) {
 }
 
 const isStemMode = mode => STEM_MODES.includes(mode);
+
+/**
+ * The Details of a partial failure: each song left out, with error-copy's sentence and the raw text (selectable).
+ * failed: [{title, error}].
+ */
+export function failureReport(failed, {title, context = 'save'} = {}) {
+  const rows = failed.map(f => {
+    const d = describeError(f.error, {context});
+    return h('li', {class: 'lib-fail-row'},
+      h('strong', {class: 'selectable'}, f.title), ' ',
+      h('span', {}, d.sentence),
+      d.details ? h('code', {class: 'lib-fail-raw selectable'}, d.details) : null);
+  });
+  return Dialog({title, body: h('ul', {class: 'lib-fail-list'}, rows)});
+}
 const titleOf = song => song?.title || 'Untitled';
 
 /** One song's re-split dialog (the §2.16 contract name). */
@@ -135,18 +152,26 @@ export async function openResplitDialog(opts = {}) {
     }
     const jobSettingsNow = jobSettings(profile, settings, {stemMode, preset});
     const started = [], failed = [];
-    for (const song of songs) {
+    for (const [i, song] of songs.entries()) {
       try {
         await jobs.createSeparation({deviceId, settings: jobSettingsNow, label: titleOf(song), replaceSongId: song.id});
         started.push(song);
       } catch (error) {
-        failed.push({song, error});
+        failed.push({song, title: titleOf(song), error});
+        // A full queue refuses every later song too: stop, and report them with the same reason.
+        if (error?.code === 'queue_full') {
+          for (const rest of songs.slice(i + 1)) failed.push({song: rest, title: titleOf(rest), error});
+          break;
+        }
       }
     }
     if (!started.length) throw new Error(describeError(failed[0].error, {context: 'resplit'}).sentence);
     desktop.refreshStatus?.();
     if (failed.length) {
-      toast(COPY.resplitPartial(started.length, songs.length), {tone: 'error', key: 'lib-resplit'});
+      const full = failed.every(f => f.error?.code === 'queue_full');
+      const text = `${COPY.resplitPartial(started.length, songs.length)} ${full ? COPY.resplitQueueFull : COPY.resplitNotStarted(failed.map(f => f.title))}`;
+      toast(text, {tone: 'error', key: 'lib-resplit',
+        action: {label: COPY.details, run: () => failureReport(failed, {title: COPY.resplitNotStarted(failed.map(f => f.title)), context: 'resplit'})}});
     } else {
       toast(many ? COPY.resplitStarted(started.length) : COPY.resplitStartedOne(titleOf(started[0])), {tone: 'ok', key: 'lib-resplit'});
     }

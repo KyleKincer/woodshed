@@ -8,9 +8,9 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {installPopoverShim, restoreDomShims, tap} from './helpers/dom.js';
 
 const peers = vi.hoisted(() => ({resplit: null}));
-vi.mock('../src/library/resplit-dialog.js', () => {
+vi.mock('../src/library/resplit-dialog.js', async importOriginal => {
   peers.resplit = vi.fn(async () => {});
-  return {openResplitDialog: peers.resplit, openResplit: vi.fn()};
+  return {...await importOriginal(), openResplitDialog: peers.resplit, openResplit: vi.fn()};
 });
 
 const {cardMenuItems, addToSetlistItems, addToSetlist, createSetlistWith, sourceUrl} = await import('../src/library/card-menu.js');
@@ -27,7 +27,8 @@ const LISTS = [
   {id: 'set-warmup', name: 'Warm-ups', count: 2, songIds: ['harbor', 'x']},
 ];
 
-function setup({desktop = true, status = 'active', pins = [], lists = LISTS, songs = [HARBOR, JAM], share = false} = {}) {
+const bars = [];
+function setup({desktop = true, status = 'active', pins = [], lists = LISTS, songs = [HARBOR, JAM], share = false, hosted = true} = {}) {
   const store = {
     library: {songs: signal(new Map(songs.map(s => [s.id, s]))), setlists: signal(lists), loaded: signal(true)},
     session: signal({status}),
@@ -45,6 +46,8 @@ function setup({desktop = true, status = 'active', pins = [], lists = LISTS, son
     remove: vi.fn(async () => null),
   };
   const selection = createSelection({order: () => songs.map(s => s.id)});
+  // A view that renders the selection mounts its bar (home.js; the harness): only then is Select offered.
+  if (hosted) bars.push(selection.mountBar(document.createElement('div'), {store, account, desktop: {available: desktop}, announce: vi.fn(), toast}));
   const win = {open: vi.fn()};
   const shareDialog = vi.fn();
   const later = share ? {'../share/share-dialog.js': async () => ({openShareDialog: shareDialog})} : {};
@@ -57,7 +60,11 @@ const labels = items => items.map(i => (i.type === 'separator' ? '—' : i.label
 const find = (items, id) => items.find(i => i.id === id);
 
 beforeEach(() => { installPopoverShim(); document.body.replaceChildren(); });
-afterEach(() => { restoreDomShims(); for (const d of document.querySelectorAll('dialog')) d.remove(); });
+afterEach(() => {
+  restoreDomShims();
+  for (const bar of bars.splice(0)) bar.destroy();
+  for (const d of document.querySelectorAll('dialog')) d.remove();
+});
 
 describe('cardMenuItems', () => {
   it('desktop, a song with a chart and an http source: the spec §2.5 list with Select first (D49)', () => {
@@ -107,6 +114,23 @@ describe('cardMenuItems', () => {
     expect(selection.list()).toEqual(['harbor']);
   });
 
+  it('without a view rendering the selection (no bar mounted), Select is not offered and the menu never turns into the selection menu', () => {
+    const {ctx, selection} = setup({hosted: false});
+    const items = cardMenuItems(HARBOR, ctx);
+    expect(find(items, 'card.select')).toBeUndefined();
+    expect(labels(items)[0]).toBe('Practice');
+    selection.toggle('harbor');
+    expect(labels(cardMenuItems(HARBOR, ctx))[0]).toBe('Practice');
+  });
+
+  it('Practice from a card ends selection mode before opening the song', () => {
+    const {ctx, selection, router} = setup();
+    selection.toggle('jam');
+    find(cardMenuItems(HARBOR, ctx), 'card.practice').run();
+    expect(selection.active.peek()).toBe(false);
+    expect(router.navigate).toHaveBeenCalledWith('/s/harbor');
+  });
+
   it('Practice, Edit details, Edit chart and Edit map navigate', () => {
     const {ctx, router} = setup();
     const items = cardMenuItems(HARBOR, ctx);
@@ -149,11 +173,14 @@ describe('cardMenuItems', () => {
     selection.toggle('harbor');
     selection.toggle('jam');
     const items = cardMenuItems(HARBOR, ctx);
-    expect(labels(items)).toEqual(['Edit details of 2 songs…', 'Pin 2 songs', 'Add to setlist', 'Re-split 2 songs…', '—', 'Done', '—', 'Delete 2 songs…']);
+    expect(labels(items)).toEqual(['Edit details of 2 songs…', 'Pin 2 songs', 'Add to setlist', 'Re-split 2 songs…', '—', 'Deselect', 'Done', '—', 'Delete 2 songs…']);
     find(items, 'selection.details').run();
     expect(router.navigate).toHaveBeenCalledWith('/edit/details?ids=harbor,jam');
-    expect(selection.active.peek()).toBe(false);
-    selection.toggle('jam');
+    expect(selection.active.peek()).toBe(true);   // bulk Details' Done/Esc comes back to it (§2.15)
+    expect(selection.list()).toEqual(['harbor', 'jam']);
+    find(cardMenuItems(HARBOR, ctx), 'selection.deselect').run();   // Deselect takes out just this card
+    expect(selection.list()).toEqual(['jam']);
+    expect(selection.active.peek()).toBe(true);
     expect(cardMenuItems(HARBOR, ctx)[0].label).toBe('Select');
     const del = find(cardMenuItems(JAM, ctx), 'selection.delete');
     await del.run();

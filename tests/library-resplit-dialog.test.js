@@ -145,13 +145,38 @@ describe('openResplitDialog', () => {
     expect(calls.at(-1).message).toBe('Re-splitting 2 songs');
   });
 
-  it('several songs, some refused: the rest start and a toast reports it', async () => {
+  it('several songs, some refused: the rest start; the toast names the songs left out, with Details and reasons', async () => {
     const {opts, jobs, calls} = setup();
-    jobs.createSeparation.mockResolvedValueOnce({jobId: 'a'}).mockRejectedValueOnce(Object.assign(new Error('x'), {code: 'queue_full'}));
+    jobs.createSeparation.mockRejectedValueOnce(Object.assign(new Error('elsewhere'), {code: 'resplit_wrong_device', data: {deviceName: 'Studio iMac'}}))
+      .mockResolvedValueOnce({jobId: 'b'});
     const closed = openResplitDialog({...opts, songIds: ['harbor', 'lanterns']});
     submit();
     await closed;
-    expect(calls.at(-1)).toMatchObject({message: COPY.resplitPartial(1, 2), options: {tone: 'error'}});
+    const report = calls.at(-1);
+    expect(report.message).toBe('Re-splitting 1 of 2 songs. Not started: Harbor Lights.');
+    expect(report.options.tone).toBe('error');
+    expect(report.options.action.label).toBe('Details');
+    report.options.action.run();
+    const details = dialog();
+    expect(details.querySelector('.ui-dialog-title').textContent).toBe('Not started: Harbor Lights.');
+    const row = details.querySelector('.lib-fail-row');
+    expect(row.textContent).toContain('Harbor Lights');
+    expect(row.querySelector('span').textContent.length).toBeGreaterThan(0);
+  });
+
+  it('a full queue with three songs reports every one left, without trying them', async () => {
+    const {opts, jobs, calls} = setup();
+    opts.store.library.songs.value = new Map([[HARBOR.id, HARBOR], [LANTERNS.id, LANTERNS], ['third', {id: 'third', title: 'Third', duration: 60}]]);
+    jobs.createSeparation.mockResolvedValueOnce({jobId: 'a'})
+      .mockRejectedValueOnce(Object.assign(new Error('x'), {code: 'queue_full'}));
+    const closed = openResplitDialog({...opts, songIds: ['harbor', 'lanterns', 'third']});
+    submit();
+    await closed;
+    expect(jobs.createSeparation).toHaveBeenCalledTimes(2);
+    const report = calls.at(-1);
+    expect(report.message).toBe(`${COPY.resplitPartial(1, 3)} ${COPY.resplitQueueFull}`);
+    report.options.action.run();
+    expect([...dialog().querySelectorAll('.lib-fail-row strong')].map(n => n.textContent)).toEqual(['Paper Lanterns', 'Third']);
   });
 
   it('the web never opens it ("Needs Woodshed for desktop"); a missing song toasts', async () => {

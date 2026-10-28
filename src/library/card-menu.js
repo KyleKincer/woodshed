@@ -5,11 +5,13 @@
 //     long-press, Shift+F10 and the ContextMenu key on a card or list row (cards.js opens the items with Menu).
 //     ctx: {router, store, registry, desktop, anchor, event} from home.js, plus optional {selection, account, toast,
 //     form, platform} (tests and harnesses inject them; the defaults are the app's singletons).
-//     Items: Select (first, D49: enters selection mode with this card selected) · Practice ↵ · Edit details… E ·
+//     Items: Select (first, D49: enters selection mode with this card selected; offered while a view renders the
+//     selection, i.e. its bar is mounted: `selection.hosted`) · Practice ↵ (ends selection) · Edit details… E ·
 //     Edit chart (when a part exists) · Edit map | Pin / Unpin · Share… · Add to setlist ▸ | Re-split… (desktop; on the
 //     web disabled with the visible reason "Needs Woodshed for desktop") · Open original source ↗ (http sources) |
 //     Delete… (danger). While selecting, a selected card's menu is the selection menu instead: Edit details of N
-//     songs… · Pin / Unpin N songs · Add to setlist ▸ · Re-split N songs… (desktop) | Deselect · Done | Delete N songs….
+//     songs… · Pin / Unpin N songs · Add to setlist ▸ · Re-split N songs… (desktop) | Deselect (this card) · Done |
+//     Delete N songs…. Edit details of N songs… keeps the selection (bulk Details' Done/Esc returns to it, §2.15).
 //   addToSetlistItems(songIds, ctx) → MenuItem   'Add to setlist ▸': every setlist (a list that already holds every
 //     one of the songs, or is full, is disabled with its reason), then "New setlist…" (a name field in a small Dialog;
 //     the list is created with the songs). Adding shows an 8 s Undo toast (spec §7.8) that takes out exactly the songs
@@ -195,7 +197,7 @@ function pinItem(songIds, labels, d) {
     run: () => setPinned(songIds, !all, {account: d.account, toast: d.toast, songs: d.store.library.songs})};
 }
 
-function selectionMenuItems(d, ctx) {
+function selectionMenuItems(song, d, ctx) {
   const sel = d.selection;
   const ids = sel.list();
   const n = ids.length;
@@ -203,11 +205,12 @@ function selectionMenuItems(d, ctx) {
   const go = path => d.router?.navigate?.(path);
   return [
     {id: 'selection.details', label: COPY.editDetailsMany(n), icon: 'pencil',
-      run: () => { const list = ids.slice(0, sel.max); sel.clear(); go(`/edit/details?ids=${list.map(enc).join(',')}`); }},
+      run: () => go(`/edit/details?ids=${ids.slice(0, sel.max).map(enc).join(',')}`)},
     pinItem(ids, {pin: COPY.pinMany(n), unpin: COPY.unpinMany(n)}, d),
     addToSetlistItems(ids, ctx),
     ...(d.desktop?.available ? [resplitItem(ids, COPY.resplitMany(n), d)] : []),
     {type: 'separator'},
+    {id: 'selection.deselect', label: COPY.deselect, icon: 'x', run: () => { if (sel.has(song.id)) sel.toggle(song.id); }},
     {id: 'selection.done', label: COPY.done, icon: 'check', run: () => sel.clear()},
     {type: 'separator'},
     {id: 'selection.delete', label: COPY.deleteMany(n), icon: 'trash-2', danger: true,
@@ -224,14 +227,15 @@ export function cardMenuItems(song, ctx = {}) {
   if (!song?.id) return [];
   const d = deps(ctx);
   const sel = d.selection;
-  if (sel.active.peek() && sel.has(song.id)) return selectionMenuItems(d, ctx);
+  // Selection is offered only while a view renders it (its bar is mounted); otherwise it would be invisible.
+  const hosted = !!sel.hosted?.peek?.();
+  if (hosted && sel.active.peek() && sel.has(song.id)) return selectionMenuItems(song, d, ctx);
   const id = enc(song.id);
   const go = path => d.router?.navigate?.(path);
   const url = sourceUrl(song);
   const items = [
-    {id: 'card.select', label: COPY.select, icon: 'check', run: () => sel.start(song.id)},
-    {type: 'separator'},
-    {id: 'card.practice', label: COPY.practice, icon: 'play', kbd: 'Enter', run: () => go(`/s/${id}`)},
+    ...(hosted ? [{id: 'card.select', label: COPY.select, icon: 'check', run: () => sel.start(song.id)}, {type: 'separator'}] : []),
+    {id: 'card.practice', label: COPY.practice, icon: 'play', kbd: 'Enter', run: () => { sel.clear(); go(`/s/${id}`); }},
     {id: 'card.editDetails', label: COPY.editDetails, icon: 'pencil', kbd: 'KeyE', run: () => go(`/s/${id}/edit/details`)},
     ...(song.hasChart ? [{id: 'card.editChart', label: COPY.editChart, icon: 'file-music', run: () => go(`/s/${id}/edit/chart`)}] : []),
     {id: 'card.editMap', label: COPY.editMap, icon: 'grid-3x3', run: () => go(`/s/${id}/edit/map`)},

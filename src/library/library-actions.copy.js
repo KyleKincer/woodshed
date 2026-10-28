@@ -33,10 +33,8 @@ export const COPY = Object.freeze({
   inSetlist: 'Already in this list',
   setlistFull: 'This list is full',
   setlistsFull: 'You have 100 setlists',
-  setlistsLoading: 'Loading your setlists…',
 
   // ---- the selection menu: the card menu of a selected card while selecting (spec §7.7) ----
-  selectionMenu: n => `${plural(n, 'selected song')}`,
   editDetailsMany: n => (n === 1 ? 'Edit details…' : `Edit details of ${n} songs…`),
   pinMany: n => (n === 1 ? 'Pin' : `Pin ${n} songs`),
   unpinMany: n => (n === 1 ? 'Unpin' : `Unpin ${n} songs`),
@@ -56,7 +54,6 @@ export const COPY = Object.freeze({
   barDelete: 'Delete',
   barDone: 'Done',
   cap: `Up to ${MAX_SELECTION} at a time`,
-  chooseFirst: 'Select a song first',
   /** Announced when selection mode starts and ends. */
   selectingOn: 'Selecting songs. Press Escape when you’re done.',
   selectingOff: 'Done selecting',
@@ -95,7 +92,6 @@ export const COPY = Object.freeze({
   added: (n, name) => `Added ${plural(n, 'song')} to ${name}`,
   alreadyIn: name => `Already in ${name}`,
   createdWith: (name, n) => `Created ${name} with ${plural(n, 'song')}`,
-  setlistsWord: 'setlists',
 
   // ---- the Re-split dialog (spec §3.7) ----
   resplitTitle: title => `Re-split ${title || 'Untitled'}`,
@@ -113,7 +109,9 @@ export const COPY = Object.freeze({
   resplitCancel: 'Cancel',
   resplitStartedOne: title => `Re-splitting ${quoted(title)}`,
   resplitStarted: n => `Re-splitting ${plural(n, 'song')}`,
-  resplitPartial: (done, total) => `Re-splitting ${done} of ${total} songs. The rest couldn’t start.`,
+  resplitPartial: (done, total) => `Re-splitting ${done} of ${total} songs.`,
+  resplitNotStarted: titles => `Not started: ${titles.join(', ')}.`,
+  resplitQueueFull: 'The queue is full: process the queued songs before adding more.',
   resplitGone: 'This song is no longer in your library.',
 
   // ---- the setlist page (/set/:id) ----

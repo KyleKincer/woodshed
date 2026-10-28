@@ -3,12 +3,16 @@
 //
 //   createSelection({max = 100, order}) → Selection
 //     Selection = {ids: ReadonlySignal<Set<id>>, active: ReadonlySignal<boolean>, count: ReadonlySignal<number>,
-//                  limited: ReadonlySignal<boolean>, has(id), toggle(id), range(id, order?), selectAll(ids?), start(id?),
-//                  set(ids), prune(existing), clear(), setOrder(fn), mountBar(el, ctx) → {el, destroy()}}
+//                  limited: ReadonlySignal<boolean>, hosted: ReadonlySignal<boolean>, has(id), toggle(id),
+//                  range(id, order?), selectAll(ids?), start(id?), set(ids), prune(existing), clear(), setOrder(fn),
+//                  mountBar(el, ctx) → {el, deleteSelected(), destroy()}}
 //     `order()` gives the visible songs' ids in visual order: Shift-click ranges and ⌘A (selectAll() with no list) use
 //     it. The cap is `max` ("Up to 100 at a time"): a toggle, a range or ⌘A that would pass it adds what fits (a toggle:
 //     nothing) and sets `limited` until the next change. Selection mode (`active`) starts with the first toggle, range,
-//     selectAll or start() and ends with clear() (Done, Esc). It stays on with nothing selected.
+//     selectAll or start() and ends with clear() (Done, Esc, opening a song). It stays on with nothing selected, and
+//     it survives the trip to bulk Details (/edit/details?ids=…, whose Done/Esc goes back to the Library selection,
+//     §2.15), so leaving the Library does not clear it. `hosted` is true while a bar is mounted, i.e. while a view
+//     renders the selection: the card menu offers Select (and turns into the selection menu) only then.
 //   sharedSelection() → the app's one Selection (created on first use): the Library view and the card menu share it.
 //   selectionClick(selection, songId, event, order?) → boolean
 //     A card click: ⌘/Ctrl-click toggles and Shift-click ranges (both enter selection mode); while selecting, a plain
@@ -26,7 +30,8 @@
 // The bar (mountBar): a 56 px floating toolbar at the bottom centre, "3 selected · Edit details · Pin · Re-split
 // (desktop) · Delete · Done". Edit details opens /edit/details?ids=a,b,c (D34), Re-split opens the Re-split dialog
 // for the selected songs, Delete runs deleteSongs. It is hidden while selection mode is off; it lifts the toast
-// region clear of itself (selection.css).
+// region clear of itself (selection.css). Re-split is hidden on the web and disabled with "Paused on this account"
+// for export-only and suspended accounts (D10), as in the card menu.
 
 import '../styles/views/library/selection.css';
 import {batch, computed, effect, readonly, signal, store as appStore, untracked} from '../app/store.js';
@@ -37,9 +42,8 @@ import {describeError} from '../app/error-copy.js';
 import * as songsApi from '../api/songs.js';
 import {MAX_PINS} from '../../convex/lib/presets.ts';
 import {Button} from '../ui/button.js';
-import {Dialog} from '../ui/dialog.js';
 import {h} from '../ui/h.js';
-import {openResplitDialog} from './resplit-dialog.js';
+import {failureReport, openResplitDialog} from './resplit-dialog.js';
 import {COPY, MAX_SELECTION, UNDO_MS} from './library-actions.copy.js';
 
 export {MAX_SELECTION, UNDO_MS};
@@ -56,6 +60,8 @@ export function createSelection({max = MAX_SELECTION, order = () => []} = {}) {
   const ids = signal(new Set(), {equals: sameSet});
   const active = signal(false);
   const limited = signal(false);
+  const hosts = signal(0);
+  const hosted = computed(() => hosts.value > 0);
   const count = computed(() => ids.value.size);
   let anchor = null;
   let orderOf = typeof order === 'function' ? order : () => [];
@@ -71,6 +77,7 @@ export function createSelection({max = MAX_SELECTION, order = () => []} = {}) {
     active: readonly(active),
     count,
     limited: readonly(limited),
+    hosted,
     max,
     has: id => ids.peek().has(id),
     /** The selected ids in the visible order, then any others (selected, then filtered out). */
@@ -136,7 +143,19 @@ export function createSelection({max = MAX_SELECTION, order = () => []} = {}) {
       anchor = null;
       batch(() => { ids.value = new Set(); limited.value = false; active.value = false; });
     },
-    mountBar: (el, ctx = {}) => mountSelectionBar(el, selection, ctx),
+    mountBar(el, ctx = {}) {
+      const bar = mountSelectionBar(el, selection, ctx);
+      hosts.value += 1;
+      let gone = false;
+      const destroy = bar.destroy;
+      bar.destroy = () => {
+        if (gone) return;
+        gone = true;
+        hosts.value -= 1;
+        destroy();
+      };
+      return bar;
+    },
   };
   return selection;
 }
@@ -213,21 +232,10 @@ export async function deleteSongs(songs, {api = songsApi, confirm: ask = appConf
     announce(text, {key: 'lib-delete'});
   } else {
     const text = one ? COPY.deleteFailedOne(failed[0].title) : `${COPY.deletePartial(deleted.length, list.length)} ${COPY.deleteFailedNamed(failed.map(f => f.title))}`;
-    toast(text, {tone: 'error', key: 'lib-delete', action: {label: COPY.details, run: () => showFailures(failed)}});
+    toast(text, {tone: 'error', key: 'lib-delete',
+      action: {label: COPY.details, run: () => failureReport(failed, {title: COPY.deleteFailedNamed(failed.map(f => f.title)), context: 'save'})}});
   }
   return {deleted, failed};
-}
-
-/** The partial-failure report's Details: each song that stayed, with its sentence and the raw text. */
-function showFailures(failed) {
-  const rows = failed.map(f => {
-    const d = describeError(f.error, {context: 'save'});
-    return h('li', {class: 'lib-fail-row'},
-      h('strong', {class: 'selectable'}, f.title), ' ',
-      h('span', {}, d.sentence),
-      d.details ? h('code', {class: 'lib-fail-raw selectable'}, d.details) : null);
-  });
-  Dialog({title: COPY.deleteFailedNamed(failed.map(f => f.title)), body: h('ul', {class: 'lib-fail-list'}, rows)});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -309,7 +317,7 @@ export function mountSelectionBar(el, selection, ctx = {}) {
     onClick: () => {
       const ids = selection.list().slice(0, MAX_SELECTION);
       if (!ids.length) return;
-      selection.clear();
+      // The selection stays: bulk Details' Done/Esc goes back to it (§2.15).
       router?.navigate?.(`/edit/details?ids=${ids.map(encodeURIComponent).join(',')}`);
     }});
   const pin = Button({label: COPY.barPin, icon: 'pin', variant: 'quiet', className: 'lib-selbar-action',
@@ -364,6 +372,7 @@ export function mountSelectionBar(el, selection, ctx = {}) {
       const n = selection.count.value;
       const limit = selection.limited.value;
       const pins = account.pins.value ?? [];
+      const status = store.session?.value?.status;
       const ids = [...selection.ids.value];
       untracked(() => {
         bar.hidden = !on;
@@ -374,7 +383,8 @@ export function mountSelectionBar(el, selection, ctx = {}) {
         pin.set({label: allPinned ? COPY.barUnpin : COPY.barPin, icon: allPinned ? 'pin-off' : 'pin', disabled: none});
         details.set({disabled: none});
         remove.set({disabled: none});
-        resplit.set({disabled: none});
+        const paused = status === 'export_only' || status === 'suspended';
+        resplit.set({disabled: none, disabledReason: paused ? COPY.pausedAccount : null, title: paused ? COPY.pausedAccount : null});
         resplit.el.hidden = !desktop?.available;
         if (on && n !== lastCount) {
           announce(n ? COPY.selected(n) : COPY.noneSelected, {key: 'lib-selected'});
