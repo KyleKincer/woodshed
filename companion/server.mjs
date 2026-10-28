@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ConvexClient } from 'convex/browser';
 import { anyApi as api } from 'convex/server';
+import { createLookup, createLookupRoutes, createYtDlp, ytDlpCommand } from './lookup.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.WOODSHED_DATA_DIR || path.join(os.homedir(), '.woodshed-companion');
@@ -26,6 +27,10 @@ let acceptingJobs = true;
 let client, identity, stopSubscription, busy = false, pending = null, current = null;
 const python = process.env.WOODSHED_PYTHON || path.join(here, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 const childEnv = { ...process.env, PATH: `${path.dirname(python)}${path.delimiter}${process.env.PATH}`, PYTHONUNBUFFERED: '1', PYTORCH_ENABLE_MPS_FALLBACK: process.env.PYTORCH_ENABLE_MPS_FALLBACK || '1' };
+// B4 lookups (/resolve, /search) run yt-dlp beside any job; they never touch `busy`.
+const lookupRoutes = createLookupRoutes(createLookup({
+  ytDlp: createYtDlp({ ...ytDlpCommand({ processor: process.env.WOODSHED_PROCESSOR, python }), env: childEnv }),
+}));
 const safe = value => String(value).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'untitled';
 const accountDir = () => path.join(data, 'accounts', crypto.createHash('sha256').update(`${config.convexUrl}:${identity.userId}`).digest('hex').slice(0, 24));
 const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -184,6 +189,8 @@ const server = http.createServer(async (req,res)=>{
   try {
     if (req.url==='/status' && req.method==='GET') {json(res,200,{name:os.hostname(),connected:!!identity,deviceId:identity?.deviceId, userId:identity?.userId,busy});return;}
     if (req.url==='/connect' && req.method==='POST') {const input=await body(req);await connect(input.convexUrl);json(res,200,identity);return;}
+    // Lookups read no account data, so they sit before the pairing and identity checks.
+    if (await lookupRoutes(req,res)) return;
     if (!client || !identity) throw new Error('Pair the companion in Settings first.');
     // Recheck revocation before any filesystem operation.
     await client.query(api.devices.identity,{token:config.token});
@@ -236,6 +243,7 @@ server.listen(port,'127.0.0.1',()=>{
 });
 if(config.convexUrl) connect(config.convexUrl).catch(error=>console.error('Desktop processor connection:',error.message));
 async function shutdown(forUpdate = false){acceptingJobs=false;
+  lookupRoutes.abortAll();  // B4: kill yt-dlp lookups now (lookup.mjs also kills any left on exit)
   const jobId = current?.id;
   const cancellation = identity ? path.join(accountDir(), 'update-cancellation.json') : null;
   if(forUpdate && jobId && cancellation) await fs.writeFile(cancellation,JSON.stringify({jobId}));

@@ -1,7 +1,35 @@
 """Local-only audio acquisition, separation and encoding. No cloud credentials."""
 from __future__ import annotations
 import json, os, pathlib, re, subprocess, sys
-YTDLP_ARGS = ['--js-runtimes', 'node', '--remote-components', 'ejs:github', '--ignore-config', '--no-playlist']
+
+
+# Used only when ytdlp-args.json is not shipped (a processor built without
+# `--add-data companion/ytdlp-args.json`): jobs keep working and stderr says why.
+# companion/lookup.test.mjs checks this equals the file's 'base' list.
+FALLBACK_YTDLP_ARGS = ["--js-runtimes", "node", "--remote-components", "ejs:github", "--ignore-config", "--no-playlist"]
+
+
+def _load_ytdlp_args() -> list[str]:
+    """The base yt-dlp arguments, shared with companion/lookup.mjs through ytdlp-args.json.
+
+    Frozen builds carry the file next to the bundled modules (sys._MEIPASS). A missing
+    file falls back to FALLBACK_YTDLP_ARGS with a warning; an unreadable one still raises.
+    """
+    roots = [pathlib.Path(__file__).resolve().parent]
+    if getattr(sys, "_MEIPASS", None):
+        roots.append(pathlib.Path(sys._MEIPASS))
+    for root in roots:
+        path = root / "ytdlp-args.json"
+        if path.is_file():
+            args = json.loads(path.read_text(encoding="utf-8")).get("base")
+            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+                raise RuntimeError(f"{path} has no valid 'base' argument list.")
+            return args
+    print("Warning: ytdlp-args.json is missing from the processor; using the built-in yt-dlp arguments.", file=sys.stderr)
+    return list(FALLBACK_YTDLP_ARGS)
+
+
+YTDLP_ARGS = _load_ytdlp_args()
 STEM_SETS = {
     "htdemucs_6s": ["drums", "bass", "other", "vocals", "guitar", "piano"],
 }
