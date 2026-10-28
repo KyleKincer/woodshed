@@ -104,7 +104,13 @@ export function mountTopbar(el, {router, store, desktop = {available: false}, re
   const dot = h('span', {class: 'shell-avatar-dot', attrs: {'aria-hidden': 'true'}});
   const avatar = h('button', {class: 'shell-avatar', type: 'button',
     attrs: {'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': COPY.account}}, picture, initials, dot);
-  picture.addEventListener('error', () => { picture.hidden = true; initials.hidden = false; }, {signal: ac.signal});
+  // A picture that failed to load stays hidden (initials shown) until the session names another one.
+  let failedSrc = null;
+  picture.addEventListener('error', () => {
+    failedSrc = picture.getAttribute('src');
+    picture.hidden = true;
+    initials.hidden = false;
+  }, {signal: ac.signal});
   let menu = null;
   function openAccountMenu() {
     if (menu?.open) return menu;
@@ -131,10 +137,12 @@ export function mountTopbar(el, {router, store, desktop = {available: false}, re
       const src = user?.image || '';
       initials.textContent = initialsOf(user);
       if (src) {
-        if (picture.getAttribute('src') !== src) picture.setAttribute('src', src);
-        picture.hidden = false;
-        initials.hidden = true;
+        if (picture.getAttribute('src') !== src) { failedSrc = null; picture.setAttribute('src', src); }
+        const show = src !== failedSrc;
+        picture.hidden = !show;
+        initials.hidden = show;
       } else {
+        failedSrc = null;
         picture.removeAttribute('src');
         picture.hidden = true;
         initials.hidden = false;

@@ -6,9 +6,10 @@
 //   renderPaused(el, {status, reason}) → {destroy}
 //     "Your account is paused", the reason, [Manage billing] [Export library] [Sign out]: a calm full
 //     page in the app frame for a suspended account (main.js stops booting there).
-//   mountBanners(el, {store, platform, codecSupported}) → {destroy}
+//   mountBanners(el, {store, platform, codecSupported, visible}) → {destroy}
 //     The shell's in-flow banners above a top-bar place's view: offline, export-only (adding songs is
-//     paused; the Library stays readable) and the codec warning with [Dismiss].
+//     paused; the Library stays readable) and the codec warning with [Dismiss]. `visible` (a signal)
+//     is false on full-bleed places (chrome 'none': Stage, Edit, /welcome), which show none of them.
 //
 // Copy is in COPY; CONTROLS lists each control's role and accessible name (the table test).
 
@@ -16,6 +17,7 @@ import '../styles/views/shell/fatal.css';
 import {action as apiAction} from '../api/client.js';
 import {signOut as authSignOut} from './auth.js';
 import {SENTENCES, ROWS, LABELS} from './error-copy.copy.js';
+import {describeError} from './error-copy.js';
 import {effect} from './store.js';
 import {Banner} from '../ui/banner.js';
 import {Button} from '../ui/button.js';
@@ -41,6 +43,7 @@ export const COPY = Object.freeze({
   exported: 'Your library was exported.',
   billingFailed: 'The billing page couldn’t be opened. Try again.',
   exportFailed: 'The export didn’t finish.',
+  tryAgain: 'Try again.',
   signOut: 'Sign out',
   offline: SENTENCES.offline,
   codec: SENTENCES.codec,
@@ -111,6 +114,17 @@ export function renderFatal(el, {title = COPY.fatalTitle, message = COPY.fatalMe
 }
 
 /**
+ * The paused page's export failure line. export.js throws a plain Error with a sentence written for
+ * people (the browser cannot stream a large archive, …); a backend error reads through error-copy;
+ * anything else (a TypeError, a network failure) gets "Try again." rather than its raw message.
+ */
+export function exportFailedText(err) {
+  if (err && typeof err.code === 'string') return `${COPY.exportFailed} ${describeError(err, {context: 'job'}).sentence}`;
+  const own = err instanceof Error && err.name === 'Error' && err.constructor === Error ? String(err.message ?? '').trim() : '';
+  return `${COPY.exportFailed} ${own || COPY.tryAgain}`;
+}
+
+/**
  * The paused-account page. Manage billing opens the Stripe portal (billing:portal), Export library
  * streams the ZIP (src/js/export.js, loaded on demand), Sign out ends the session and reloads.
  */
@@ -138,7 +152,7 @@ export function renderPaused(el, {status = 'suspended', reason, win = globalThis
       await exportLibrary(text => say('info', text));
       say('ok', COPY.exported);
     } catch (err) {
-      if (err?.name !== 'AbortError') say('error', `${COPY.exportFailed} ${err?.message ?? ''}`.trim());
+      if (err?.name !== 'AbortError') say('error', exportFailedText(err));
     }
     exporter.set({busy: false, disabled: false});
   }});
@@ -169,9 +183,10 @@ export function renderPaused(el, {status = 'suspended', reason, win = globalThis
 /**
  * The shell's banners (in flow, never fixed): offline while `platform.online` is false; export-only
  * while `store.session.status` is 'export_only' ([Plan & storage] → `navigate('/settings/plan')`);
- * the codec warning when `codecSupported` is false, until dismissed on this page.
+ * the codec warning when `codecSupported` is false, until dismissed on this page. Nothing shows while
+ * `visible.value` is false (a full-bleed place).
  */
-export function mountBanners(el, {store, platform, codecSupported = true, navigate = () => {}} = {}) {
+export function mountBanners(el, {store, platform, codecSupported = true, visible = null, navigate = () => {}} = {}) {
   el.setAttribute('role', 'region');
   el.setAttribute('aria-label', COPY.notices);
   let codecDismissed = false;
@@ -185,10 +200,11 @@ export function mountBanners(el, {store, platform, codecSupported = true, naviga
   const order = ['offline', 'exportOnly', 'codec'];
   let shown = {};
   function render() {
+    const show = visible ? visible.value !== false : true;
     const next = {
-      offline: platform?.online ? !platform.online.value : false,
-      exportOnly: store?.session?.value?.status === 'export_only',
-      codec: !codecSupported && !codecDismissed,
+      offline: show && (platform?.online ? !platform.online.value : false),
+      exportOnly: show && store?.session?.value?.status === 'export_only',
+      codec: show && !codecSupported && !codecDismissed,
     };
     shown = next;
     el.replaceChildren(...order.filter(k => next[k]).map(k => banners[k].el));

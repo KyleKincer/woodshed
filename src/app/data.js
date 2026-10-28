@@ -34,8 +34,11 @@ export function nextSongs(previous, rows) {
   return changed ? next : previous;
 }
 
+/** A list row's key: songs and setlists carry `id`, jobs.listActive rows `jobId`, devices.list rows `deviceId`. */
+export const rowId = item => item?.id ?? item?.jobId ?? item?.deviceId ?? item?._id;
+
 /** A list result with unchanged items (by id and content) reused from `previous`; `previous` itself when nothing changed. */
-export function nextList(previous, rows, idOf = item => item?.id ?? item?._id) {
+export function nextList(previous, rows, idOf = rowId) {
   const list = Array.isArray(rows) ? rows : [];
   const byId = new Map(previous.map(item => [idOf(item), item]));
   let changed = list.length !== previous.length;
@@ -69,9 +72,9 @@ export function startData({store = appStore, api = {songs: songsApi, jobs: jobsA
       if (!lib.loaded.peek()) lib.loaded.value = true;
     });
   });
-  watch('jobs.listActive', api.jobs.subscribeActive, value => { lib.jobs.value = nextList(lib.jobs.peek(), value); });
-  watch('devices.list', api.devices.subscribeList, value => { lib.devices.value = nextList(lib.devices.peek(), value); });
-  watch('setlists.list', api.setlists.subscribeList, value => { lib.setlists.value = nextList(lib.setlists.peek(), value); });
+  watch('jobs.listActive', api.jobs.subscribeActive, value => { lib.jobs.value = nextList(lib.jobs.peek(), value, job => job?.jobId); });
+  watch('devices.list', api.devices.subscribeList, value => { lib.devices.value = nextList(lib.devices.peek(), value, device => device?.deviceId); });
+  watch('setlists.list', api.setlists.subscribeList, value => { lib.setlists.value = nextList(lib.setlists.peek(), value, setlist => setlist?.id); });
 
   let stopped = false;
   return () => {

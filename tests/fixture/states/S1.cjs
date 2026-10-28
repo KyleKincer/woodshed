@@ -19,6 +19,8 @@
 //   s1-app-paused            a suspended account → the paused page
 //   s1-app-export-only       an export-only account → the Library with the banner
 //   s1-app-offline           going offline shows the banner; coming back removes it
+//   s1-app-stage-no-banners  an export-only account, offline, on the Stage: no banners (full-bleed)
+//   s1-app-share-boot        /share/<token> and /download/: the boot status leaves once the page is up
 //   s1-app-admin             an administrator's /admin deep link passes its guard; a non-admin's goes home
 //   s1-app-keys              ⌘K opens the palette, ? the shortcut sheet, Esc clears the search, / stays native
 //   s1-app-redirects         /billing?checkout=success → /settings/plan?checkout=success
@@ -337,6 +339,34 @@ module.exports = [
     async fn(page, t) {
       const text = await page.locator('[data-banner=export-only]').textContent();
       t.expect(text.includes('Adding songs is paused on this account.'), `the export-only banner (${text})`);
+    },
+  },
+  {
+    name: 's1-app-stage-no-banners',
+    url: '/s/glasshouse?fx-auth=export_only&fx-reset=1',
+    opts: {requires: APP, ready: 'stage', structure: PLACEHOLDER_OK, devices: ['laptop', 'ipad'], themes: ['light'], capture: false},
+    async fn(page, t) {
+      // The Stage is full-bleed (chrome 'none'): no top bar and none of the shell's banners, even offline.
+      await page.evaluate(() => dispatchEvent(new Event('offline')));
+      const facts = await page.evaluate(() => ({chrome: document.getElementById('app')?.dataset.chrome,
+        banners: document.querySelectorAll('.shell-banners > *').length}));
+      t.expect(facts.chrome === 'none', `chrome none (${facts.chrome})`);
+      t.expect(facts.banners === 0, `no banners on the Stage (${facts.banners})`);
+      await page.evaluate(() => dispatchEvent(new Event('online')));
+    },
+  },
+  {
+    name: 's1-app-share-boot',
+    url: `/share/${'a'.repeat(64)}?fx-reset=1`,
+    opts: {requires: APP, ready: false, structure: PLACEHOLDER_OK, devices: ['laptop', 'ipad'], themes: ['light'], capture: false},
+    async fn(page, t) {
+      // A boot route: once its module's boot() resolves, the "Opening Woodshed…" status leaves.
+      await page.waitForSelector('html[data-view-ready]', {state: 'attached'});
+      await page.waitForSelector('#startup', {state: 'detached'});
+      t.expect(await page.evaluate(() => document.documentElement.dataset.startup) !== 'loading', 'the boot status is dismissed');
+      await page.goto(`${t.base}/download/?fx-reset=1`);
+      await page.waitForSelector('html[data-view-ready]', {state: 'attached'});
+      await page.waitForSelector('#startup', {state: 'detached'});
     },
   },
   {

@@ -293,13 +293,30 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
 
   test.each([
     ['/download', 'download', {}],
+    ['/download/', 'download', {}],
     [`/share/${'c'.repeat(64)}`, 'share', {token: 'c'.repeat(64)}],
-  ])('step 2: %s hands over to its boot route and stops', async (path, name, params) => {
+  ])('step 2: %s hands over to its boot route, dismisses the boot status and stops', async (path, name, params) => {
+    root.dataset.startup = 'loading';   // as index.html ships it
     const env = await load(path);
     const result = await env.main.boot();
     expect(result.kind).toBe(name);
-    expect(h.log).toEqual([`boot ${name}`]);
+    expect(h.log).toEqual([`boot ${name}`, 'finishStartup']);
     expect(h.bootMatch.params).toEqual(params);
+    expect(root.dataset.startup).not.toBe('loading');
+    expect(document.getElementById('startup')).toBeNull();
+  });
+
+  test('the banners row stays empty on full-bleed places (Stage, Edit, /welcome) and returns on the Library', async () => {
+    h.init = [{user, status: 'export_only'}];
+    h.codec = false;
+    const {result} = await bootApp('/s/song1');
+    const row = document.querySelector('.shell-banners');
+    expect(document.getElementById('app').dataset.chrome).toBe('none');
+    expect(row.childElementCount).toBe(0);
+    expect(row.hidden).toBe(true);
+    await result.router.navigate('/');
+    expect([...row.children].map(b => b.dataset.banner)).toEqual(['export-only', 'codec']);
+    expect(row.hidden).toBe(false);
   });
 
   test('step 8: /welcome is pushed once when "What do you play?" is unanswered', async () => {

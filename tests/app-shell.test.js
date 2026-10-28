@@ -26,8 +26,12 @@ vi.mock('../src/api/client.js', async importOriginal => ({
 }));
 const authCalls = vi.hoisted(() => ({signOut: 0}));
 vi.mock('../src/app/auth.js', async importOriginal => ({...(await importOriginal()), signOut: vi.fn(async () => { authCalls.signOut++; })}));
-const exportCalls = vi.hoisted(() => ({count: 0}));
-vi.mock('../src/js/export.js', () => ({exportLibrary: vi.fn(async onProgress => { exportCalls.count++; onProgress('Exporting 1/2: Song'); })}));
+const exportCalls = vi.hoisted(() => ({count: 0, error: null}));
+vi.mock('../src/js/export.js', () => ({exportLibrary: vi.fn(async onProgress => {
+  exportCalls.count++;
+  if (exportCalls.error) throw exportCalls.error;
+  onProgress('Exporting 1/2: Song');
+})}));
 // S2's modules (same wave): global-commands.js imports them statically.
 vi.mock('../src/app/palette.js', () => ({openPalette: vi.fn(() => ({close() {}}))}));
 vi.mock('../src/app/shortcuts-sheet.js', () => ({openShortcuts: vi.fn(() => ({close() {}}))}));
@@ -179,6 +183,24 @@ describe('the top bar (spec §2.1)', () => {
     expect(avatar.getAttribute('aria-label')).toBe(COPY.accountUpdate);
   });
 
+  test('a picture that failed to load stays replaced by initials across session updates, until the image changes', () => {
+    const img = el.querySelector('.shell-avatar-image');
+    const initials = el.querySelector('.shell-avatar-initials');
+    store.session.value = {...store.session.peek(), user: {...store.session.peek().user, image: 'https://img.example/broken.png'}};
+    expect(img.hidden).toBe(false);
+    img.dispatchEvent(new Event('error'));
+    expect(img.hidden).toBe(true);
+    expect(initials.hidden).toBe(false);
+    store.session.value = {...store.session.peek(), online: false};
+    store.session.value = {...store.session.peek(), online: true, status: 'export_only'};
+    expect(img.hidden).toBe(true);
+    expect(initials.hidden).toBe(false);
+    store.session.value = {...store.session.peek(), user: {...store.session.peek().user, image: 'https://img.example/new.png'}};
+    expect(img.getAttribute('src')).toBe('https://img.example/new.png');
+    expect(img.hidden).toBe(false);
+    expect(initials.hidden).toBe(true);
+  });
+
   test('the avatar shows the picture, else initials', () => {
     const img = el.querySelector('.shell-avatar-image');
     const initials = el.querySelector('.shell-avatar-initials');
@@ -261,6 +283,7 @@ describe('the fatal card, the paused page and the banners (spec §2.7, §6.3)', 
     apiCalls.fail = false;
     authCalls.signOut = 0;
     exportCalls.count = 0;
+    exportCalls.error = null;
   });
 
   test('renderFatal: a 480 px card with the copy, Retry (focused) and the raw details behind Details, with Copy', async () => {
@@ -316,6 +339,33 @@ describe('the fatal card, the paused page and the banners (spec §2.7, §6.3)', 
     expect(authCalls.signOut).toBe(1);
   });
 
+  test('renderPaused: an export failure reads as copy, never a raw TypeError', async () => {
+    exportCalls.error = new TypeError('Cannot read properties of null (reading \'query\')');
+    fatal.renderPaused(el, {status: 'suspended', win: {location: {assign: vi.fn()}}});
+    [...el.querySelectorAll('button')].find(b => b.textContent.includes('Export library')).click();
+    await vi.waitFor(() => expect(el.querySelector('[role=alert]')?.textContent).toBe('The export didn’t finish. Try again.'));
+    expect(el.textContent).not.toContain('Cannot read properties');
+  });
+
+  test('exportFailedText: export.js\'s own sentences stay; backend codes read through error-copy; the rest say Try again', async () => {
+    const {ApiError} = await import('../src/api/client.js');
+    const {describeError} = await import('../src/app/error-copy.js');
+    const big = 'This browser cannot stream a large archive to disk. Export from Chrome or Edge on a desktop.';
+    expect(fatal.exportFailedText(new Error(big))).toBe(`The export didn’t finish. ${big}`);
+    expect(fatal.exportFailedText(new TypeError('x is null'))).toBe('The export didn’t finish. Try again.');
+    expect(fatal.exportFailedText(null)).toBe('The export didn’t finish. Try again.');
+    const apiErr = new ApiError({code: 'account_suspended', message: 'raw server text'});
+    expect(fatal.exportFailedText(apiErr)).toBe(`The export didn’t finish. ${describeError(apiErr, {context: 'job'}).sentence}`);
+    expect(fatal.exportFailedText(apiErr)).not.toContain('raw server text');
+  });
+
+  test('the shell never reaches the 1.9 backend client statically (§0.1)', () => {
+    for (const file of ['main', 'routes', 'topbar', 'fatal', 'placeholder', 'data', 'global-commands', 'boot-common', 'dev-handle']) {
+      const src = readFileSync(repo('src/app', `${file}.js`), 'utf8');
+      expect(src, file).not.toMatch(/from\s+['"][^'"]*js\/(backend|auth)\.js['"]/);
+    }
+  });
+
   test('renderPaused: a billing failure shows inline; a given reason wins', async () => {
     apiCalls.fail = true;
     fatal.renderPaused(el, {status: 'suspended', reason: 'Payment failed.', win: {location: {assign: vi.fn()}}});
@@ -365,6 +415,20 @@ describe('the fatal card, the paused page and the banners (spec §2.7, §6.3)', 
     expect(el.hidden).toBe(true);
     banners.destroy();
     online.value = false;
+    expect(el.childElementCount).toBe(0);
+  });
+
+  test('banners: none show while `visible` is false (a full-bleed place), and they come back with it', () => {
+    const visible = signal(false);
+    const online = signal(false);
+    fatal.mountBanners(el, {store: {session: signal({status: 'export_only'})}, platform: {online}, codecSupported: false, visible});
+    expect(el.childElementCount).toBe(0);
+    expect(el.hidden).toBe(true);
+    visible.value = true;
+    expect([...el.children].map(b => b.dataset.banner)).toEqual(['offline', 'export-only', 'codec']);
+    expect(el.hidden).toBe(false);
+    visible.value = false;
+    online.value = true;
     expect(el.childElementCount).toBe(0);
   });
 
@@ -603,13 +667,35 @@ describe('app data (startData)', () => {
   test('jobs, devices and setlists go to their slices; uploads are left alone', () => {
     startData({store: st, api: api()});
     const uploads = lib.uploads.value;
-    subs.jobs.v([{id: 'j1', status: 'running'}]);
-    subs.devices.v([{id: 'd1', name: 'MacBook Pro'}]);
+    subs.jobs.v([{jobId: 'j1', status: 'running'}]);
+    subs.devices.v([{deviceId: 'd1', name: 'MacBook Pro'}]);
     subs.setlists.v([{id: 'set-1', name: 'Friday'}]);
-    expect(lib.jobs.value.map(j => j.id)).toEqual(['j1']);
+    expect(lib.jobs.value.map(j => j.jobId)).toEqual(['j1']);
     expect(lib.devices.value.map(d => d.name)).toEqual(['MacBook Pro']);
     expect(lib.setlists.value.map(s => s.name)).toEqual(['Friday']);
     expect(lib.uploads.value).toBe(uploads);
+  });
+
+  test('jobs (jobId) and devices (deviceId) rows are reused by their own keys; an unchanged result keeps the array', () => {
+    startData({store: st, api: api()});
+    const jobs = [{jobId: 'a', status: 'running', progress: 0.1}, {jobId: 'b', status: 'queued', progress: 0}];
+    subs.jobs.v(jobs);
+    const first = lib.jobs.value;
+    subs.jobs.v(structuredClone(jobs));
+    expect(lib.jobs.value).toBe(first);
+    subs.jobs.v([{...jobs[0], progress: 0.5}, {...jobs[1]}]);
+    expect(lib.jobs.value).not.toBe(first);
+    expect(lib.jobs.value[0].progress).toBe(0.5);
+    expect(lib.jobs.value[1]).toBe(first[1]);
+
+    const devices = [{deviceId: 'd1', name: 'MacBook Pro'}, {deviceId: 'd2', name: 'Studio'}];
+    subs.devices.v(devices);
+    const firstDevices = lib.devices.value;
+    subs.devices.v(structuredClone(devices));
+    expect(lib.devices.value).toBe(firstDevices);
+    subs.devices.v([{deviceId: 'd1', name: 'Laptop'}, {deviceId: 'd2', name: 'Studio'}]);
+    expect(lib.devices.value[0].name).toBe('Laptop');
+    expect(lib.devices.value[1]).toBe(firstDevices[1]);
   });
 
   test('a subscription error is reported, not thrown', () => {
@@ -631,6 +717,8 @@ describe('app data (startData)', () => {
     expect(nextList(list, [{id: 'a', n: 1}, {id: 'b', n: 2}])).toBe(list);
     expect(nextList(list, [{id: 'a', n: 1}, {id: 'b', n: 3}])[0]).toBe(a);
     expect(nextList(list, null)).toEqual([]);
+    const rows = [{jobId: 'x', n: 1}, {deviceId: 'y', n: 2}];
+    expect(nextList(rows, [{jobId: 'x', n: 1}, {deviceId: 'y', n: 2}])).toBe(rows);
   });
 });
 

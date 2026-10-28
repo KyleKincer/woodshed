@@ -1,6 +1,7 @@
 // The app's boot (architecture §2.3.1), in order:
 //   1. main.css, the icon sprite, the font preload and the test handle (boot-common.js)
-//   2. a boot route (/download, /share/:token) hands over to that module's boot(match) and stops here
+//   2. a boot route (/download, /share/:token) hands over to that module's boot(match), then the boot
+//      status leaves (finishStartup) and the boot stops here
 //   3. auth.initialize(): AuthError 'oauth' → the sign-in card with the error; 'config'/'network' (and
 //      anything unexpected) → the fatal card, whose Retry runs initialize() again; signed out → the
 //      sign-in card; suspended → the paused page. Each of these stops the boot.
@@ -30,7 +31,7 @@ import {registry} from './commands.js';
 import {startDispatcher} from './dispatch.js';
 import * as keys from './keys.js';
 import {createRouter} from './router.js';
-import {effect, store} from './store.js';
+import {computed, effect, store} from './store.js';
 import {platform} from './platform.js';
 import {desktop} from './desktop.js';
 import * as feedback from './feedback.js';
@@ -169,6 +170,8 @@ export async function boot({win = globalThis.window, doc = globalThis.document} 
   if (bootMatch) {
     const mod = await bootMatch.route.boot();
     await mod.boot(bootMatch);
+    // index.html ships the status pill; the boot module's page is up now, so it leaves (§2.3.1).
+    finishStartup({doc});
     return {kind: bootMatch.name};
   }
 
@@ -240,7 +243,10 @@ export async function boot({win = globalThis.window, doc = globalThis.document} 
     registry.invalidate();
   });
   effect(() => { void store.prefs.value; void store.session.value; void store.update.value; registry.invalidate(); });
-  mountBanners(frame.banners, {store, platform, codecSupported: likelySupportsOpus(), navigate: path => router.navigate(path)});
+  // The banners belong to top-bar places only: the Stage, Edit and /welcome are full-bleed (spec §1.3).
+  const onTopbarPlace = computed(() => router.current.value?.route?.chrome !== 'none');
+  mountBanners(frame.banners, {store, platform, codecSupported: likelySupportsOpus(), visible: onTopbarPlace,
+    navigate: path => router.navigate(path)});
   await runStarters({router});
   await router.start();
   finishStartup({doc});
