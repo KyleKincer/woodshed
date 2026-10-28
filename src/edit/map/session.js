@@ -10,12 +10,15 @@
 //   map        SongMapStore (every edit goes through `map.edit(change, reason)`,
 //              which stamps the origin, §4.2)
 //   prefs      device prefs (`edit.map.tapSnap`, `edit.map.tapOffset`, §2.5)
-//   hooks      suspendSaves(on), pauseMapSync(on): the audition (D20)
+//   hooks      suspendSaves(on, {changed}), pauseMapSync(on): the audition (D20);
+//                resuming with `changed: true` must save the map (Use their map)
 //              status(text, {tone, action}): results that offer Undo
 //              loop.get() / loop.set(range|null): the user's practice loop;
 //                set(get()) restores it exactly (Preview)
 //              markers.list() / markers.tombstone(ids, deleted = true): live
-//                markers, and (un)deleting them (markers → sections)
+//                markers, and (un)deleting them (markers → sections) without a
+//                practice-undo step (the map step's `linked` undo owns it, D23)
+//              rename(barIndex): open the inline rename (the "Section n added" status)
 //
 // Every user-visible outcome lands in `message` ({text, tone}); refusals from
 // the model and the drum-part guards come back as tone 'error' and change nothing.
@@ -90,7 +93,13 @@ export const MAP_SESSION_COPY = Object.freeze({
   noMoreBars: 'No more bars in the map.',
   tap: (count, what, bpm) => `Tap ${count} · ${what}${bpm === null ? '' : ` · ${bpmText(bpm)} BPM`}`,
   passDone: (count) => `Tapped ${plural(count, 'line')}. Undo takes back the whole pass.`,
-  previewing: (first, last) => `Previewing ${first === last ? `bar ${first}` : `bars ${first}–${last}`} · Esc to stop`,
+  /** Display bar numbers; null is the pickup. */
+  previewing: (first, last) => {
+    const bar = (n) => (n === null ? 'the pickup' : `bar ${n}`);
+    const what = first === last ? bar(first) : first === null ? `the pickup to bar ${last}` : `bars ${first}–${last}`;
+    return `Previewing ${what} · Esc to stop`;
+  },
+  tapAlong: 'Tap T on every beat. D on a downbeat keeps the bars in step.',
   calibrating: `Tap T with each of the ${CALIBRATION.clicks} clicks. The first few taps are ignored.`,
   calibrationNoAudio: 'Audio is not available, so the clicks can’t play. Try again.',
   calibrationShort: 'Not enough taps to calibrate. Try again and tap T with every click.',
@@ -114,6 +123,7 @@ export const MAP_SESSION_COPY = Object.freeze({
   markersTurned: (n, skipped) => `Turned ${plural(n, 'marker')} into sections${skipped ? ` · skipped ${skipped} on a bar that already had one` : ''}`,
   suggestionsAdded: (n) => (n ? `Added ${plural(n, 'section')}` : 'No sections added: every chosen bar already has a label.'),
   undoAction: 'Undo',
+  renameAction: 'Rename',
 });
 
 /**
@@ -160,7 +170,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
 
   let pass = null;          // {lastQ, count} while a tap pass is open
   let preview = null;       // {loop, click} saved when Preview started
-  let previewStarting = false;
+  let previewStarting = null; // the preview whose engine.play() is still pending
   let calibration = null;   // {clicks, taps, end, timer}
   let onsets = null;
   let destroyed = false;
@@ -199,7 +209,8 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     const span = map.spanAt(number(q) - 1e-6);
     return span.from ? MAP_SESSION_COPY.since(span.endBpm, describe(span.from.position)) : '';
   };
-  const keepDefault = (index) => (beatsPinnedNear(map.data, index, meterRun(map.data, index)) ? 'beats' : 'lines');
+  /** Keep beats when beats (not just bar lines) are pinned in or right after the bars an edit covers (`end`: its last bar). */
+  const keepDefault = (index, end = meterRun(map.data, index)) => (beatsPinnedNear(map.data, index, end) ? 'beats' : 'lines');
   const explicitGroups = (m) => (m.grouping && m.grouping.length > 1 && !m.grouping.every((g) => g === 1) ? m.grouping.join('+') : '');
   const isPartial = (m) => number(m.length) < number(fullLength(m)) - 1e-9;
   const openSpan = (span) => span.open === 'tail' || (span.open === 'head' && map.data.pins.length === 1);
@@ -224,7 +235,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     };
   }
   const span = computed(() => { revision.value; return spanInfo(cursorQ.value); });
-  const canUndo = computed(() => { revision.value; tapping.value; return !auditioning.value && (map.undoStack.length > 0 || !!(pass && map.batch?.changed)); });
+  const canUndo = computed(() => { revision.value; tapping.value; return !auditioning.value && (map.undoStack.length > 0 || !!map.batch?.changed); });
   const canRedo = computed(() => { revision.value; return !auditioning.value && !pass && map.redoStack.length > 0; });
 
   // ---- messages and refusals ------------------------------------------------
@@ -239,6 +250,13 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     if (destroyed) return true;
     if (!auditioning.peek()) return false;
     say(MAP_SESSION_COPY.auditionLocked, 'error');
+    return true;
+  }
+
+  /** Start a map edit from a member other than a tap: refused while auditioning; an open tap pass closes first (its own undo step). */
+  function editable() {
+    if (locked()) return false;
+    finishPass();
     return true;
   }
 
@@ -326,7 +344,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   // ---- pins -----------------------------------------------------------------------
   function pinLine(q, time) {
     const target = toFraction(q);
-    if (locked() || !target || !Number.isFinite(time)) return false;
+    if (!editable() || !target || !Number.isFinite(time)) return false;
     const replaced = attempt(() => map.edit((d) => pin(d, target, time, true), 'pin'));
     if (replaced === FAILED) return false;
     batch(() => {
@@ -337,7 +355,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
   const pinNearest = (kind, time) => pinLine(map.nearestLine(time, {bars: kind === 'D'}).q, time);
   function unpinLine() {
-    if (locked()) return false;
+    if (!editable()) return false;
     const q = cursorQ.peek();
     if (!pinAt(q) || !map.isReal) { say(MAP_SESSION_COPY.notPinned); return false; }
     if (attempt(() => map.edit((d) => unpin(d, q), 'unpin')) === FAILED) return false;
@@ -345,7 +363,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     return true;
   }
   function nudge(seconds) {
-    if (locked() || !Number.isFinite(seconds)) return false;
+    if (!editable() || !Number.isFinite(seconds)) return false;
     const q = cursorQ.peek(), existing = pinAt(q), time = existing ? existing.time : timeOf(q);
     const pins = map.data.pins, prev = pins.findLast((p) => compare(p.position, q) < 0), next = pins.find((p) => compare(p.position, q) > 0);
     const target = clamp(time + seconds, Math.max(0, (prev?.time ?? -Infinity) + PIN_GAP), (next?.time ?? Infinity) - PIN_GAP);
@@ -367,7 +385,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
   /** Wrong bar number? Move the cursor's pin to the previous/next bar line (byBeat: any beat line), keeping its time. */
   function renumber(direction, {byBeat = false} = {}) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const q = cursorQ.peek();
     if (!pinAt(q)) { say(MAP_SESSION_COPY.needPin); return false; }
     const list = byBeat ? map.lines : map.lines.filter((l) => l.downbeat);
@@ -377,7 +395,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
   /** "This pin is bar [ 41 ]": the cursor's pin becomes that display bar's downbeat. */
   function renumberTo(bar) {
-    if (locked()) return false;
+    if (!editable()) return false;
     if (!pinAt(cursorQ.peek())) { say(MAP_SESSION_COPY.needPin); return false; }
     const n = Math.round(Number(bar));
     if (!Number.isFinite(n)) { say(MAP_SESSION_COPY.noBar, 'error'); return false; }
@@ -392,10 +410,10 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
    * and the beats between them re-spread (fixing a miscount between downbeats).
    */
   function changeBeats(direction, {thisBar = false} = {}) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const index = map.barIndexAtQ(number(cursorQ.peek())), m = map.measure(index), next = m.numerator + (direction < 0 ? -1 : 1);
     if (next < 1 || next > 16) { say(MAP_SESSION_COPY.beatsRange, 'error'); return false; }
-    const keep = keepDefault(index);
+    const keep = keepDefault(index, thisBar ? index : meterRun(map.data, index));
     if (keep === 'beats' && map.notationAfter(index)) { say(MAP_SESSION_COPY.notesAfter, 'error'); return false; }
     const edit = keep === 'beats' ? rebarBars : editBars;
     const dropped = attempt(() => map.edit((d) => edit(d, index, thisBar ? index : meterRun(d, index), (bar) => setMeter(bar, next, bar.denominator)), 'meter'));
@@ -415,12 +433,16 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   /**
    * The Meter form ("Edit bar"), every field of 1.9's form, applied in one edit:
    * `{numerator, denominator, groups, pickup, label, applyTo, keep, tempo?, ramp?}`.
-   * `pickup` (quarters) applies to bar 1 or an already-short bar; `label` to this
-   * bar only (omit to keep it). Pass `tempo` only when the user changed the field
-   * (it applies on open spans) and `ramp` only when the checkbox is offered.
+   * `pickup` (quarters) applies to bar 1 or an already-short bar: a full bar
+   * becomes short only when `pickup` differs from its current length (so the
+   * form's own starting value keeps it full under a new meter); `label` applies
+   * to this bar only (omit to keep it). Pass `tempo` only when the user changed
+   * the field (it applies on open spans) and `ramp` only when the checkbox is
+   * offered. A form that changes no meter edits this bar only; a meter change
+   * keeps the shortened bars it covers short where they still fit.
    */
   function applyBar(form = {}) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const q = number(cursorQ.peek()), index = map.barIndexAtQ(q), before = map.measure(index), span = map.spanAt(q);
     const n = Number(form.numerator ?? before.numerator), d = Number(form.denominator ?? before.denominator);
     if (!Number.isInteger(n) || n < 1 || n > 16) { say(MAP_SESSION_COPY.beatsRange, 'error'); return false; }
@@ -428,25 +450,33 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     const grouping = parseGroups(form.groups);
     if (grouping === undefined || (grouping && grouping.reduce((a, b) => a + b, 0) !== n)) { say(MAP_SESSION_COPY.groups(n), 'error'); return false; }
     const partial = isPartial(before), lengthShown = index === 0 || partial;
-    const length = lengthShown ? Number(form.pickup ?? number(partial ? before.length : fullLength(before))) : NaN;
+    const typed = lengthShown && form.pickup != null ? Number(form.pickup) : NaN;
+    const lengthEdited = Number.isFinite(typed) && Math.abs(typed - number(before.length)) > 1e-9;
+    // The bar's length after the edit, when it stays (or becomes) short; NaN = a full bar.
+    const length = lengthEdited ? typed : partial ? number(before.length) : NaN;
     const scope = ['this', 'until', 'end'].includes(form.applyTo) ? form.applyTo : 'until';
     const keep = form.keep === 'beats' || form.keep === 'lines' ? form.keep : keepDefault(index);
     const label = form.label === undefined ? before.label : cleanLabel(form.label);
     const tempoShown = openSpan(span), rampShown = rampAvailable(span), rampPin = span.from?.position;
     const bpm = Number(form.tempo);
     if (form.tempo != null && tempoShown && !(bpm > 0)) { say(MAP_SESSION_COPY.tempoNumber, 'error'); return false; }
-    const meterChanged = before.numerator !== n || before.denominator !== d || (before.grouping || []).join('+') !== (grouping || []).join('+')
-      || (lengthShown && Number.isFinite(length) && Math.abs(length - number(before.length)) > 1e-9);
+    // Compare what setMeter would store: an all-ones grouping (legacy maps) is the same even count as none.
+    const after = {numerator: n, denominator: d, length: before.length};
+    setMeter(after, n, d, grouping || undefined);
+    const fits = (len, m) => len > 0 && len < number(fullLength(m)) - 1e-9;
+    const meterChanged = !sameMeter(before, after) || (Number.isFinite(length) && fits(length, after) ? Math.abs(length - number(before.length)) > 1e-9 : partial);
     if (meterChanged && keep === 'beats' && map.notationAfter(index)) { say(MAP_SESSION_COPY.notesAfter, 'error'); return false; }
     const dropped = attempt(() => map.edit((draft) => {
-      const end = scope === 'this' ? index : scope === 'end' ? draft.measures.length - 1 : meterRun(draft, index);
-      const count = (keep === 'beats' ? rebarBars : editBars)(draft, index, end, (m, i) => {
-        setMeter(m, n, d, grouping || undefined);
-        if (i !== index) return;
-        m.label = label;
-        const full = number(fullLength(m));
-        if (lengthShown && Number.isFinite(length) && length > 0 && length < full - 1e-9) m.length = fraction(Math.max(1, Math.round(length * 16)), 16);
-      });
+      let count = 0;
+      if (meterChanged) {
+        const end = scope === 'this' ? index : scope === 'end' ? draft.measures.length - 1 : meterRun(draft, index);
+        count = (keep === 'beats' ? rebarBars : editBars)(draft, index, end, (m, i) => {
+          const was = i === index ? length : isPartial(m) ? number(m.length) : NaN;
+          setMeter(m, n, d, grouping || undefined);
+          if (Number.isFinite(was) && fits(was, m)) m.length = fraction(Math.max(1, Math.round(was * 16)), 16);
+        });
+      }
+      draft.measures[index].label = label;
       if (form.tempo != null && tempoShown) draft.tailQpm = clamp(bpm * pulseOf(draft.measures[index]), MIN_QPM, MAX_QPM);
       if (typeof form.ramp === 'boolean' && rampShown && rampPin) {
         const p = draft.pins.find((x) => sameQ(x.position, rampPin));
@@ -464,7 +494,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
 
   // ---- tempo --------------------------------------------------------------------------
   function toggleRamp() {
-    if (locked()) return false;
+    if (!editable()) return false;
     const q = number(cursorQ.peek()), span = map.spanAt(q);
     if (!span.from || !span.to) { say(MAP_SESSION_COPY.rampNeedsPins); return false; }
     if (!rampAvailable(span)) { say(MAP_SESSION_COPY.rampNeedsSteady); return false; }
@@ -488,20 +518,20 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
   /** Tail tempo −/+ (⌥↓/⌥↑, Shift ±0.1): only where no pin bounds the tempo. */
   function tail(delta) {
-    if (locked() || !Number.isFinite(delta)) return false;
+    if (!editable() || !Number.isFinite(delta)) return false;
     const q = number(cursorQ.peek());
     return setOpenTempo(map.bpmAt(q) + delta);
   }
   /** The inspector's ♩ [96.00] field on an open span. */
   function setTempoOpenSpan(bpm) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const value = Number(bpm);
     if (!(value > 0)) { say(MAP_SESSION_COPY.tempoNumber, 'error'); return false; }
     return setOpenTempo(value);
   }
   /** ×2 / ÷2: pins keep their times; the cursor follows its musical position. */
   function scale(factor) {
-    if (locked() || !(factor > 0)) return false;
+    if (!editable() || !(factor > 0)) return false;
     if (attempt(() => map.edit((d) => scaleTempo(d, factor), 'scale')) === FAILED) return false;
     const list = navigable(), scaled = fraction(Math.round(number(cursorQ.peek()) * factor * 64), 64);
     batch(() => {
@@ -590,6 +620,17 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     return pinNearest(which, position());
   }
 
+  /** The inspector's [Tap along]: tapping along → stop (closing the pass); otherwise end a preview, play, and say how to tap. */
+  async function tapAlong() {
+    if (destroyed || calibration || locked()) return false;
+    if (!preview && (engine.playing || engine.countingIn)) { engine.stop({returnToEdit: false}); return false; }
+    stopPreview();
+    await engine.play();
+    if (destroyed || !engine.playing) return false;
+    say(MAP_SESSION_COPY.tapAlong);
+    return true;
+  }
+
   // ---- calibration ------------------------------------------------------------------------
   function click(when, accent) {
     if (typeof metronome.clickAt === 'function') metronome.clickAt(when, accent);
@@ -663,25 +704,28 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     if (preview) { stopPreview(); return false; }
     if (destroyed || calibration) return false;
     finishPass();
-    preview = {loop: loopHook.get(), click: !!metronome.enabled};
-    previewStarting = true;
+    const mine = preview = {loop: loopHook.get(), click: !!metronome.enabled};
+    previewStarting = mine;
     try {
       previewing.value = true;
       setClick(true);
       placePreview();
-      const {from, to} = previewBounds(), name = (i) => displayOf(i) ?? 'pickup';
-      say(MAP_SESSION_COPY.previewing(name(from), name(to)));
+      const {from, to} = previewBounds();
+      say(MAP_SESSION_COPY.previewing(displayOf(from), displayOf(to)));
       if (!engine.playing) await engine.play();
-    } finally { previewStarting = false; }
-    if (preview && !engine.playing) { stopPreview(); return false; }
-    return !!preview;
+    } finally { if (previewStarting === mine) previewStarting = null; }
+    // P again (or destroy) while play() waited on ctx.resume(): stopPreview already cancelled that start.
+    if (preview !== mine) return false;
+    if (!engine.playing) { stopPreview(); return false; }
+    return true;
   }
   function stopPreview() {
     if (!preview) return false;
     const saved = preview;
     preview = null;
     previewing.value = false;
-    if (engine.playing) engine.stop({returnToEdit: false});
+    // A start still waiting on ctx.resume() is cancelled too: stop() → pause() bumps the engine's playRequest.
+    if (engine.playing || previewStarting === saved) engine.stop({returnToEdit: false});
     loopHook.set(saved.loop);
     seekTo(timeOf(cursorQ.peek()));
     setClick(saved.click);
@@ -691,7 +735,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   // ---- sections ---------------------------------------------------------------------------------
   /** Label a bar (the section that starts there); '' removes it. */
   function setLabel(barIndex, label) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const index = Math.round(Number(barIndex)), text = cleanLabel(label);
     if (!(index >= 0 && index < map.data.measures.length)) { say(MAP_SESSION_COPY.noBar, 'error'); return false; }
     if (map.measure(index).label === text) return false;
@@ -702,7 +746,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   const sectionStartingAt = (index) => map.sections.find((s) => s.startBar === index) ?? null;
   /** Drag a section's start from one bar to another (one edit; never past another section). */
   function moveSectionBoundary(fromBar, toBar) {
-    if (locked()) return false;
+    if (!editable()) return false;
     const from = Math.round(Number(fromBar)), to = Math.round(Number(toBar)), count = map.bars.length;
     if (!(from >= 0 && from < count) || !(to >= 0 && to < count)) { say(MAP_SESSION_COPY.noBar, 'error'); return false; }
     if (from === to) return false;
@@ -719,12 +763,14 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   }
   /** S in Edit · Map: label the bar under `t` "Section {n}" (n = sections + 1), unless it already starts one (§4.5). */
   function addSectionAt(t) {
-    if (locked()) return null;
+    if (!editable()) return null;
     const index = map.barIndexAt(clamp(Number(t) || 0, 0, duration())), existing = sectionLabelOf({index, label: map.measure(index).label});
     if (existing) { say(MAP_SESSION_COPY.alreadyStarts(barName(index), sectionStartingAt(index)?.name ?? existing)); return null; }
     const label = `Section ${map.sections.length + 1}`;
     if (attempt(() => map.edit((d) => { d.measures[index].label = label; }, 'label')) === FAILED) return null;
-    say(MAP_SESSION_COPY.sectionAdded(label), 'ok');
+    const text = MAP_SESSION_COPY.sectionAdded(label);
+    say(text, 'ok');
+    status(text, {tone: 'ok', action: {label: MAP_SESSION_COPY.renameAction, run: () => hooks.rename?.(index)}});
     return {index, label};
   }
   /**
@@ -733,8 +779,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
    * Two markers on one bar: the earlier wins, the other is skipped and kept.
    */
   function markersToSections() {
-    if (locked()) return {converted: [], skipped: []};
-    finishPass();
+    if (!editable()) return {converted: [], skipped: []};
     const {change, converted, skipped} = sectionsFromMarkers(map.data, markerHook.list() ?? [], duration());
     if (!converted.length) { say(MAP_SESSION_COPY.noMarkers); return {converted, skipped}; }
     const before = map.revision;
@@ -792,8 +837,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
   function applySuggestionReview() {
     const current = review.peek();
     if (!current) return {added: 0};
-    if (locked()) return {added: 0};
-    finishPass();
+    if (!editable()) return {added: 0};
     const chosen = current.blocks.filter((b) => b.accepted).map((b) => ({t0: map.bars[clamp(b.bar, 0, map.bars.length - 1)].t0, label: b.label}));
     const {change, added} = applySuggestion(map.data, chosen, duration());
     if (added && attempt(() => map.edit(change, 'sections')) === FAILED) return {added: 0};
@@ -826,7 +870,8 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
       resnap();
     });
     hooks.pauseMapSync?.(false);
-    hooks.suspendSaves?.(false);
+    // endBatch emits nothing, and the tries' own events came while saves were off: say whether a save is owed.
+    hooks.suspendSaves?.(false, {changed: !!(commit && changed)});
     say(commit && changed ? MAP_SESSION_COPY.usingTheirs : MAP_SESSION_COPY.keptYours, commit && changed ? 'ok' : 'info');
     return changed;
   }
@@ -881,7 +926,7 @@ export function createMapSession({engine, metronome, map, prefs, hooks = {}}) {
     select, selectNear, step, first, last, typeDigit, backspaceDigit, commitDigits, clearDigits, goToBar,
     pinDownbeat: (event) => tap('D', event), pinBeat: (event) => tap('T', event), pinLine, unpin: unpinLine, nudge, renumber, renumberTo,
     changeBeats, applyBar, toggleRamp, scale, tail, setTempoOpenSpan,
-    tap, startCalibration, togglePreview,
+    tap, tapAlong, startCalibration, togglePreview,
     setLabel, moveSectionBoundary, addSectionAt, markersToSections,
     reviewSuggestion, setSuggestionBlock, applySuggestionReview,
     beginAudition, endAudition,

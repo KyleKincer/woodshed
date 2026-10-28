@@ -41,9 +41,10 @@ function fakeHooks(markers = []) {
     markers,
     get loop() { return loop; },
     hooks: {
-      suspendSaves: (on) => log.push(`suspendSaves:${on}`),
+      suspendSaves: (on, opts) => log.push(`suspendSaves:${on}${opts?.changed ? ':changed' : ''}`),
       pauseMapSync: (on) => log.push(`pauseMapSync:${on}`),
       status: vi.fn(),
+      rename: vi.fn(),
       loop: {
         get: () => (loop ? {...loop} : null),
         set: (range) => { loop = range ? {...range} : null; engine.setLoop(!!range?.on, range?.a ?? 0, range?.b ?? 0); },
@@ -559,7 +560,9 @@ describe('Find a chart audition (D20)', () => {
     expect(session.beginAudition()).toBe(false);              // already auditioning
     map.replace(candidate(0.2), 'tempo-source');
     map.replace(candidate(0.4), 'tempo-source');
+    log.length = 0;
     expect(session.endAudition({commit: true})).toBe(true);
+    expect(log).toEqual(['pauseMapSync:false', 'suspendSaves:false:changed']);  // endBatch emits nothing: the save is owed
     expect(text()).toBe(MAP_SESSION_COPY.usingTheirs);
     expect(map.undoStack).toHaveLength(depth + 1);
     expect(map.data.origin).toBe('imported');
@@ -570,6 +573,20 @@ describe('Find a chart audition (D20)', () => {
 
   test('beginning an audition ends a preview and a tap pass; leaving the session mid-audition keeps your map', async () => {
     await open({store: mapStore(legacySongMap), duration: 30});
+    const depth = map.undoStack.length;
+    await engine.play();
+    playTo(1); session.pinDownbeat();
+    playTo(3); session.pinDownbeat();
+    expect(session.tapping.value).toBe(true);
+    session.beginAudition();
+    expect(session.tapping.value).toBe(false);
+    expect(map.undoStack).toHaveLength(depth + 1);            // the pass closed as its own step before the audition's batch
+    const tapped = map.undoStack.at(-1), afterPass = map.snapshot();
+    map.replace(candidate(0.2), 'tempo-source');
+    session.endAudition({commit: false});
+    expect(map.undoStack.at(-1)).toBe(tapped);                // Keep my map leaves the pass's step alone
+    expect(sameContent(map.snapshot(), afterPass)).toBe(true);
+    engine.stop();
     const before = map.snapshot();
     session.goToBar(3);
     await session.togglePreview();
@@ -675,9 +692,135 @@ describe('sections', () => {
   });
 });
 
+describe('edits that must not spill over', () => {
+  /** A stored 20-bar map with one pin at 120 quarters a minute; `make(i)` returns a measure's overrides. */
+  const stored = (make = () => ({})) => ({songMap: {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
+    measures: Array.from({length: 20}, (_, i) => ({id: `b${i}`, numerator: 4, denominator: 4, length: {n: 4, d: 1}, label: '', ...make(i)}))}});
+  /** Every field of the Meter form as the inspector would send it back unchanged. */
+  const formFields = (f = span().form) => ({numerator: f.numerator, denominator: f.denominator, groups: f.groups, pickup: f.pickup.value, label: f.label, applyTo: f.applyTo, keep: f.keep});
+
+  test('the Meter form: the offered pickup keeps a full bar 1 full; a label edit leaves other bars alone; all-ones groups are no change', async () => {
+    await open({tempo: stored(() => ({numerator: 3, length: {n: 3, d: 1}}))});
+    session.goToBar(1);
+    expect(span().form.pickup).toEqual({editable: true, value: 3});
+    expect(session.applyBar({...formFields(), numerator: 4})).toBe(true);
+    expect(text()).toMatch(/^Bar 1 is 4\/4 until the next change · /);
+    expect(map.measure(0).length).toEqual(fraction(4));
+    expect(span()).toMatchObject({name: 'Bar 1', display: 1, pickup: false});
+
+    await open({tempo: stored((i) => (i === 5 ? {length: {n: 2, d: 1}} : {}))});
+    session.goToBar(2);
+    expect(session.applyBar({...formFields(), label: 'Verse'})).toBe(true);
+    expect(text()).toBe('Bar 2 updated');
+    expect(map.measure(5).length).toEqual(fraction(2));      // the short bar later in the run stays short
+    expect(map.measure(1).label).toBe('Verse');
+    session.applyBar({...formFields(), numerator: 3});        // a real meter change keeps it short where it still fits
+    expect(map.measure(4)).toMatchObject({numerator: 3, length: fraction(3)});
+    expect(map.measure(5)).toMatchObject({numerator: 3, length: fraction(2)});
+
+    await open({tempo: stored(() => ({grouping: [1, 1, 1, 1]}))});
+    session.goToBar(3);
+    expect(span().form.groups).toBe('');
+    expect(session.applyBar({...formFields(), label: 'Verse'})).toBe(true);
+    expect(text()).toBe('Bar 3 updated');
+    expect(map.measure(3).grouping).toEqual([1, 1, 1, 1]);
+  });
+
+  test('a this-bar meter change chooses Keep beats from that bar only, not from a beat pin later in the run', async () => {
+    await open();
+    session.pinLine(fraction(0), 0);
+    session.pinLine(fraction(41), 20.5);                      // bar 11 beat 2
+    session.goToBar(3);
+    expect(span().form.keep).toBe('beats');                   // the whole run holds a beat pin
+    session.changeBeats(-1, {thisBar: true});
+    expect(text()).toBe('Bar 3 is 3/4 for this bar · pinned bar lines stayed put, the beats re-spread');
+  });
+
+  test('canUndo sees a batch the session did not open (a lane drag) before and after it closes', async () => {
+    await open();
+    expect(session.canUndo.value).toBe(false);
+    map.beginBatch();
+    map.edit((d) => { d.tailQpm = 100; }, 'drag');
+    expect(session.canUndo.value).toBe(true);
+    map.endBatch();
+    expect(map.undoStack).toHaveLength(1);
+    expect(session.canUndo.value).toBe(true);
+  });
+
+  test('an edit while a tap pass is open closes the pass first, so Undo of the pass keeps it', async () => {
+    const {h} = await open();
+    await engine.play();
+    playTo(1); session.pinDownbeat();
+    expect(session.tapping.value).toBe(true);
+    expect(session.addSectionAt(10)).toEqual({index: 4, label: 'Section 1'});  // bar 1 pinned at 1 s: 10 s is in bar 5
+    expect(session.tapping.value).toBe(false);
+    expect(map.undoStack).toHaveLength(2);
+    expect(text()).toBe('Section 1 added');
+    const [said, opts] = h.hooks.status.mock.lastCall;       // §4.5: "Section {n} added — Rename"
+    expect([said, opts.action.label]).toEqual(['Section 1 added', 'Rename']);
+    opts.action.run();
+    expect(h.hooks.rename).toHaveBeenCalledWith(4);
+    session.undo();
+    expect(map.measure(4).label).toBe('');
+    expect(map.isReal).toBe(true);                            // the tapped pin is still there
+    session.undo();
+    expect(map.isReal).toBe(false);
+  });
+
+  test('Preview: P again or destroy while play() waits on ctx.resume() leaves the transport stopped; the pickup reads as such', async () => {
+    const {h} = await open();
+    await engine.ctx.suspend();
+    const p1 = session.togglePreview(), p2 = session.togglePreview();
+    expect(await p1).toBe(false);
+    expect(await p2).toBe(false);
+    expect([engine.playing, session.previewing.value, engine.loop.enabled]).toEqual([false, false, false]);
+    await engine.ctx.suspend();
+    const p3 = session.togglePreview();
+    session.togglePreview();
+    const p4 = session.togglePreview();                       // a new preview while the first still waits
+    expect(await p3).toBe(false);
+    expect(await p4).toBe(true);
+    expect([engine.playing, session.previewing.value]).toEqual([true, true]);
+    await session.togglePreview();
+    await engine.ctx.suspend();
+    const p5 = session.togglePreview();
+    session.destroy();
+    expect(await p5).toBe(false);
+    expect(engine.playing).toBe(false);
+    session = createMapSession({engine, metronome, map: mapStore(pickup), prefs: fakePrefs(), hooks: h.hooks});
+    session.goToBar(0);
+    await session.togglePreview();
+    expect(text()).toBe('Previewing the pickup to bar 1 · Esc to stop');
+    expect(MAP_SESSION_COPY.previewing(null, null)).toBe('Previewing the pickup · Esc to stop');
+  });
+
+  test('Tap along: a preview gives way to playing with the hint; pressed again it stops and closes the pass', async () => {
+    await open();
+    session.goToBar(3);
+    await session.togglePreview();
+    expect(await session.tapAlong()).toBe(true);
+    expect([session.previewing.value, engine.playing, engine.loop.enabled]).toEqual([false, true, false]);
+    expect(text()).toBe(MAP_SESSION_COPY.tapAlong);
+    clock.advance(0.5); session.pinDownbeat();
+    expect(session.tapping.value).toBe(true);
+    expect(await session.tapAlong()).toBe(false);
+    expect([engine.playing, session.tapping.value]).toEqual([false, false]);
+    expect(text()).toBe('Tapped 1 line. Undo takes back the whole pass.');
+  });
+});
+
 describe('lifecycle', () => {
   test('destroy ends a preview and a pass, stops listening, and refuses later edits', async () => {
-    const {h} = await open();
+    const {h, prefs} = await open();
+    await engine.play();
+    playTo(1); session.pinDownbeat();
+    playTo(3); session.pinDownbeat();
+    session.destroy();
+    expect(session.tapping.value).toBe(false);
+    expect(map.batch).toBeNull();
+    expect(map.undoStack).toHaveLength(1);                    // the pass is one step
+    engine.stop();
+    session = createMapSession({engine, metronome, map, prefs, hooks: h.hooks});
     h.hooks.loop.set({on: true, a: 2, b: 4});
     session.goToBar(6);
     await session.togglePreview();
