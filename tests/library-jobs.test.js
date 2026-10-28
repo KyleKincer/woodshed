@@ -296,6 +296,83 @@ describe('createJobsModel: rows', () => {
     expect(m.items.peek().map(i => i.id)).toEqual(['fail', 'bot', 'old']);
   });
 
+  test('a failure reported as stage "error" (the companion) marks the step it failed in, from its code', () => {
+    s.library.jobs.value = [
+      job({jobId: 'split', status: 'error', stage: 'error', percent: 0, errorCode: 'separation_failed'}),
+      job({jobId: 'disk', status: 'error', stage: 'error', percent: 0, errorCode: 'disk_full'}),
+      job({jobId: 'bot', status: 'error', stage: 'error', percent: 0, errorCode: 'bot_check'}),
+      job({jobId: 'sync', status: 'error', stage: 'error', percent: 0, errorCode: 'sync_failed'}),
+      job({jobId: 'odd', status: 'error', stage: 'error', percent: 0, errorCode: 'unknown'}),
+      job({jobId: 'legacy', status: 'error', stage: 'error', percent: 0, errorCode: null, error: 'ERROR: Private video'}),
+      job({jobId: 'early', status: 'error', stage: 'queued', percent: 0, errorCode: 'separation_failed'}),
+    ];
+    const m = model();
+    const states = id => byId(m, id).stages.map(x => `${x.label}:${x.state}`);
+    expect(states('split')).toEqual(['Fetch:done', 'Split:failed', 'Finish:pending', 'Ready:pending']);
+    expect(byId(m, 'split').line).toBe('Splitting failed on this computer.');
+    expect(states('disk')).toEqual(['Fetch:done', 'Split:failed', 'Finish:pending', 'Ready:pending']);
+    expect(states('bot')).toEqual(['Fetch:failed', 'Split:pending', 'Finish:pending', 'Ready:pending']);
+    expect(states('sync')).toEqual(['Fetch:done', 'Split:done', 'Finish:failed', 'Ready:pending']);
+    expect(states('odd')).toEqual(['Fetch:failed', 'Split:pending', 'Finish:pending', 'Ready:pending']);
+    expect(states('legacy')).toEqual(['Fetch:failed', 'Split:pending', 'Finish:pending', 'Ready:pending']);
+    expect(states('early')).toEqual(['Fetch:done', 'Split:failed', 'Finish:pending', 'Ready:pending']);
+  });
+
+  test('disk full: Details is the primary (spec §3.6), first in the row, with Dismiss after it', () => {
+    s.library.jobs.value = [job({jobId: 'disk', status: 'error', stage: 'error', errorCode: 'disk_full', error: 'OSError: [Errno 28] No space left on device'})];
+    const m = model();
+    const vm = byId(m, 'disk');
+    expect(vm.detailsFirst).toBe(true);
+    expect(vm.actions.map(a => a.label)).toEqual(['Dismiss']);
+    expect(byId(model(), 'disk').detailsFirst).toBe(true);
+    installPopoverShim();
+    openPopover(m);
+    const buttons = [...document.querySelector('.lib-job[data-job-id="disk"] .lib-job-buttons').querySelectorAll('button')];
+    expect(buttons.map(b => accName(b))).toEqual([ACTIONS.details, 'Dismiss']);
+    expect(buttons[0].dataset.variant).toBe('primary');
+    s.library.jobs.value = [job({jobId: 'disk', status: 'error', errorCode: 'separation_failed'})];
+    const again = [...document.querySelector('.lib-job[data-job-id="disk"] .lib-job-buttons').querySelectorAll('button')];
+    expect(again.map(b => accName(b)).at(-1)).toBe(ACTIONS.details);
+    expect(again.at(-1).dataset.variant).toBe('quiet');
+  });
+
+  test('a first-run model or runtime download is "Setting up", with no split percent or ETA', () => {
+    const DL = 'Downloading the separation model (first run)…';
+    s.library.jobs.value = [job({percent: 10, message: DL})];
+    const m = model();
+    for (let i = 0; i < 40; i++) { tick(1000); s.library.jobs.value = [job({percent: 10 + 2 * (i + 1), message: DL})]; }
+    let vm = byId(m, 'run');
+    expect(vm.setup).toBe(true);
+    expect(vm.line).toBe('Setting up · 90%');
+    expect(vm.eta).toBeNull();
+    expect(vm.percent).toBeNull();
+    expect(vm.rail).toEqual({value: .9, striped: false});
+    expect(vm.activity).toMatch(/^Setting up on Kyle’s MacBook/);
+    expect(vm.message).toBe(DL);
+    const NV = 'Preparing NVIDIA acceleration (one-time download)…';
+    s.library.jobs.value = [job({percent: 40, message: NV})];
+    expect(byId(m, 'run').line).toBe('Setting up · 40%');
+    // The real split starts from 0: a split percent again, and the ETA history starts over.
+    s.library.jobs.value = [job({percent: 1, message: 'Separating stems…'})];
+    vm = byId(m, 'run');
+    expect(vm.setup).toBe(false);
+    expect(vm.line).toBe('Splitting · 1%');
+    expect(vm.eta).toBeNull();
+    tick(5000);
+    s.library.jobs.value = [job({percent: 2, message: 'Separating stems…'})];
+    expect(byId(m, 'run').eta).toBeNull();                          // not 15 s of the real split yet
+  });
+
+  test('desktop: the processor\'s first run reads as setting up for the local job', () => {
+    desktop.available = true;
+    s.processor.value = {phase: 'starting', firstRun: true, deviceId: 'dev1', name: 'Kyle’s MacBook'};
+    s.library.jobs.value = [job({percent: 30, message: 'Loading model…'})];
+    const m = model();
+    expect(byId(m, 'run').line).toBe('Setting up · 30%');
+    s.processor.value = {phase: 'busy', firstRun: false, deviceId: 'dev1', name: 'Kyle’s MacBook'};
+    expect(byId(m, 'run').line).toBe('Splitting · 30%');
+  });
+
   test('Cancel calls jobs.cancel; a failed action shows its error sentence', async () => {
     s.library.jobs.value = [job()];
     const m = model();
@@ -378,8 +455,13 @@ describe('createJobsModel: chip', () => {
   test('splitting, in progress, failed and nothing', async () => {
     const m = model();
     expect(m.chip.peek()).toBeNull();
-    s.library.jobs.value = [job({jobId: 'a'}), job({jobId: 'b', status: 'queued', stage: 'queued'})];
+    s.library.jobs.value = [job({jobId: 'a'}), job({jobId: 'b'})];
     expect(m.chip.peek()).toEqual({text: '2 splitting', tone: 'neutral', icon: 'loader'});
+    // Queued jobs are not splitting: only queued ones are "waiting", a mix is "in progress".
+    s.library.jobs.value = [job({jobId: 'a', status: 'queued', stage: 'queued'}), job({jobId: 'b', status: 'queued', stage: 'queued', deviceId: 'dev2'})];
+    expect(m.chip.peek()).toEqual({text: '2 waiting', tone: 'neutral', icon: 'loader'});
+    s.library.jobs.value = [job({jobId: 'a'}), job({jobId: 'b', status: 'queued', stage: 'queued'})];
+    expect(m.chip.peek().text).toBe('2 in progress');
     s.library.jobs.value = [job({jobId: 'a'}), job({jobId: 'c', kind: 'beats', stage: 'detect', songId: 'x'})];
     expect(m.chip.peek().text).toBe('2 in progress');
     s.library.jobs.value = [job({jobId: 'f', status: 'error', errorCode: 'separation_failed'})];
@@ -450,13 +532,115 @@ describe('createJobsModel: what finished', () => {
     const live = job({jobId: 'b1', kind: 'beats', stage: 'detect', songId: 'glass', settingsSummary: null});
     s.library.jobs.value = [live, {...live, jobId: 'b2', chainedFrom: 'x'}, {...live, jobId: 'b3', songId: 'other'}];
     const m = model();
-    api.get.mockImplementation(async ({jobId}) => ({...live, jobId, status: 'done', appliedAt: jobId === 'b1' ? T0 : null,
+    api.get.mockImplementation(async ({jobId}) => ({...live, jobId, status: 'done', appliedAt: jobId === 'b1' ? T0 : null, result: {beats: []},
       chainedFrom: jobId === 'b2' ? 'x' : null, songId: jobId === 'b3' ? 'other' : 'glass'}));
     s.library.jobs.value = [];
     await flush();
     expect(m.items.peek().map(i => i.id)).toEqual(['b3']);
     s.stage.value = {songId: 'other'};
     expect(m.items.peek()).toEqual([]);
+  });
+});
+
+describe('createJobsModel: what finished on the open song', () => {
+  const beatsLive = () => job({jobId: 'b1', kind: 'beats', stage: 'detect', songId: 'song1', settingsSummary: null, source: null});
+  const doneOf = (j, over = {}) => ({...j, status: 'done', stage: 'done', percent: 100, appliedAt: null, result: {beats: [[0, 1]]}, ...over});
+
+  test('a detection that finishes on the open song is not offered, even after going back to the Library', async () => {
+    s.library.songs.value = new Map([['song1', {id: 'song1', title: 'Song One'}]]);
+    s.stage.value = {songId: 'song1'};
+    const live = beatsLive();
+    s.library.jobs.value = [live];
+    const m = model();
+    api.get.mockResolvedValueOnce(doneOf(live));
+    s.library.jobs.value = [];
+    await flush();
+    s.stage.value = null;
+    expect(m.chip.peek()).toBeNull();
+    expect(m.items.peek()).toEqual([]);
+  });
+
+  test('the song being opened when the job vanished counts, even if the reply comes after leaving it', async () => {
+    s.library.songs.value = new Map([['song1', {id: 'song1', title: 'Song One'}]]);
+    s.stage.value = {songId: 'song1'};
+    const live = beatsLive();
+    s.library.jobs.value = [live];
+    const m = model();
+    let reply;
+    api.get.mockImplementationOnce(() => new Promise(r => { reply = r; }));
+    s.library.jobs.value = [];
+    s.stage.value = null;
+    reply(doneOf(live));
+    await flush();
+    expect(m.items.peek()).toEqual([]);
+  });
+
+  test('a split that finishes while its song is open is not "ready"', async () => {
+    s.library.songs.value = new Map([['song1', {id: 'song1', title: 'Song One'}]]);
+    s.stage.value = {songId: 'song1'};
+    const live = job({songId: 'song1'});
+    s.library.jobs.value = [live];
+    const m = model();
+    api.get.mockResolvedValueOnce(doneOf(live, {kind: 'separate', result: null}));
+    s.library.jobs.value = [];
+    await flush();
+    s.stage.value = null;
+    expect(m.ready.peek()).toEqual([]);
+  });
+
+  test('a done detection without a result is not offered', async () => {
+    const live = beatsLive();
+    s.library.jobs.value = [live];
+    const m = model();
+    api.get.mockResolvedValueOnce(doneOf(live, {result: null}));
+    s.library.jobs.value = [];
+    await flush();
+    expect(m.chip.peek()).toBeNull();
+  });
+
+  test('a found detection leaves once applied elsewhere (jobs.get follows it)', async () => {
+    s.library.songs.value = new Map([['song1', {id: 'song1', title: 'Song One'}]]);
+    const subs = new Map();
+    const off = vi.fn();
+    api.subscribeJob = vi.fn(({jobId}, onValue) => { subs.set(jobId, onValue); return off; });
+    const live = beatsLive();
+    s.library.jobs.value = [live];
+    const m = model();
+    api.get.mockResolvedValueOnce(doneOf(live));
+    s.library.jobs.value = [];
+    await flush();
+    expect(m.chip.peek()?.text).toBe('Bars found');
+    expect(api.subscribeJob).toHaveBeenCalledWith({jobId: 'b1'}, expect.any(Function), expect.any(Function));
+    subs.get('b1')(doneOf(live));                                  // unchanged: still offered
+    expect(m.chip.peek()?.text).toBe('Bars found');
+    subs.get('b1')(doneOf(live, {appliedAt: T0 + 1}));
+    expect(m.chip.peek()).toBeNull();
+    expect(m.items.peek()).toEqual([]);
+    expect(off).toHaveBeenCalled();
+  });
+
+  test('unapplied detections from before this session are asked for once (latestDetection)', async () => {
+    const songs = Array.from({length: 15}, (_, i) => [`s${i}`, {id: `s${i}`, title: `Song ${i}`, addedAt: T0 - i * MIN, lastPracticedAt: i === 14 ? T0 : null}]);
+    s.library.loaded.value = false;
+    s.library.songs.value = new Map(songs);
+    s.stage.value = {songId: 's3'};
+    api.latestDetection = vi.fn(async ({songId}) => (songId === 'nightbus' || songId === 's2' || songId === 's3'
+      ? {jobId: `det-${songId}`, kind: 'beats', status: 'done', songId, chainedFrom: null, appliedAt: null, result: {beats: [[0, 1]]}} : null));
+    const m = model();
+    await flush();
+    expect(api.latestDetection).not.toHaveBeenCalled();               // waits for the library
+    s.library.loaded.value = true;
+    await flush();
+    await flush();
+    const asked = api.latestDetection.mock.calls.map(c => c[0].songId);
+    expect(asked).toHaveLength(12);
+    expect(asked[0]).toBe('s14');                                       // practiced most recently first
+    expect(asked).not.toContain('s12');
+    expect(m.items.peek().map(i => i.id)).toEqual(['det-s2']);           // s3 is open: its Stage offers it
+    expect(m.chip.peek()?.text).toBe('Bars found');
+    s.library.songs.value = new Map([...songs, ['x', {id: 'x', title: 'X'}]]);
+    await flush();
+    expect(api.latestDetection).toHaveBeenCalledTimes(12);
   });
 });
 
@@ -515,6 +699,25 @@ describe('Jobs chip', () => {
     s.library.jobs.value = [];
     expect(slot.children).toHaveLength(0);
     expect(m.chip.peek()).toBeNull();
+  });
+
+  test('pressing the chip closes a popover anchored elsewhere (a card) instead of reopening it', () => {
+    const {slot, m} = mountChip();
+    s.library.jobs.value = [job()];
+    const card = document.createElement('div');
+    document.body.append(card);
+    openJobsPopover({anchor: card, model: m, store: s, desktop, now});
+    const button = slot.querySelector('button');
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    button.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+    button.dispatchEvent(new PointerEvent('pointerup', {bubbles: true}));
+    button.click();
+    expect(byRole('dialog', POPOVER.title)).toHaveLength(0);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    // The next press opens it again.
+    button.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+    button.click();
+    expect(byRole('dialog', POPOVER.title)).toHaveLength(1);
   });
 
   test('stays (as "Jobs") while the popover is open after the last job leaves', () => {
@@ -678,7 +881,7 @@ describe('CONTROLS', () => {
     else if (/found/.test(context)) {
       const beats = job({jobId: 'bg', kind: 'beats', stage: 'detect', songId: 'glass', settingsSummary: null});
       s.library.jobs.value = [beats];
-      api.get.mockResolvedValueOnce({...beats, status: 'done', appliedAt: null});
+      api.get.mockResolvedValueOnce({...beats, status: 'done', appliedAt: null, result: {beats: []}});
     } else s.library.jobs.value = live;
     const {slot, m} = mountChip();
     if (/found/.test(context)) { s.library.jobs.value = []; await flush(); }

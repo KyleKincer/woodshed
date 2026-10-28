@@ -12,6 +12,8 @@ export const quote = s => `“${s}”`;
 export const CHIP = Object.freeze({
   splitting: n => `${n} splitting`,
   inProgress: n => `${n} in progress`,
+  /** Only queued jobs: nothing is running yet. */
+  waiting: n => `${n} waiting`,
   failed: n => `${n} failed`,
   found: n => (n === 1 ? 'Bars found' : `Bars found · ${n}`),
   offline: 'Processor offline',
@@ -40,6 +42,8 @@ export const VERBS = Object.freeze({
   fetching: 'Fetching audio',
   preparing: 'Preparing audio',
   splitting: 'Splitting',
+  /** A first-run model or runtime download, reported under the `separate` stage (spec §6.6). */
+  settingUp: 'Setting up',
   finishing: 'Finishing',
   bars: 'Finding bars',
   sections: 'Finding sections',

@@ -12,6 +12,8 @@
 //   lb1b-jobs-actions         Details and Copy, Try now on the bot check, Cancel on a queued job
 //   lb1b-jobs-focus           opened from a processing card: focus lands on that job's row
 //   lb1b-jobs-found           a detection that finished during the session: Bars found, Not now, then empty
+//   lb1b-jobs-found-seeded    the seed's unapplied detection from before the session (job-detect-nightbus,
+//                             via jobs.latestDetection), offered after a reload; Open song opens it
 //   lb1b-jobs-uploads         an upload in progress (real bytes) and a failed upload (Dismiss)
 //   lb1b-jobs-web-offline     the web footer when the paired computer is offline
 //   lb1b-jobs-web-none        the web footer with no paired computer (Get Woodshed for desktop)
@@ -95,10 +97,12 @@ module.exports = [
     name: 'lb1b-jobs-popover',
     url: `${H}?${BASE}&open=1`,
     async fn(page, t) {
+      // The seed's unapplied detection from before the session (latestDetection) joins the list last.
+      await page.waitForSelector('.lib-job[data-job-id="job-detect-nightbus"]', {timeout: 8000});
       const f = await expectPopoverFits(t, page);
       const kinds = new Set(f.rows.map(r => r.kind));
       t.expect(['separate', 'beats', 'sections', 'import'].every(k => kinds.has(k)), `every job kind is listed (${[...kinds]})`);
-      t.expect(f.rows.length === 12, `12 rows (${f.rows.length})`);
+      t.expect(f.rows.length === 13 && f.rows.at(-1).id === 'job-detect-nightbus', `12 jobs and the found detection last (${f.rows.map(r => r.id)})`);
       const run = row(f, 'job-run');
       t.expect(run.title === 'Harbor Lights' && run.settings === 'Balanced · 4 stems' && run.source === 'youtube.com/… ↗', `split row ${JSON.stringify(run)}`);
       t.expect(JSON.stringify(run.stages) === JSON.stringify(['Fetch:done', 'Split:current', 'Finish:pending', 'Ready:pending']), `stepper ${run.stages}`);
@@ -207,6 +211,21 @@ module.exports = [
       t.expect(empty && f.chip?.text === 'Jobs', `the empty popover keeps its chip until it closes (${JSON.stringify(f.chip)})`);
       await page.keyboard.press('Escape');
       await page.waitForSelector('.lib-jobs-chip', {state: 'detached', timeout: 5000});
+    },
+  },
+  {
+    name: 'lb1b-jobs-found-seeded',
+    url: `${H}?${BASE}&open=1&only=beats`,
+    opts: {themes: ['light']},
+    async fn(page, t) {
+      await page.waitForSelector('.lib-job[data-job-id="job-detect-nightbus"]', {timeout: 8000});
+      const f = await expectPopoverFits(t, page);
+      const found = row(f, 'job-detect-nightbus');
+      t.expect(found?.status === 'done' && found.title === 'Night Bus' && found.actions.join() === 'Open song,Not now', `seeded detection ${JSON.stringify(found)}`);
+      t.expect(!row(f, 'job-beats-velvet'), 'the chained, server-applied detection is not offered');
+      await page.locator('.lib-job[data-job-id="job-detect-nightbus"]').getByRole('button', {name: 'Open song'}).click();
+      const log = await page.evaluate(() => window.__jobs.router.log);
+      t.expect(log.some(([kind, to]) => kind === 'navigate' && to === '/s/nightbus'), `Open song navigates to the song (${JSON.stringify(log)})`);
     },
   },
   {

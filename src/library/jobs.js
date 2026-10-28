@@ -21,6 +21,8 @@
 //          line /* the card line, §3.4 */, activity /* the popover line, §2.8 */, rail: {value, striped}|null,
 //          ahead, device: {id, name, online, local}|null, settingsLine, message, source: {label, url}|null,
 //          eta /* ms left, or null */, startedAt, failure: describeError()|null, local, resplit,
+//          detailsFirst /* the §3.6 row's primary is Details (disk full): actions are its secondaries */,
+//          setup /* a first-run model/runtime download under the separate stage: no split percent, no ETA */,
 //          actions: [{label, run, tone, target?}], details}
 //
 // Where the rows come from:
@@ -29,12 +31,15 @@
 //     progress: Signal<{loaded, total}>, state: Signal<'uploading'|'queued'|'error'|'canceled'>, cancel(),
 //     error?, dismiss?()}; `progress`/`state`/`error` may also be plain values. Only uploading and failed
 //     entries are rows: a queued one already has its job;
-//   - found detections: a beat detection seen live during this app session that left the list done,
-//     user-started (no chainedFrom) and unapplied (D44: the server applied it itself on an unmapped song and
-//     set appliedAt). The row offers [Open song] (the Stage then offers "Bars found while you were away") and
-//     [Not now] (jobs.markApplied, as the Stage's own Not now does).
-// `ready` follows separations (and imports) seen live that left the list done (jobs.get after they vanish);
-// opening the song (store.stage.songId) removes it.
+//   - found detections: a user-started (no chainedFrom) beat detection that is done, has a result and is
+//     unapplied (D44: the server applies it itself on an unmapped song and sets appliedAt). Either one seen
+//     live this session that left the list done while its song was not open (an open session applies its
+//     own), or one `jobs.latestDetection` returns for the DETECTION_PROBE_MAX most recently practiced/added
+//     songs when the library first loads. Each is followed with jobs.get (subscribeJob) and leaves once
+//     applied anywhere. The row offers [Open song] (the Stage then offers "Bars found while you were away")
+//     and [Not now] (jobs.markApplied, as the Stage's own Not now does).
+// `ready` follows separations (and imports) seen live that left the list done (jobs.get after they vanish)
+// while their song was not open; opening the song (store.stage.songId) removes it.
 //
 // ETA (spec §3.4): from the percent samples of the current `separate` stage, after the stage was seen for
 // ETA_AFTER_MS, over a moving ETA_WINDOW_MS window; hidden when the window's newer half moves at more
@@ -72,6 +77,31 @@ export const TICK_MS = 1000;
 export const COPIED_MS = 2000;
 /** Samples kept per job (the window rarely holds more). */
 const MAX_SAMPLES = 120;
+/** Songs asked for an unapplied detection (`jobs.latestDetection`) when the library first loads. */
+export const DETECTION_PROBE_MAX = 12;
+
+/**
+ * The stage a failed job stopped in when the companion reported only `stage: 'error'` (companion/server.mjs
+ * sends every failure that way): from its error code. Unknown codes read as the first step.
+ */
+const FAILED_STAGE = Object.freeze({
+  bot_check: 'download', unavailable: 'download', not_found: 'download', playlist: 'download', source_missing: 'download',
+  unreadable: 'download', separation_failed: 'separate', disk_full: 'separate', storage_full: 'sync', storage_full_user: 'sync',
+  account_paused: 'sync', sync_failed: 'sync',
+});
+/** The stage a failed job reads as on its stepper. */
+export function failedStage(job, code = job?.errorCode) {
+  const stage = job?.stage;
+  if (stage && stage !== 'error' && stage !== 'queued') return stage;
+  return FAILED_STAGE[code] ?? 'download';
+}
+
+/**
+ * A first-run download the companion reports under the `separate` stage (the separation model, or the
+ * NVIDIA runtime: companion/pipeline.py DOWNLOAD_MESSAGE, companion/gpu_runtime.py). Not split progress.
+ */
+const SETUP_MESSAGE = /\(first run\)|one-time download/i;
+export const isSetupMessage = message => typeof message === 'string' && SETUP_MESSAGE.test(message);
 
 const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = v => (typeof v === 'string' ? v.trim() : '');
@@ -227,8 +257,13 @@ export function createJobsModel({
   const seen = new Map();             // jobId → {kind, songId} of jobs seen live this session
   const readyIds = signal(new Set());
   const found = signal(new Map());    // jobId → JobDetail (done, unapplied, user-started detections)
+  const foundWatches = new Map();     // jobId → off() of its jobs.get subscription
   const disposers = [];
   let destroyed = false;
+
+  /** A first-run download on this job's computer (the message, or the desktop processor's first run). */
+  const settingUp = (job, processor = store.processor.peek()) => isSetupMessage(job?.message)
+    || (!!desktop.available && !!processor?.firstRun && !!processor?.deviceId && processor.deviceId === job?.deviceId);
 
   const routerOf = () => {
     if (router) return router;
@@ -247,7 +282,7 @@ export function createJobsModel({
         present.add(job.jobId);
         if (isLiveStatus(job.status)) seen.set(job.jobId, {kind: job.kind, songId: job.songId ?? null});
         else seen.delete(job.jobId);
-        if (job.status === 'running' && job.stage === 'separate' && job.kind === 'separate') {
+        if (job.status === 'running' && job.stage === 'separate' && job.kind === 'separate' && !settingUp(job)) {
           const pct = Number(job.percent) || 0;
           let entry = history.get(job.jobId);
           if (!entry || entry.stage !== job.stage || pct < (entry.samples.at(-1)?.[1] ?? 0)) {
@@ -263,30 +298,80 @@ export function createJobsModel({
         } else if (history.delete(job.jobId)) touched = true;
       }
       for (const id of [...history.keys()]) if (!present.has(id)) { history.delete(id); touched = true; }
+      const openSong = store.stage.peek()?.songId ?? null;
       for (const [jobId, info] of [...seen]) {
         if (present.has(jobId)) continue;
         seen.delete(jobId);
-        void settleVanished(jobId, info);
+        void settleVanished(jobId, {...info, openAtVanish: openSong});
       }
       if (touched) historyVersion.value++;
     });
   }));
+
+  /** A detection the Library may offer: done, user-started, with a result, not applied (jobs.latestDetection, §6.4). */
+  const offerable = d => !!d && d.status === 'done' && d.kind === 'beats' && !d.chainedFrom && !d.appliedAt && d.result != null;
 
   async function settleVanished(jobId, info) {
     let detail = null;
     try { detail = await api.get({jobId}); } catch { return; }
     if (destroyed || !detail || detail.status !== 'done') return;
     const songId = detail.songId ?? info.songId ?? null;
-    if ((detail.kind === 'separate' || detail.kind === 'import') && songId) {
+    if (!songId) return;
+    // The song is open (or was when the job finished): that session applies the result itself (D44) and the
+    // user is looking at the song, so it is neither "ready" nor a found detection here.
+    if (info.openAtVanish === songId || store.stage.peek()?.songId === songId) return;
+    if (detail.kind === 'separate' || detail.kind === 'import') {
       const next = new Set(readyIds.peek());
       next.add(songId);
       readyIds.value = next;
-    } else if (detail.kind === 'beats' && songId && !detail.appliedAt && !detail.chainedFrom) {
-      const next = new Map(found.peek());
-      next.set(jobId, {...detail, songId});
-      found.value = next;
+    } else if (offerable(detail)) addFound({...detail, songId});
+  }
+
+  function addFound(detail) {
+    if (destroyed || found.peek().has(detail.jobId)) return;
+    const next = new Map(found.peek());
+    next.set(detail.jobId, detail);
+    found.value = next;
+    // Follow the job: once a session (here or on another device) applies it, the row goes.
+    if (typeof api.subscribeJob === 'function') {
+      try {
+        const off = api.subscribeJob({jobId: detail.jobId}, value => { if (!offerable(value)) dismissFound(detail.jobId); }, () => {});
+        if (typeof off === 'function') foundWatches.set(detail.jobId, off);
+      } catch { /* not signed in: the row stays until Not now or the song is opened */ }
     }
   }
+
+  function dropFound(predicate) {
+    const f = found.peek();
+    const gone = [...f].filter(([id, d]) => predicate(d, id)).map(([id]) => id);
+    if (!gone.length) return;
+    for (const id of gone) { foundWatches.get(id)?.(); foundWatches.delete(id); }
+    found.value = new Map([...f].filter(([id]) => !gone.includes(id)));
+  }
+
+  // ---- unapplied detections from before this session (D44: a reload, or finished while the app was closed).
+  // `latestDetection` is per song, so the most recently practiced (then added) songs are asked, once.
+  let probed = false;
+  disposers.push(effect(() => {
+    const songs = lib.songs.value;
+    const loaded = lib.loaded ? lib.loaded.value : true;
+    if (probed || !loaded || !(songs?.size > 0) || typeof api.latestDetection !== 'function') return;
+    probed = true;
+    untracked(() => {
+      const recent = n => (Number.isFinite(n) ? n : 0);
+      const candidates = [...songs.values()].filter(x => x?.id)
+        .sort((a, b) => recent(b.lastPracticedAt) - recent(a.lastPracticedAt) || recent(b.addedAt) - recent(a.addedAt))
+        .slice(0, DETECTION_PROBE_MAX);
+      for (const song of candidates) {
+        Promise.resolve().then(() => api.latestDetection({songId: song.id})).then(detail => {
+          if (destroyed || !offerable(detail)) return;
+          const songId = detail.songId ?? song.id;
+          if (store.stage.peek()?.songId === songId) return;
+          addFound({...detail, songId});
+        }, () => {});
+      }
+    });
+  }));
 
   // ---- opening a song clears its ready mark and its found detection (the Stage offers it)
   disposers.push(effect(() => {
@@ -298,8 +383,7 @@ export function createJobsModel({
         next.delete(songId);
         readyIds.value = next;
       }
-      const f = found.peek();
-      if ([...f.values()].some(d => d.songId === songId)) found.value = new Map([...f].filter(([, d]) => d.songId !== songId));
+      dropFound(d => d.songId === songId);
     });
   }));
 
@@ -314,11 +398,7 @@ export function createJobsModel({
   }));
 
   function dismissFound(jobId) {
-    const f = found.peek();
-    if (!f.has(jobId)) return;
-    const next = new Map(f);
-    next.delete(jobId);
-    found.value = next;
+    dropFound((_, id) => id === jobId);
   }
 
   /** Wraps an action: a failure becomes an error toast with the error copy's sentence. */
@@ -365,22 +445,23 @@ export function createJobsModel({
     const cover = (/^https:\/\//i.test(thumb) ? thumb : '') || str(song?.coverUrl) || null;
     const coverKey = cover ? null : str(meta.coverKey) || str(song?.coverKey) || null;
     const failed = job.status === 'error';
-    const {stages, current} = stagesFor(kind, failed && (job.stage === 'error' || job.stage === 'queued') ? 'download' : job.stage, {sourceType});
     const device = deviceFor(job.deviceId ?? null, ctx);
     const deviceName = device?.name ?? DEVICES.yourComputer;
-    const percent = job.status === 'running' && current !== 'finish' && current != null ? clampPct(job.percent) : null;
+    const failure = failed ? describeError(job, {context: 'job', song, device: deviceName, jobs: api, desktop, ...(router ? {router} : {})}) : null;
+    const {stages, current} = stagesFor(kind, failed ? failedStage(job, failure.code) : job.stage, {sourceType});
+    const setup = job.status === 'running' && kind === 'separate' && current === 'split' && settingUp(job, ctx.processor);
+    const percent = job.status === 'running' && current !== 'finish' && current != null && !setup ? clampPct(job.percent) : null;
     const ahead = aheadOf(job, ctx.jobs);
     const resplit = kind === 'separate' && !!song;
     const local = !!device?.local;
     const startedAt = Number.isFinite(job.startedAt) ? job.startedAt : null;
     const samples = history.get(job.jobId)?.samples;
-    const eta = job.status === 'running' && kind === 'separate' && current === 'split' ? estimateRemaining(samples, ctx.at) : null;
+    const eta = job.status === 'running' && kind === 'separate' && current === 'split' && !setup ? estimateRemaining(samples, ctx.at) : null;
     const settings = kind === 'separate' ? settingsLine(job.settingsSummary) : null;
-    let failure = null, line, activity, rail = null;
+    let line, activity, rail = null;
     const actions = [];
 
     if (failed) {
-      failure = describeError(job, {context: 'job', song, device: deviceName, jobs: api, desktop, ...(router ? {router} : {})});
       line = failure.sentence;
       activity = failure.sentence;
       actions.push(...failureActions(failure));
@@ -398,6 +479,14 @@ export function createJobsModel({
       line = LINES.waitingFor(device.name);
       activity = LINES.pausedOn(device.name);
       rail = {value: percent != null ? percent / 100 : 0, striped: true};
+    } else if (setup) {
+      // A first-run download (spec §6.6): its own percent, no split percent and no ETA; the message says what.
+      const pct = clampPct(job.percent);
+      line = LINES.percent(VERBS.settingUp, pct);
+      const parts = [LINES.on(VERBS.settingUp, deviceName)];
+      if (startedAt != null) parts.push(LINES.started(formatElapsed(ctx.at - startedAt)));
+      activity = parts.join(' · ');
+      rail = {value: pct / 100, striped: false};
     } else {
       const verb = verbFor(kind, current, sourceType);
       line = percent != null ? LINES.percent(verb, percent) : verb;
@@ -421,7 +510,7 @@ export function createJobsModel({
       id: job.jobId, jobId: job.jobId, kind, status: job.status, songId: job.songId ?? null, title, quoted, artist, cover, coverKey,
       stages: stageStateList(stages, current, failed), current, percent, line, activity, rail, ahead, device,
       settingsLine: settings, message: isLiveStatus(job.status) ? str(job.message) || null : null, source: sourceLink(job.source),
-      eta, startedAt, failure, local, resplit, actions, details,
+      eta, startedAt, failure, detailsFirst: !!failure?.detailsFirst, setup, local, resplit, actions, details,
     };
   }
 
@@ -458,7 +547,8 @@ export function createJobsModel({
     return {
       id, jobId: null, kind: 'upload', status: failed ? 'error' : 'running', songId: null, title, quoted: false, artist: '', cover: null,
       coverKey: null, stages: stageStateList(stages, current, failed), current, percent, line, activity, rail, ahead: 0, device,
-      settingsLine: null, message: null, source: null, eta: null, startedAt: null, failure, local: !!device?.local, resplit: false, actions,
+      settingsLine: null, message: null, source: null, eta: null, startedAt: null, failure, detailsFirst: !!failure?.detailsFirst, setup: false,
+      local: !!device?.local, resplit: false, actions,
       details: failure ? failure.details : detailsText([['Upload', name], ['Bytes', total ? `${loaded} of ${total}` : loaded]]),
     };
   }
@@ -472,7 +562,7 @@ export function createJobsModel({
       artist: str(song?.artist), cover: str(song?.coverUrl) || null, coverKey: str(song?.coverUrl) ? null : str(song?.coverKey) || null,
       stages: stageStateList(stages, 'ready', false), current: 'ready', percent: null,
       line: LINES.found, activity: LINES.found, rail: null, ahead: 0, device: deviceFor(detail.deviceId ?? null, ctx), settingsLine: null,
-      message: null, source: null, eta: null, startedAt: detail.startedAt ?? null, failure: null, local: false, resplit: false,
+      message: null, source: null, eta: null, startedAt: detail.startedAt ?? null, failure: null, detailsFirst: false, setup: false, local: false, resplit: false,
       actions: [
         {label: ACTIONS.openSong, tone: 'primary', run: guarded(async () => routerOf()?.navigate?.(`/s/${encodeURIComponent(detail.songId)}`))},
         {label: ACTIONS.notNow, tone: 'quiet', run: guarded(async () => { await api.markApplied({jobId: detail.jobId}); dismissFound(detail.jobId); })},
@@ -507,8 +597,11 @@ export function createJobsModel({
     // One message (spec §2.1: `◐ 2 splitting`, `⚠ 1 failed` or `⦸ Processor offline`), the most urgent first.
     if (failed.length) return {text: CHIP.failed(failed.length), tone: 'warn', icon: 'alert-triangle'};
     if (live.length) {
-      const splits = live.every(i => i.kind === 'separate' || i.kind === 'upload');
-      return {text: splits ? CHIP.splitting(live.length) : CHIP.inProgress(live.length), tone: 'neutral', icon: 'loader'};
+      // "Splitting" only while every live job is a running split or upload; only queued ones are "waiting".
+      const queued = live.filter(i => i.status === 'queued').length;
+      const splits = !queued && live.every(i => i.kind === 'separate' || i.kind === 'upload');
+      const text = queued === live.length ? CHIP.waiting(live.length) : splits ? CHIP.splitting(live.length) : CHIP.inProgress(live.length);
+      return {text, tone: 'neutral', icon: 'loader'};
     }
     if (foundCount) return {text: CHIP.found(foundCount), tone: 'accent', icon: 'sparkles'};
     return null;
@@ -537,6 +630,8 @@ export function createJobsModel({
       if (destroyed) return;
       destroyed = true;
       for (const d of disposers.splice(0)) d();
+      for (const off of foundWatches.values()) off();
+      foundWatches.clear();
     },
   };
 }
@@ -621,8 +716,8 @@ function JobRow(initial, {clipboard = globalThis.navigator?.clipboard} = {}) {
   const detailsButton = Button({label: ACTIONS.details, variant: 'quiet', size: 'sm', className: 'lib-job-details-toggle',
     attrs: {'aria-expanded': 'false', 'aria-controls': `${uid}-details-region`}, onClick: () => toggleDetails()});
   detailsRegion.id = `${uid}-details-region`;
-  const body = h('div', {class: 'lib-job-body'}, title, stepper.el, activity, ahead, settings, message, source,
-    h('div', {class: 'lib-job-buttons'}, actions, detailsButton.el), detailsRegion);
+  const buttonRow = h('div', {class: 'lib-job-buttons'}, actions, detailsButton.el);
+  const body = h('div', {class: 'lib-job-body'}, title, stepper.el, activity, ahead, settings, message, source, buttonRow, detailsRegion);
   const el = h('li', {class: 'lib-job', tabIndex: -1, attrs: {'aria-labelledby': `${uid}-title`}}, cover.el, body);
 
   function toggleDetails(open = detailsRegion.hidden) {
@@ -684,6 +779,10 @@ function JobRow(initial, {clipboard = globalThis.navigator?.clipboard} = {}) {
       source.removeAttribute('href');
     }
     if (pre.textContent !== vm.details) pre.textContent = vm.details ?? '';
+    // A row whose primary is Details (spec §3.6, disk full) shows it first, as the primary button.
+    detailsButton.set({variant: vm.detailsFirst ? 'primary' : 'quiet'});
+    if (vm.detailsFirst && buttonRow.firstChild !== detailsButton.el) buttonRow.prepend(detailsButton.el);
+    else if (!vm.detailsFirst && buttonRow.lastChild !== detailsButton.el) buttonRow.append(detailsButton.el);
     renderActions();
   }
 
@@ -853,10 +952,27 @@ export function closeJobsPopover(reason = 'close') {
  */
 export function mountJobsChip(slot, {model = null, store = appStore, desktop = appDesktop, now = clockNow} = {}) {
   const m = model ?? sharedJobsModel();
+  // Whether the popover was open when the chip was pressed: read before the popover's outside-press
+  // dismissal (a capture listener on the document) closes a popover anchored elsewhere (a card).
+  let pressedOpen = null, pressTimer = null;
+  const view = slot.ownerDocument?.defaultView ?? globalThis;
+  const onPress = event => {
+    if (!button.el.contains(event.target)) return;
+    pressedOpen = !!openHandle?.open;
+  };
+  const onRelease = () => {
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => { pressedOpen = null; }, 0);
+  };
+  view.addEventListener?.('pointerdown', onPress, true);
+  view.addEventListener?.('pointerup', onRelease, true);
+  view.addEventListener?.('pointercancel', onRelease, true);
   const button = Button({label: CHIP.idle, icon: 'loader', variant: 'quiet', className: 'lib-jobs-chip',
     attrs: {'aria-haspopup': 'dialog', 'aria-expanded': 'false'},
     onClick: () => {
-      if (openHandle?.open) openHandle.close('close');
+      const wasOpen = pressedOpen ?? !!openHandle?.open;
+      pressedOpen = null;
+      if (wasOpen) closeJobsPopover('close');
       else openJobsPopover({anchor: button.el, model: m, store, desktop, now});
     }});
   chipButton = button;
@@ -876,6 +992,10 @@ export function mountJobsChip(slot, {model = null, store = appStore, desktop = a
     el: button.el,
     destroy() {
       off();
+      clearTimeout(pressTimer);
+      view.removeEventListener?.('pointerdown', onPress, true);
+      view.removeEventListener?.('pointerup', onRelease, true);
+      view.removeEventListener?.('pointercancel', onRelease, true);
       if (chipButton === button) chipButton = null;
       button.destroy();
     },
