@@ -38,7 +38,7 @@ const stages = current => ['fetch', 'split', 'finish'].map((id, i, all) => ({id,
   state: current == null ? 'pending' : i < all.indexOf(current) ? 'done' : id === current ? 'current' : 'pending'}));
 
 function jobVM(id, extra) {
-  return {id, kind: 'separate', songId: null, title: null, quoted: null, cover: null, stages: stages(null), percent: 0, line: '', ahead: 0,
+  return {id, kind: 'separate', songId: null, title: null, quoted: false, cover: null, coverKey: null, stages: stages(null), percent: 0, line: '', ahead: 0,
     device: null, settingsLine: '', message: null, source: null, eta: null, failure: null, local: false, actions: [], ...extra};
 }
 
@@ -56,7 +56,7 @@ async function cardsPart(el, h, query) {
   const items = [
     Song(songs[0], base),
     Song({...songs[1], lastPracticedAt: null, addedAt: now - DAY}, {...base, isNew: true}),
-    Job(jobVM('w', {quoted: 'marisol vega satellites live', line: 'Waiting · 2 ahead', stages: stages(null)}), jobBase),
+    Job(jobVM('w', {title: 'marisol vega satellites live', quoted: true, line: 'Waiting · 2 ahead', stages: stages(null)}), jobBase),
     Job(jobVM('f', {title: 'Lighthouse Keeper', cover: ART[1], line: 'Fetching audio · 38%', percent: 38, stages: stages('fetch')}), jobBase),
     Job(jobVM('s', {title: 'Harbor Lights', cover: ART[5], line: 'Splitting · 46% · ~2 min', percent: 46, stages: stages('split')}), jobBase),
     Job(jobVM('z', {title: 'Tin Roof Rain', cover: ART[0], line: 'Finishing', percent: 90, stages: stages('finish')}), jobBase),

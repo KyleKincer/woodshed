@@ -40,6 +40,8 @@ import {icon} from '../ui/icon.js';
 import {ProgressRail} from '../ui/progress.js';
 import {bindContextMenu, Menu} from '../ui/menu.js';
 import {signKeys} from '../api/media.js';
+import {toast} from '../app/feedback.js';
+import {describeError} from '../app/error-copy.js';
 import {setArtwork} from '../js/artwork.js';
 import {COPY} from './home.copy.js';
 import {artistLabel, formatDuration, metaLine, relativeTime} from './song-labels.js';
@@ -94,16 +96,26 @@ export function Cover({className = ''} = {}) {
       shown = id;
       const mine = ++token;
       const seed = {id: seedSong?.id, title: seedSong?.title, artist: seedSong?.artist, uploader: seedSong?.uploader, album: seedSong?.album};
+      let resigned = false;
+      const sign = () => signedCover(src.key).then(url => {
+        if (token !== mine) return;
+        if (url) paint(url);
+        else if (shown === id) shown = null;   // not signed (a failed batch): the next render asks again
+      });
       const paint = url => {
         const keep = [...el.children].filter(child => child.tagName !== 'IMG');   // the rail stays on the cover
         setArtwork(el, seed, url);
         const img = el.querySelector('img');
-        if (img) { img.loading = 'lazy'; img.draggable = false; img.alt = ''; }
+        if (img) {
+          img.loading = 'lazy'; img.draggable = false; img.alt = '';
+          // A signed URL can expire (6 h) before a lazy image below the fold loads: sign it again, once.
+          if (src?.key) img.addEventListener('error', () => { if (token === mine && !resigned) { resigned = true; void sign(); } }, {once: true});
+        }
         el.append(...keep);
       };
       if (src?.url) { paint(src.url); return; }
       paint(null);
-      if (src?.key) signedCover(src.key).then(url => { if (url && token === mine) paint(url); });
+      if (src?.key) void sign();
     },
   };
 }
@@ -148,13 +160,34 @@ export function railOf(job) {
   return Number.isFinite(pct) ? {value: Math.max(0, Math.min(1, pct / 100)), striped: false} : {value: null, striped: false};
 }
 
-const jobTitle = job => (job?.title ? String(job.title) : job?.quoted ? `“${job.quoted}”` : '');
-/** A failed card's inline action: the failure's primary action (Try again, Try now, Try Fast quality…), else the job's Try again. */
+/** A job's title; `quoted` (a search with no metadata title yet) shows the query in quotes (spec §2.8). */
+const jobTitle = job => {
+  const t = job?.title ? String(job.title) : '';
+  return t && job?.quoted === true ? `“${t}”` : t;
+};
+/**
+ * A failed card's inline action: the failure's primary action (Try again, Try now, Try Fast quality…),
+ * run through the job's own action of the same target or label when it has one (LB1b guards those:
+ * an error toast, and the processor refresh after a retry), else the job's Try again.
+ */
 const retryOf = job => {
   const primary = job?.failure?.primary;
-  if (primary?.label && typeof primary.run === 'function') return primary;
-  return job?.actions?.find?.(a => a?.label === COPY.tryAgain && typeof a.run === 'function') ?? null;
+  const actions = Array.isArray(job?.actions) ? job.actions.filter(a => a?.label && typeof a.run === 'function') : [];
+  if (primary?.label) {
+    const own = actions.find(a => (primary.target && a.target === primary.target) || a.label === primary.label);
+    if (own) return own;
+    if (typeof primary.run === 'function') return primary;
+  }
+  return actions.find(a => a.label === COPY.tryAgain) ?? null;
 };
+/** Runs an action; a failure that reaches here becomes an error toast, never an unhandled rejection. */
+function runAction(action) {
+  const fail = err => toast(describeError(err, {context: 'job'}).sentence, {tone: 'error'});
+  try {
+    const out = action?.run?.();
+    if (out && typeof out.then === 'function') out.then(undefined, fail);
+  } catch (err) { fail(err); }
+}
 const isPlainClick = e => e && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
 let seq = 0;
@@ -192,9 +225,8 @@ function createParts(kind, {song, job, opts}) {
   const open = s
     ? h('a', {class: ['lib-open', kind === 'card' ? 'lib-open-cover' : 'lib-open-title'], id: `${id}-open`, attrs: {'aria-describedby': meta.id, draggable: 'false'}})
     : h('button', {class: ['lib-open', kind === 'card' ? 'lib-open-cover' : 'lib-open-title'], id: `${id}-open`, type: 'button', attrs: {'aria-describedby': meta.id}});
-  const rowArtist = h('span', {class: 'lib-row-artist-text', attrs: {'aria-hidden': 'true'}});
   if (kind === 'card') open.append(cover.el);
-  else open.append(h('span', {class: 'lib-row-title-line'}, newDot, titleText), rowArtist);
+  else open.append(h('span', {class: 'lib-row-title-line'}, newDot, titleText));
 
   let review = null, rail = null, moreBtn = null, menu = null, active = false, offMenu = () => {};
 
@@ -207,7 +239,7 @@ function createParts(kind, {song, job, opts}) {
     if (isPlainClick(e)) nameCover(cover.el, s.id);
   });
   on(artistBtn, 'click', () => { const name = s ? artistLabel(s) : ''; if (name) o.onArtist?.(name); });
-  on(tryBtn, 'click', () => { retryOf(j)?.run?.(); });
+  on(tryBtn, 'click', () => runAction(retryOf(j)));
   on(detailsBtn, 'click', () => o.onJob?.(j, {anchor: detailsBtn}));
 
   const menuItems = (event, anchor) => (s && typeof o.onMenu === 'function' ? o.onMenu(s, {anchor, event}) ?? null : null);
@@ -264,8 +296,6 @@ function createParts(kind, {song, job, opts}) {
     // row 2: the artist drills down
     const artist = s ? artistLabel(s) : '';
     artistText.textContent = artist;
-    rowArtist.textContent = artist;
-    rowArtist.hidden = !artist;
     artistBtn.hidden = !artist;
     if (artist) { artistBtn.setAttribute('aria-label', COPY.openArtist(artist)); artistBtn.title = artist; }
     else { artistBtn.removeAttribute('aria-label'); artistBtn.removeAttribute('title'); }
@@ -279,11 +309,11 @@ function createParts(kind, {song, job, opts}) {
     if (retry && tryBtn.textContent !== retry.label) tryBtn.textContent = retry.label;
     detailsBtn.setAttribute('aria-label', COPY.jobDetails(t));
 
-    // the cover: the song's art, else the job's (an R2 key or a URL)
-    cover.set(s ?? j?.cover ?? null, s ?? {id: j?.id, title: jobTitle(j)});
+    // the cover: the song's art, else the job's (a URL in `cover`, an R2 key in `coverKey`)
+    cover.set(s ?? j?.cover ?? (j?.coverKey ? {key: j.coverKey} : null), s ?? {id: j?.id, title: jobTitle(j)});
 
-    // the rail on the cover's bottom edge
-    const r = state === 'failed' || state === 'ready' ? null : railOf(j);
+    // the rail on the cover's bottom edge: the job's own (queued, paused offline, setup, upload), else from its stages
+    const r = state === 'failed' || state === 'ready' ? null : (j?.rail && typeof j.rail === 'object' ? j.rail : railOf(j));
     if (r && !rail) { rail = ProgressRail({className: 'lib-rail', ...r}); cover.el.append(rail.el); }
     else if (r) rail.set(r);
     else if (rail) { rail.destroy(); rail = null; }

@@ -8,7 +8,7 @@
 // import home.js are skipped until both files exist (Appendix C item 60), and run at integration I1b.
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import {installPopoverShim, restoreDomShims, setRect} from './helpers/dom.js';
 
 const peers = vi.hoisted(() => ({items: null, reviews: []}));
@@ -17,14 +17,14 @@ vi.mock('../src/library/jobs.js', async () => {
   const {computed, signal} = await import('../src/app/store.js');
   const items = signal([]);
   peers.items = items;
-  return {
-    createJobsModel: () => ({
-      items,
-      bySong: computed(() => new Map(items.value.filter(j => j.songId).map(j => [j.songId, j]))),
-      chip: computed(() => null),
-      ready: computed(() => []),
-    }),
+  // LB1b's shape: `items` also holds found, unapplied detections (status 'done'), which bySong leaves out.
+  const model = {
+    items,
+    bySong: computed(() => new Map(items.value.filter(j => j.songId && j.status !== 'done').map(j => [j.songId, j]))),
+    chip: computed(() => null),
+    ready: computed(() => []),
   };
+  return {createJobsModel: () => model, sharedJobsModel: () => model};
 });
 vi.mock('../src/library/review-chip.js', () => ({
   ReviewChip: song => {
@@ -88,7 +88,7 @@ const LIBRARY = [
 ];
 
 function jobVM(id, extra = {}) {
-  return {id, kind: 'separate', songId: null, title: null, quoted: null, cover: null, stages: [], percent: 0, line: '', ahead: 0, device: null,
+  return {id, kind: 'separate', songId: null, title: null, quoted: false, cover: null, coverKey: null, stages: [], percent: 0, line: '', ahead: 0, device: null,
     settingsLine: '', message: null, source: null, eta: null, failure: null, local: false, actions: [], ...extra};
 }
 
@@ -281,9 +281,28 @@ describe('SongCard / SongRow', () => {
     expect(onJob).toHaveBeenCalledWith(job, {anchor: card.focusTarget});
   });
 
-  it('a job without a title reads its quoted query', () => {
-    const card = cards.JobCard(jobVM('j2', {quoted: 'harbor lights ada moreno', line: 'Waiting · 2 ahead'}));
+  it("a search job with no metadata title yet shows its query in quotes (LB1b: title is the query, quoted: true)", () => {
+    const card = cards.JobCard(jobVM('j2', {title: 'harbor lights ada moreno', quoted: true, line: 'Waiting · 2 ahead'}));
     expect(card.el.querySelector('.lib-title-text').textContent).toBe('“harbor lights ada moreno”');
+    card.update(jobVM('j2', {title: 'Harbor Lights', quoted: false, line: 'Fetching'}));
+    expect(card.el.querySelector('.lib-title-text').textContent).toBe('Harbor Lights');
+  });
+
+  it("a job card's cover: an R2 coverKey is signed; the URL in cover is used as is", async () => {
+    const keyed = cards.JobCard(jobVM('jk', {title: 'Harbor Lights', cover: null, coverKey: 'covers/new.png'}));
+    const url = cards.JobCard(jobVM('ju', {title: 'Undertow', cover: 'https://i.ytimg.com/u.jpg', coverKey: null}));
+    await flush();
+    expect(keyed.cover.querySelector('img')?.getAttribute('src')).toBe('https://cdn.test/covers/new.png');
+    expect(url.cover.querySelector('img')?.getAttribute('src')).toBe('https://i.ytimg.com/u.jpg');
+  });
+
+  it("the rail: the job's own rail when it has one (paused offline: striped; first-run setup: its percent)", () => {
+    const paused = cards.JobCard(jobVM('jp', {title: 'A', percent: 40, stages: [{id: 'split', state: 'current'}], rail: {value: 0.4, striped: true}}));
+    const rail = paused.el.querySelector('.lib-rail');
+    expect(rail.dataset.striped).toBe('');
+    const setup = cards.JobCard(jobVM('js', {title: 'B', percent: null, stages: [{id: 'split', state: 'current'}], rail: {value: 0.3, striped: false}}));
+    const fill = setup.el.querySelector('.lib-rail');
+    expect(fill.getAttribute('aria-valuenow') ?? fill.querySelector('.ui-progress-rail-fill')?.style.getPropertyValue('--progress')).toMatch(/30|0\.3/);
   });
 
   it('re-splitting: processing chrome on an existing song that still opens the song', () => {
@@ -322,6 +341,35 @@ describe('SongCard / SongRow', () => {
     expect(tryNow).toHaveBeenCalled();
   });
 
+  it("Try again runs the job's guarded action of the failure's primary target, not the raw one", () => {
+    const raw = vi.fn(async () => { throw new Error('network'); });
+    const guarded = vi.fn(async () => undefined);
+    const job = jobVM('jg', {title: 'Undertow', failure: {sentence: 'Couldn’t split this song.', primary: {label: 'Try again', target: 'jobs.retry', run: raw}},
+      actions: [{label: 'Try again', target: 'jobs.retry', run: guarded}, {label: 'Cancel', run: vi.fn()}]});
+    const card = cards.JobCard(job);
+    byRole(card.el, 'button', COPY.tryAgain).click();
+    expect(guarded).toHaveBeenCalledTimes(1);
+    expect(raw).not.toHaveBeenCalled();
+  });
+
+  it('a retry that rejects becomes an error toast, not an unhandled rejection', async () => {
+    const {toastState} = await import('../src/app/feedback.js');
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const run = vi.fn(async () => { throw new Error('network'); });
+      const card = cards.JobCard(jobVM('jr', {title: 'Undertow', failure: {sentence: 'Couldn’t split this song.', primary: {label: 'Try again', run}}}));
+      byRole(card.el, 'button', COPY.tryAgain).click();
+      await flush();
+      expect(run).toHaveBeenCalled();
+      const state = toastState();
+      expect([state.visible, ...state.queued].some(t => t?.tone === 'error')).toBe(true);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
   it('railOf: waiting is empty and striped, finishing is indeterminate, else the percent', () => {
     expect(cards.railOf(jobVM('a', {stage: 'queued'}))).toEqual({value: 0, striped: true});
     expect(cards.railOf(jobVM('a', {stages: [{id: 'fetch', state: 'pending'}, {id: 'split', state: 'pending'}]}))).toEqual({value: 0, striped: true});
@@ -345,6 +393,25 @@ describe('SongCard / SongRow', () => {
     expect(cards.coverSource(null)).toBeNull();
   });
 
+  it('a cover whose signing failed asks again on the next render; a broken signed image is signed once more', async () => {
+    mediaApi.signKeys.mockRejectedValueOnce(new Error('offline'));
+    const card = cards.SongCard(LIBRARY[0]);
+    await flush();
+    expect(card.cover.querySelector('img')).toBeNull();
+    card.update(LIBRARY[0], {});
+    await flush();
+    expect(mediaApi.signKeys).toHaveBeenCalledTimes(2);
+    const img = card.cover.querySelector('img');
+    expect(img.getAttribute('src')).toBe('https://cdn.test/covers/weather.png');
+    img.dispatchEvent(new Event('error'));
+    await flush();
+    expect(mediaApi.signKeys).toHaveBeenCalledTimes(3);
+    expect(card.cover.querySelector('img')?.getAttribute('src')).toBe('https://cdn.test/covers/weather.png');
+    card.cover.querySelector('img').dispatchEvent(new Event('error'));
+    await flush();
+    expect(mediaApi.signKeys).toHaveBeenCalledTimes(3);   // once
+  });
+
   it('a list row: the title link, album drill-down, key, BPM, length and practised columns', () => {
     const onAlbum = vi.fn();
     const row = cards.SongRow(LIBRARY[1], {onAlbum, now: NOW});
@@ -366,6 +433,25 @@ describe('SongCard / SongRow', () => {
 // continue.js, setlists.js, first-run.js
 
 describe('ContinueSection', () => {
+  it('a clock tick or a store update keeps keyboard focus on a spot chip (chips update in place)', () => {
+    const profile = {instruments: ['drums'], primary: 'drums'};
+    const section = ContinueSection({songs: LIBRARY, now: NOW, profile});
+    document.body.append(section.el);
+    const chip = section.el.querySelector('.lib-spot-chip');
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+    section.update({songs: LIBRARY.map(s => ({...s})), now: NOW + 30_000, profile});
+    expect(document.activeElement).toBe(chip);
+    const renamed = LIBRARY.map(s => (s.id === 'lowtide' ? {...s, practiceSummary: {...s.practiceSummary,
+      spots: [{id: 'sp1', name: 'Chorus fill (2)', rate: 0.8}, ...s.practiceSummary.spots.slice(1)]}} : s));
+    section.update({songs: renamed, now: NOW + 60_000, profile});
+    expect(document.activeElement).toBe(chip);
+    expect(chip.textContent).toContain('Chorus fill (2)');
+    section.update({songs: LIBRARY.map(s => (s.id === 'lowtide' ? {...s, practiceSummary: {...s.practiceSummary, spots: s.practiceSummary.spots.slice(1)}} : s)), now: NOW, profile});
+    expect(section.el.querySelectorAll('.lib-spot-chip')).toHaveLength(2);
+    expect(chip.isConnected).toBe(false);
+  });
+
   it('the hero: title, artist, state line, Resume, Start from top and up to 3 spot chips', () => {
     const section = ContinueSection({songs: LIBRARY, now: NOW, profile: {instruments: ['drums'], primary: 'drums'}});
     document.body.append(section.el);
@@ -587,6 +673,8 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
   }
   const search = () => ctx.topbar.setSearch.mock.calls.at(-1)[0];
   const cardsShown = () => [...el.querySelectorAll('[data-key^="song:"], [data-key^="job:"]')].map(n => n.dataset.key);
+  // Loading home.js instantiates the mocked jobs model (peers.items), so a test may seed jobs before it mounts.
+  beforeAll(async () => { home ??= await import('../src/library/home.js'); });
 
   afterEach(async () => { await view?.unmount(); view = null; });
 
@@ -642,6 +730,19 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     byRole(el, 'button', COPY.filters.review).click();
     expect(cardsShown()).toEqual(['song:jam03']);
     expect(el.querySelector('[data-key="song:jam03"] .test-review')).not.toBeNull();
+  });
+
+  it("the Processing count is what the Processing filter shows: a found, unapplied detection (status done) is not processing", async () => {
+    await mountHome();
+    peers.items.value = [jobVM('jd', {kind: 'beats', songId: 'velvet', status: 'done', line: 'Bars found'})];
+    await flush();
+    expect(byRole(el, 'button', /^Processing/)).toBeNull();
+    peers.items.value = [jobVM('jd', {kind: 'beats', songId: 'velvet', status: 'done', line: 'Bars found'}),
+      jobVM('j1', {songId: 'glasshouse', status: 'running', percent: 10, line: 'Splitting · 10%'}),
+      jobVM('j2', {title: 'Harbor Lights', status: 'queued', line: 'Waiting'})];
+    await flush();
+    byRole(el, 'button', COPY.filterWithCount(COPY.filters.processing, 2)).click();
+    expect(cardsShown()).toEqual(['job:j2', 'song:glasshouse']);
   });
 
   it('the URL drives the first view; prefs fill what the URL lacks; a new search never resets the sort', async () => {
@@ -813,6 +914,26 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     expect(byRole(el, 'button', COPY.addAsNew('zzzz'))).toBeNull();
   });
 
+  it('no results: the Add action appears once a paired computer comes online, and goes when it leaves', async () => {
+    await mountHome({query: {q: 'zzzz'}});
+    expect(byRole(el, 'button', COPY.addAsNew('zzzz'))).toBeNull();
+    store.library.devices.value = [{deviceId: 'dev1', name: 'Studio MacBook', state: 'idle', lastSeenAt: Date.now() - 20_000}];
+    await flush();
+    expect(byRole(el, 'button', COPY.addAsNew('zzzz'))).not.toBeNull();
+    store.library.devices.value = [];
+    await flush();
+    expect(byRole(el, 'button', COPY.addAsNew('zzzz'))).toBeNull();
+  });
+
+  it('a drill-down without a filter chip says so plainly', async () => {
+    await mountHome({query: {artist: 'Nobody'}});
+    expect(el.textContent).toContain(COPY.emptyArtist('Nobody'));
+    expect(el.textContent).not.toContain('with this filter');
+    await view.unmount();
+    await mountHome({query: {album: 'Nowhere'}});
+    expect(el.textContent).toContain(COPY.emptyAlbum('Nowhere'));
+  });
+
   it('an empty filter offers [Show all]', async () => {
     await mountHome({query: {filter: 'spots', artist: 'Marisol Vega'}});
     expect(el.textContent).toContain(COPY.emptyDrill(COPY.drillArtist('Marisol Vega')));
@@ -870,6 +991,42 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     expect(el.querySelector('[data-key="song:velvet"]').dataset.state).toBe('resplitting');
     el.querySelector('[data-key="job:j-new"] .lib-open').click();
     expect(ctx.jobsCalls.at(-1)).toMatchObject({jobId: 'j-new'});
+    // ungrouped, a Songs divider closes the Adding group; grouped, the group headers do
+    const order = () => [...el.querySelectorAll('.lib-grid > *')].map(n => n.dataset.key ?? n.textContent);
+    expect(order().slice(0, 3)).toEqual([COPY.adding, 'job:j-new', COPY.songsDivider]);
+    view.update({name: 'library', query: {group: 'artist'}});
+    await flush();
+    expect(el.textContent).not.toContain(COPY.songsDivider);
+  });
+
+  it('the FLIP pairs a job with its song only within 10 s, measured at render time', async () => {
+    let at = 1000;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => at);
+    try {
+      peers.items.value = [jobVM('j-new', {title: 'Harbor Lights', percent: 90, line: 'Finishing'})];
+      await mountHome();
+      setRect(el.querySelector('[data-key="job:j-new"]'), {x: 0, y: 0, width: 190, height: 280});
+      const animate = vi.fn();
+      HTMLElement.prototype.animate = animate;
+      peers.items.value = [];       // the job leaves (cancelled, say)
+      await flush();
+      at += 11_000;                 // well within one 30 s tick of the view's clock
+      const proto = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect');
+      HTMLElement.prototype.getBoundingClientRect = function () {
+        return this.dataset?.key === 'song:harbor' ? {x: 600, y: 300, left: 600, top: 300, width: 190, height: 280, right: 790, bottom: 580} : {x: 0, y: 0, left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0};
+      };
+      try {
+        setSongs([...LIBRARY, song('harbor', {title: 'Harbor Lights', addedAt: NOW})]);
+        await flush();
+      } finally {
+        if (proto) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', proto);
+        else delete HTMLElement.prototype.getBoundingClientRect;
+      }
+      expect(animate).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      delete HTMLElement.prototype.animate;
+    }
   });
 
   it('done → the card FLIPs to its sorted position (260 ms, none under reduced motion)', async () => {

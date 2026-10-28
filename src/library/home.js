@@ -25,7 +25,7 @@
 // Context: ctx {router, store, registry, platform, desktop, topbar}. While mounted the view
 // provides the registry's 'library' context ({selecting, exitSelection, focusedSongId, …}) the
 // library commands (src/library/commands.js) and app.escape read.
-// Peers: LB1b's createJobsModel (job view-models per song and for new songs) and ReviewChip.
+// Peers: LB1b's shared jobs model (sharedJobsModel: job view-models per song and for new songs) and ReviewChip.
 // The card menu (card-menu.js, LB3, a later wave) resolves by its contract path; until it exists
 // cards have no ⋯ button and long-press opens nothing.
 
@@ -46,12 +46,12 @@ import {platform as appPlatform} from '../app/platform.js';
 import {desktop as appDesktop} from '../app/desktop.js';
 import * as settingsApi from '../api/settings.js';
 import {onlineDevices, RECHECK_MS} from '../api/devices.js';
-import {createJobsModel} from './jobs.js';
+import {sharedJobsModel} from './jobs.js';
 import {ReviewChip} from './review-chip.js';
 import {COPY} from './home.copy.js';
 import {
-  CONDITIONAL_FILTERS, FILTERS, FIRST_RUN_MIN, GROUPS, SORTS, defaultSort, filterSongs, fold, groupSongs,
-  isFailed, isNew, matches, parseSort, queryOf, sortSongs, sortValue, viewState,
+  CONDITIONAL_FILTERS, FILTERS, FIRST_RUN_MIN, GROUPS, SORTS, addingJobsOf, defaultSort, filterSongs, fold, groupSongs,
+  isFailed, isNew, jobCounts, matches, parseSort, queryOf, sortSongs, sortValue, viewState,
 } from './library-model.js';
 import {CompactCard, Cover, JobCard, JobRow, SongCard, SongRow, nameCover} from './cards.js';
 import {ContinueSection} from './continue.js';
@@ -63,19 +63,20 @@ export const QUERY_DEBOUNCE_MS = 400;
 export const STILL_CONNECTING_MS = 8000;
 export const SKELETON_CARDS = 8;
 export const FLIP_MEMORY_MS = 10_000;
-const NEW_SONG_KINDS = new Set(['separate', 'upload', 'import']);
 const ARROWS = 'ArrowLeft ArrowRight ArrowUp ArrowDown';
 
 // Later-wave module (LB3), resolved by its contract path like main.js's starters (Appendix C item 58).
 const LATER = import.meta.glob('./card-menu.js');
 
-let jobsModel = null;
-/** One jobs model for the app (LB1b): its `ready` list spans the whole session. */
-const jobs = () => (jobsModel ??= createJobsModel());
+/** The app's one jobs model (LB1b), shared with the top bar's Jobs chip and the Jobs popover. */
+const jobs = () => sharedJobsModel();
 
 const isPlainClick = e => !e || (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey);
 const isTextInput = el => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName ?? '') || !!el.closest?.('[data-text-input]'));
 const URL_RE = /^https?:\/\/\S+$/i;
+
+/** A monotonic clock read at render time (the FLIP's memory window); the 30 s `tick` is too coarse. */
+const monotonic = () => globalThis.performance?.now?.() ?? clockNow();
 
 function motionMs(doc, platform) {
   if (platform?.reducedMotion?.peek?.()) return 0;
@@ -90,7 +91,7 @@ function easing(doc) {
 }
 
 /** The job's song title for matching a finished job with the song that replaced its card. */
-const jobName = job => fold(job?.title ?? job?.quoted ?? '').trim();
+const jobName = job => fold(job?.title ?? '').trim();
 
 export function mount(el, match, ctx = {}) {
   const doc = el.ownerDocument;
@@ -436,7 +437,7 @@ export function mount(el, match, ctx = {}) {
     order = items.filter(i => i.type === 'song' || i.type === 'job').map(i => i.key);
     if (!order.includes(activeKey)) { const next = order[0] ?? null; activeKey = null; setActiveKey(next); }
     else entries.get(activeKey)?.card?.setActive(true);
-    settleFlips(before, items, now);
+    settleFlips(before, items, monotonic());
     updateColumnMarks();
   }
 
@@ -512,7 +513,8 @@ export function mount(el, match, ctx = {}) {
   }
 
   function showEdge(kind, state) {
-    const key = JSON.stringify([kind, state.q, state.filter, state.artist, state.album]);
+    const remote = kind === 'noResults' && canAddRemotely();
+    const key = JSON.stringify([kind, state.q, state.filter, state.artist, state.album, remote]);
     if (edgeState?.key === key) return;
     edgeState?.destroy();
     let node;
@@ -520,11 +522,14 @@ export function mount(el, match, ctx = {}) {
       const q = state.q.trim();
       const parts = COPY.noResults(q).map(p => (typeof p === 'string' ? p : h('strong', {class: 'selectable'}, p.strong)));
       const actions = [{label: COPY.clearSearch, variant: 'secondary', onClick: () => clearSearch()}];
-      if (canAddRemotely()) actions.push({label: COPY.addAsNew(q), variant: 'primary', iconEnd: 'arrow-right', onClick: () => navigate(`/add?q=${encodeURIComponent(q)}`)});
+      if (remote) actions.push({label: COPY.addAsNew(q), variant: 'primary', iconEnd: 'arrow-right', onClick: () => navigate(`/add?q=${encodeURIComponent(q)}`)});
       node = EmptyState({title: COPY.noResultsTitle, body: parts, actions, headingLevel: 3, className: 'lib-empty'});
     } else {
       const drill = state.artist ? COPY.drillArtist(state.artist) : state.album ? COPY.drillAlbum(state.album) : null;
-      const text = drill ? COPY.emptyDrill(drill) : COPY.emptyFilter[state.filter] ?? COPY.emptyFilter.chart;
+      const text = drill && state.filter ? COPY.emptyDrill(drill)
+        : state.artist ? COPY.emptyArtist(state.artist)
+          : state.album ? COPY.emptyAlbum(state.album)
+            : COPY.emptyFilter[state.filter] ?? COPY.emptyFilter.chart;
       node = EmptyState({title: drill ? COPY.noResultsTitle : COPY.emptyTitle, body: text, headingLevel: 3, className: 'lib-empty',
         actions: [{label: COPY.showAll, variant: 'secondary', onClick: () => setView({filter: null, artist: null, album: null})}]});
     }
@@ -547,11 +552,11 @@ export function mount(el, match, ctx = {}) {
 
   /** New-song jobs (the "Adding" group) that the filter and search let through. */
   function addingJobs(state, songs) {
-    const all = (model.items.value ?? []).filter(j => j && NEW_SONG_KINDS.has(j.kind) && !(j.songId && songs.has(j.songId)));
     if (state.artist || state.album) return [];
+    const all = addingJobsOf(model.items.value ?? [], songs);
     const byFilter = all.filter(j => (state.filter == null ? true : state.filter === 'processing' ? !isFailed(j) : state.filter === 'failed' ? isFailed(j) : false));
     const q = state.q.trim();
-    return q ? byFilter.filter(j => matches({title: j.title ?? j.quoted ?? ''}, q)) : byFilter;
+    return q ? byFilter.filter(j => matches({title: j.title ?? ''}, q)) : byFilter;
   }
 
   let visibleSongs = [];
@@ -579,8 +584,7 @@ export function mount(el, match, ctx = {}) {
       layoutToggle.set({value: state.layout});
     });
     tools.hidden = !established;
-    const counts = {processing: 0, failed: 0};
-    for (const job of items) { if (!job) continue; if (isFailed(job)) counts.failed++; else counts.processing++; }
+    const counts = jobCounts({songs: songsMap, bySong, items});
     const options = FILTERS.filter(f => !CONDITIONAL_FILTERS.includes(f) || counts[f] > 0 || state.filter === f)
       .map(f => ({value: f, label: CONDITIONAL_FILTERS.includes(f) ? COPY.filterWithCount(COPY.filters[f], counts[f]) : COPY.filters[f]}));
     untracked(() => filters.set({options, value: state.filter ?? null}));
@@ -597,7 +601,7 @@ export function mount(el, match, ctx = {}) {
       return;
     }
     const adding = addingJobs(state, songsMap);
-    if (total === 0 && !adding.length && !(model.items.value ?? []).length) {
+    if (total === 0 && !adding.length && !addingJobsOf(items, songsMap).length) {
       libCount.textContent = '';
       header.hidden = true;
       untracked(showFirstRun);
@@ -616,6 +620,8 @@ export function mount(el, match, ctx = {}) {
     if (adding.length) {
       list.push({type: 'divider', key: 'divider:adding', label: COPY.adding});
       for (const job of adding) list.push({type: 'job', key: `job:${job.id}`, job});
+      // Ungrouped, the songs need their own boundary, or they read as part of the Adding group.
+      if (groups.length === 1 && groups[0].label == null && groups[0].songs.length) list.push({type: 'divider', key: 'divider:songs', label: COPY.songsDivider});
     }
     for (const g of groups) {
       if (g.label != null) list.push({type: 'group', key: `group:${g.key}`, group: g});

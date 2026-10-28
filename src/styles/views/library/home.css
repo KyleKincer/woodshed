@@ -146,6 +146,8 @@
   }
   @media (max-width: 1199px) { .lib-grid { --lib-cols: 5; } }
   @media (max-width: 999px) { .lib-grid { --lib-cols: 3; } }
+  /* Every iPad in portrait (744–1032 px wide, including the 12.9" Pro at 1024) gets 3 columns. */
+  @media (pointer: coarse) and (orientation: portrait) and (max-width: 1100px) { .lib-grid { --lib-cols: 3; } }
   @media (max-width: 599px) { .lib-grid { --lib-cols: 2; gap: var(--s5) var(--s4); } }
 
   .lib-group,

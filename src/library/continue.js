@@ -36,6 +36,7 @@ function Hero() {
   const text = h('div', {class: 'lib-hero-text'}, title, artist, state, actions, spots);
   const el = h('article', {class: 'lib-hero'}, coverLink, text);
   let song = null;
+  const spotChips = new Map();   // `${songId}\0${spotId}` → {li, link, label}
   for (const link of [coverLink, resume, startOver]) {
     link.addEventListener('click', e => { if (song && isPlainClick(e)) nameCover(cover.el, song.id); });
   }
@@ -60,9 +61,24 @@ function Hero() {
     startOver.setAttribute('href', songHref(next.id, '?t=0'));
     startOver.setAttribute('aria-label', COPY.startOverLabel(name));
     const list = Array.isArray(next.practiceSummary?.spots) ? next.practiceSummary.spots.slice(0, 3) : [];
-    spots.replaceChildren(...list.map(spot => h('li', {},
-      h('a', {class: 'lib-spot-chip', href: songHref(next.id, `?spot=${encodeURIComponent(spot.id)}`), attrs: {draggable: 'false'}},
-        icon('diamond', {size: 20}), h('span', {}, spotLabel(spot))))));
+    // Keyed by spot id and updated in place, so a clock tick or a store update keeps focus on a chip.
+    const keep = new Set();
+    list.forEach((spot, i) => {
+      const key = `${next.id}\u0000${spot.id}`;
+      keep.add(key);
+      let chip = spotChips.get(key);
+      if (!chip) {
+        const label = h('span', {});
+        const link = h('a', {class: 'lib-spot-chip', attrs: {draggable: 'false'}}, icon('diamond', {size: 20}), label);
+        chip = {li: h('li', {}, link), link, label};
+        spotChips.set(key, chip);
+      }
+      chip.link.setAttribute('href', songHref(next.id, `?spot=${encodeURIComponent(spot.id)}`));
+      const text = spotLabel(spot);
+      if (chip.label.textContent !== text) chip.label.textContent = text;
+      if (spots.children[i] !== chip.li) spots.insertBefore(chip.li, spots.children[i] ?? null);
+    });
+    for (const [key, chip] of spotChips) if (!keep.has(key)) { chip.li.remove(); spotChips.delete(key); }
     spots.hidden = !list.length;
     cover.set(next, next);
   }

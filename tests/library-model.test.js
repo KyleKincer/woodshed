@@ -3,7 +3,7 @@
 import {describe, expect, it} from 'vitest';
 import {
   CONDITIONAL_FILTERS, FILTERS, FIRST_RUN_MIN, GROUPS, NEW_WINDOW_MS, SORTS, continuePicks, defaultSort, filterSongs, fold, groupSongs,
-  isFailed, isNew, jobCounts, matches, parseSort, passesFilter, queryOf, sortSongs, sortValue, viewState,
+  addingJobsOf, isFailed, isNew, jobCounts, matches, parseSort, passesFilter, queryOf, sortSongs, sortValue, viewState,
 } from '../src/library/library-model.js';
 
 const DAY = 864e5;
@@ -217,8 +217,31 @@ describe('viewState and queryOf', () => {
   });
 });
 
-describe('jobCounts', () => {
-  it('counts live and failed job view-models', () => {
-    expect(jobCounts([{failure: null}, {failure: {sentence: 'x'}}, {}, null])).toEqual({processing: 2, failed: 1});
+describe('jobCounts / addingJobsOf', () => {
+  const songs = new Map([['a', song('a')], ['b', song('b')], ['c', song('c')]]);
+  it('counts what the Processing and Failed filters show: songs by their job, plus the new-song jobs', () => {
+    const bySong = new Map([['a', {id: 'j1', songId: 'a', status: 'running', failure: null}], ['b', {id: 'j2', songId: 'b', status: 'error', failure: {sentence: 'x'}}]]);
+    const items = [...bySong.values(), {id: 'j3', kind: 'separate', songId: null, status: 'queued'}, {id: 'j4', kind: 'upload', status: 'error', failure: {sentence: 'y'}}];
+    expect(jobCounts({songs, bySong, items})).toEqual({processing: 2, failed: 2});
+  });
+  it("LB1b's found, unapplied detections (status done) are not processing", () => {
+    const found = {id: 'jd', kind: 'beats', songId: 'c', status: 'done', failure: null};
+    expect(jobCounts({songs, bySong: new Map(), items: [found]})).toEqual({processing: 0, failed: 0});
+    // even if a model kept it in bySong, a done row is not on a card
+    expect(jobCounts({songs, bySong: new Map([['c', found]]), items: [found]})).toEqual({processing: 0, failed: 0});
+  });
+  it('addingJobsOf: new-song kinds whose song does not exist yet, never settled ones', () => {
+    const items = [{id: 'n', kind: 'separate', songId: null, status: 'running'}, {id: 'r', kind: 'separate', songId: 'a', status: 'running'},
+      {id: 'b', kind: 'beats', songId: 'zz', status: 'running'}, {id: 'd', kind: 'import', songId: 'zz', status: 'done'}, null];
+    expect(addingJobsOf(items, songs).map(j => j.id)).toEqual(['n']);
+    expect(addingJobsOf(items, [song('a')]).map(j => j.id)).toEqual(['n']);
+  });
+});
+
+describe('album order', () => {
+  it('a track without a disc number sorts as disc 1 (one scale for mixed rows)', () => {
+    const rows = [song('t2', {album: 'X', discNumber: '1', trackNumber: '2'}), song('t5', {album: 'X', discNumber: '', trackNumber: '5'}),
+      song('d2t1', {album: 'X', discNumber: '2', trackNumber: '1'}), song('t1', {album: 'X', trackNumber: '1'})];
+    expect(sortSongs(rows, 'album').map(s => s.id)).toEqual(['t1', 't2', 't5', 'd2t1']);
   });
 });

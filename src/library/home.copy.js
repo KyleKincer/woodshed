@@ -11,6 +11,7 @@ export const COPY = Object.freeze({
   libraryCount: (shown, total) => (shown === total ? String(total) : `${shown} of ${total}`),
   libraryCountLabel: (shown, total) => (shown === total ? `${total} ${total === 1 ? 'song' : 'songs'}` : `${shown} of ${total} songs`),
   adding: 'Adding',
+  songsDivider: 'Songs',   // closes the Adding group when Group is None
 
   // Continue
   resume: 'Resume',
@@ -71,6 +72,8 @@ export const COPY = Object.freeze({
     failed: 'Nothing has failed.',
   }),
   emptyDrill: label => `No songs match ${label} with this filter.`,   // a drill-down plus a filter chip
+  emptyArtist: name => `No songs by ${name}.`,                       // a drill-down alone
+  emptyAlbum: name => `No songs on ${name}.`,
   emptyTitle: 'Nothing here yet',
   showAll: 'Show all',
   loading: 'Loading your library…',

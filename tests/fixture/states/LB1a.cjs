@@ -56,6 +56,15 @@ function gridFacts() {
     columns: firstRow.length, width: covers[0] ? Math.round(covers[0].width) : 0,
     square: covers.every(r => Math.abs(r.width - r.height) <= 1), radius: cs?.borderTopLeftRadius,
     contentVisibility: cards[0] ? getComputedStyle(cards[0]).contentVisibility : null,
+    // Paint containment between the cover link and the grid would clip its 3 px focus ring (spec §8.4).
+    clipsRing: (() => {
+      const link = cards[0]?.querySelector('.lib-open-cover');
+      for (let n = link?.parentElement; n && !n.classList.contains('lib-grid'); n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        if (cs.contentVisibility === 'auto' || cs.contentVisibility === 'hidden' || /paint|content|strict/.test(cs.contain)) return n.className;
+      }
+      return null;
+    })(),
     more: document.querySelectorAll('.lib-grid .lib-more').length,
   };
 }
@@ -98,8 +107,16 @@ module.exports = [
       const g = await page.evaluate(gridFacts);
       t.expect(g.columns === (coarse ? 3 : 6), `${g.columns} columns (6 at 1440, 3 on iPad portrait)`);
       t.expect(g.square && g.radius === '0px', `covers are square with radius 0 (${g.radius})`);
-      t.expect(g.contentVisibility === 'auto', `cards use content-visibility: auto (${g.contentVisibility})`);
+      t.expect(g.contentVisibility !== 'auto' && !g.clipsRing, `nothing clips the cover link's focus ring (${g.contentVisibility}, ${g.clipsRing})`);
       t.expect(g.more === 0, 'no ⋯ until the card menu exists (LB3)');
+      if (coarse) {
+        // The 12.9" iPad Pro in portrait (1024 wide) is an iPad portrait too: 3 columns, not 5.
+        const size = page.viewportSize();
+        await page.setViewportSize({width: 1024, height: 1366});
+        const pro = await page.evaluate(gridFacts);
+        t.expect(pro.columns === 3, `${pro.columns} columns on a 1024 px iPad in portrait`);
+        await page.setViewportSize(size);
+      }
       await page.evaluate(() => { document.querySelector('[data-scroller]').scrollTop = 0; });
       await expectTargets(t, page);
       if (!coarse) {
@@ -133,9 +150,15 @@ module.exports = [
           resplitColor: resplit ? getComputedStyle(resplit).color : null, processingColor: processingTitle ? getComputedStyle(processingTitle).color : null, ink,
           veil: cover ? getComputedStyle(cover, '::after').opacity : null,
           striped: !!document.querySelector('[data-key="job:job-q"] .lib-rail[data-striped]'),
+          dividers: [...document.querySelectorAll('.lib-grid > .lib-divider')].map(n => n.textContent),
+          quotedTitle: document.querySelector('[data-key="job:job-q"] .lib-title-text')?.textContent ?? null,
+          runCover: document.querySelector('[data-key="job:job-run"] .lib-card-cover img')?.getAttribute('src') ?? null,
         };
       });
       t.expect(facts.divider === 'Adding', `the "Adding" divider (${facts.divider})`);
+      t.expect(JSON.stringify(facts.dividers) === JSON.stringify(['Adding', 'Songs']), `a Songs divider closes the Adding group (${facts.dividers})`);
+      t.expect(/^“.+”$/.test(facts.quotedTitle ?? ''), `a search job without a title shows its query in quotes (${facts.quotedTitle})`);
+      t.expect(!!facts.runCover, 'a job whose art is an R2 coverKey shows it, signed');
       const s = facts.states;
       t.expect(s['job:job-run'] === 'processing' && s['job:job-q'] === 'processing', `new-song jobs are processing cards ${JSON.stringify(s)}`);
       t.expect(s['job:job-fail'] === 'failed' && s['job:job-bot'] === 'failed', 'failed jobs are failed cards');
@@ -166,6 +189,8 @@ module.exports = [
           heights: rows.slice(0, 5).map(r => Math.round(r.getBoundingClientRect().height)),
           albumShown: album ? album.checkVisibility() : null, cv: rows[0] ? getComputedStyle(rows[0]).contentVisibility : null,
           sorted: document.querySelector('[aria-sort=descending]')?.textContent ?? null,
+          artists: rows.filter(r => r.querySelector('.lib-artist:not([hidden])')?.checkVisibility()).length,
+          withArtist: rows.filter(r => r.querySelector('.lib-artist:not([hidden])')).length,
         };
       });
       t.expect(facts.table, 'the list is a table');
@@ -173,6 +198,7 @@ module.exports = [
       t.expect(facts.albumShown === !coarse, `Album and BPM columns ${coarse ? 'dropped on iPad' : 'shown on laptop'}`);
       t.expect(JSON.stringify(facts.heads) === JSON.stringify(coarse ? ['Title', 'Key', 'Length', 'Practised'] : ['Title', 'Album', 'Key', 'BPM', 'Length', 'Practised']), `headers ${facts.heads}`);
       t.expect(facts.cv === 'auto', `rows use content-visibility: auto (${facts.cv})`);
+      t.expect(facts.withArtist > 0 && facts.artists === facts.withArtist, `every row's artist drills down, coarse too (${facts.artists}/${facts.withArtist})`);
       t.expect(/Practised/.test(facts.sorted ?? ''), `Practised is the sorted column (${facts.sorted})`);
       await expectTargets(t, page);
       await page.getByRole('button', {name: 'Title', exact: true}).click();
@@ -225,6 +251,8 @@ module.exports = [
         const keys = await page.evaluate(() => [...document.querySelectorAll('.lib-grid > [data-key]')].map(n => n.dataset.key));
         t.expect(keys.length > 0, `${label} shows something`);
         if (expected[label]) t.expect(expected[label].every(k => keys.includes(k)) && keys.length === expected[label].length, `${label}: ${keys}`);
+        const n = /\s(\d+)$/.exec(label)?.[1];
+        if (n) t.expect(keys.length === Number(n), `${label} counts what it shows (${keys.length}: ${keys})`);
         t.expect(await page.getByRole('button', {name: label, exact: true}).getAttribute('aria-pressed') === 'true', `${label} is pressed`);
         await t.capture(`filter-${label.replace(/\s*\d+$/, '').toLowerCase().replace(/\s+/g, '-')}`);
         await page.getByRole('button', {name: label, exact: true}).click();
@@ -479,6 +507,8 @@ module.exports = [
       });
       t.expect(result.card && !result.divider, 'the job left and its song arrived');
       t.expect(result.durations.includes(260), `the card FLIPs for 260 ms (${result.durations})`);
+      // Let the flight land before the structure check (a card in flight overlaps whatever it passes).
+      await page.evaluate(() => Promise.all((document.querySelector('[data-key="song:harbor"]')?.getAnimations() ?? []).map(a => a.finished)));
     },
   },
   {

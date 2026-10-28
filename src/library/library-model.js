@@ -83,6 +83,10 @@ const sameText = (a, b) => fold(a).trim() === fold(b).trim();
 /** A job view-model (JobVM) or a bare {failed} flag that failed. */
 export const isFailed = job => !!(job?.failure || job?.failed);
 
+/** Job view-models that no longer show on a card (LB1b's found, unapplied detections are `done`). */
+const SETTLED = new Set(['done', 'cancelled', 'canceled']);
+const onCard = job => !!job && !SETTLED.has(job.status);
+
 /** Whether a song passes a filter chip. `jobs` maps song ids to their live or failed job. */
 export function passesFilter(song, filter, jobs = null) {
   switch (filter) {
@@ -90,8 +94,8 @@ export function passesFilter(song, filter, jobs = null) {
     case 'mapped': return song.mapSummary?.real === true;
     case 'spots': return (song.practiceSummary?.spotCount ?? 0) > 0;
     case 'review': return song.reviewMetadata === true;
-    case 'processing': { const job = jobs?.get?.(song.id); return !!job && !isFailed(job); }
-    case 'failed': { const job = jobs?.get?.(song.id); return !!job && isFailed(job); }
+    case 'processing': { const job = jobs?.get?.(song.id); return onCard(job) && !isFailed(job); }
+    case 'failed': { const job = jobs?.get?.(song.id); return onCard(job) && isFailed(job); }
     default: return true;
   }
 }
@@ -125,9 +129,12 @@ const SORT_KEYS = {
   key: {value: s => text(s.musicalKey), compare: TEXT},
 };
 
+/** disc × 1000 + track; a track without a disc number is on disc 1, so mixed rows share one scale. */
 const trackNo = s => {
-  const n = parseInt(String(s.discNumber ?? ''), 10) * 1000 + parseInt(String(s.trackNumber ?? ''), 10);
-  return Number.isFinite(n) ? n : parseInt(String(s.trackNumber ?? ''), 10);
+  const track = parseInt(String(s.trackNumber ?? ''), 10);
+  if (!Number.isFinite(track)) return NaN;
+  const disc = parseInt(String(s.discNumber ?? ''), 10);
+  return (Number.isFinite(disc) ? disc : 1) * 1000 + track;
 };
 
 /** Ties: album order uses disc/track, then title; everything else the newest addition first. */
@@ -226,13 +233,26 @@ export function queryOf(state) {
   };
 }
 
-/** Counts behind the conditional chips: songs with a live job, songs or new-song jobs that failed. */
-export function jobCounts(items = []) {
+/** Jobs that put a song in a new card: a split, an upload or an import whose song does not exist yet. */
+export const NEW_SONG_KINDS = Object.freeze(['separate', 'upload', 'import']);
+
+/** The "Adding" group's jobs: live or failed new-song jobs whose song is not in `songs` yet. */
+export function addingJobsOf(items = [], songs = null) {
+  const ids = songs instanceof Map ? songs : new Set([...iterate(songs)].map(s => s?.id));
+  return (items ?? []).filter(j => onCard(j) && NEW_SONG_KINDS.includes(j.kind) && !(j.songId && ids.has(j.songId)));
+}
+
+/**
+ * Counts behind the conditional chips: exactly what the Processing and Failed filters show, i.e.
+ * songs whose job (bySong) is live or failed, plus the "Adding" group's new-song jobs.
+ */
+export function jobCounts({songs = null, bySong = null, items = []} = {}) {
   let processing = 0, failed = 0;
-  for (const job of items) {
-    if (!job) continue;
-    if (isFailed(job)) failed++;
-    else processing++;
+  const count = job => { if (isFailed(job)) failed++; else processing++; };
+  for (const song of iterate(songs)) {
+    const job = song ? bySong?.get?.(song.id) : null;
+    if (onCard(job)) count(job);
   }
+  for (const job of addingJobsOf(items, songs)) count(job);
   return {processing, failed};
 }
