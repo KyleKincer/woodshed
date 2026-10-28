@@ -594,13 +594,26 @@ export function mountHud(el, {
     offs.push(bus.subscribe((f) => { if (!destroyed) paintLamps(f); }, {hz: 60}));
   }
 
-  // ---- speed drag (±1% per 12 px, pointer capture, one coalesced undo step) ----------------------------------
-  // The steps coalesce through the practice undo's 1 s 'speed' window; a gesture-bounded step (a pause
-  // over 1 s mid-drag, or a tap just before it) needs an undo/transport gesture API (handoff ticket).
+  // ---- speed drag (±1% per 12 px, pointer capture, one undo step) -------------------------------------------
+  // The drag is one gesture-bounded undo step (§2.14.10, ticket I2a-3): pointerdown opens
+  // undo.beginGesture('speed') (I2a-1), every step passes it to transport.setSpeed(rate, {gesture})
+  // (I2a-2), and pointerup / pointercancel / lost capture end it. So a pause past the 1 s coalescing
+  // window mid-drag is still one step, and a +/− tap just before the drag stays its own step. Without
+  // the gesture API (an older session) the steps fall back to the 1 s 'speed' coalescing window.
   let drag = null;
+  const closeDrag = () => {
+    if (!drag) return;
+    try { drag.gesture?.end?.(); } finally {
+      drag = null;
+      root.removeAttribute('data-speed-drag');
+    }
+  };
   speed.el.addEventListener('pointerdown', (e) => {
     if (!e.isPrimary || e.button !== 0) return;
-    drag = {id: e.pointerId, y: e.clientY, rate: snap().rate, steps: 0, moved: false};
+    closeDrag();
+    const undo = session.undo;
+    const gesture = typeof undo?.beginGesture === 'function' ? undo.beginGesture('speed') : null;
+    drag = {id: e.pointerId, y: e.clientY, rate: snap().rate, steps: 0, moved: false, gesture};
     speed.el.setPointerCapture?.(e.pointerId);
   }, listen);
   speed.el.addEventListener('pointermove', (e) => {
@@ -611,18 +624,18 @@ export function mountHud(el, {
     if (steps === drag.steps) return;
     drag.steps = steps;
     root.setAttribute('data-speed-drag', '');
-    transport.setSpeed(Math.round(drag.rate * 100 + steps) / 100, {coalesce: true});
+    transport.setSpeed(Math.round(drag.rate * 100 + steps) / 100, drag.gesture ? {coalesce: true, gesture: drag.gesture} : {coalesce: true});
   }, listen);
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.moved && e.type === 'pointerup') suppressTap = true;   // the readouts' pointerup that follows clears it
-    drag = null;
-    root.removeAttribute('data-speed-drag');
+    closeDrag();
     speed.el.releasePointerCapture?.(e.pointerId);
   };
   speed.el.addEventListener('pointerup', endDrag, listen);
   speed.el.addEventListener('pointercancel', endDrag, listen);
-  speed.el.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.id) { drag = null; root.removeAttribute('data-speed-drag'); } }, listen);
+  speed.el.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.id) closeDrag(); }, listen);
+  destroyers.push(closeDrag);
 
   // ---- double-tap the readouts → Focus (view.focus) -----------------------------------------------------------
   let suppressTap = false;

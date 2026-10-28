@@ -16,6 +16,8 @@
 //                         marked (unmapped markers) | shared (read-only, Shared by …) | setlist
 //   load=hold             the audio never finishes loading (the Play ring; Play arms "Play when ready")
 //   load=error            the audio fails to load (every control aria-disabled with the reason)
+//   load=decoding|progress|preparing   the controls see a held load at that point ('Decoding 1 of 4',
+//                         'Loading 62%', 'Preparing'); window.__hud.setLoad({...}) moves it (I2a-13)
 //   ready=1               a `1 ready` chip (a song finished processing)
 //   wake=1 / pedal=1      the ☼ and ⎍ indicators
 //   cue=<s>               the cue (default 0)
@@ -32,6 +34,13 @@ import {mountHud} from '../../../src/stage/hud.js';
 import {mountControls} from '../../../src/stage/controls.js';
 import {createTestSession, waitForLoad} from '../../helpers/test-session.js';
 import {pickup, sectioned, sevenEight} from '../../fixtures/maps.js';
+
+/** The held load states (load=…): what the session's `load` signal reads at that point (session.js). */
+const HELD_LOADS = Object.freeze({
+  decoding: {phase: 'decoding', loadedBytes: 4, totalBytes: 4, decoded: 0, tracks: 4, error: null},
+  progress: {phase: 'loading', loadedBytes: 62, totalBytes: 100, decoded: 0, tracks: 4, error: null},
+  preparing: {phase: 'preparing', loadedBytes: 4, totalBytes: 4, decoded: 4, tracks: 4, error: null},
+});
 
 const SCENARIOS = {
   fresh: () => null,
@@ -77,11 +86,14 @@ export default async function mount(el, {query, h}) {
     song: {musicalKey: 'A minor', tuning: 'Standard', notes: 'Watch the flam into the chorus.', ...(scenario === 'shared' ? {ownerName: 'Kyle K.'} : {})},
     shared: scenario === 'shared' ? {token: 'harness-share'} : null,
     // load=hold: the stems are never signed, so the audio stays loading (the Play ring).
-    ...(query.get('load') === 'hold' ? {media: {signKeys: () => new Promise(() => {})}} : {}),
+    ...(HELD_LOADS[query.get('load')] || query.get('load') === 'hold' ? {media: {signKeys: () => new Promise(() => {})}} : {}),
     ...(query.get('load') === 'error' ? {media: {signKeys: async () => { throw new Error('harness: storage down'); }}} : {}),
     load: false,
   });
-  const session = ts.session;
+  // load=decoding|progress|preparing: the audio is held (as load=hold) and the controls read a load
+  // state the harness sets, so a state can capture Play mid-decode (the real phases pass in a blink).
+  const heldLoad = HELD_LOADS[query.get('load')] ? signal({...HELD_LOADS[query.get('load')]}) : null;
+  const session = heldLoad ? Object.create(ts.session, {load: {value: heldLoad}}) : ts.session;
 
   // The Stage frame (ST4's stage.js does this in the app): Stage tokens on the root, a music area
   // the count-in plate overlays, and the 'session' / 'transport' / 'stage' command contexts.
@@ -154,8 +166,9 @@ export default async function mount(el, {query, h}) {
   el.append(frame);
   session.frame.start();
 
-  window.__hud = {ts, session, hud, controls, sheets, calls, stage, wake, pedal, setlist, ready};
-  if (query.get('load') !== 'hold') {
+  window.__hud = {ts, session, hud, controls, sheets, calls, stage, wake, pedal, setlist, ready,
+    setLoad: (l) => { if (heldLoad) heldLoad.value = {...heldLoad.peek(), ...l}; }};
+  if (query.get('load') !== 'hold' && !heldLoad) {
     await waitForLoad(session);
     if (scenario === 'trainer') session.transport.startTrainer();
   }
