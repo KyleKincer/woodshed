@@ -1,5 +1,5 @@
 // Stand-in for 'convex/browser': every client talks to the in-memory db.
-import {call, subscribe, fx} from '../db.js';
+import {call, subscribe, fx} from '../db/index.js';
 const nameOf = ref => typeof ref === 'string' ? ref : ref[Symbol.for('functionName')];
 export class ConvexClient {
   constructor(url) { this.url = url; }
