@@ -148,6 +148,33 @@ test('audible pre-roll plays into a loop without changing its boundaries', async
   advance(3); expect(engine.getPosition()).toBe(11);
   expect(engine.loop).toEqual({enabled:true,a:10,b:12});
 });
+test('I2b-1: a segmented loop with a count-in plays, and every automation time is finite', async () => {
+  const params = () => [engine.master.gain, engine.pitchGate.gain, ...engine.tracks.map(t => t.gain.gain)];
+  // Like a real AudioParam, automation rejects a non-finite value or time (play then throws).
+  for (const p of params()) p.setValueAtTime.mockImplementation((v, t) => {
+    if (!Number.isFinite(v) || !Number.isFinite(t)) throw new TypeError('Failed to execute setValueAtTime on AudioParam: The provided double value is non-finite.');
+  });
+  for (const gap of ['silent', 'preroll']) for (const rate of [1, 0.75]) {
+    engine.stop(); for (const p of params()) p.setValueAtTime.mockClear();
+    engine.setSpeed(rate); engine.setLoop(true, 10, 12, {gapSec: 4, gap}); engine.seek(10);
+    await engine.play({countIn: {duration: 4, beats: [{offset: 0, downbeat: true}]}});
+    expect(engine.playing).toBe(true); expect(engine.countingIn).toBe(true);
+    // The last pass is open-ended: nothing is appended after it until it starts.
+    expect(engine.plan.at(-1).kind).toBe('pass');
+    const end = engine.countIn.audioWhen;
+    engine.ctx.currentTime = end + 0.5; engine._tick();
+    expect(engine.getPosition()).toBeCloseTo(10 + 0.5 * rate);
+    advance(30 / rate); engine._tick();
+    expect(engine.loop).toMatchObject({enabled: true, a: 10, b: 12});
+    const times = params().flatMap(p => p.setValueAtTime.mock.calls.map(([, t]) => t));
+    expect(times.length).toBeGreaterThan(0);
+    expect(times.every(Number.isFinite)).toBe(true);
+    // The stems stay silent through the count, then sound with the first pass.
+    const master = engine.master.gain.setValueAtTime.mock.calls;
+    expect(master.findLast(([, t]) => t <= end - 1e-6)?.[0]).toBe(0);
+    expect(master.some(([v, t]) => v === 1 && Math.abs(t - end) < 1e-9)).toBe(true);
+  }
+});
 test('pre-roll before song start retains a full count-in with silence for unavailable audio', async () => {
   engine.seek(1);
   await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
