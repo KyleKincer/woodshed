@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
 import { test, expect, vi, afterEach } from 'vitest';
+import { ConvexError } from 'convex/values';
 import schema from './schema';
 import { api, internal } from './_generated/api';
 import { hashToken } from './devices';
@@ -72,4 +73,41 @@ test('owner access binds to trusted Google account ID, never email or client cla
  expect(await t.withIdentity({subject:impostor,email:'owner@test.example'}).query(api.admin.access,{})).toBe(false);
  vi.stubEnv('OWNER_GOOGLE_ACCOUNT_ID','');
  expect(await owner.query(api.admin.access,{})).toBe(false);
+});
+
+// I2a-7: the account page's data (SE3): coded not_found for any id that is not a
+// users id, the user's own device name, and the bot-check retry time on job rows.
+async function coded(promise:Promise<unknown>){
+ try{await promise;}catch(error){expect(error).toBeInstanceOf(ConvexError);return (error as ConvexError<any>).data as Record<string,unknown>;}
+ throw new Error('expected a coded failure');
+}
+test('account refuses malformed, foreign-table and deleted ids with a coded not_found',async()=>{
+ const {t,owner,userId}=await setup();
+ const deviceId=await t.withIdentity({subject:userId}).mutation(api.devices.pair,{tokenHash:await hashToken('f'.repeat(64)),name:'Computer'});
+ const gone=await t.run(async ctx=>{const id=await ctx.db.insert('users',{name:'gone',emailVerified:true,createdAt:1});await ctx.db.delete('users',id);return id;});
+ for(const id of ['not-an-id','',String(deviceId),gone]){
+  expect(await coded(owner.query(api.admin.account,{id}))).toMatchObject({code:'not_found',message:'Account not found.'});
+ }
+ expect((await owner.query(api.admin.account,{id:userId})).id).toBe(userId);
+});
+test('account device rows carry the user-chosen name; job rows carry retryAt',async()=>{
+ const {t,owner,userId}=await setup();
+ const user=t.withIdentity({subject:userId});const token='f'.repeat(64);
+ const deviceId=await user.mutation(api.devices.pair,{tokenHash:await hashToken(token),name:'MacBook-Pro.local'});
+ const plainId=await user.mutation(api.devices.pair,{tokenHash:await hashToken('1'.repeat(64)),name:'Studio PC'});
+ await user.mutation(api.devices.rename,{deviceId,name:'Kitchen laptop'});
+ const {jobId}=await user.mutation(api.jobs.createSeparation,{deviceId,settings:{},label:'x',source:{type:'search',value:'x'}});
+ const {jobId:queuedId}=await user.mutation(api.jobs.createSeparation,{deviceId,settings:{},label:'y',source:{type:'search',value:'y'}});
+ await t.mutation(api.worker.claim,{token,jobId});
+ await t.mutation(api.worker.progress,{token,jobId,stage:'error',percent:0,error:'Bot check',errorCode:'bot_check'});
+ const page=await owner.query(api.admin.account,{id:userId});
+ const devices=Object.fromEntries(page.devices.map((d:any)=>[d.id,d.name]));
+ expect(devices).toEqual({[deviceId]:'Kitchen laptop',[plainId]:'Studio PC'});
+ const jobs=Object.fromEntries(page.jobs.map((j:any)=>[j.id,j]));
+ expect(jobs[jobId]).toMatchObject({status:'error',retryAt:expect.any(Number)});
+ expect(jobs[jobId].retryAt).toBe((await t.run(ctx=>ctx.db.get('jobs',jobId)))!.retryAt);
+ expect(jobs[queuedId]).toMatchObject({status:'queued',retryAt:null});
+ // The row the page offers Cancel… on is one cancelJob accepts.
+ await owner.mutation(api.admin.cancelJob,{id:jobId,reason:'Stop the retry'});
+ expect((await owner.query(api.admin.account,{id:userId})).jobs.find((j:any)=>j.id===jobId)).toMatchObject({status:'canceled',retryAt:null});
 });
