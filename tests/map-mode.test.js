@@ -131,3 +131,40 @@ test('on a map tapped on every beat, 4/4 → 3/4 re-bars without moving a single
   key('e');
   expect(document.querySelector('input[name="keep"][value="beats"]').checked).toBe(true);
 });
+
+// I0A-2: SongMapStore.barIndexAt takes seconds; the lane and the player's
+// metronome readout look bars up by quarter-note position (barIndexAtQ).
+// 14 bars of 6/8 (3 quarters, 1.5 s each, so 21 s) then 10 bars of 4/4 at
+// 120 quarters a minute: quarter 40 (20 s) is in bar 14 (6/8), while 40 *seconds*
+// is in the last 4/4 bar, so a seconds lookup picks the wrong bar and meter.
+const meterChange = () => ({songMap: {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
+  measures: Array.from({length: 24}, (_, i) => i < 14
+    ? {id: `m${i}`, numerator: 6, denominator: 8, length: {n: 3, d: 1}, label: ''}
+    : {id: `m${i}`, numerator: 4, denominator: 4, length: {n: 4, d: 1}, label: ''})}});
+
+test('the tempo lane selects the cursor bar and labels the span by quarter position, not seconds', async () => {
+  const {drawLane} = await import('../src/js/map-lane.js');
+  const {SongMapStore} = await import('../src/js/song-map.js');
+  const songMap = SongMapStore.fromTempo(meterChange(), 40);
+  const calls = [];
+  const ctx = new Proxy({measureText: () => ({width: 10})}, {
+    get: (t, k) => t[k] ?? ((...args) => calls.push({op: k, args, fillStyle: t.fillStyle})),
+    set: (t, k, v) => { t[k] = v; return true; },
+  });
+  const canvas = {clientWidth: 400, clientHeight: 80, width: 400, height: 80, getContext: () => ctx};
+  const color = new Proxy({}, {get: (_, k) => String(k)});
+  drawLane(canvas, {songMap, view: {start: 0, end: 40}, timeToX: (t) => t * 10, duration: 40, cursorQ: fraction(40), hoverPin: null, color});
+  const selected = calls.find((c) => c.op === 'fillRect' && c.fillStyle === 'selected');
+  expect(selected.args[0]).toBeCloseTo(195);   // bar 14 starts at quarter 39 = 19.5 s
+  expect(selected.args[2]).toBeCloseTo(15);    // and lasts 1.5 s
+  const labels = calls.filter((c) => c.op === 'fillText').map((c) => c.args[0]);
+  expect(labels).toContain('♩.80 →');          // the tail at 20 s is in 6/8, felt in dotted quarters
+});
+
+test('the metronome readout names the bar under the playhead by quarter position, not seconds', async () => {
+  song.tempo = meterChange();
+  await openPlayer(song); const engine = state.engines[0];
+  engine.seek(20);                             // quarter 40, inside bar 14 (6/8)
+  document.getElementById('metro-btn').click();
+  expect(document.getElementById('m-now').textContent).toBe('♩. = 80 · 6/8');
+});
