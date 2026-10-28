@@ -1,0 +1,45 @@
+@layer views {
+  /* The count-in plate (src/stage/hud.js; spec §4.3, wireframe §10.4): a centred plate over the top
+   * of the music, --surface at 85%, with the current number at 120 px (Stand, × Distance) in --now
+   * and "Count-in · bar 13" / "Lead-in · 0:31" beneath at 17. It overlays (no layout change); its
+   * host is the music area (position: relative), else the HUD. */
+  .stage-count-plate {
+    position: absolute;
+    inset-block-start: var(--s5);
+    inset-inline-start: 50%;
+    z-index: var(--z-overlay);
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s1);
+    min-inline-size: 280px;
+    padding: var(--s4) var(--s6) var(--s5);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+    transform: translateX(-50%);
+    pointer-events: none;
+    text-align: center;
+  }
+  .stage-count-plate::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-under);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+    opacity: .85;
+  }
+  /* Without a music host the plate hangs just below the HUD (the band's music area starts there). */
+  .hud > .stage-count-plate { inset-block-start: calc(100% + var(--s5)); }
+  .stage-count-number {
+    color: var(--now);
+    font: var(--fw-heavy) var(--fs-stage-count)/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .stage-count-label {
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-stage-sub)/1.3 var(--font-ui);
+    white-space: nowrap;
+  }
+}
