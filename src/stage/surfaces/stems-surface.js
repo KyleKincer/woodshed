@@ -28,10 +28,14 @@
 // One pointer model (press.js, glass.js; touch-action none):
 //   mouse   click seeks (immediately, even while playing; the Stage applies glass.pressPolicy);
 //           a drag past 8 px makes a loop; the loop's edges resize it and a drag inside moves it
-//           (loop-handles.js); right-click opens the bar menu
+//           (loop-handles.js); right-click opens the bar menu, or on the loop band the loop-band
+//           menu (menus.loopBandMenu: Save as spot · Count in every pass · Move ◀ ▶ · Zoom to loop · Clear)
 //   touch   stopped: tap cues; a 350 ms long-press then drag makes a loop; releasing a long press
-//           opens the bar menu; two fingers pan, a pinch zooms (pinch.js). Playing: tap shows the
-//           pill, no loop drags (glass).
+//           opens the bar menu (the loop-band menu when it began on the band); two fingers pan, a
+//           pinch zooms (pinch.js). Playing: tap shows the pill, no loop drags (glass).
+//   header  right-click, a 500 ms touch or pen long-press, Shift+F10 or the ContextMenu key opens the
+//           stem menu (menus.stemMenu: Mute · Solo · Reset level · This is my instrument; spec §7.7)
+//           through the Menu primitive's bindContextMenu. A long-press on the fader is a drag, not a menu.
 //   wheel   as 1.9 (timeline-navigation.js wheelNavigation): vertical zooms at the cursor,
 //           horizontal or Shift pans, ⌘/Ctrl or a trackpad pinch zooms.
 // Manual navigation that moves the window while playing (wheel, two-finger pan, pinch, the strip's
@@ -60,7 +64,7 @@ import {Button, IconButton} from '../../ui/button.js';
 import {Toggle} from '../../ui/toggle.js';
 import {Fader, percent} from '../../ui/fader.js';
 import {Kbd} from '../../ui/kbd.js';
-import {Menu} from '../../ui/menu.js';
+import {Menu, bindContextMenu} from '../../ui/menu.js';
 import {stemColor} from '../../ui/stem-pad.js';
 import {wheelNavigation} from '../../js/timeline-navigation.js';
 import {formatClock} from '../../../shared/practice.ts';
@@ -71,6 +75,7 @@ import {mountLoopHandles} from '../loop-handles.js';
 import {gridTicks, snapTime} from '../grid.js';
 import {drawGrid, drawRows, STEM_KEYS} from '../wave-render.js';
 import {stemLabel} from '../transport-commands.js';
+import {loopBandMenu, stemMenu} from '../menus.js';
 
 /** The dispatcher scope while the surface is shown (D24). */
 export const SCOPE = 'stage.stems';
@@ -130,6 +135,8 @@ export const COPY = Object.freeze({
   out: 'OUT',
   soloWord: 'SOLO',
   backToPlayhead: 'Back to playhead',
+  stemMenu: (name) => `${name} stem`,
+  loopMenu: 'Loop',
 });
 
 /** The §3.3 command ids. */
@@ -142,13 +149,13 @@ export const COMMAND_IDS = Object.freeze({
 export const CONTROLS = Object.freeze([
   Object.freeze({role: 'region', name: COPY.region, context: 'always'}),
   Object.freeze({role: 'group', name: COPY.toolbar, context: 'always'}),
-  Object.freeze({role: 'button', name: COPY.zoomOut, command: COMMAND_IDS.zoomOut, context: 'always'}),
-  Object.freeze({role: 'button', name: COPY.zoomIn, command: COMMAND_IDS.zoomIn, context: 'always'}),
-  Object.freeze({role: 'button', name: COPY.fit, command: COMMAND_IDS.fit, context: 'always'}),
-  Object.freeze({role: 'button', name: COPY.zoomLoop, command: COMMAND_IDS.zoomLoop, context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.zoomOut, command: 'stems.zoomOut', context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.zoomIn, command: 'stems.zoomIn', context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.fit, command: 'stems.fit', context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.zoomLoop, command: 'stems.zoomLoop', context: 'always'}),
   Object.freeze({role: 'button', name: COPY.gridButton(COPY.divisions.bar), context: 'mapped'}),
-  Object.freeze({role: 'button', name: COPY.snap, command: COMMAND_IDS.snap, context: 'always'}),
-  Object.freeze({role: 'button', name: COPY.follow, command: COMMAND_IDS.follow, context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.snap, command: 'stems.snap', context: 'always'}),
+  Object.freeze({role: 'button', name: COPY.follow, command: 'stems.follow', context: 'always'}),
   Object.freeze({role: 'group', name: 'Drums', context: 'row'}),
   Object.freeze({role: 'button', name: COPY.mute('Drums'), context: 'row'}),
   Object.freeze({role: 'button', name: COPY.solo('Drums'), context: 'row'}),
@@ -377,19 +384,19 @@ export function createStemsSurface(host, opts = {}) {
   const keep = (b) => { buttons.push(b); return b; };
   const zoomGroup = h('div', {class: 'stems-tool-group'});
   zoomGroup.append(
-    keep(IconButton({label: COPY.zoomOut, icon: 'zoom-out', command: COMMAND_IDS.zoomOut, size: 'sm', registry})).el,
-    keep(IconButton({label: COPY.zoomIn, icon: 'zoom-in', command: COMMAND_IDS.zoomIn, size: 'sm', registry})).el,
-    keep(Button({label: COPY.fit, command: COMMAND_IDS.fit, size: 'sm', variant: 'quiet', registry})).el,
+    keep(IconButton({label: COPY.zoomOut, icon: 'zoom-out', command: 'stems.zoomOut', size: 'sm', registry})).el,
+    keep(IconButton({label: COPY.zoomIn, icon: 'zoom-in', command: 'stems.zoomIn', size: 'sm', registry})).el,
+    keep(Button({label: COPY.fit, command: 'stems.fit', size: 'sm', variant: 'quiet', registry})).el,
   );
-  const zoomLoopButton = keep(Button({label: COPY.zoomLoop, icon: 'scan', command: COMMAND_IDS.zoomLoop, size: 'sm', variant: 'quiet', kbd: true, registry}));
+  const zoomLoopButton = keep(Button({label: COPY.zoomLoop, icon: 'scan', command: 'stems.zoomLoop', size: 'sm', variant: 'quiet', kbd: true, registry}));
   let gridMenu = null;
   const gridButton = keep(Button({
     label: COPY.gridButton(COPY.divisions[grid]), iconEnd: 'chevron-down', size: 'sm', variant: 'quiet',
     attrs: {'aria-haspopup': 'menu', 'aria-expanded': 'false'}, className: 'stems-grid-button',
     onClick: () => openGridMenu(),
   }));
-  const snapToggle = keep(Toggle({label: COPY.snap, icon: 'magnet', command: COMMAND_IDS.snap, size: 'sm', variant: 'quiet', registry}));
-  const followToggle = keep(Toggle({label: COPY.follow, icon: 'arrow-down-to-line', command: COMMAND_IDS.follow, size: 'sm', variant: 'quiet', registry}));
+  const snapToggle = keep(Toggle({label: COPY.snap, icon: 'magnet', command: 'stems.snap', size: 'sm', variant: 'quiet', registry}));
+  const followToggle = keep(Toggle({label: COPY.follow, icon: 'arrow-down-to-line', command: 'stems.follow', size: 'sm', variant: 'quiet', registry}));
   followToggle.el.classList.add('stems-follow');   // right-aligned (spec §10.7)
   toolbar.append(zoomGroup, zoomLoopButton.el, gridButton.el, snapToggle.el, followToggle.el);
   // The Follow pill (56 px, bottom centre) while manual navigation has paused Follow. In the Stage it
@@ -610,8 +617,12 @@ export function createStemsSurface(host, opts = {}) {
   }));
 
   // ---------------------------------------------------------------- rows
-  const rows = new Map();   // name → {el, head, word, mute, solo, fader, kbd, lane}
+  const rows = new Map();   // name → {el, head, word, mute, solo, fader, kbd, lane, offMenu}
   let rowOrder = [];
+  /** The open loop-band menu (each header's binding owns its stem menu and closes it with the row). */
+  let bandMenu = null;
+  /** The menus act through the surface's registry (menus.js: the mix, loop and spot commands, stems.zoomLoop). */
+  const menuOpts = () => ({registry});
 
   function createRow(track, index) {
     const label = stemLabel(track.name);
@@ -639,8 +650,15 @@ export function createStemsSurface(host, opts = {}) {
     const head = h('div', {class: 'stems-head', role: 'listitem'},
       h('div', {class: 'stems-head-body', role: 'group', attrs: {'aria-label': label}}, color, line1, line2, line3));
     const lane = h('div', {class: 'stems-lane', 'aria-hidden': 'true'});
+    // The stem menu (spec §7.7): right-click, long-press, Shift+F10 or the ContextMenu key anywhere
+    // on the header. A long-press that starts on the fader is a level drag held still, not a menu.
+    const offMenu = bindContextMenu(head, (event, {source} = {}) => {
+      if (destroyed) return null;
+      if (source === 'longpress' && event?.target?.closest?.('.stems-fader')) return null;
+      return stemMenu(session, track.name, menuOpts());
+    }, {label: COPY.stemMenu(label), registry});
     // The laptop fader; on an iPad (or any coarse pointer) the level lives in the Mix sheet.
-    const row = {name: track.name, head, lane, word, mute, solo, fader, level, showLevel, kbdHost, kbd: null, index: -1, line1, line2, line3};
+    const row = {name: track.name, head, lane, word, mute, solo, fader, level, showLevel, kbdHost, kbd: null, index: -1, line1, line2, line3, offMenu};
     placeRowParts(row);
     updateRow(row, track, index, false);
     return row;
@@ -689,7 +707,7 @@ export function createStemsSurface(host, opts = {}) {
     if (names.join('\n') !== rowOrder.join('\n')) {
       for (const [name, row] of rows) {
         if (names.includes(name)) continue;
-        row.mute.destroy(); row.solo.destroy(); row.fader.destroy?.(); row.kbd?.destroy?.();
+        row.offMenu(); row.mute.destroy(); row.solo.destroy(); row.fader.destroy?.(); row.kbd?.destroy?.();
         row.head.remove(); row.lane.remove();
         rows.delete(name);
       }
@@ -878,8 +896,8 @@ export function createStemsSurface(host, opts = {}) {
     }
   }
 
-  let downAt = null;   // the client point of the latest primary press (a mouse drag starts there)
-  const onDown = (e) => { if (e.isPrimary !== false) downAt = {x: e.clientX, y: e.clientY}; };
+  let downAt = null;   // the latest primary press: its client point (a mouse drag starts there) and target
+  const onDown = (e) => { if (e.isPrimary !== false) downAt = {x: e.clientX, y: e.clientY, target: e.target}; };
   lanes.addEventListener('pointerdown', onDown, true);
   offs.push(() => lanes.removeEventListener('pointerdown', onDown, true));
 
@@ -888,7 +906,10 @@ export function createStemsSurface(host, opts = {}) {
     haptic: (ms) => platformHaptic(ms),
     onTap: (e) => activate('tap', e),
     onDouble: (e) => activate('double', e),
-    onMenu: (e) => activate(e.pointerType === 'mouse' || e.keyboard ? 'context' : 'long', e),
+    onMenu: (e) => {
+      if (onLoopBand(e)) openLoopBandMenu(e);
+      else activate(e.pointerType === 'mouse' || e.keyboard ? 'context' : 'long', e);
+    },
     onLongStart: (e) => {
       if (pressPolicy({pointerType: e.pointerType, playing, gesture: 'longDrag'}) !== 'loopDrag') return false;
       loopDrag = {from: clientToT(e.clientX), pointer: e.pointerType};
@@ -907,6 +928,23 @@ export function createStemsSurface(host, opts = {}) {
     onDrag: (e) => dragTo(e.clientX, {alt: e.altKey, shift: e.shiftKey}),
     onDragEnd: (e) => endDrag({commit: !e.cancelled}),
   }));
+
+  /**
+   * Whether a menu gesture is on the loop band (or a loop handle): a right-click's own target; a long
+   * press's pointerdown target (its pointerup lands on the lanes, which captured the pointer).
+   */
+  function onLoopBand(e) {
+    if (!loop || e.keyboard || loopDrag) return false;
+    const target = e.pointerType === 'mouse' ? e.target : downAt?.target;
+    return !!target?.closest?.('.loop-band, .loop-handle') && lanes.contains(target);
+  }
+  function openLoopBandMenu(e) {
+    const items = loopBandMenu(session, menuOpts());
+    if (!items.length) return;
+    bandMenu?.destroy?.();
+    bandMenu = Menu.open(items, {anchor: {x: e.clientX, y: e.clientY}, label: COPY.loopMenu, registry,
+      onClose: () => { bandMenu = null; }});
+  }
 
   // Two fingers: pan and pinch zoom, previewed live (the canvas redraws), committed on release.
   let pinchStart = null;
@@ -1159,7 +1197,9 @@ export function createStemsSurface(host, opts = {}) {
       endDrag({commit: false});
       for (const off of offs.splice(0).reverse()) { try { off?.(); } catch (err) { console.error('[stems] cleanup failed', err); } }
       handles.destroy();
-      for (const row of rows.values()) { row.mute.destroy(); row.solo.destroy(); row.fader.destroy?.(); row.kbd?.destroy?.(); }
+      bandMenu?.destroy?.();
+      bandMenu = null;
+      for (const row of rows.values()) { row.offMenu(); row.mute.destroy(); row.solo.destroy(); row.fader.destroy?.(); row.kbd?.destroy?.(); }
       rows.clear();
       for (const b of buttons) b.destroy();
       const at = live.indexOf(self);

@@ -9,11 +9,15 @@ import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/fake-audio.js')).fakeSignalsmith}));
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: () => false}));
 
+import {readFileSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createRegistry} from '../src/app/commands.js';
 import {activeScopeChain, setSurfaceScope, startDispatcher} from '../src/app/dispatch.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {signal} from '../src/app/store.js';
 import {clearHatchCache} from '../src/stage/wave-render.js';
+import {defineTransportCommands} from '../src/stage/transport-commands.js';
 import {
   COMMAND_IDS, CONTROLS, COPY, FOLLOW_IDLE_MS, FOLLOW_LINE, GRID_MIN_PX, MIN_SPAN, SCOPE, ZOOM_SAVE_MS,
   clampView, createStemsSurface, defineStemsCommands, loopView, rowState, rowWord, rulerMarks, stemsCommandDefs, timeLabel, zoomView,
@@ -748,5 +752,147 @@ describe('the §3.3 commands and the stage.stems scope', () => {
     expect(b.reg.state(COMMAND_IDS.zoomLoop).enabled).toBe(false);
     b.surface.setLoop({a: 8, b: 16});
     expect(b.reg.state(COMMAND_IDS.zoomLoop).enabled).toBe(true);
+  });
+});
+
+describe('the stem and loop-band menus (spec §7.7)', () => {
+  /** The bed with the transport's commands (mix.mute.N, loop.*, spot.save) on its registry, as in the Stage. */
+  const menuBed = (options = {}) => bed({beforeMount: (reg) => defineTransportCommands({registry: reg, sheets: {}}), ...options});
+  const openMenu = () => document.querySelector('[role=menu]');
+  const menuLabels = () => [...document.querySelectorAll('[role=menu] .ui-menu-label')].map((n) => n.textContent);
+  const menuRow = (label) => [...document.querySelectorAll('[role=menu] .ui-menu-item')].find((r) => r.querySelector('.ui-menu-label')?.textContent === label);
+  const rightClick = (el, x, y = TOP + 50) =>
+    el.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2, detail: 1}));
+  const STEM_ROWS = ['Mute', 'Solo', 'Reset level', 'This is my instrument'];
+  const LOOP_ROWS = ['Save as spot', 'Count in every pass', '◀ Move 8 bars', 'Move 8 bars ▶', 'Zoom to loop', 'Clear'];
+
+  test('right-click on a row header opens the stem menu; Mute there mutes that stem', async () => {
+    const b = await menuBed();
+    const bass = b.heads()[1];
+    rightClick(bass.querySelector('.stems-name'), 40, 140);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.stemMenu('Bass'));
+    expect(menuLabels()).toEqual(STEM_ROWS);
+    expect(b.activations).toHaveLength(0);
+    menuRow('Mute').click();
+    expect(b.snap.mix.tracks.find((t) => t.name === 'bass').muted).toBe(true);
+    expect(openMenu()).toBeNull();
+    // Right-click on the header's own M button is the stem menu too (not the browser's).
+    rightClick(byRole(bass, 'button', COPY.mute('Bass'))[0], 40, 140);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.stemMenu('Bass'));
+    expect(menuRow('Reset level')).toBeTruthy();
+  });
+
+  test('a 500 ms touch long-press on a header opens it and swallows the tap; a long-press on the fader does not', async () => {
+    const b = await menuBed();
+    const drums = b.heads()[0];
+    const mute = byRole(drums, 'button', COPY.mute('Drums'))[0];
+    pointer(mute, 'pointerdown', {x: 30, y: 90, pointerType: 'touch', pointerId: 21});
+    await vi.advanceTimersByTimeAsync(510);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.stemMenu('Drums'));
+    pointer(mute, 'pointerup', {x: 30, y: 90, pointerType: 'touch', pointerId: 21});
+    mute.click();
+    expect(b.snap.mix.tracks.find((t) => t.name === 'drums').muted).toBe(false);
+    menuRow('Solo').click();
+    expect(b.snap.mix.tracks.find((t) => t.name === 'drums').soloed).toBe(true);
+    expect(openMenu()).toBeNull();
+
+    const slider = byRole(drums, 'slider', COPY.level('Drums'))[0];
+    pointer(slider, 'pointerdown', {x: 60, y: 120, pointerType: 'touch', pointerId: 22});
+    await vi.advanceTimersByTimeAsync(510);
+    pointer(slider, 'pointerup', {x: 60, y: 120, pointerType: 'touch', pointerId: 22});
+    expect(openMenu()).toBeNull();
+  });
+
+  test('Shift+F10 on a focused header control opens the stem menu below it', async () => {
+    const b = await menuBed();
+    const solo = byRole(b.heads()[2], 'button', COPY.solo('Vocals'))[0];
+    solo.focus();
+    solo.dispatchEvent(new KeyboardEvent('keydown', {key: 'F10', code: 'F10', shiftKey: true, bubbles: true, cancelable: true}));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.stemMenu('Vocals'));
+    expect(menuLabels()).toEqual(STEM_ROWS);
+  });
+
+  test('right-click on the loop band opens the loop-band menu (not the bar menu); Zoom to loop and Clear act', async () => {
+    const b = await menuBed();
+    b.ts.session.transport.loopRange(32, 48, {snap: 'none'});
+    b.surface.setLoop({a: 32, b: 48});
+    const band = b.lanes.querySelector('.loop-band');
+    expect(band).toBeTruthy();
+    rightClick(band, b.xOf(40));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.loopMenu);
+    expect(menuLabels()).toEqual(LOOP_ROWS);
+    expect(b.activations).toHaveLength(0);
+    menuRow('Zoom to loop').click();
+    expect(b.surface.view).toMatchObject({t0: 31.2});
+    expect(b.surface.view.span).toBeCloseTo(17.6, 6);
+
+    // A right-click on a loop handle is the band's menu too; off the band it stays the bar menu.
+    rightClick(b.lanes.querySelector('.loop-handle[data-edge=b]'), b.xOf(48));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.loopMenu);
+    menuRow('Clear').click();
+    expect(b.snap.loop.on).toBe(false);
+    b.surface.setLoop(null);
+    await vi.advanceTimersByTimeAsync(900);
+    rightClick(b.lanes, b.xOf(40));
+    expect(b.activations.at(-1)).toMatchObject({kind: 'context', bar: 21});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu()).toBeNull();
+  });
+
+  test('a touch long-press that began on the band opens the loop-band menu; elsewhere it is the bar menu', async () => {
+    const b = await menuBed();
+    b.ts.session.transport.loopRange(32, 48, {snap: 'none'});
+    b.surface.setLoop({a: 32, b: 48});
+    const band = b.lanes.querySelector('.loop-band');
+    pointer(band, 'pointerdown', {x: b.xOf(40), y: TOP + 50, pointerType: 'touch', pointerId: 31});
+    vi.advanceTimersByTime(360);
+    // The lanes captured the pointer: the release lands on them, not the band.
+    pointer(b.lanes, 'pointerup', {x: b.xOf(40), y: TOP + 50, pointerType: 'touch', pointerId: 31});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu().getAttribute('aria-label')).toBe(COPY.loopMenu);
+    expect(b.activations).toHaveLength(0);
+    expect(b.edits).toHaveLength(0);
+    expect(menuRow('Save as spot')).toBeTruthy();
+    openMenu().querySelector('.ui-menu-item').dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+    await settle();
+    expect(openMenu()).toBeNull();
+
+    pointer(b.lanes, 'pointerdown', {x: b.xOf(60), y: TOP + 50, pointerType: 'touch', pointerId: 32});
+    vi.advanceTimersByTime(360);
+    pointer(b.lanes, 'pointerup', {x: b.xOf(60), y: TOP + 50, pointerType: 'touch', pointerId: 32});
+    expect(b.activations.at(-1)).toMatchObject({kind: 'long', bar: 31});
+  });
+
+  test('destroying the surface closes an open stem or loop-band menu', async () => {
+    const b = await menuBed();
+    b.surface.setLoop({a: 32, b: 48});
+    rightClick(b.lanes.querySelector('.loop-band'), b.xOf(40));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu()).toBeTruthy();
+    b.surface.destroy();
+    expect(openMenu()).toBeNull();
+
+    const c = await menuBed();
+    rightClick(c.heads()[0].querySelector('.stems-name'), 40, 90);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu()).toBeTruthy();
+    c.surface.destroy();
+    expect(openMenu()).toBeNull();
+  });
+});
+
+describe('registry CI can see the controls (I2b-18)', () => {
+  test('every toolbar Button and Toggle names its stems.* command as a literal id', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/stage/surfaces/stems-surface.js'), 'utf8');
+    expect(src).not.toMatch(/command:\s*COMMAND_IDS\./);
+    const literals = new Set([...src.matchAll(/command:\s*'(stems\.[A-Za-z]+)'/g)].map((m) => m[1]));
+    const onToolbar = Object.values(COMMAND_IDS).filter((id) => id !== COMMAND_IDS.grid);   // Grid ▾ is a menu button
+    for (const id of onToolbar) expect(literals, id).toContain(id);
+    for (const id of literals) expect(Object.values(COMMAND_IDS)).toContain(id);
   });
 });
