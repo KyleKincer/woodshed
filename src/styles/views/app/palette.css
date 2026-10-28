@@ -148,6 +148,9 @@
     font-size: var(--fs-12);
   }
   .app-palette-row:not([aria-selected=true]) .app-palette-mod { visibility: hidden; }
+  /* --ink-3 on --accent-soft falls short of 4.5:1 in both themes (WCAG 1.4.3): the selected row's
+   * secondary text steps up to --ink-2. */
+  .app-palette-row[aria-selected=true] :is(.app-palette-sub, .app-palette-mod) { color: var(--ink-2); }
   .app-palette-key { flex: none; }
 
   .app-palette-empty {
