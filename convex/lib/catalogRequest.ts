@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { fail } from "./errors";
 
 const retryable = new Set([429, 500, 502, 503, 504]);
 const unavailable =
@@ -6,7 +7,11 @@ const unavailable =
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Retry transient provider failures; every attempt still acquires a shared rate slot. */
+/**
+ * Retry transient provider failures; every attempt still acquires a shared rate slot.
+ * Failures are coded (§6.1): `lookup_unavailable` when the provider cannot be
+ * reached, `invalid` when a response is too large to use.
+ */
 export async function catalogRequest(
   url: string,
   options: {
@@ -31,7 +36,7 @@ export async function catalogRequest(
         signal: AbortSignal.timeout(8000),
       });
     } catch {
-      if (attempt === 2) throw new ConvexError(unavailable);
+      if (attempt === 2) fail("lookup_unavailable", unavailable);
       await pause(2000 * (attempt + 1));
       continue;
     }
@@ -39,18 +44,19 @@ export async function catalogRequest(
       try {
         const body = await response.text();
         if (body.length > 900000)
-          throw new ConvexError(
+          fail(
+            "invalid",
             "This release is too large to look up. Try another match.",
           );
         return JSON.parse(body);
       } catch (error) {
         if (error instanceof ConvexError) throw error;
-        if (attempt === 2) throw new ConvexError(unavailable);
+        if (attempt === 2) fail("lookup_unavailable", unavailable);
         await pause(2000 * (attempt + 1));
         continue;
       }
     }
-    if (!retryable.has(response.status)) throw new ConvexError(unavailable);
+    if (!retryable.has(response.status)) fail("lookup_unavailable", unavailable);
     const retryAfter = response.headers.get("retry-after");
     const seconds = retryAfter === null ? NaN : Number(retryAfter);
     const requestedDelay = Number.isFinite(seconds)
@@ -65,8 +71,8 @@ export async function catalogRequest(
     // Other requests also respect the provider's cooldown, including requests from other users.
     await options.defer(backoff);
     await response.body?.cancel().catch(() => {});
-    if (attempt === 2 || backoff > 8000) throw new ConvexError(unavailable);
+    if (attempt === 2 || backoff > 8000) fail("lookup_unavailable", unavailable);
     await pause(backoff);
   }
-  throw new ConvexError(unavailable);
+  fail("lookup_unavailable", unavailable);
 }
