@@ -8,7 +8,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {
   WAVES, expandBraces, matchGlob, ownsPath, samplePaths, loadPackages, validatePackages,
-  findOverlaps, moduleTestNames, ownedModules, namedAllowance, checkOwnership,
+  findOverlaps, moduleTestNames, ownedModules, namedAllowance, checkOwnership, allowance, modulesFor,
 } from '../../scripts/check-ownership.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -213,6 +213,89 @@ describe('test files named after a package’s modules', () => {
   ])('%s may not change %s', (id, file) => expect(allowed(id, file)).toBe(null));
 });
 
+describe('naming rules never let two packages of one wave change one path', () => {
+  const check = (id, file) => checkOwnership({packages, id, files: [file], knownPaths: tracked}).rows[0];
+  it.each([
+    ['BK3', 'convex/admin.test.ts', 'owned by BK1 (wave 0B)'], // BK3 owns convex/admin.ts; BK1 owns the test
+    ['ED2', 'tests/commands.test.js', 'named after modules of ED2, ED3, ED5 in wave 3a'],
+    ['ED3', 'tests/commands.test.js', 'named after modules of ED2, ED3, ED5 in wave 3a'],
+    ['ED5', 'tests/commands.test.js', 'named after modules of ED2, ED3, ED5 in wave 3a'],
+    ['ED3', 'tests/harness/edit/commands.harness.js', 'named after modules of ED2, ED3, ED5 in wave 3a'],
+    ['U2', 'tests/position.test.js', 'named after modules of ST0, U2 in wave 0B'],
+    ['ST0', 'tests/position.test.js', 'named after modules of ST0, U2 in wave 0B'],
+    ['BK1', 'tests/storage.test.js', 'named after modules of BK1, BK3 in wave 0B'],
+    ['SE1', 'tests/account.test.js', 'named after modules of SE1, SE3 in wave 2a'],
+    ['SE3', 'tests/account.test.js', 'named after modules of SE1, SE3 in wave 2a'],
+    ['BK2', 'tests/harness/library/jobs.harness.js', 'owned by LB1b (wave 1b)'], // listed literally by a later package
+    ['ST0', 'tests/harness/stage/frame.harness.js', 'owned by ST4 (wave 2a)'],
+  ])('%s may not change %s', (id, file, detail) => {
+    const row = check(id, file);
+    expect(row.status).toBe('unowned');
+    expect(row.detail).toContain(detail);
+  });
+  it.each([
+    ['BK1', 'convex/admin.test.ts', 'owned'],
+    ['ED3', 'tests/edit-map-commands.test.js', 'named'],
+    ['ED3', 'tests/harness/edit/map-commands.harness.js', 'named'],
+    ['ED5', 'tests/chart-commands.test.js', 'named'],
+    ['F3', 'tests/fixture/states/F3.cjs', 'named'], // FX1's tests/fixture/** leaves the per-package states alone
+    ['FX1', 'tests/fixture/states/FX1.cjs', 'named'],
+  ])('%s may still change %s (%s)', (id, file, status) => expect(check(id, file).status).toBe(status));
+  it('lets FX1 own no other package’s states file', () => {
+    expect(ownsPath(byId.FX1.owns, 'tests/fixture/states/F3.cjs')).toBe(false);
+    expect(check('FX1', 'tests/fixture/states/F3.cjs').status).toBe('unowned');
+  });
+
+  it('a glob of a later wave does not block a naming rule; a same-wave glob or any literal entry does', () => {
+    const l = [
+      {id: 'A1', wave: '0A', kind: 'package', title: 'A', owns: ['src/a/keys.js', 'src/a/menu.js'], deps: []},
+      {id: 'B1', wave: '0A', kind: 'package', title: 'B', owns: ['tests/b-*.test.js', 'src/b/x.js'], deps: []},
+      {id: 'C1', wave: '0B', kind: 'package', title: 'C', owns: ['tests/*.test.js', 'tests/a-menu.test.js'], deps: []},
+      {id: 'D1', wave: '0A', kind: 'package', title: 'D', owns: ['src/d/keys.js'], deps: []},
+    ];
+    const st = (id, file) => checkOwnership({packages: l, id, files: [file]}).rows[0];
+    expect(st('A1', 'tests/a-keys.test.js').status).toBe('named'); // C1's tests/*.test.js is a later wave
+    expect(st('A1', 'tests/a-menu.test.js')).toMatchObject({status: 'unowned', detail: 'owned by C1 (wave 0B)'});
+    expect(st('A1', 'tests/keys.test.js')).toMatchObject({status: 'unowned', detail: expect.stringMatching(/A1, D1 in wave 0A/)});
+    expect(st('D1', 'tests/d-keys.test.js').status).toBe('named');
+    l[0].owns.push('src/b-thing.js');
+    expect(st('A1', 'tests/b-thing.test.js')).toMatchObject({status: 'unowned', detail: 'owned by B1 (wave 0A)'});
+  });
+
+  it('holds for every wave over every name the rules would grant', () => {
+    const mods = modulesFor(tracked);
+    const shared = [];
+    let candidates = 0;
+    for (const wave of WAVES) {
+      const peers = packages.filter(p => p.wave === wave && p.kind !== 'integration');
+      const names = new Set();
+      for (const p of peers) {
+        for (const m of mods(p)) {
+          const forms = moduleTestNames(m);
+          if (!forms.length) continue;
+          const dir = path.posix.dirname(m);
+          for (const n of forms) { names.add(`tests/${n}.test.js`); names.add(`tests/harness/x/${n}.harness.js`); }
+          names.add(`${dir}/${forms[0]}.test.${m.endsWith('.ts') ? 'ts' : 'js'}`);
+          names.add(`${dir}/test_${forms[0]}.py`);
+          const segs = forms[forms.length - 1].split('-');
+          for (let k = 1; k < segs.length; k++) {
+            names.add(`tests/${segs.slice(0, k).join('/')}/${segs.slice(k).join('-')}.test.js`);
+            names.add(`tests/harness/${segs.slice(0, k).join('/')}/${segs.slice(k).join('-')}.harness.js`);
+          }
+        }
+        names.add(`tests/fixture/states/${p.id}.cjs`);
+      }
+      for (const file of names) {
+        candidates++;
+        const ok = peers.filter(p => allowance(packages, p, file, mods).status).map(p => p.id);
+        if (ok.length > 1) shared.push(`${wave} ${file}: ${ok.join(', ')}`);
+      }
+    }
+    expect(candidates).toBeGreaterThan(1000);
+    expect(shared).toEqual([]);
+  }, 60_000);
+});
+
 describe('checkOwnership', () => {
   it('classifies owned, named, declared, peer and unowned paths', () => {
     const files = ['src/app/keys.js', 'tests/app-keys.test.js', 'tests/old-ui.test.js', 'src/app/store.js', 'src/js/engine.js', 'README.md'];
@@ -263,7 +346,9 @@ function scratchRepo() {
 }
 const run = (cwd, args) => spawnSync(process.execPath, [SCRIPT, ...args], {cwd, encoding: 'utf8'});
 
-describe('check-ownership CLI', () => {
+// The CLI blocks spawn git on a scratch repository; the release workflow's
+// Windows runner skips them (Linux and macOS cover them).
+describe.skipIf(process.platform === 'win32')('check-ownership CLI', () => {
   let s;
   beforeAll(() => { s = scratchRepo(); });
   afterAll(() => rmSync(s.dir, {recursive: true, force: true}));

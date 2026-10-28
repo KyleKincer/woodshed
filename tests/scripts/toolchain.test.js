@@ -15,6 +15,9 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const pkg = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8'));
 const lock = JSON.parse(readFileSync(path.join(repo, 'package-lock.json'), 'utf8'));
 const cacheRoot = path.join(repo, 'tests/fixture/.vite-cache');
+// The process-spawning checks use `npm` without a shell and POSIX process
+// groups; the release workflow's Windows runner skips them.
+const posix = process.platform !== 'win32';
 
 const PINNED = {
   '@fontsource-variable/atkinson-hyperlegible-next': '5.3.0',
@@ -55,7 +58,7 @@ describe('devDependencies (§0.1)', () => {
     expect(existsSync(path.join(repo, 'node_modules/axe-core/axe.min.js'))).toBe(true);
   });
 
-  it('npm ls finds the four packages at their pinned versions', () => {
+  it.runIf(posix)('npm ls finds the four packages at their pinned versions', () => {
     const r = spawnSync('npm', ['ls', ...Object.keys(PINNED), '--json'], {cwd: repo, encoding: 'utf8'});
     expect(r.status).toBe(0);
     const deps = JSON.parse(r.stdout).dependencies;
@@ -172,7 +175,7 @@ async function waitForPage(port, child, timeoutMs = 45_000) {
   throw new Error(`fixture on ${port} did not answer: ${child.output}`);
 }
 
-describe('fixture servers', () => {
+describe.runIf(posix)('fixture servers', () => {
   const createdCaches = [];
   afterAll(async () => {
     await Promise.all(children.map(stop));

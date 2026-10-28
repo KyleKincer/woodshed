@@ -7,11 +7,15 @@
 //       .env.worktree with WT_ID, WT_WAVE, WT_BRANCH, WT_BASE,
 //       FIXTURE_PORT (5200 + the package's index in packages.json) and
 //       VITEST_MAX_WORKERS=2. --wave names a follow-up wave such as 0Ax.
-//   node scripts/wt.mjs merge <wave> [--skip <ID>]... [--dry-run]
+//   node scripts/wt.mjs merge <wave> [--verification] [--skip <ID>]... [--dry-run]
 //       merges ux2/<wave>/<ID> for every package of the wave, in ID order,
 //       into the current branch with --no-ff; stops at the first conflict,
-//       prints it and leaves the merge in progress. For a follow-up wave
-//       (<wave>x) it merges whichever ux2/<wave>x/* branches exist.
+//       prints it and leaves the merge in progress. Branches already merged
+//       are skipped, including ones `remove` has since deleted (found by their
+//       merge commit), so re-running continues after a conflict. For a
+//       follow-up wave (<wave>x) it merges whichever ux2/<wave>x/* branches
+//       exist. A verification run that follows the wave's integration (VF1–VF3)
+//       is not part of the wave; merge it afterwards with --verification.
 //   node scripts/wt.mjs remove <ID> [--force] [--keep-branch]
 //       removes the worktree once its branch is merged into HEAD and deletes
 //       the merged branch. --force removes an unmerged or dirty worktree and
@@ -106,32 +110,42 @@ function create(cwd, id, opts, log) {
   return 0;
 }
 
-export function wavePlan(packages, wave, branches) {
+export function wavePlan(packages, wave, branches, {verification = false} = {}) {
   const followUp = /x$/.test(wave) && WAVES.includes(wave.slice(0, -1));
   if (!followUp && !WAVES.includes(wave)) throw new UsageError(`unknown wave ${wave}`);
+  if (followUp && verification) throw new UsageError('--verification takes a wave, not a follow-up wave');
   if (followUp) {
     const prefix = `ux2/${wave}/`;
     return branches.filter(b => b.startsWith(prefix)).map(b => ({id: b.slice(prefix.length), branch: b})).sort((a, b) => byId(a.id, b.id));
   }
   // Verification runs after the wave's integration (VF1–VF3) are not part of the wave's merge.
   const integrations = new Set(packages.filter(p => p.wave === wave && p.kind === 'integration').map(p => p.id));
-  return packages.filter(p => p.wave === wave && p.kind !== 'integration' && !p.deps.some(d => integrations.has(d)))
+  const afterIntegration = p => p.deps.some(d => integrations.has(d));
+  return packages.filter(p => p.wave === wave && p.kind !== 'integration' && afterIntegration(p) === verification)
     .map(p => ({id: p.id, title: p.title, branch: branchName(wave, p.id)}))
     .sort((a, b) => byId(a.id, b.id));
+}
+
+/** True when HEAD's history has a merge commit of `branch` (ours, or git's default message). */
+export function mergedBefore(cwd, branch) {
+  const subjects = git(cwd, ['log', '--merges', '--fixed-strings', `--grep=${branch}`, '--format=%s', 'HEAD']).split('\n');
+  return subjects.some(s => s === `Merge ${branch}` || s.startsWith(`Merge ${branch} `) || s.startsWith(`Merge branch '${branch}'`));
 }
 
 function merge(cwd, wave, opts, log) {
   const {top} = locate(cwd);
   const packages = packagesAt(top);
   const branches = git(top, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/ux2/']).split('\n').filter(Boolean);
-  const plan = wavePlan(packages, wave, branches).filter(p => !opts.skip.includes(p.id));
-  if (!plan.length) throw new UsageError(`nothing to merge for wave ${wave}`);
-  const missing = plan.filter(p => !branches.includes(p.branch));
+  const plan = wavePlan(packages, wave, branches, {verification: opts.verification}).filter(p => !opts.skip.includes(p.id));
+  if (!plan.length) throw new UsageError(`nothing to merge for wave ${wave}${opts.verification ? ' (verification)' : ''}`);
+  const absent = plan.filter(p => !branches.includes(p.branch));
+  const deleted = absent.filter(p => mergedBefore(top, p.branch));
+  const missing = absent.filter(p => !deleted.includes(p));
   const into = git(top, ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (opts.dryRun) {
     log(`would merge into ${into}:`);
     for (const p of plan) {
-      const state = missing.includes(p) ? ' (missing)' : gitOk(top, ['merge-base', '--is-ancestor', p.branch, 'HEAD']) ? ' (already merged)' : '';
+      const state = missing.includes(p) ? ' (missing)' : deleted.includes(p) ? ' (merged and deleted)' : gitOk(top, ['merge-base', '--is-ancestor', p.branch, 'HEAD']) ? ' (already merged)' : '';
       log(`  ${p.branch}${state}`);
     }
     return missing.length ? 1 : 0;
@@ -140,6 +154,7 @@ function merge(cwd, wave, opts, log) {
   if (git(top, ['status', '--porcelain', '--untracked-files=no'])) throw new UsageError('the working tree has uncommitted changes; commit or discard them first');
   if (existsSync(path.resolve(top, git(top, ['rev-parse', '--git-path', 'MERGE_HEAD'])))) throw new UsageError('a merge is already in progress');
   for (const p of plan) {
+    if (deleted.includes(p)) { log(`skip   ${p.branch} (merged and deleted)`); continue; }
     if (gitOk(top, ['merge-base', '--is-ancestor', p.branch, 'HEAD'])) { log(`skip   ${p.branch} (already merged)`); continue; }
     const message = `Merge ${p.branch}${p.title ? ` (${p.id}: ${p.title})` : ''} into ${into}`;
     const r = spawnSync('git', ['merge', '--no-ff', '--no-edit', '-m', message, p.branch], {cwd: top, encoding: 'utf8'});
@@ -187,7 +202,7 @@ function list(cwd, log) {
 
 export function parseArgs(argv) {
   const [cmd, arg, ...rest] = argv;
-  const opts = {install: true, skip: [], force: false, keepBranch: false, dryRun: false};
+  const opts = {install: true, skip: [], force: false, keepBranch: false, dryRun: false, verification: false};
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     const value = () => { const v = rest[++i]; if (v === undefined) throw new UsageError(`${a} needs a value`); return v; };
@@ -198,13 +213,14 @@ export function parseArgs(argv) {
     else if (a === '--force') opts.force = true;
     else if (a === '--keep-branch') opts.keepBranch = true;
     else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--verification') opts.verification = true;
     else throw new UsageError(`unknown option ${a}`);
   }
   return {cmd, arg, opts};
 }
 
 const USAGE = 'usage: node scripts/wt.mjs create <ID> [--base <ref>] [--wave <wave>] [--no-install]\n' +
-  '       node scripts/wt.mjs merge <wave> [--skip <ID>]... [--dry-run]\n' +
+  '       node scripts/wt.mjs merge <wave> [--verification] [--skip <ID>]... [--dry-run]\n' +
   '       node scripts/wt.mjs remove <ID> [--force] [--keep-branch]\n' +
   '       node scripts/wt.mjs list';
 

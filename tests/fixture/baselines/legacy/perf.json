@@ -5,7 +5,7 @@
     "commit": "820f4db790236938df9ad034efe88df65c2eb5af",
     "app": "1.9 full-app fixture (tests/fixture at 820f4db)"
   },
-  "recordedAt": "2026-10-28T04:10:13.323Z",
+  "recordedAt": "2026-10-28T04:32:32.367Z",
   "environment": {
     "chromium": "153.0.8010.12",
     "node": "v22.22.0",
@@ -14,8 +14,8 @@
     "cpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
     "memoryGb": 15.71,
     "loadAverage": {
-      "before": [0.39,0.3,0.18],
-      "after": [1.19,0.68,0.34]
+      "before": [1.32,0.89,0.81],
+      "after": [1.68,1.62,1.14]
     },
     "viewport": {
       "width": 1440,
@@ -23,54 +23,77 @@
     },
     "headless": true
   },
+  "validity": {
+    "provisional": true,
+    "quietLoadThreshold": 0.5,
+    "reason": "Provisional: recorded by package FX0 in the package-agent container, which other agents share; the 1-minute load average was 1.32 (> 0.5) before the runs; the 1-minute load average was 1.68 (> 0.5 + 1 for the probe itself) after the runs. Re-record with the manifest command in a quiet container before computing ratios."
+  },
   "runs": 5,
   "warmup": 1,
   "rule": "a 2.0 measurement passes when it is at most 1.15 × metrics.<name>.median from the same container",
   "metrics": {
     "openToPlayMs": {
-      "median": 2173.3,
+      "median": 2492.3,
       "unit": "ms",
-      "runs": [2173.3,2420.8,2158.2,2253,2171.5],
+      "runs": [2462.5,2333.2,2511,2557.6,2492.3],
       "method": "navigation start of /?song=glasshouse&fx-jobs=0&fx-practice=chart to #play enabled with #player-root not aria-busy and .player not .is-loading (performance.now() in the page)"
     },
     "relayout64Ms": {
-      "median": 73.4,
+      "median": 44.6,
       "unit": "ms",
-      "runs": [68.7,74.7,73.4,100.3,72.7],
-      "method": "tests/fixture/harness/score-geometry.html?seconds=128 (64 bars, 1200 px): view.setScale(1.2) from 1.0 until alphaTab renderFinished plus 2 animation frames"
+      "runs": [37.7,43.3,53.7,44.6,47.8],
+      "method": "tests/fixture/harness/score-geometry.html?seconds=128 (64 bars of demoScore(128, 120), 1200 px, no page instrumentation): view.setScale(1.2) from 1.0 until the score view's render callback (alphaTab renderFinished); paintMs (secondary, not gated) adds 2 animation frames",
+      "paintMsMedian": 72.4
     },
     "frameCostMs": {
-      "median": 5.48,
+      "median": 7.07,
       "unit": "ms per frame",
-      "runs": [5.69,5.15,5.24,5.48,5.64],
-      "method": "/?song=glasshouse&fx-jobs=0&fx-practice=chart playing on the practice chart for 10 s: CDP Performance TaskDuration delta divided by requestAnimationFrame callbacks",
-      "intervalP95Ms": 16.8,
-      "scriptMsPerFrame": 0.5,
+      "runs": [7.33,6.76,6.84,7.15,7.07],
+      "method": "/?song=glasshouse&fx-jobs=0&fx-practice=chart playing on the practice chart for 10 s: CDP Performance TaskDuration delta divided by requestAnimationFrame callbacks (the ratio denominator). intervalP95Ms, longAnimationFrames and blockingMs are secondary checks, not ratios.",
+      "intervalP95Ms": 16.7,
+      "scriptMsPerFrame": 0.66,
+      "longAnimationFrames": 0,
+      "blockingMs": 0
+    },
+    "frameCostTracksMs": {
+      "median": 6.33,
+      "unit": "ms per frame",
+      "runs": [5.71,6.13,6.38,6.33,6.42],
+      "method": "/?song=glasshouse&fx-jobs=0&fx-practice=tracks playing on the practice tracks (waveform) view for 10 s: CDP Performance TaskDuration delta divided by requestAnimationFrame callbacks (the ratio denominator). intervalP95Ms, longAnimationFrames and blockingMs are secondary checks, not ratios.",
+      "intervalP95Ms": 16.7,
+      "scriptMsPerFrame": 0.38,
       "longAnimationFrames": 0,
       "blockingMs": 0
     }
   },
   "details": {
     "openToPlay": [
-      {"openToPlayMs":2173.3},
-      {"openToPlayMs":2420.8},
-      {"openToPlayMs":2158.2},
-      {"openToPlayMs":2253},
-      {"openToPlayMs":2171.5}
+      {"openToPlayMs":2462.5},
+      {"openToPlayMs":2333.2},
+      {"openToPlayMs":2511},
+      {"openToPlayMs":2557.6},
+      {"openToPlayMs":2492.3}
     ],
     "relayout64": [
-      {"relayout64Ms":68.7,"renderMs":43.3,"systemsBefore":18},
-      {"relayout64Ms":74.7,"renderMs":47.1,"systemsBefore":18},
-      {"relayout64Ms":73.4,"renderMs":45.7,"systemsBefore":18},
-      {"relayout64Ms":100.3,"renderMs":57,"systemsBefore":18},
-      {"relayout64Ms":72.7,"renderMs":45.3,"systemsBefore":18}
+      {"relayout64Ms":37.7,"paintMs":78.5,"systemsBefore":18},
+      {"relayout64Ms":43.3,"paintMs":72.4,"systemsBefore":18},
+      {"relayout64Ms":53.7,"paintMs":60.3,"systemsBefore":18},
+      {"relayout64Ms":44.6,"paintMs":59.6,"systemsBefore":18},
+      {"relayout64Ms":47.8,"paintMs":78.1,"systemsBefore":18}
     ],
     "frameCost": [
-      {"frameCostMs":5.69,"frames":597,"elapsedMs":10005.3,"scriptMsPerFrame":0.51,"layoutMsPerFrame":0.48,"styleMsPerFrame":2.72,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":83.3,"slowFrames":1,"longAnimationFrames":1,"longAnimationFrameMs":104.4,"blockingMs":0},
-      {"frameCostMs":5.15,"frames":600,"elapsedMs":10010.4,"scriptMsPerFrame":0.46,"layoutMsPerFrame":0.41,"styleMsPerFrame":2.45,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":33.4,"slowFrames":1,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
-      {"frameCostMs":5.24,"frames":601,"elapsedMs":10005.5,"scriptMsPerFrame":0.46,"layoutMsPerFrame":0.43,"styleMsPerFrame":2.53,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
-      {"frameCostMs":5.48,"frames":601,"elapsedMs":10016.3,"scriptMsPerFrame":0.5,"layoutMsPerFrame":0.46,"styleMsPerFrame":2.65,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":33.3,"slowFrames":1,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
-      {"frameCostMs":5.64,"frames":601,"elapsedMs":10000.9,"scriptMsPerFrame":0.52,"layoutMsPerFrame":0.46,"styleMsPerFrame":2.72,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0}
+      {"frameCostMs":7.33,"frames":602,"elapsedMs":10015.9,"scriptMsPerFrame":0.67,"layoutMsPerFrame":0.64,"styleMsPerFrame":3.6,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.76,"frames":600,"elapsedMs":10005.1,"scriptMsPerFrame":0.66,"layoutMsPerFrame":0.57,"styleMsPerFrame":3.26,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":33.3,"slowFrames":1,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.84,"frames":601,"elapsedMs":10000.8,"scriptMsPerFrame":0.59,"layoutMsPerFrame":0.57,"styleMsPerFrame":3.41,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":7.15,"frames":583,"elapsedMs":10005.6,"scriptMsPerFrame":0.61,"layoutMsPerFrame":0.59,"styleMsPerFrame":3.53,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":200,"slowFrames":5,"longAnimationFrames":3,"longAnimationFrameMs":339,"blockingMs":0},
+      {"frameCostMs":7.07,"frames":600,"elapsedMs":10002.6,"scriptMsPerFrame":0.7,"layoutMsPerFrame":0.62,"styleMsPerFrame":3.41,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":33.3,"slowFrames":1,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0}
+    ],
+    "frameCostTracks": [
+      {"frameCostMs":5.71,"frames":600,"elapsedMs":10005.5,"scriptMsPerFrame":0.32,"layoutMsPerFrame":0.52,"styleMsPerFrame":1.67,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":33.3,"slowFrames":1,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.13,"frames":602,"elapsedMs":10015.4,"scriptMsPerFrame":0.37,"layoutMsPerFrame":0.55,"styleMsPerFrame":1.86,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.38,"frames":601,"elapsedMs":10004.5,"scriptMsPerFrame":0.39,"layoutMsPerFrame":0.61,"styleMsPerFrame":1.91,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.33,"frames":601,"elapsedMs":10008.5,"scriptMsPerFrame":0.38,"layoutMsPerFrame":0.57,"styleMsPerFrame":1.89,"intervalMedianMs":16.7,"intervalP95Ms":16.8,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0},
+      {"frameCostMs":6.42,"frames":602,"elapsedMs":10016.2,"scriptMsPerFrame":0.4,"layoutMsPerFrame":0.59,"styleMsPerFrame":1.97,"intervalMedianMs":16.7,"intervalP95Ms":16.7,"intervalMaxMs":16.8,"slowFrames":0,"longAnimationFrames":0,"longAnimationFrameMs":0,"blockingMs":0}
     ]
   }
 }

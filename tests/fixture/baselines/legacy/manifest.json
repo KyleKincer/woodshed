@@ -11,7 +11,8 @@
   "setup": [
     "git worktree add --detach /tmp/claude-0/fx0-pristine 820f4db",
     "cd /tmp/claude-0/fx0-pristine && npm ci --prefer-offline --ignore-scripts",
-    "cp <main>/tests/fixture/harness/score-geometry.{html,js} /tmp/claude-0/fx0-pristine/tests/fixture/harness/   (the harness only imports modules that exist at 820f4db)"
+    "mkdir -p /tmp/claude-0/fx0-pristine/tests/fixture/harness && cp <main>/tests/fixture/harness/score-geometry.{html,js} /tmp/claude-0/fx0-pristine/tests/fixture/harness/   (820f4db has no tests/fixture/harness/; the harness only imports modules that exist at 820f4db)",
+    "when done: git worktree remove --force /tmp/claude-0/fx0-pristine"
   ],
   "screenshots": {
     "how": "node tests/fixture/capture.cjs <laptop|ipad> <light|dark> '^(chart-practice|transcribe-score|transcribe-lanes)$' run inside the pristine worktree with FIXTURE_URL pointing at its fixture server (laptop 1440x900; iPad 820x1180 with touch; dark = browser colour scheme dark with the app's System theme)",
@@ -160,11 +161,20 @@
     "file": "score-geometry.json",
     "harness": "tests/fixture/harness/score-geometry.html (createScoreView(host, {scale}) + view.setScore(demoScore(64, 120), {layout: 'combined'}) at a fixed 1200 px width)",
     "record": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-geometry.cjs --record --root /tmp/claude-0/fx0-pristine",
-    "check": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-geometry.cjs   (starts this tree's fixture on a free port; exit 0 = identical bars per system and every notehead within ±2 px of its bar origin at scales 1.0 and 1.2)"
+    "check": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-geometry.cjs   (starts this tree's fixture on a free port and removes the per-port Vite cache it created; exit 0 = identical bars per system and every notehead within ±2 px of its bar origin, position and box size, at scales 1.0 and 1.2; exit 1 = mismatch, page error, render error or no render within --timeout (60 s); exit 2 = setup failure)",
+    "reuse": "require('./probe-geometry.cjs') exports startServer, measureHarness (settings.harness / settings.query select another harness page or extra parameters) and compareGeometry(expected, actual, tolerance), so a wrapper can compare two live measurements (e.g. paged vs continuous)."
   },
   "perf": {
     "file": "perf.json",
-    "record": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-perf-legacy.cjs --root /tmp/claude-0/fx0-pristine",
-    "rule": "Ratio checks compare a 2.0 median with metrics.<name>.median: at most 1.15x, measured in the same container with nothing else running. Re-record this file in that container first with the same command if the container changed (architecture §11.5)."
+    "record": "NODE_PATH=/opt/node-tools/node_modules node tests/fixture/probes/probe-perf-legacy.cjs --root /tmp/claude-0/fx0-pristine   (exit 0 written; 1 a run failed, timed out, reported page errors or produced a non-finite median, nothing written; 2 setup failure or bad arguments)",
+    "rule": "Ratio checks compare a 2.0 median with metrics.<name>.median: at most 1.15x, measured in the same container with nothing else running. Re-record this file in that container first with the same command if the container changed (architecture §11.5).",
+    "metrics": {
+      "openToPlayMs": "navigation start of /?song=glasshouse&fx-jobs=0&fx-practice=chart until #play is enabled and the player is neither aria-busy nor .is-loading (page performance.now()).",
+      "relayout64Ms": "harness ?seconds=128 (64 bars of demoScore(128, 120), 1200 px, no init script on the page): view.setScale(1.2) from 1.0 until the score view's render callback (alphaTab renderFinished). Gated. paintMs (render + 2 animation frames) is a secondary field, not a ratio denominator.",
+      "frameCostMs": "Glasshouse playing on the practice chart (fx-practice=chart) for 10 s: CDP Performance TaskDuration delta divided by requestAnimationFrame callbacks. 2.0 chart frame cost must use exactly this definition.",
+      "frameCostTracksMs": "the same, on the practice tracks (waveform) view (fx-practice=tracks), the 1.9 predecessor of the road map: the denominator for the road-map frame-cost check of architecture §10.4.",
+      "secondary": "intervalP95Ms, longAnimationFrames and blockingMs are secondary checks (the long-animation-frame count should stay 0), not ratio denominators."
+    },
+    "validity": "perf.json carries validity.provisional. The committed file was recorded in the package-agent container while other agents shared it, so it is provisional: VF2, ST9 and ED7 re-record it with the record command (after the setup steps) in their quiet container, and compute ratios only against that re-recording."
   }
 }

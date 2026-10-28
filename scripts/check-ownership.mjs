@@ -15,7 +15,8 @@
 //   - a test file named after one of the package's own modules
 //     (src/app/keys.js → tests/app-keys.test.js or tests/keys.test.js;
 //      convex/songs.ts → convex/songs.test.ts; companion/sections.py → companion/test_sections.py),
-//   - tests/harness/**/<module>.harness.js for one of its modules,
+//   - tests/harness/<sub>/<module>.harness.js for one of its modules (the same
+//     <name> or <sub>-<name> forms as tests/<sub>/<name>.test.js),
 //   - tests/fixture/states/<ID>.cjs.
 // Any other path fails, and the report names the package that owns it.
 // A naming rule never grants a path a same-wave peer owns, a path any package
@@ -273,6 +274,18 @@ export function modulesFor(knownPaths) {
 }
 
 /**
+ * Whether `pkg` may change `file` on its own account: {status: 'owned'},
+ * {status: 'named', detail}, or {status: null, conflict} (conflict says why a
+ * matching naming rule was refused, else it is null).
+ */
+export function allowance(packages, pkg, file, modulesOf) {
+  if (ownsPath(pkg.owns, file)) return {status: 'owned', conflict: null};
+  const why = namedAllowance(pkg, file, modulesOf(pkg));
+  const conflict = why ? namedConflict(packages, pkg, file, modulesOf) : null;
+  return why && !conflict ? {status: 'named', detail: why, conflict} : {status: null, conflict};
+}
+
+/**
  * Classifies each changed path. Returns {ok, rows: [{file, status, detail}]}
  * where status is owned | named | declared | peer | unowned.
  */
@@ -281,10 +294,8 @@ export function checkOwnership({packages, id, files, knownPaths = [], allowPeers
   if (!pkg) throw new Error(`unknown package ${id}`);
   const modulesOf = modulesFor([...knownPaths, ...files]);
   const rows = files.map(file => {
-    if (ownsPath(pkg.owns, file)) return {file, status: 'owned'};
-    const why = namedAllowance(pkg, file, modulesOf(pkg));
-    const conflict = why ? namedConflict(packages, pkg, file, modulesOf) : null;
-    if (why && !conflict) return {file, status: 'named', detail: why};
+    const {status, detail: why, conflict} = allowance(packages, pkg, file, modulesOf);
+    if (status) return why ? {file, status, detail: why} : {file, status};
     if (allow.some(g => matchGlob(file, g))) return {file, status: 'declared'};
     const owners = packages.filter(p => p.id !== id && p.kind !== 'integration' && ownsPath(p.owns, file));
     const peers = owners.filter(p => p.wave === pkg.wave);

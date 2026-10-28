@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {wavePlan, byId, branchName, envFileText, PORT_BASE} from '../../scripts/wt.mjs';
-import {loadPackages} from '../../scripts/check-ownership.mjs';
+import {loadPackages, WAVES} from '../../scripts/check-ownership.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const WT = path.join(repoRoot, 'scripts/wt.mjs');
@@ -42,6 +42,11 @@ describe('wt.mjs helpers', () => {
     expect(wavePlan(PACKAGES, '0A', []).map(p => p.id)).toEqual(['E1']);
     expect(() => wavePlan(PACKAGES, '7q', [])).toThrow(/unknown wave/);
   });
+  it('plans the verification run that follows a wave’s integration separately', () => {
+    expect(wavePlan(PACKAGES, '0A', [], {verification: true}).map(p => p.branch)).toEqual(['ux2/0A/VF9']);
+    expect(wavePlan(PACKAGES, 'P', [], {verification: true})).toEqual([]);
+    expect(() => wavePlan(PACKAGES, 'Px', [], {verification: true})).toThrow(/follow-up/);
+  });
   it('plans a follow-up wave from the branches that exist', () => {
     expect(wavePlan(PACKAGES, 'Px', ['ux2/Px/C2', 'ux2/P/A1', 'ux2/Px/A1']).map(p => p.branch)).toEqual(['ux2/Px/A1', 'ux2/Px/C2']);
   });
@@ -50,11 +55,19 @@ describe('wt.mjs helpers', () => {
     expect(wavePlan(real, 'P', []).map(p => p.id)).toEqual(['FX0', 'P0']);
     expect(wavePlan(real, '1b', []).map(p => p.id)).toEqual(['CPC', 'LB1a', 'LB1b', 'ON1', 'ST1c']);
     expect(wavePlan(real, '4', []).map(p => p.id)).toEqual(['V1', 'VF4']);
+    const verification = wave => wavePlan(real, wave, [], {verification: true}).map(p => p.branch);
+    expect(['1b', '2b', '3b'].map(verification)).toEqual([['ux2/1b/VF1'], ['ux2/2b/VF2'], ['ux2/3b/VF3']]);
+    expect(['P', '0A', '0B', '1a', '2a', '3a', '4'].flatMap(verification)).toEqual([]);
+    // Every verification run is merged by exactly one plan.
+    const all = WAVES.flatMap(w => [...wavePlan(real, w, []), ...wavePlan(real, w, [], {verification: true})].map(p => p.id));
+    expect(real.filter(p => p.kind === 'verification').map(p => all.filter(id => id === p.id).length)).toEqual([1, 1, 1, 1]);
   });
   it('writes KEY=value lines', () => expect(envFileText({A: '1', B: 'x'})).toBe('A=1\nB=x\n'));
 });
 
-describe('wt.mjs on a scratch repository', () => {
+// Spawns git and a POSIX shell stand-in for npm; the release workflow's Windows
+// runner skips it (Linux and macOS cover it).
+describe.skipIf(process.platform === 'win32')('wt.mjs on a scratch repository', () => {
   let tmp, repo, root, fakeNpmLog, fakeNpm;
   beforeAll(() => {
     tmp = mkdtempSync(path.join(tmpdir(), 'ws-wt-'));
@@ -182,6 +195,15 @@ describe('wt.mjs on a scratch repository', () => {
   it('merges a follow-up wave from its ticket branches', () => {
     expect(run(repo, ['create', 'B1', '--wave', 'Px', '--no-install']).out).toMatch(/already exists/); // B1's worktree is still there
     expect(run(repo, ['remove', 'B1']).status).toBe(0);
+    expect(git(repo, 'branch', '--list', 'ux2/P/B1')).toBe(''); // merged, so remove deleted it
+    // Re-running the wave's merge still works: the deleted branch is known by its merge commit.
+    const dry = run(repo, ['merge', 'P', '--dry-run']);
+    expect(dry.status).toBe(0);
+    expect(dry.out).toMatch(/ux2\/P\/B1 \(merged and deleted\)/);
+    const resumed = run(repo, ['merge', 'P', '--skip', 'C2']);
+    expect(resumed.out).toContain('skip   ux2/P/B1 (merged and deleted)');
+    expect(resumed.out).not.toMatch(/missing branches/);
+    expect(resumed.status).toBe(0);
     expect(run(repo, ['create', 'B1', '--wave', 'Px', '--no-install']).status).toBe(0);
     const dir = path.join(root, 'B1');
     expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('ux2/Px/B1');
@@ -191,6 +213,22 @@ describe('wt.mjs on a scratch repository', () => {
     const r = run(repo, ['merge', 'Px']);
     expect(r.out).toContain('merged ux2/Px/B1');
     expect(r.status).toBe(0);
+  });
+
+  it('merge --verification merges the run that follows the integration, apart from the wave', () => {
+    expect(run(repo, ['create', 'VF9', '--no-install']).status).toBe(0);
+    const dir = path.join(root, 'VF9');
+    expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('ux2/0A/VF9');
+    write(path.join(dir, 'tests/flows/open.cjs'), 'module.exports = [];\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'VF9 flows');
+    expect(run(repo, ['merge', '0A']).out).not.toContain('VF9'); // the wave's merge leaves it out
+    const r = run(repo, ['merge', '0A', '--verification']);
+    expect(r.out).toContain('merged ux2/0A/VF9');
+    expect(r.status).toBe(0);
+    expect(git(repo, 'log', '-1', '--format=%s')).toBe('Merge ux2/0A/VF9 (VF9: Verification) into main');
+    expect(existsSync(path.join(repo, 'tests/flows/open.cjs'))).toBe(true);
+    expect(run(repo, ['remove', 'VF9']).status).toBe(0);
   });
 
   it('remove deletes a merged worktree and its branch, and refuses an unmerged one without --force', () => {

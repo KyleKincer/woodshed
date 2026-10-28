@@ -30,8 +30,12 @@
 //   --url <base>      use a running fixture server instead (then pass --commit)
 //   --runs 5 --warmup 1 --seconds 10   (integers ≥ 1, ≥ 0, number > 0)
 //   --metrics openToPlay,relayout64,frameCost,frameCostTracks   subset to measure
-//   --quiet-load 0.5  1-minute load average above which the result is marked
-//                     provisional (validity.provisional in the output)
+//   --quiet-load 0.5  the result is marked provisional (validity.provisional)
+//                     when the 1-minute load average exceeds this before the
+//                     runs, or exceeds it + 1 after them (the probe itself
+//                     keeps about one core busy)
+//   --provisional <reason>  mark the result provisional regardless (e.g. a
+//                     container shared with other work)
 //   --out <file>      default tests/fixture/baselines/legacy/perf.json
 //   --self-test       check the argument and statistics helpers without a browser
 // Run it with nothing else busy in the container: the numbers are ratios'
@@ -191,15 +195,18 @@ function nonFiniteMedians(metrics) {
 }
 
 /** Whether the container was busy enough that the numbers are only provisional. */
-function validity(loadBefore, loadAfter, threshold) {
-  const peak = Math.max(loadBefore[0], loadAfter[0]);
-  const provisional = peak > threshold;
+function validity(loadBefore, loadAfter, threshold, forced = null) {
+  const reasons = [];
+  if (forced) reasons.push(forced);
+  if (loadBefore[0] > threshold) reasons.push(`the 1-minute load average was ${round(loadBefore[0])} (> ${threshold}) before the runs`);
+  if (loadAfter[0] > threshold + 1) reasons.push(`the 1-minute load average was ${round(loadAfter[0])} (> ${threshold} + 1 for the probe itself) after the runs`);
+  const provisional = reasons.length > 0;
   return {
     provisional,
     quietLoadThreshold: threshold,
     reason: provisional
-      ? `1-minute load average reached ${round(peak)} (> ${threshold}): other work was running. Re-record with the manifest command in a quiet container before computing ratios.`
-      : `1-minute load average stayed at or below ${threshold}.`,
+      ? `Provisional: ${reasons.join('; ')}. Re-record with the manifest command in a quiet container before computing ratios.`
+      : `The container was quiet (1-minute load average ≤ ${threshold} before and ≤ ${threshold} + 1 after the runs).`,
   };
 }
 
@@ -209,15 +216,19 @@ function selfTest() {
   assert.equal(median([4, 1, 3, 2]), 2.5);
   assert.ok(Number.isNaN(median([])), 'an empty series has no median');
   assert.deepEqual(nonFiniteMedians({a: {median: 1}, b: {median: NaN}, c: {median: null}}), ['b', 'c']);
-  assert.equal(validity([0.2], [0.4], 0.5).provisional, false);
-  assert.equal(validity([0.2], [1.19], 0.5).provisional, true);
+  assert.equal(validity([0.2], [1.19], 0.5).provisional, false, 'the probe\'s own core is allowed for');
+  assert.equal(validity([0.9], [1.19], 0.5).provisional, true, 'a busy container before the runs is provisional');
+  assert.equal(validity([0.2], [2.4], 0.5).provisional, true, 'other work during the runs is provisional');
+  assert.equal(validity([0.2], [0.4], 0.5, 'shared container').provisional, true, '--provisional forces it');
   assert.throws(() => readOptions({warmup: 'abc'}), SetupError, '--warmup abc is refused');
   assert.throws(() => readOptions({runs: '0'}), SetupError, '--runs 0 is refused');
   assert.throws(() => readOptions({seconds: '-3'}), SetupError, '--seconds -3 is refused');
   assert.throws(() => readOptions({metrics: 'frameCost,nope'}), SetupError, 'an unknown metric is refused');
   assert.deepEqual(readOptions({warmup: '0', runs: '3', metrics: 'relayout64'}).wanted, ['relayout64']);
   assert.equal(readOptions({warmup: '0'}).warmup, 0, '--warmup 0 is honoured');
-  assert.deepEqual(readOptions({}), {runs: 5, warmup: 1, seconds: 10, quietLoad: 0.5, wanted: ALL});
+  assert.deepEqual(readOptions({}), {runs: 5, warmup: 1, seconds: 10, quietLoad: 0.5, provisional: null, wanted: ALL});
+  assert.equal(readOptions({provisional: 'P0 running'}).provisional, 'P0 running');
+  assert.throws(() => readOptions({provisional: true}), SetupError, '--provisional needs a reason');
   console.log('probe-perf-legacy self-test: all checks passed');
 }
 
@@ -229,7 +240,9 @@ function readOptions(args) {
   const wanted = typeof args.metrics === 'string' ? args.metrics.split(',').map(s => s.trim()).filter(Boolean) : ALL;
   const unknown = wanted.filter(name => !ALL.includes(name));
   if (unknown.length || !wanted.length) throw new SetupError(`Unknown metric(s): ${unknown.join(', ') || '(none given)'}; choose from ${ALL.join(', ')}.`);
-  return {runs, warmup, seconds, quietLoad, wanted};
+  if (args.provisional === true) throw new SetupError('--provisional needs a reason, e.g. --provisional "container shared with other agents"');
+  const provisional = typeof args.provisional === 'string' ? args.provisional : null;
+  return {runs, warmup, seconds, quietLoad, provisional, wanted};
 }
 
 async function main() {
@@ -237,7 +250,7 @@ async function main() {
   if (args['self-test']) { selfTest(); return 0; }
   let options;
   try { options = readOptions(args); } catch (error) { if (!(error instanceof SetupError)) throw error; console.error(error.message); return 2; }
-  const {runs, warmup, seconds, quietLoad, wanted} = options;
+  const {runs, warmup, seconds, quietLoad, provisional, wanted} = options;
   const out = path.resolve(args.out || DEFAULT_OUT);
   const root = path.resolve(args.root || REPO);
 
@@ -306,7 +319,7 @@ async function main() {
   const broken = nonFiniteMedians(metrics);
   if (broken.length) { console.error(`No finite median for ${broken.join(', ')}; not writing a baseline.`); return 1; }
   const loadAfter = os.loadavg();
-  const valid = validity(loadBefore, loadAfter, quietLoad);
+  const valid = validity(loadBefore, loadAfter, quietLoad, provisional);
   if (valid.provisional) console.warn(`Warning: ${valid.reason}`);
   writeJson(out, {
     probe: 'probe-perf-legacy', version: 1,
