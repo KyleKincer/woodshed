@@ -402,6 +402,24 @@ describe('hasChart follows the drum part', () => {
   });
 });
 
+describe('the summaries follow the chart (§4.1 rule 2)', () => {
+  test('a first chart makes a placeholder map real in the row and its loop label; deleting the part undoes both', async () => {
+    const { t, alice } = setup();
+    const songId = await insert(t, songRow('alice', { tempo: { songMap: placeholder() } }));
+    await alice.mutation(api.songs.savePractice, { id: songId, practice: practice({ loop: loop(0, 4) }), final: true });
+    const row = async () => (await alice.query(api.songs.list, {})).songs[0];
+    expect(await row()).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] }, practiceSummary: { loopLabel: '0:00–0:04 loop' } });
+    const score = emptyScore(20);
+    const { bars: _bars, ...header } = score;
+    const hit = { id: 'h1', offset: fraction(0), instrument: 'snare', voice: 1, accent: false, ghost: false, flam: false, sticking: '', velocity: 0.75 };
+    await alice.mutation(api.notation.save, { songId, baseRevision: 0, mutationId: 'm0', header, bars: [{ measureId: score.timeline.measures[0].id, coverage: 'progress', hits: [hit] } as never] });
+    expect(await row()).toMatchObject({ hasChart: true, mapSummary: { real: true, bpm: 120, meter: '4/4', sections: [] }, practiceSummary: { loopLabel: 'Bars 1–2 loop' } });
+    const part = await t.run(ctx => ctx.db.query('notationParts').withIndex('by_songId', q => q.eq('songId', songId)).unique());
+    await t.run(ctx => deletePart(ctx, part!._id));
+    expect(await row()).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] }, practiceSummary: { loopLabel: '0:00–0:04 loop' } });
+  });
+});
+
 describe('songs.remove, confirmRecording, dismissSectionSuggestion, exportPage', () => {
   test('deleteSongData removes the practice row and strips the song from setlists and pins', async () => {
     const { t, alice } = setup();

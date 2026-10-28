@@ -13,7 +13,7 @@ import { readPart, deletePart } from './notation';
 import { sameContent } from '../shared/content';
 import { PRACTICE_CAP } from '../shared/practice';
 import { cleanSongMap, hasRealMap, sectionsOf } from '../shared/song-map';
-import { ensureBackfill, mapSummaryFor, practiceSummaryFor } from './migrations';
+import { chartOf, ensureBackfill, mapSummaryFor, practiceSummaryFor, storedPractice } from './migrations';
 
 type Song = Doc<'songs'>;
 
@@ -45,11 +45,14 @@ export function reviewMetadataOf(s: Pick<Song, 'needsReview' | 'metadataStatus' 
 /**
  * The slim Library row (B1, D4, D5): no notes, tempo, practice, metadata
  * locks or recording/release ids. A row the B1 upgrade has not reached yet
- * gets its summaries computed here, from the same functions the upgrade uses.
+ * gets its summaries computed here, from the same functions the upgrade uses,
+ * with `hasChart` as `chartOf` derived it (a summary stored while the flag was
+ * unknown may have missed the chart, so it is recomputed too).
  */
-export function toListRow(s: Song) {
-  const hasChart = s.hasChart === true;
-  const practiceSummary = s.practiceSummary ?? (s.practice != null ? practiceSummaryFor(s.practice, s).summary : null);
+export function toListRow(s: Song, hasChart = s.hasChart === true) {
+  const chartKnown = s.hasChart !== undefined, current = { ...s, hasChart };
+  const mapSummary = chartKnown && s.mapSummary ? s.mapSummary : mapSummaryFor(current);
+  const practiceSummary = s.practiceSummary ?? (s.practice != null ? practiceSummaryFor(s.practice, current).summary : null);
   return {
     id: s._id,
     title: s.title,
@@ -80,7 +83,7 @@ export function toListRow(s: Song) {
       ? { title: s.metadataSuggestion.title, artist: s.metadataSuggestion.artist ?? '', album: s.metadataSuggestion.album ?? '', releaseId: s.metadataSuggestion.releaseId ?? null }
       : null,
     hasChart,
-    mapSummary: s.mapSummary ?? mapSummaryFor(s),
+    mapSummary,
     lastPracticedAt: s.lastPracticedAt ?? null,
     practiceSummary,
     hasSectionSuggestion: (s.sectionSuggestion?.sections.length ?? 0) > 0,
@@ -103,7 +106,7 @@ export const list = query({
       .withIndex('by_user_added', (q) => q.eq('userId', userId))
       .order('desc')
       .take(LIST_LIMIT);
-    return { songs: songs.map(toListRow) };
+    return { songs: await Promise.all(songs.map(async s => toListRow(s, await chartOf(ctx, s)))) };
   },
 });
 
@@ -115,7 +118,7 @@ export const get = query({
     const song = await ownedOrNull(ctx, args.id);
     if (!song) return null;
     return {
-      ...toClient(song),
+      ...toClient(song, await chartOf(ctx, song)),
       tempoRev: song.tempoRev ?? 0,
       tempoSaveId: song.tempoSaveId ?? null,
       recordingUnconfirmed: song.recordingUnconfirmed === true,
@@ -131,8 +134,7 @@ export const getPractice = query({
   handler: async (ctx, args) => {
     const song = await ownedOrNull(ctx, args.id);
     if (!song) return null;
-    const row = await practiceRow(ctx, song._id);
-    return row ? row.practice : song.practice ?? null;
+    return storedPractice(ctx, song);
   },
 });
 
@@ -147,14 +149,19 @@ export const getMany = query({
     const out = [];
     for (const id of new Set(args.ids)) {
       const song = await ctx.db.get('songs', id);
-      if (song && song.userId === userId) out.push(toClient(song));
+      if (song && song.userId === userId) out.push(toClient(song, await chartOf(ctx, song)));
     }
     return out;
   },
 });
 
-/** The full client shape: the 1.9 library.json entry (without practice, D52) plus the 2.0 song fields. `id` is the Convex document id. */
-export function toClient(s: Song) {
+/**
+ * The full client shape: the 1.9 library.json entry (without practice, D52)
+ * plus the 2.0 song fields. `id` is the Convex document id. Readers pass
+ * `hasChart` from `chartOf`, so a song the upgrade has not reached still
+ * opens with its chart (§2.14.1).
+ */
+export function toClient(s: Song, hasChart = s.hasChart === true) {
   return {
     albumArtist: s.albumArtist ?? '', year: s.year ?? '', genre: s.genre ?? '',
     trackNumber: s.trackNumber ?? '', discNumber: s.discNumber ?? '',
@@ -183,7 +190,7 @@ export function toClient(s: Song) {
     quality: s.quality,
     addedAt: s.addedAt,
     tempo: s.tempo ?? null,
-    hasChart: s.hasChart === true,
+    hasChart,
   };
 }
 
@@ -196,9 +203,11 @@ export function nonMapFields(tempo: unknown): Record<string, unknown> {
 /**
  * Saves the song map (`tempo.songMap`). A stale save (`baseRev` behind
  * `tempoRev`) that would replace a real map with a non-real one keeps the
- * stored map and returns it as a conflict. Every write bumps `tempoRev`,
- * stores `tempoSaveId` (D53), recomputes `mapSummary` and clears a section
- * suggestion once the map has sections (D47). Unchanged content is a no-op.
+ * stored map and returns it as a conflict, writing nothing (no `tempoRev`
+ * bump, no `tempoSaveId`). Every write bumps `tempoRev`, stores `tempoSaveId`
+ * (D53), recomputes `mapSummary` (with `hasChart` from `chartOf`) and clears a
+ * section suggestion once the map has sections (D47). Unchanged content is a
+ * no-op.
  */
 export const saveTempo = mutation({
   args: { id: v.id('songs'), tempo: v.any(), baseRev: v.optional(v.number()), saveId: v.optional(v.string()) },
@@ -214,10 +223,12 @@ export const saveTempo = mutation({
     if (args.baseRev !== tempoRev && hasRealMap(song.tempo) && !hasRealMap(tempo)) return { tempoRev, conflict: true, tempo: song.tempo };
     await ensureBackfill(ctx, song.userId);
     const duration = Math.max(0.001, song.duration || 0);
+    const hasChart = await chartOf(ctx, song);
     const patch: Partial<Song> = {
       tempo, tempoRev: tempoRev + 1, tempoSaveId: args.saveId,
-      mapSummary: mapSummaryFor({ tempo, duration: song.duration, hasChart: song.hasChart }),
+      mapSummary: mapSummaryFor({ tempo, duration: song.duration, hasChart }),
     };
+    if (song.hasChart === undefined) patch.hasChart = hasChart;
     if (song.sectionSuggestion && sectionsOf(songMap, duration).length) patch.sectionSuggestion = undefined;
     await ctx.db.patch('songs', song._id, patch);
     return { tempoRev: tempoRev + 1, conflict: false };
@@ -228,8 +239,8 @@ export const saveTempo = mutation({
  * What a final practice save writes to `songs`: the new `practiceSummary` and
  * `lastPracticedAt`, or null when neither changed (D52, R3).
  */
-export function summaryPatch(song: Song, practice: unknown): Pick<Song, 'practiceSummary' | 'lastPracticedAt'> | null {
-  const { summary, lastAt } = practiceSummaryFor(practice, song);
+export function summaryPatch(song: Song, practice: unknown, hasChart = song.hasChart === true): Pick<Song, 'practiceSummary' | 'lastPracticedAt'> | null {
+  const { summary, lastAt } = practiceSummaryFor(practice, { ...song, hasChart });
   const lastPracticedAt = lastAt ?? song.lastPracticedAt;
   if (sameContent(song.practiceSummary, summary) && lastPracticedAt === song.lastPracticedAt) return null;
   return { practiceSummary: summary, lastPracticedAt };
@@ -252,7 +263,7 @@ export const savePractice = mutation({
     const row = await practiceRow(ctx, song._id);
     if (!row) await ctx.db.insert('songPractice', { songId: song._id, userId: song.userId, practice, updatedAt: Date.now() });
     else if (!sameContent(row.practice, practice)) await ctx.db.patch('songPractice', row._id, { practice, updatedAt: Date.now() });
-    const patch = final ? summaryPatch(song, practice) : null;
+    const patch = final ? summaryPatch(song, practice, await chartOf(ctx, song)) : null;
     if (patch) await ctx.db.patch('songs', song._id, patch);
     return null;
   },
@@ -296,7 +307,7 @@ export const dismissSectionSuggestion = mutation({
  * (freed only when no other song holds it). Billing cleanup uses this too.
  */
 export async function deleteSongData(ctx: MutationCtx, song: Song) {
-    const notation=await readPart(ctx,song._id);if(notation)await deletePart(ctx,notation.part._id);
+    const notation=await readPart(ctx,song._id);if(notation)await deletePart(ctx,notation.part._id,{songDeleted:true});
     for (const row of await ctx.db.query('songPractice').withIndex('by_songId', q => q.eq('songId', song._id)).take(10)) await ctx.db.delete('songPractice', row._id);
     const setlists = await ctx.db.query('setlists').withIndex('by_userId_and_updatedAt', q => q.eq('userId', song.userId)).take(100);
     for (const list of setlists)
@@ -363,10 +374,7 @@ export const exportPage = query({
     const userId = await requireUserId(ctx);
     const page = await ctx.db.query('songs').withIndex('by_user', q => q.eq('userId', userId)).paginate(args.paginationOpts);
     const songs = [];
-    for (const song of page.page) {
-      const row = await practiceRow(ctx, song._id);
-      songs.push({ ...toClient(song), practice: row ? row.practice : song.practice ?? null });
-    }
+    for (const song of page.page) songs.push({ ...toClient(song, await chartOf(ctx, song)), practice: await storedPractice(ctx, song) });
     return { ...page, page: songs };
   },
 });

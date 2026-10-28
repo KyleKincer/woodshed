@@ -6,9 +6,16 @@ import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { BACKFILL_BATCH } from './migrations';
+import { toListRow } from './songs';
 import { emptyPractice, PRACTICE_CAP } from '../shared/practice';
-import { defaultSongMap } from '../shared/song-map';
+import { barsOf, defaultSongMap, mapSummaryOf } from '../shared/song-map';
 import { emptyScore } from '../shared/notation';
+
+// Pass-through spies: they count the map work a Library read does per row.
+vi.mock('../shared/song-map', async importOriginal => {
+  const mod = await importOriginal<typeof import('../shared/song-map')>();
+  return { ...mod, barsOf: vi.fn(mod.barsOf), mapSummaryOf: vi.fn(mod.mapSummaryOf) };
+});
 
 const modules = import.meta.glob('./**/*.ts');
 afterEach(() => { vi.useRealTimers(); });
@@ -164,5 +171,98 @@ describe('self-running upgrade after a deploy', () => {
     // The tempo save's own map summary stands; the 1.9 click settings stay in tempo for upgradePractice.
     expect(song).toMatchObject({ hasChart: false, mapSummary: { real: true, bpm: 100 }, tempo: { countIn: true, countInLength: 2, songMap: map } });
     expect((await rows(t))[0].practice).toMatchObject({ v: 2, click: { countIn: { on: true, length: 2, unit: 'beats' }, mode: 'always' } });
+  });
+});
+
+describe('a song the upgrade has not reached reads with its chart', () => {
+  test('list, get and getMany derive hasChart from the drum part, and list sums the map with it, without writing', async () => {
+    const { t, alice } = setup();
+    const id = await t.run(ctx => ctx.db.insert('songs', legacySong('alice', { tempo: { songMap: defaultSongMap(60, 120) } })));
+    const plain = await t.run(ctx => ctx.db.insert('songs', legacySong('alice', { addedAt: 2, tempo: { songMap: defaultSongMap(60, 120) } })));
+    await addPart(t, id, 5);
+    const byId = new Map((await alice.query(api.songs.list, {})).songs.map(r => [r.id, r]));
+    expect(byId.get(id)).toMatchObject({ hasChart: true, mapSummary: { real: true, bpm: 120, meter: '4/4', sections: [] } });
+    expect(byId.get(plain)).toMatchObject({ hasChart: false, mapSummary: { real: false, sections: [] } });
+    expect(await alice.query(api.songs.get, { id })).toMatchObject({ hasChart: true });
+    expect((await alice.query(api.songs.getMany, { ids: [id, plain] })).map(s => s.hasChart)).toEqual([true, false]);
+    expect((await songs(t)).every(s => s.hasChart === undefined && s.mapSummary === undefined)).toBe(true);
+  });
+
+  test('a tempo save before the backfill stores hasChart and a map summary that counts the chart', async () => {
+    const { t, alice } = setup();
+    const id = await t.run(ctx => ctx.db.insert('songs', legacySong('alice')));
+    await addPart(t, id, 5);
+    await alice.mutation(api.songs.saveTempo, { id, tempo: { songMap: defaultSongMap(60, 120) }, baseRev: 0 });
+    await drain(t);
+    expect((await songs(t))[0]).toMatchObject({ hasChart: true, mapSummary: { real: true, bpm: 120, meter: '4/4' } });
+  });
+
+  test('the upgrade recomputes summaries stored while hasChart was unknown', async () => {
+    const { t } = setup();
+    const id = await t.run(ctx => ctx.db.insert('songs', legacySong('alice', {
+      tempo: { songMap: defaultSongMap(60, 120) }, mapSummary: { real: false, sections: [] },
+      practiceSummary: { loopLabel: '0:00–0:04 loop', rate: 1, minusMe: false, spotCount: 0, spots: [] },
+    })));
+    await t.run(ctx => ctx.db.insert('songPractice', { songId: id, userId: 'alice', updatedAt: 1,
+      practice: { ...emptyPractice(), loop: { on: true, a: 0, b: 4, eachPassCount: true, playTimes: 0, between: 'none' } } }));
+    await addPart(t, id, 5);
+    await t.mutation(internal.migrations.backfillB1, { cursor: null });
+    expect((await songs(t))[0]).toMatchObject({ hasChart: true, mapSummary: { real: true, bpm: 120 }, practiceSummary: { loopLabel: 'Bars 1–2 loop' } });
+  });
+});
+
+describe('ensureBackfill', () => {
+  test('saves made while an account’s chain runs schedule it once', async () => {
+    const { t, alice } = setup();
+    const ids = await t.run(async ctx => {
+      const out: Id<'songs'>[] = [];
+      for (let i = 0; i < 120; i++) out.push(await ctx.db.insert('songs', legacySong('alice', { addedAt: i, practice: v1Practice, tempo: legacyTempo() })));
+      return out;
+    });
+    const map = defaultSongMap(60, 100);
+    map.origin = 'tapped';
+    await alice.mutation(api.songs.saveTempo, { id: ids[119], tempo: { songMap: map }, baseRev: 0 });
+    for (let i = 0; i < 5; i++) await alice.mutation(api.songs.savePractice, { id: ids[119], practice: { ...emptyPractice(), rate: 0.5 + i / 10 } });
+    // The oldest song, the marker, is upgraded inline.
+    expect((await songs(t)).find(s => s._id === ids[0])).toMatchObject({ hasChart: false, mapSummary: { real: true } });
+    expect((await scheduled(t)).map(f => f.name)).toEqual(['migrations:backfillUser']);
+    await drain(t);
+    expect((await scheduled(t)).filter(f => f.name === 'migrations:backfillUser')).toHaveLength(3);
+    expect((await songs(t)).every(s => s.hasChart === false && s.mapSummary && s.practiceSummary)).toBe(true);
+    expect(await rows(t)).toHaveLength(120);
+  });
+});
+
+describe('the Library read stays bounded on 1,000 rows the upgrade has not reached', () => {
+  const legacyRow = (i: number, practice: unknown) => ({ _id: `s${i}` as Id<'songs'>, _creationTime: 0, ...legacySong('alice', { addedAt: i, duration: 240, tempo: legacyTempo(), practice }) });
+
+  test('one map summary per row, and bars for the practice summary only while its loop is on', () => {
+    vi.mocked(barsOf).mockClear();
+    vi.mocked(mapSummaryOf).mockClear();
+    const idle = Array.from({ length: 1000 }, (_, i) => toListRow(legacyRow(i, { rate: 0.8, tracks: [] })));
+    expect(idle.every(r => r.mapSummary.real && r.practiceSummary?.rate === 0.8 && !r.practiceSummary.loopLabel)).toBe(true);
+    expect(vi.mocked(mapSummaryOf)).toHaveBeenCalledTimes(1000);
+    expect(vi.mocked(barsOf)).toHaveBeenCalledTimes(0);
+    const looping = Array.from({ length: 1000 }, (_, i) => toListRow(legacyRow(i, v1Practice)));
+    expect(looping.every(r => r.practiceSummary?.loopLabel === 'Verse loop')).toBe(true);
+    expect(vi.mocked(mapSummaryOf)).toHaveBeenCalledTimes(2000);
+    expect(vi.mocked(barsOf)).toHaveBeenCalledTimes(1000);
+  });
+
+  test('songs.list returns all 1,000 with their chart flags', async () => {
+    const { t, alice } = setup();
+    await t.run(async ctx => {
+      for (let i = 0; i < 1000; i++) {
+        const songId = await ctx.db.insert('songs', legacySong('alice', { addedAt: i, duration: 240, tempo: legacyTempo(), practice: v1Practice }));
+        if (i % 10 === 0) {
+          const { bars: _bars, ...header } = emptyScore(60);
+          await ctx.db.insert('notationParts', { songId, userId: 'alice', revision: 1, lastMutation: 'm', hitCount: 3, header });
+        }
+      }
+    });
+    const { songs: list } = await alice.query(api.songs.list, {});
+    expect(list).toHaveLength(1000);
+    expect(list.filter(r => r.hasChart)).toHaveLength(100);
+    expect(list.every(r => r.mapSummary.real && r.practiceSummary?.loopLabel === 'Verse loop')).toBe(true);
   });
 });

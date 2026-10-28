@@ -31,7 +31,7 @@ function summaryMap(s) {
 }
 function practiceSummary(practice, s) {
   const p = upgradePractice(practice, {legacyTempo: s.tempo, duration: s.duration});
-  return {summary: summarize(p, summaryMap(s)), lastAt: p.lastAt};
+  return {summary: summarize(p, p.loop?.on ? summaryMap(s) : null), lastAt: p.lastAt};
 }
 const mapSummary = s => mapSummaryOf(s.tempo, s.duration, {hasPart: hasChart(s)});
 
@@ -45,9 +45,15 @@ function reviewMetadata(s) {
   return uploadNames(s.source.filename).includes(String(s.title).trim());
 }
 
-/** convex/songs.ts toListRow. */
+/**
+ * convex/songs.ts toListRow. The chart flag is derived live from
+ * `db.notation`, so when it differs from the stored flag (a chart saved or
+ * removed here, which on the server rewrites the summaries with it) the
+ * summaries are recomputed with it too.
+ */
 export function listRow(s) {
   const suggestion = s.metadataSuggestion;
+  const stale = hasChart(s) !== s.hasChart, practice = practiceRow(s.id)?.practice ?? s.practice;
   return {
     id: s.id, title: s.title, artist: s.artist ?? '', album: s.album ?? '', albumArtist: s.albumArtist ?? '', uploader: s.uploader ?? '',
     duration: s.duration, addedAt: s.addedAt, stemMode: s.stemMode,
@@ -58,9 +64,10 @@ export function listRow(s) {
     reviewMetadata: reviewMetadata(s), recordingUnconfirmed: s.recordingUnconfirmed === true,
     suggestion: suggestion ? {title: suggestion.title, artist: suggestion.artist ?? '', album: suggestion.album ?? '', releaseId: suggestion.releaseId ?? null} : null,
     hasChart: hasChart(s),
-    mapSummary: clone(s.mapSummary ?? mapSummary(s)),
+    mapSummary: clone(!stale && s.mapSummary ? s.mapSummary : mapSummary(s)),
     lastPracticedAt: s.lastPracticedAt ?? null,
-    practiceSummary: clone(s.practiceSummary ?? (s.practice != null ? practiceSummary(s.practice, s).summary : null)),
+    practiceSummary: clone(stale && practice != null ? practiceSummary(practice, s).summary
+      : s.practiceSummary ?? (s.practice != null ? practiceSummary(s.practice, s).summary : null)),
     hasSectionSuggestion: (s.sectionSuggestion?.sections?.length ?? 0) > 0,
   };
 }

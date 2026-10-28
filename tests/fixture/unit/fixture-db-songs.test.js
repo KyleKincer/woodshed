@@ -44,6 +44,17 @@ describe('songs:list', () => {
     expect(byId.nightbus.mapSummary).toMatchObject({real: true, meter: '4/4', sections: ['Start', 'Chorus', 'Verse 2', 'Chorus 2']});
     expect(byId.quiet.mapSummary).toEqual({real: false, sections: []});
   });
+
+  it('recomputes the map summary when a chart is saved on a placeholder-map song, as notation.save does', async () => {
+    const {emptyScore} = await import('../../../shared/notation.ts');
+    const before = (await q('list', {})).songs.find(s => s.id === 'shuffle');
+    expect(before).toMatchObject({hasChart: false, mapSummary: {real: false, sections: []}});
+    const score = emptyScore(20), {bars: _bars, ...header} = score;
+    const hit = {id: 'h1', offset: {n: 0, d: 1}, instrument: 'snare', voice: 1, accent: false, ghost: false, flam: false, sticking: '', velocity: 0.75};
+    await call('mutation', 'notation:save', {songId: 'shuffle', baseRevision: 0, mutationId: 'm0', header, bars: [{measureId: score.timeline.measures[0].id, coverage: 'progress', hits: [hit]}]});
+    const after = (await q('list', {})).songs.find(s => s.id === 'shuffle');
+    expect(after).toMatchObject({hasChart: true, mapSummary: {real: true, bpm: 120, meter: '4/4'}});
+  });
 });
 
 describe('songs:get, getPractice, getMany', () => {
