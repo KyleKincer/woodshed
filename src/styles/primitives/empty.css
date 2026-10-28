@@ -29,36 +29,6 @@
     gap: var(--s2);
     margin-block-start: var(--s2);
   }
-
-  /* Plain-spec actions (Button primitives bring their own styles). */
-  .ui-empty-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-block-size: var(--h-md);
-    padding: 0 var(--s4);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--r-control);
-    background: var(--surface);
-    color: var(--ink);
-    font: var(--fw-semibold) var(--fs-16)/1.2 var(--font-ui);
-    text-decoration: none;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background-color var(--motion-fast) var(--ease);
-  }
-  @media (hover: hover) {
-    .ui-empty-action:hover { background: var(--surface-2); }
-    .ui-empty-action[data-variant=primary]:hover { background: var(--accent-fill); }
-  }
-  .ui-empty-action[data-variant=primary] {
-    border-color: var(--accent-fill);
-    background: var(--accent-fill);
-    color: var(--on-accent);
-  }
-  .ui-empty-action[data-variant=quiet] {
-    border-color: transparent;
-    background: transparent;
-    color: var(--accent);
-  }
+  /* An href action is a link wearing the Button look (button.css); only the underline differs. */
+  .ui-empty-actions > a.ui-button { text-decoration: none; }
 }

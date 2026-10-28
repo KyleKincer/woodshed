@@ -4,18 +4,23 @@
 //     title         the heading text (string)
 //     body          a string, a Node, or an array of strings and Nodes ("No songs match <b>zzzz</b>.")
 //     actions       an array of: a Node, a primitive ({el}, e.g. Button({command})), or a plain
-//                   spec {label, onClick(e), href?, target?, variant: 'primary'|'secondary'|'quiet'}
-//                   rendered as a native <button> (or <a> with href)
+//                   spec {label, onClick(e), href?, target?, variant: 'primary'|'secondary'|'quiet'|'danger',
+//                   …other Button props}. A plain spec without href is a Button(...) (button.js);
+//                   with href it is a native <a> link wearing the same Button look (Button renders
+//                   only <button>, and a link must keep the link role); a link takes only label,
+//                   href, target, variant, onClick and the common props.
 //     headingLevel  2–6 (the heading element; default h2)
 //   e.set(partial) · e.destroy() · e.el (section.ui-empty)
 //
-// The section is labelled by its heading. Primitives passed in actions are not destroyed
-// here; their owner destroys them.
+// The section is labelled by its heading. Buttons built here from plain specs are destroyed
+// when the actions change and on destroy(); primitives passed in are not (their owner does).
 
 import '../styles/primitives/empty.css';
+import {Button} from './button.js';
 
 const EMPTY = Object.freeze({});
 const DEV = !!import.meta.env?.DEV;
+const VARIANTS = ['primary', 'secondary', 'quiet', 'danger'];
 let seq = 0;
 
 // Common props (§2.12): className, id, attrs, dataset, testid.
@@ -43,29 +48,39 @@ function nodesOf(content) {
   return list.filter(c => c != null && c !== false && c !== '').map(c => (isNode(c) ? c : document.createTextNode(String(c))));
 }
 
-// TEMPORARY (handoff to I1/U1): a plain {label, onClick, href, variant} spec renders a native
-// control styled by .ui-empty-action. Once U1's Button lands this maps to Button({label, variant,
-// onClick, href}) and .ui-empty-action goes, so the app keeps a single button style.
-function actionNode(action) {
+// A link styled as a Button: Button's own classes and data attributes, so the app keeps a single
+// button style (button.css) while the element keeps the link role.
+function linkButton(action) {
+  const {label, href, target, variant, onClick} = action;
+  const a = document.createElement('a');
+  applyCommon(a, action, EMPTY);
+  a.classList.add('ui-button');
+  a.dataset.variant = VARIANTS.includes(variant) ? variant : 'secondary';
+  a.dataset.size = 'md';
+  const text = a.appendChild(document.createElement('span'));
+  text.className = 'ui-button-text';
+  const name = text.appendChild(document.createElement('span'));
+  name.className = 'ui-button-label';
+  name.textContent = String(label);
+  a.href = href;
+  if (target) {
+    a.target = target;
+    if (target === '_blank') a.rel = 'noopener';
+  }
+  if (typeof onClick === 'function') a.addEventListener('click', e => onClick(e));
+  return a;
+}
+
+// Resolves one action to its node; plain specs it builds as Buttons are pushed onto `owned`.
+function actionNode(action, owned) {
   if (isNode(action)) return action;
   if (action && isNode(action.el)) return action.el;
   if (!action || typeof action !== 'object') throw new TypeError('EmptyState: each action is a Node, a primitive {el} or {label, onClick, href?}');
   if (DEV && !String(action.label ?? '').trim()) throw new Error('EmptyState: an action needs a label');
-  const node = document.createElement(action.href ? 'a' : 'button');
-  node.className = 'ui-empty-action';
-  node.dataset.variant = action.variant ?? 'secondary';
-  node.textContent = String(action.label);
-  if (action.href) {
-    node.href = action.href;
-    if (action.target) {
-      node.target = action.target;
-      if (action.target === '_blank') node.rel = 'noopener';
-    }
-  } else {
-    node.type = 'button';
-  }
-  if (typeof action.onClick === 'function') node.addEventListener('click', e => action.onClick(e));
-  return node;
+  if (action.href) return linkButton(action);
+  const button = Button({variant: 'secondary', ...action, label: String(action.label)});
+  owned.push(button);
+  return button.el;
 }
 
 export function EmptyState(initial = {}) {
@@ -78,6 +93,7 @@ export function EmptyState(initial = {}) {
   const actions = document.createElement('div');
   actions.className = 'ui-empty-actions';
   let props = EMPTY;
+  let owned = [];
 
   function set(partial = {}) {
     const prev = props;
@@ -96,12 +112,20 @@ export function EmptyState(initial = {}) {
     if (props.title) el.setAttribute('aria-labelledby', headingId); else el.removeAttribute('aria-labelledby');
     if (prev === EMPTY || props.body !== prev.body) body.replaceChildren(...nodesOf(props.body));
     body.hidden = !body.firstChild;
-    if (prev === EMPTY || props.actions !== prev.actions) actions.replaceChildren(...(props.actions ?? []).filter(Boolean).map(actionNode));
+    if (prev === EMPTY || props.actions !== prev.actions) {
+      const next = [];
+      const nodes = (props.actions ?? []).filter(Boolean).map(a => actionNode(a, next));
+      for (const b of owned) b.destroy();
+      owned = next;
+      actions.replaceChildren(...nodes);
+    }
     actions.hidden = !actions.firstChild;
     if (!heading.parentNode) el.append(heading, body, actions);
   }
 
   function destroy() {
+    for (const b of owned) b.destroy();
+    owned = [];
     el.remove();
   }
 

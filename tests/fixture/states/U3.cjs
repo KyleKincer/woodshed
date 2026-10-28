@@ -47,6 +47,23 @@ function railFacts() {
   return out;
 }
 
+function emptyActionFacts() {
+  const fact = el => {
+    const cs = getComputedStyle(el);
+    return {
+      tag: el.tagName, text: el.textContent, uiButton: el.classList.contains('ui-button'), variant: el.dataset.variant,
+      decoration: cs.textDecorationLine, color: cs.color, background: cs.backgroundColor, border: `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`,
+      radius: cs.borderTopLeftRadius, height: el.getBoundingClientRect().height, font: `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`,
+    };
+  };
+  const all = [...document.querySelectorAll('.ui-empty-actions > *')].map(fact);
+  return {
+    buttons: all.filter(f => f.tag !== 'A'),
+    link: fact(document.querySelector('[data-testid=u3-empty-link]')),
+    secondary: all.find(f => f.tag === 'BUTTON' && f.variant === 'secondary'),
+  };
+}
+
 module.exports = [
   {
     name: 'u3-display',
@@ -69,6 +86,14 @@ module.exports = [
       t.expect(rails.Finishing.motion === 'animate' && rails.Finishing.animations === 1 && rails.Finishing.valuenow === null, `an indeterminate rail shimmers: ${JSON.stringify(rails.Finishing)}`);
       t.expect(rails.ring.motion === 'animate' && rails.ring.animations === 1, 'an indeterminate ring turns');
       t.expect(rails.skeletonAnimations > 0, 'skeletons shimmer');
+
+      // EmptyState actions (I0B-13): plain specs are Buttons; an href is a link with the same Button look.
+      const empty = await page.evaluate(emptyActionFacts);
+      t.expect(empty.buttons.every(b => b.tag === 'BUTTON' && b.uiButton), `plain empty-state actions are Buttons: ${JSON.stringify(empty.buttons)}`);
+      t.expect(empty.link.tag === 'A' && empty.link.uiButton, `an href action is a link styled as a Button: ${JSON.stringify(empty.link)}`);
+      t.expect(empty.link.decoration === 'none', `the link is not underlined (${empty.link.decoration})`);
+      const same = ['color', 'background', 'border', 'radius', 'height', 'font'].filter(k => empty.link[k] !== empty.secondary[k]);
+      t.expect(!same.length, `the link matches a secondary Button in ${same.join(', ') || 'every property'}: ${JSON.stringify({link: empty.link, button: empty.secondary})}`);
 
       const targets = await checkTargets(page);
       t.expect(!targets.length, `targets: ${targets.join('; ')}`);
