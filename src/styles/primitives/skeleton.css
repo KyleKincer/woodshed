@@ -1,0 +1,67 @@
+@layer primitives {
+  /* Skeleton (src/ui/skeleton.js). Card, row and cell placeholders join the
+   * parent's grid or list (display: contents), so the loading state has the
+   * same geometry as the loaded one. Covers stay square-cornered. */
+  .ui-skeleton[data-shape=text] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .ui-skeleton[data-shape=card],
+  .ui-skeleton[data-shape=row],
+  .ui-skeleton[data-shape=cell] { display: contents; }
+
+  .ui-skeleton-item { min-inline-size: 0; }
+  .ui-skeleton[data-shape=card] .ui-skeleton-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .ui-skeleton[data-shape=row] .ui-skeleton-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: var(--h-lg);
+  }
+
+  .ui-skeleton-block {
+    background: linear-gradient(90deg, var(--surface-2) 0%, var(--line) 50%, var(--surface-2) 100%);
+    background-size: 300% 100%;
+    animation: ui-skeleton-shimmer calc(var(--motion-slow) * 6) linear infinite;
+  }
+  .ui-skeleton-cover {
+    flex: none;
+    aspect-ratio: 1;
+    border-radius: 0;
+  }
+  .ui-skeleton[data-shape=card] .ui-skeleton-cover { inline-size: 100%; }
+  .ui-skeleton[data-shape=row] .ui-skeleton-cover { inline-size: 40px; }
+  .ui-skeleton-lines {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .ui-skeleton-line {
+    block-size: var(--fs-14);
+    inline-size: 80%;
+    border-radius: var(--r-control);
+  }
+  .ui-skeleton-line-short { inline-size: 50%; }
+  .ui-skeleton-w0 { inline-size: 92%; }
+  .ui-skeleton-w1 { inline-size: 78%; }
+  .ui-skeleton-w2 { inline-size: 60%; }
+  .ui-skeleton-cell {
+    block-size: var(--h-lg);
+    border-radius: var(--r-control);
+  }
+
+  @keyframes ui-skeleton-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -50% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ui-skeleton-block { animation: none; background: var(--surface-2); }
+  }
+}

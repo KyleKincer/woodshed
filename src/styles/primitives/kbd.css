@@ -1,0 +1,54 @@
+@layer primitives {
+  /* Kbd (src/ui/kbd.js): a key-cap in the mono face. Touch-only devices hide it
+   * from JS (the `hidden` attribute) unless forced. A hint cap shows only inside
+   * an element with [data-kbd-hints] (Edit adds it after keyboard use, spec §5.0). */
+  .ui-kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s1);
+    min-inline-size: calc(var(--fs-12) + var(--s2));
+    min-block-size: calc(var(--fs-12) + var(--s2));
+    padding: 0 var(--s1);
+    border: 1px solid var(--line-strong);
+    border-block-end-width: 2px;
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-12)/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* Alternatives: the outer cap becomes a plain row of caps. */
+  .ui-kbd:has(> .ui-kbd-key) {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .ui-kbd-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: calc(var(--fs-12) + var(--s2));
+    min-block-size: calc(var(--fs-12) + var(--s2));
+    padding: 0 var(--s1);
+    border: 1px solid var(--line-strong);
+    border-block-end-width: 2px;
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    font: inherit;
+  }
+  .ui-kbd-sep { color: var(--ink-3); }
+
+  /* On accent fills (a primary button's cap) the cap reads as a lighter outline. */
+  [data-variant=primary] .ui-kbd {
+    border-color: currentColor;
+    background: transparent;
+    color: inherit;
+  }
+
+  .ui-kbd[data-hint] { display: none; }
+  [data-kbd-hints] .ui-kbd[data-hint] { display: inline-flex; }
+}

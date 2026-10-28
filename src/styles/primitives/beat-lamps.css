@@ -1,0 +1,60 @@
+@layer primitives {
+  /* BeatLamps (src/ui/beat-lamps.js, D15). --lamp is the counted-beat dot
+   * (18 px band, 20 px rail, × Distance, §7.2); the downbeat is larger and the
+   * other meter units smaller. Groups are separated by a wider gap. */
+  .ui-beat-lamps {
+    --ui-lamp: var(--lamp);
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--ui-lamp) * 1.1);
+    min-block-size: calc(var(--ui-lamp) * 1.34);
+  }
+  .ui-beat-lamps[data-size=sm] { --ui-lamp: calc(var(--lamp) * .7); }
+
+  .ui-beat-lamps-group {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--ui-lamp) * .45);
+  }
+
+  .ui-beat-lamp {
+    display: block;
+    flex: none;
+    inline-size: var(--ui-lamp);
+    block-size: var(--ui-lamp);
+    border: 2px solid var(--ink-3);
+    border-radius: var(--r-pill);
+    background: transparent;
+  }
+  .ui-beat-lamp[data-kind=downbeat] {
+    inline-size: calc(var(--ui-lamp) * 1.34);
+    block-size: calc(var(--ui-lamp) * 1.34);
+  }
+  .ui-beat-lamp[data-kind=unit] {
+    inline-size: calc(var(--ui-lamp) * .56);
+    block-size: calc(var(--ui-lamp) * .56);
+  }
+
+  /* ● past · ◉ now · ○ next (wireframe §10.5). State changes are instant. */
+  .ui-beat-lamp[data-state=past] { background: var(--ink-3); }
+  .ui-beat-lamp[data-state=now] {
+    border-color: var(--now);
+    background: var(--now);
+  }
+
+  /* A counted beat's onset: 60 ms on, 180 ms decay (spec §8.6). Two names so a
+   * repeat on the same dot restarts the animation. */
+  .ui-beat-lamp[data-flash="1"] { animation: ui-beat-lamp-flash-1 calc(var(--motion-fast) * 2) linear; }
+  .ui-beat-lamp[data-flash="2"] { animation: ui-beat-lamp-flash-2 calc(var(--motion-fast) * 2) linear; }
+  @keyframes ui-beat-lamp-flash-1 {
+    0%, 25% { box-shadow: 0 0 0 calc(var(--ui-lamp) * .25) var(--now-soft); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  @keyframes ui-beat-lamp-flash-2 {
+    0%, 25% { box-shadow: 0 0 0 calc(var(--ui-lamp) * .25) var(--now-soft); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ui-beat-lamp[data-flash] { animation: none; }
+  }
+}

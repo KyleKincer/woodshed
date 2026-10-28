@@ -1,0 +1,144 @@
+@layer primitives {
+  /* ProgressRail, ProgressRing, StageStepper (src/ui/progress.js). */
+
+  /* ---------- ProgressRail ---------- */
+  .ui-progress-rail {
+    position: relative;
+    display: block;
+    inline-size: 100%;
+    block-size: var(--s1);
+    overflow: hidden;
+    border-radius: var(--r-pill);
+    background: var(--line);
+  }
+  .ui-progress-rail[data-striped] {
+    background: repeating-linear-gradient(-45deg, var(--line) 0 var(--s1), var(--surface-2) var(--s1) var(--s2));
+  }
+  .ui-progress-rail-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    transform: scaleX(var(--progress, 0));
+    transform-origin: left center;
+    transition: transform var(--motion-enter) var(--ease);
+  }
+  /* Indeterminate: a band sweeping across the rail (spec §3.4 "shimmer"). */
+  .ui-progress-rail[data-motion=animate] .ui-progress-rail-fill {
+    inline-size: 40%;
+    inset-inline-end: auto;
+    transform: translateX(-100%);
+    transition: none;
+    background: linear-gradient(90deg, transparent, var(--accent) 35% 65%, transparent);
+    animation: ui-progress-shimmer calc(var(--motion-slow) * 5) linear infinite;
+  }
+  /* Reduced motion: a static rail at 90% (the value comes from JS through --progress). */
+  .ui-progress-rail[data-motion=static] .ui-progress-rail-fill {
+    animation: none;
+    transition: none;
+  }
+  @keyframes ui-progress-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(250%); }
+  }
+
+  /* ---------- ProgressRing ---------- */
+  .ui-progress-ring {
+    display: inline-block;
+    flex: none;
+    inline-size: 32px;
+    block-size: 32px;
+    color: var(--accent);
+    line-height: 0;
+  }
+  .ui-progress-ring[data-size=sm] { inline-size: 20px; block-size: 20px; }
+  .ui-progress-ring[data-size=lg] { inline-size: 48px; block-size: 48px; }
+  .ui-progress-ring[data-size=fill] { inline-size: 100%; block-size: 100%; }
+  .ui-progress-ring svg {
+    inline-size: 100%;
+    block-size: 100%;
+    transform: rotate(-90deg);
+    overflow: visible;
+  }
+  .ui-progress-ring circle {
+    fill: none;
+    stroke-width: 3;
+  }
+  .ui-progress-ring[data-size=fill] circle,
+  .ui-progress-ring[data-size=lg] circle { stroke-width: 2; }
+  .ui-progress-ring-track { stroke: var(--line); }
+  .ui-progress-ring-fill {
+    stroke: currentColor;
+    stroke-linecap: round;
+    transition: stroke-dasharray var(--motion-enter) var(--ease);
+  }
+  .ui-progress-ring[data-motion=animate] svg {
+    animation: ui-progress-spin calc(var(--motion-slow) * 4) linear infinite;
+  }
+  .ui-progress-ring[data-indeterminate] .ui-progress-ring-fill { transition: none; }
+  @keyframes ui-progress-spin {
+    from { transform: rotate(-90deg); }
+    to { transform: rotate(270deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ui-progress-rail-fill, .ui-progress-ring-fill { transition: none; }
+    .ui-progress-ring svg { animation: none; }
+  }
+
+  /* ---------- StageStepper: Fetch ✓ — Split ● 46% — Finish — Ready ---------- */
+  .ui-stage-stepper {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui);
+    color: var(--ink-3);
+  }
+  .ui-stage-stepper-stage {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    white-space: nowrap;
+  }
+  .ui-stage-stepper-stage + .ui-stage-stepper-stage::before {
+    content: '';
+    display: inline-block;
+    inline-size: var(--s4);
+    margin-inline-end: var(--s1);
+    border-block-start: 1px solid var(--line-strong);
+  }
+  .ui-stage-stepper-mark {
+    display: inline-flex;
+    align-items: center;
+  }
+  .ui-stage-stepper-mark:empty { display: none; }
+  .ui-stage-stepper-icon {
+    inline-size: 16px;
+    block-size: 16px;
+    stroke-width: var(--icon-stroke);
+  }
+  .ui-stage-stepper-stage[data-state=done] { color: var(--ink-2); }
+  .ui-stage-stepper-stage[data-state=done] .ui-stage-stepper-mark { color: var(--ok); }
+  .ui-stage-stepper-stage[data-state=current],
+  .ui-stage-stepper-stage[data-state=failed] {
+    color: var(--ink);
+    font-weight: var(--fw-semibold);
+  }
+  .ui-stage-stepper-stage[data-state=current] .ui-stage-stepper-mark::before {
+    content: '';
+    inline-size: var(--s2);
+    block-size: var(--s2);
+    border-radius: var(--r-pill);
+    background: var(--accent);
+  }
+  .ui-stage-stepper-stage[data-state=current] .ui-stage-stepper-mark:empty { display: inline-flex; }
+  .ui-stage-stepper-stage[data-state=failed] .ui-stage-stepper-mark { color: var(--danger); }
+  .ui-stage-stepper-percent {
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+}
