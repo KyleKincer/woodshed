@@ -26,7 +26,7 @@ export const OUTPUT = 'src/styles/icons.svg';
 /** The Lucide icons the app uses. Add a name here, then run npm run build:icons. */
 export const ICONS = [
   'play', 'square', 'pause', 'rotate-ccw', 'repeat', 'repeat-1', 'gauge', 'timer', 'music', 'mic', 'mic-off',
-  'volume-2', 'volume-x', 'headphones', 'list-music', 'layers', 'layout-grid', 'list', 'search', 'plus', 'x', 'check',
+  'volume-2', 'volume-x', 'headphones', 'list-music', 'layers', 'layout-grid', 'list', 'search', 'plus', 'minus', 'x', 'check',
   'chevron-left', 'chevron-right', 'chevron-down', 'chevron-up', 'ellipsis', 'more-vertical', 'pencil', 'share-2',
   'link', 'copy', 'trash-2', 'pin', 'pin-off', 'star', 'flag', 'diamond', 'bookmark', 'sticky-note', 'maximize-2',
   'minimize-2', 'zoom-in', 'zoom-out', 'scan', 'grid-3x3', 'magnet', 'arrow-down-to-line', 'arrow-left', 'arrow-right',

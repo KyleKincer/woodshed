@@ -13,10 +13,13 @@ const scratch = [];
 afterAll(() => { for (const d of scratch) rmSync(d, {recursive: true, force: true}); });
 
 const CONTRACT_ICONS = 'play, square, pause, rotate-ccw, repeat, repeat-1, gauge, timer, music, mic, mic-off, volume-2, volume-x, headphones, list-music, layers, layout-grid, list, search, plus, x, check, chevron-left, chevron-right, chevron-down, chevron-up, ellipsis, more-vertical, pencil, share-2, link, copy, trash-2, pin, pin-off, star, flag, diamond, bookmark, sticky-note, maximize-2, minimize-2, zoom-in, zoom-out, scan, grid-3x3, magnet, arrow-down-to-line, arrow-left, arrow-right, keyboard, settings, user, log-out, download, upload, refresh-cw, alert-triangle, alert-circle, info, loader, sun, moon, monitor, cpu, hard-drive, cloud, wifi-off, external-link, file-music, file-audio, folder-open, wand-2, sparkles, sliders-horizontal, footprints, hand, keyboard-music, guitar, piano, drum, undo-2, redo-2, gamepad-2'.split(', ');
+// Names added after the §7.4 initial list, each with the ticket that asked for it.
+// 'minus' (I0B-14): the U1 Stepper's − button, paired with 'plus'.
+const ADDED_ICONS = ['minus'];
 
 describe('build-icons', () => {
-  it('ICONS is the §7.4 initial list and CUSTOM the five custom glyphs', () => {
-    expect(ICONS).toEqual(CONTRACT_ICONS);
+  it('ICONS is the §7.4 initial list plus the ticketed additions, and CUSTOM the five custom glyphs', () => {
+    expect([...ICONS].sort()).toEqual([...CONTRACT_ICONS, ...ADDED_ICONS].sort());
     expect([...CUSTOM].sort()).toEqual(['count-in', 'drum', 'metronome', 'minus-me', 'trainer']);
     expect(readdirSync(path.join(root, 'src/styles/icons-custom')).sort()).toEqual(CUSTOM.map(n => `${n}.svg`).sort());
   });
@@ -44,6 +47,14 @@ describe('build-icons', () => {
       expect(s.body, s.id).not.toMatch(/<(script|style)|\son\w+=/i);
     }
     expect(sprite).not.toMatch(/<!-- @license/);
+  });
+
+  it('has the Lucide minus icon for the Stepper (I0B-14)', () => {
+    const minus = symbols.filter(s => s.id === 'i-minus');
+    expect(minus).toHaveLength(1);
+    const lucide = parseIcon(readFileSync(path.join(root, 'node_modules/lucide-static/icons/minus.svg'), 'utf8'), 'minus');
+    expect(minus[0].body).toBe(lucide.body);
+    expect(symbols.some(s => s.id === 'i-plus')).toBe(true);
   });
 
   it('a custom glyph replaces the Lucide icon of the same name (drum)', () => {
