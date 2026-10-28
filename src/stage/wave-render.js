@@ -232,12 +232,15 @@ let tokenListening = false;
 /** Forgets the cached tokens (also done on window `woodshed:theme` and `woodshed:place`). */
 export function invalidateTokens() { tokenCache = null; }
 
+// Registered when the module loads, in the capture phase: before any surface's own theme
+// listener (added later, at mount) redraws with readTokens(), the cache is already cleared.
 function listenForTheme() {
   if (tokenListening || typeof window === 'undefined' || !window.addEventListener) return;
   tokenListening = true;
-  window.addEventListener('woodshed:theme', invalidateTokens);
-  window.addEventListener('woodshed:place', invalidateTokens);
+  window.addEventListener('woodshed:theme', invalidateTokens, true);
+  window.addEventListener('woodshed:place', invalidateTokens, true);
 }
+listenForTheme();
 
 /**
  * The colours the canvases draw with, resolved from the tokens on the root element (D3: the
@@ -311,10 +314,10 @@ function tileCanvas(size) {
 /**
  * The 45° hatch for muted stems, as a CanvasPattern in `color`. Cached per colour and device
  * pixel ratio (the tile is drawn in device pixels and scaled back, so lines stay 1 px crisp on a
- * context scaled by dpr). Returns `color` itself when no canvas is available.
+ * context scaled by dpr) and spacing. Returns `color` itself when no canvas is available.
  */
 export function hatch(ctx, color, {dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1, spacing = 6} = {}) {
-  const key = `${color}|${dpr}`;
+  const key = `${color}|${dpr}|${spacing}`;
   const cached = hatchCache.get(key);
   if (cached) return cached;
   const size = Math.max(2, Math.round(spacing * dpr));

@@ -23,7 +23,12 @@ function mount(opts = {}) {
   playing = false;
   parentDowns = 0;
   parent.addEventListener('pointerdown', () => { parentDowns++; });
-  snap = vi.fn((t, {alt, shift}) => (shift ? t : alt ? Math.round(t * 4) / 4 : Math.round(t)));
+  // Bars are whole seconds, Alt snaps to quarter-second beats; mode 'ceil'/'floor' is honoured.
+  snap = vi.fn((t, {alt, shift, mode}) => {
+    if (shift) return t;
+    const step = alt ? 0.25 : 1, round = mode === 'ceil' ? Math.ceil : mode === 'floor' ? Math.floor : Math.round;
+    return round(t / step) * step;
+  });
   handles = mountLoopHandles(host, {
     toX: t => t * PX, toT: x => x / PX, rows: () => STEM_ROWS, snap,
     onEdit: e => edits.push(e), playing: () => playing, ...opts,
@@ -143,7 +148,7 @@ describe('edge drags', () => {
     expect(edits.at(-1)).toEqual({a: 1, b: 3, phase: 'preview'});
     pointer(a, 'pointermove', mouse(170));
     expect(edits.at(-1)).toEqual({a: 2, b: 3, phase: 'preview'});
-    expect(snap).toHaveBeenLastCalledWith(3, {alt: false, shift: false});
+    expect(snap).toHaveBeenLastCalledWith(1.7, {alt: false, shift: false});   // only the dragged edge
     // While dragging, the handle follows the pointer (unsnapped) and the band follows it.
     expect(box(a).left).toBe(170 - 22);
     expect(visible('.loop-band').map(box)[0]).toMatchObject({left: 170, width: 130});
@@ -206,14 +211,57 @@ describe('edge drags', () => {
     expect(box(handleAt('b')).left).toBe(400 - 22);
   });
 
-  test('a snapped empty loop falls back to the raw edges', () => {
+  test('an edge that would snap onto the other is pushed to the next line away from it (never unsnapped)', () => {
     mount();
     handles.set({a: 1, b: 3});
     const b = withCapture(handleAt('b'));
     pointer(b, 'pointerdown', mouse(300));
-    pointer(b, 'pointermove', mouse(120));   // snaps to 1 = a
-    expect(r6(edits.at(-1).a)).toBe(1);
-    expect(r6(edits.at(-1).b)).toBe(1.2);
+    pointer(b, 'pointermove', mouse(130));   // rounds to 1 = a: ceil gives the next bar
+    expect(snap).toHaveBeenLastCalledWith(1.3, {alt: false, shift: false, mode: 'ceil'});
+    expect(edits.at(-1)).toEqual({a: 1, b: 2, phase: 'preview'});
+    pointer(b, 'pointermove', mouse(80));    // crossed: rounds to 1 = a, floor gives 0
+    expect(edits.at(-1)).toEqual({a: 0, b: 1, phase: 'preview'});
+    pointer(b, 'pointerup', mouse(80));
+    expect(edits.at(-1)).toEqual({a: 0, b: 1, phase: 'commit'});
+  });
+
+  test('a surface snap that ignores mode: the last valid range is kept (no sub-bar, unsnapped loop)', () => {
+    mount({snap: t => Math.round(t)});
+    handles.set({a: 1, b: 3});
+    const b = withCapture(handleAt('b'));
+    pointer(b, 'pointerdown', mouse(300));
+    pointer(b, 'pointermove', mouse(130));   // collapses at once: nothing valid yet, no preview
+    expect(edits).toEqual([]);
+    pointer(b, 'pointermove', mouse(210));
+    expect(edits.at(-1)).toEqual({a: 1, b: 2, phase: 'preview'});
+    pointer(b, 'pointermove', mouse(110));   // collapses: {1, 2} stays
+    expect(edits).toHaveLength(1);
+    pointer(b, 'pointerup', mouse(110));
+    expect(edits.at(-1)).toEqual({a: 1, b: 2, phase: 'commit'});
+    expect(handleAt('b').getAttribute('data-edge')).toBe('b');
+  });
+
+  test('crossing past the other edge keeps the fixed edge (and a commit on bar lines)', () => {
+    mount();
+    handles.set({a: 1, b: 3});
+    const a = withCapture(handleAt('a'));
+    pointer(a, 'pointerdown', mouse(100));
+    pointer(a, 'pointermove', mouse(500));
+    pointer(a, 'pointermove', mouse(520));
+    pointer(a, 'pointerup', mouse(520));
+    expect(edits.at(-1)).toEqual({a: 3, b: 5, phase: 'commit'});
+  });
+
+  test('an edge drag snaps only the dragged edge: an unsnapped loop (⇧I / ⇧O) keeps its other edge', () => {
+    mount();
+    handles.set({a: 1.37, b: 3.37});
+    const b = withCapture(handleAt('b'));
+    pointer(b, 'pointerdown', mouse(337));
+    pointer(b, 'pointermove', mouse(500));
+    expect(edits.at(-1)).toEqual({a: 1.37, b: 5, phase: 'preview'});
+    pointer(b, 'pointerup', mouse(500));
+    expect(edits.at(-1)).toEqual({a: 1.37, b: 5, phase: 'commit'});
+    expect(snap.mock.calls.map(([t]) => t)).not.toContain(1.37);
   });
 
   test('pointercancel restores the range and reports the cancel', () => {
@@ -247,6 +295,38 @@ describe('edge drags', () => {
     expect(box(a).left).toBe(148);
     pointer(a, 'pointerup', mouse(170));
     expect(handles.range).toEqual({a: 2, b: 3});
+  });
+
+  test('a surface that echoes every preview through set(): moves are measured from the drag origin', () => {
+    mount({onEdit: e => { edits.push(e); if (e.phase === 'preview') handles.set({a: e.a, b: e.b}); }});
+    handles.set({a: 1, b: 3});
+    const band = withCapture(visible('.loop-band')[0]);
+    pointer(band, 'pointerdown', mouse(200));
+    pointer(band, 'pointermove', mouse(300));
+    pointer(band, 'pointermove', mouse(310));
+    pointer(band, 'pointermove', mouse(320));
+    pointer(band, 'pointerup', mouse(320));
+    expect(edits.filter(e => e.phase === 'preview').map(({a, b}) => [a, b])).toEqual([[2, 4], [2, 4], [2, 4]]);
+    expect(edits.at(-1)).toEqual({a: 2, b: 4, phase: 'commit'});
+    // An edge dragged past the other with echoes keeps the fixed edge.
+    edits.length = 0;
+    const a = withCapture(handleAt('a'));
+    pointer(a, 'pointerdown', mouse(200));
+    pointer(a, 'pointermove', mouse(600));
+    pointer(a, 'pointermove', mouse(620));
+    pointer(a, 'pointerup', mouse(620));
+    expect(edits.at(-1)).toEqual({a: 4, b: 6, phase: 'commit'});
+  });
+
+  test('pointercancel after echoed previews restores the range from before the drag', () => {
+    mount({onEdit: e => { edits.push(e); if (e.phase === 'preview') handles.set({a: e.a, b: e.b}); }});
+    handles.set({a: 1, b: 3});
+    const a = withCapture(handleAt('a'));
+    pointer(a, 'pointerdown', mouse(100));
+    pointer(a, 'pointermove', mouse(220));
+    pointer(a, 'pointercancel', mouse(220));
+    expect(edits.at(-1)).toEqual({a: 1, b: 3, phase: 'cancel'});
+    expect(handles.range).toEqual({a: 1, b: 3});
   });
 });
 

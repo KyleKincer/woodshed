@@ -10,7 +10,11 @@
 //                      so a time on a row break can end one row or start the next). A row < 0
 //                      is before the first rendered row, ≥ rows().length after the last; null hides.
 //   toT(clientX, clientY) → t
-//   snap(t, {alt, shift}) → t   the surface's snapping (bars; Alt → beats; Shift → none)
+//   snap(t, {alt, shift, mode}) → t   the surface's snapping (bars; Alt → beats; Shift → none);
+//                               mode 'floor'|'ceil' is asked for (and may be ignored) when the dragged
+//                               edge would snap onto the fixed one. An edge drag snaps only the
+//                               dragged edge (the other keeps its value, snapped or not); a move
+//                               snaps both. A loop never collapses: the last valid range is kept.
 //   onEdit({a, b, phase})       'preview' while dragging (snapped), 'commit' on release,
 //                               'cancel' (with the range before the drag) when the pointer is cancelled
 //   playing()                   true while the transport runs: handles show at 50% and only a mouse
@@ -51,7 +55,11 @@ export function mountLoopHandles(host, {
 
   /** The committed range (what set() last gave, or the last commit). */
   let range = null;
-  /** The drag in progress: {kind: 'a'|'b'|'move', id, el, start, x0, y0, pending, raw: {a, b}, last}. */
+  /**
+   * The drag in progress: {kind: 'a'|'b'|'move', id, el, origin, x0, y0, pending, raw: {a, b}, last}.
+   * origin is the range when the drag began and never changes (set() echoes while a drag runs are
+   * ignored), so every move is measured from it and a cancel restores it.
+   */
   let drag = null;
   let springTimer = null;
   let destroyed = false;
@@ -200,15 +208,21 @@ export function mountLoopHandles(host, {
 
   const mods = e => ({alt: !!e.altKey, shift: !!e.shiftKey});
 
-  /** Snapped {a, b} from raw edges; never empty (falls back to the raw edges). */
-  const snapped = (lo, hi, e) => {
-    let a = snap(lo, mods(e)), b = snap(hi, mods(e));
-    if (!(b - a > EPS)) { a = lo; b = hi; }
-    return {a: Math.max(0, a), b};
+  /**
+   * The dragged edge at raw time t against the fixed edge f, snapped: never onto f (asks the
+   * surface for the next line away from f, else null: the caller keeps its last valid range).
+   */
+  const snapEdge = (t, f, e) => {
+    const m = mods(e);
+    let s = snap(t, m);
+    if (Math.abs(s - f) > EPS && (s > f) === (t > f)) return Math.max(0, s);
+    s = snap(t, {...m, mode: t > f ? 'ceil' : 'floor'});
+    if (Math.abs(s - f) > EPS && (s > f) === (t > f)) return Math.max(0, s);
+    return null;
   };
 
   const startDrag = (e, kind, el) => {
-    drag = {kind, id: e.pointerId, el, start: {...range}, x0: e.clientX, y0: e.clientY, pending: kind === 'move',
+    drag = {kind, id: e.pointerId, el, origin: Object.freeze({...range}), x0: e.clientX, y0: e.clientY, pending: kind === 'move',
       raw: {...range}, last: null, pointerType: e.pointerType || 'mouse'};
     clearSpring();
     if (kind !== 'move') {
@@ -246,24 +260,26 @@ export function mountLoopHandles(host, {
       drag.el.setAttribute('data-dragging', '');
     }
     const t = toT(e.clientX, e.clientY);
-    const {start} = drag;
-    let lo, hi;
+    const {origin} = drag;
+    const before = drag.last;
     if (drag.kind === 'move') {
-      const length = start.b - start.a;
-      lo = start.a + (t - toT(drag.x0, drag.y0));
+      const length = origin.b - origin.a;
+      let lo = origin.a + (t - toT(drag.x0, drag.y0));
       if (lo < 0) lo = 0;
-      hi = lo + length;
+      const hi = lo + length;
       drag.raw = {a: lo, b: hi};
-      const s = snapped(lo, hi, e);
-      drag.last = s.b - s.a > EPS ? s : {a: s.a, b: s.a + length};
+      const a = Math.max(0, snap(lo, mods(e))), b = snap(hi, mods(e));
+      drag.last = b - a > EPS ? {a, b} : {a, b: a + length};
     } else {
-      drag.raw = drag.kind === 'a' ? {a: Math.max(0, t), b: start.b} : {a: start.a, b: Math.max(0, t)};
-      lo = Math.min(drag.raw.a, drag.raw.b); hi = Math.max(drag.raw.a, drag.raw.b);
-      if (!(hi - lo > EPS)) { draw(); return; }
-      drag.last = snapped(lo, hi, e);
+      // Only the dragged edge moves (and snaps); the other stays where it was, snapped or not.
+      const fixed = drag.kind === 'a' ? origin.b : origin.a;
+      const raw = Math.max(0, t);
+      drag.raw = drag.kind === 'a' ? {a: raw, b: fixed} : {a: fixed, b: raw};
+      const s = Math.abs(raw - fixed) > EPS ? snapEdge(raw, fixed, e) : null;
+      if (s != null) drag.last = {a: Math.min(s, fixed), b: Math.max(s, fixed)};
     }
     draw();
-    emit(drag.last.a, drag.last.b, 'preview');
+    if (drag.last && drag.last !== before) emit(drag.last.a, drag.last.b, 'preview');
   }
 
   const detach = () => {
@@ -285,7 +301,9 @@ export function mountLoopHandles(host, {
     if (d.pending || !d.last) { draw(); return; }
     // A dragged edge that crossed the other becomes the other edge.
     const crossed = d.kind !== 'move' && ((d.kind === 'a' && d.raw.a > d.raw.b) || (d.kind === 'b' && d.raw.b < d.raw.a));
-    if (crossed) swapEdges();
+    // When the last valid range kept the edge on its own side, the handles keep their edges.
+    const lastCrossed = d.kind !== 'move' && (d.kind === 'a' ? d.last.a >= d.origin.b - EPS : d.last.b <= d.origin.a + EPS);
+    if (crossed && lastCrossed) swapEdges();
     range = {a: d.last.a, b: d.last.b};
     spring();
     emit(range.a, range.b, 'commit');
@@ -294,7 +312,7 @@ export function mountLoopHandles(host, {
   function onDragCancel(e) {
     if (!drag || e.pointerId !== drag.id) return;
     const d = detach();
-    range = {...d.start};
+    range = {...d.origin};
     draw();
     if (d.last) emit(range.a, range.b, 'cancel');
   }
@@ -346,8 +364,8 @@ export function mountLoopHandles(host, {
     set(next) {
       const value = next && Number.isFinite(next.a) && Number.isFinite(next.b) && next.b > next.a ? {a: next.a, b: next.b} : null;
       if (drag) {
-        // The surface echoes practice state while a drag runs: the drag's own view wins until it ends.
-        drag.start = value ?? drag.start;
+        // The surface echoes practice state (its previews) while a drag runs: the drag's own view
+        // and its origin win until it ends. Only a cleared loop ends the drag.
         if (!value) { detach(); range = null; draw(); }
         return;
       }

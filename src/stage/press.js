@@ -10,6 +10,10 @@
 //   - a press held longMs without moving more than moveTol fires haptic() and onLongStart(e);
 //     moving afterwards fires onLongDrag(e, {dx, dy}) on every move, and the release
 //     onLongEnd(e, {dragged: true}). Scrolling is blocked for the rest of that press.
+//     When onLongStart returns false (glass.pressPolicy says 'scroll' for a long drag: touch
+//     while playing) the press stays scrollable instead: no capture, no blocked touchmove, and
+//     moving past moveTol hands it to the browser with onLongEnd(e, {dragged: false,
+//     cancelled: true}) (no onLongDrag, no menu). Releasing it still ends it and opens the menu.
 //   - releasing a long press without moving fires onLongEnd(e, {dragged: false}), then onMenu(e).
 //   - moving more than moveTol before longMs gives the press to the browser (native scroll,
 //     `touch-action: pan-y`): nothing fires.
@@ -22,7 +26,10 @@
 //     move, onDragEnd(e) on release (pointer capture held). A release without moving is a tap
 //     or double click as above.
 //   - right-click (contextmenu), Shift+F10 and the ContextMenu key on the element → onMenu(e).
-//     The keyboard paths place e at the focused element's centre and set e.keyboard.
+//     The keyboard paths place e at the focused element's centre and set e.keyboard. A macOS
+//     Ctrl-click (button-0 pointerdown, then contextmenu) is a menu only: the pending press ends.
+//   - a release outside el (no capture before a drag) drops the press: no tap, no later drag.
+// Pen: only the tip (button 0) presses; the barrel button's contextmenu is a right-click → onMenu.
 // The gesture object e = {clientX, clientY, pointerType: 'mouse'|'touch'|'pen', button, altKey,
 //   shiftKey, ctrlKey, metaKey, target, event, keyboard?, cancelled?}; the surface adds t/bar.
 // Cooperation with other layers (loop-handles.js): a press that starts inside
@@ -72,6 +79,7 @@ export function createPressRecognizer(el, {
   /** Pointers currently down on el (to see a second finger). */
   const down = new Set();
   let suppressContextMenu = false;
+  const win = el.ownerDocument?.defaultView ?? (typeof window !== 'undefined' ? window : null);
   let suppressTimer = null;
   const suppressMenuEvent = () => {
     suppressContextMenu = true;
@@ -122,7 +130,8 @@ export function createPressRecognizer(el, {
     }
     if (down.size > 1) return;
     const pointerType = event.pointerType || 'mouse';
-    if (pointerType === 'mouse' && event.button !== 0) return;   // right-click goes through contextmenu
+    // Right-click and the pen's barrel button go through contextmenu (touch reports button 0).
+    if (pointerType !== 'touch' && event.button !== 0) return;
     press = {id: event.pointerId, pointerType, x0: event.clientX, y0: event.clientY, phase: 'down', timer: null,
       nodrag: !!event.target?.closest?.('[data-press-nodrag]')};
     if (pointerType === 'mouse') return;
@@ -133,7 +142,12 @@ export function createPressRecognizer(el, {
       capture(press.id);
       clearTap();
       call(haptic, 8);
-      call(onLongStart, gesture(event));
+      const p = press;
+      if (call(onLongStart, gesture(event)) === false && press === p) {
+        // The surface declines long drags (playing touch): the press stays scrollable.
+        p.scrolls = true;
+        release(p.id);
+      }
     }, longMs);
   };
 
@@ -159,6 +173,12 @@ export function createPressRecognizer(el, {
         return;
       case 'long':
         if (!moved) return;
+        if (press.scrolls) {
+          // A declined long press that moves is the browser's scroll.
+          press = null;
+          call(onLongEnd, gesture(event, {cancelled: true}), {dragged: false, cancelled: true});
+          return;
+        }
         press.phase = 'longDrag';
         call(onLongDrag, gesture(event), {dx, dy});
         return;
@@ -198,11 +218,14 @@ export function createPressRecognizer(el, {
   };
 
   const onContextMenu = event => {
-    // Touch long presses are ours (the timer above); the browser's own long-press menu is suppressed.
-    const fromTouch = event.pointerType === 'touch' || event.pointerType === 'pen' || (press && press.pointerType !== 'mouse') || suppressContextMenu;
+    // Touch and pen long presses are ours (the timer above); the browser's own long-press menu is
+    // suppressed. A pen contextmenu with no pen press of ours is the barrel button: a right-click.
+    const fromTouch = event.pointerType === 'touch' || (press && press.pointerType !== 'mouse') || suppressContextMenu;
     event.preventDefault();
     if (fromTouch) return;
     if (press?.phase === 'drag') return;
+    // A macOS Ctrl-click: the button-0 press that began it is the menu, not a tap.
+    if (press) cancel(event, {silent: true});
     const keyboard = event.button === -1 || (event.clientX === 0 && event.clientY === 0 && event.detail === 0);
     if (keyboard) {
       const focused = el.contains(document.activeElement) ? document.activeElement : el;
@@ -210,7 +233,7 @@ export function createPressRecognizer(el, {
       return;
     }
     clearTap();
-    call(onMenu, gesture(event, {pointerType: 'mouse'}));
+    call(onMenu, gesture(event, {pointerType: event.pointerType === 'pen' ? 'pen' : 'mouse'}));
   };
 
   const onKeyDown = event => {
@@ -225,7 +248,17 @@ export function createPressRecognizer(el, {
 
   // Long-press drags must not scroll; nor may a press that has become a long press.
   const onTouchMove = event => {
-    if (press && (press.phase === 'long' || press.phase === 'longDrag') && event.cancelable) event.preventDefault();
+    if (press && !press.scrolls && (press.phase === 'long' || press.phase === 'longDrag') && event.cancelable) event.preventDefault();
+  };
+
+  // A mouse press released outside el before it became a drag (no capture yet): the pointerup
+  // never reaches el, so it is caught here and the press dropped (a later hover is not a drag).
+  const onWindowPointerUp = event => {
+    if (!press || press.pointerType !== 'mouse' || event.pointerId !== press.id) return;
+    try { if (el.contains(event.target)) return; } catch { /* not a node: outside */ }
+    if (press.phase !== 'down' && press.phase !== 'nodrag') return;
+    clearLong();
+    press = null;
   };
 
   const previousTouchAction = el.style.touchAction;
@@ -245,6 +278,7 @@ export function createPressRecognizer(el, {
   el.addEventListener('contextmenu', onContextMenu);
   el.addEventListener('keydown', onKeyDown);
   el.addEventListener('touchmove', onTouchMove, {passive: false});
+  win?.addEventListener('pointerup', onWindowPointerUp, true);
 
   // Losing capture without a pointerup (the element was hidden, another capture) is a cancel.
   function onPointerCancelIfCaptured(event) {
@@ -267,6 +301,7 @@ export function createPressRecognizer(el, {
     el.removeEventListener('contextmenu', onContextMenu);
     el.removeEventListener('keydown', onKeyDown);
     el.removeEventListener('touchmove', onTouchMove);
+    win?.removeEventListener('pointerup', onWindowPointerUp, true);
     el.style.touchAction = previousTouchAction;
     el.style.webkitTouchCallout = previousCallout ?? '';
     if (previousConsume == null) el.removeAttribute('data-consume-keys');

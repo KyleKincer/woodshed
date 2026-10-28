@@ -208,6 +208,23 @@ describe('readTokens', () => {
     expect(readTokens().ink).toBe('#eeeeee');
     expect(document.body.querySelectorAll('span[aria-hidden]').length).toBe(0);   // the probe is removed
   });
+
+  test("a surface's own woodshed:theme redraw, added before the first readTokens(), sees the new colours", async () => {
+    // A fresh module (its first readTokens() comes after the surface's listener), as at app start.
+    vi.resetModules();
+    const fresh = await import('../src/stage/wave-render.js');
+    const seen = [];
+    const redraw = () => seen.push(fresh.readTokens().ink);
+    window.addEventListener('woodshed:theme', redraw);
+    try {
+      expect(fresh.readTokens().ink).toBe('#ffffff');
+      document.documentElement.style.setProperty('--ink', '#000000');
+      window.dispatchEvent(new CustomEvent('woodshed:theme', {detail: {theme: 'light'}}));
+      expect(seen).toEqual(['#000000']);
+    } finally {
+      window.removeEventListener('woodshed:theme', redraw);
+    }
+  });
 });
 
 describe('hatch', () => {
@@ -231,6 +248,16 @@ describe('hatch', () => {
     const other = createRecordingContext();
     expect(hatch(other, '#9cd3b1', {dpr: 1})).toBe(second);
     expect(other.callsOf('createPattern')).toHaveLength(0);
+  });
+
+  test('the cache tells spacings apart', () => {
+    installCanvasShim();
+    const ctx = createRecordingContext();
+    const fine = hatch(ctx, '#123456', {dpr: 1, spacing: 6});
+    const wide = hatch(ctx, '#123456', {dpr: 1, spacing: 12});
+    expect(wide).not.toBe(fine);
+    expect(ctx.callsOf('createPattern')[1][0].width).toBe(12);
+    expect(hatch(ctx, '#123456', {dpr: 1, spacing: 12})).toBe(wide);
   });
 
   test('the tile is one diagonal plus its corner pieces, stroked in the colour', () => {

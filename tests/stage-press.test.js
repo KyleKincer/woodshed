@@ -173,6 +173,56 @@ describe('touch and pen', () => {
     expect(after.defaultPrevented).toBe(true);
     expect(names()).toEqual(['longStart', 'longEnd', 'menu']);
   });
+
+  test('onLongStart returning false (playing touch: a long drag scrolls) leaves the press scrollable', () => {
+    mount({onLongStart: e => { log.push(['longStart', {x: e.clientX}]); return false; }});
+    down(touch(100, 100));
+    vi.advanceTimersByTime(350);
+    expect(haptic).toHaveBeenCalledWith(8);
+    expect(el.releasePointerCapture).toHaveBeenCalledWith(7);
+    const tm = touchEvent('touchmove', el, [{x: 100, y: 160}]);
+    el.dispatchEvent(tm);
+    expect(tm.defaultPrevented).toBe(false);   // the browser may scroll
+    move(touch(100, 160));
+    expect(log.at(-1)).toEqual(['longEnd', {dragged: false, cancelled: true}]);
+    up(touch(100, 160));
+    expect(names()).toEqual(['longStart', 'longEnd']);   // no long drag, no menu
+    // Released without moving, it is still the menu.
+    log.length = 0;
+    down(touch(100, 100, {pointerId: 8}));
+    vi.advanceTimersByTime(350);
+    up(touch(100, 100, {pointerId: 8}));
+    expect(names()).toEqual(['longStart', 'longEnd', 'menu']);
+  });
+
+  test('a long press the surface accepts still blocks scrolling', () => {
+    mount();
+    down(touch(100, 100));
+    vi.advanceTimersByTime(350);
+    const tm = touchEvent('touchmove', el, [{x: 100, y: 160}]);
+    el.dispatchEvent(tm);
+    expect(tm.defaultPrevented).toBe(true);
+  });
+
+  test("a pen's barrel button is a right-click: no tap, and its contextmenu opens the menu", () => {
+    mount();
+    const pen = {x: 80, y: 60, pointerType: 'pen', pointerId: 4, button: 2};
+    down(pen);
+    up(pen);
+    const menu = new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 80, clientY: 60, button: 2, detail: 1});
+    Object.defineProperty(menu, 'pointerType', {value: 'pen'});
+    el.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(true);
+    expect(log).toEqual([['menu', {x: 80, y: 60, type: 'pen', keyboard: false, cancelled: false}]]);
+    // A pen tip long press still swallows the browser's own contextmenu.
+    log.length = 0;
+    down({...pen, button: 0});
+    vi.advanceTimersByTime(350);
+    const echo = new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 80, clientY: 60});
+    Object.defineProperty(echo, 'pointerType', {value: 'pen'});
+    el.dispatchEvent(echo);
+    expect(names()).toEqual(['longStart']);
+  });
 });
 
 describe('mouse', () => {
@@ -213,6 +263,37 @@ describe('mouse', () => {
     el.dispatchEvent(menu);
     expect(menu.defaultPrevented).toBe(true);
     expect(log).toEqual([['menu', {x: 90, y: 40, type: 'mouse', keyboard: false, cancelled: false}]]);
+  });
+
+  test('a macOS Ctrl-click (button 0 down, contextmenu, button 0 up) is the menu only', () => {
+    mount();
+    down(mouse(60, 40, {ctrlKey: true}));
+    const menu = new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 60, clientY: 40, button: 0, detail: 1, ctrlKey: true});
+    el.dispatchEvent(menu);
+    up(mouse(60, 40));
+    expect(names()).toEqual(['menu']);
+    expect(menu.defaultPrevented).toBe(true);
+    // The next click is a plain tap, not a double.
+    vi.advanceTimersByTime(100);
+    down(mouse(60, 40)); up(mouse(60, 40));
+    expect(names()).toEqual(['menu', 'tap']);
+  });
+
+  test('a mouse press released outside the element is dropped: a later hover is not a drag', () => {
+    mount();
+    const sibling = document.createElement('div');
+    document.body.append(sibling);
+    down(mouse(2, 2));
+    pointer(sibling, 'pointerup', mouse(500, 2));
+    move(mouse(60, 20));
+    move(mouse(90, 20));
+    expect(log).toEqual([]);
+    sibling.remove();
+    // A drag (pointer capture held) is unaffected by the window listener.
+    down(mouse(50, 50));
+    move(mouse(80, 50));
+    up(mouse(80, 50));
+    expect(names()).toEqual(['dragStart', 'drag', 'dragEnd']);
   });
 
   test('a press whose pointerup was lost ends when the next one starts', () => {
