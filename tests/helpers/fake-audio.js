@@ -23,6 +23,18 @@ const round9 = (x) => Math.round(x * 1e9) / 1e9;
 const liveContexts = new Set();
 let activeClock = null;
 
+// AudioParam's automation arguments are WebIDL `float`/`double` (not the
+// `unrestricted` variants), so Chromium converts each with ToNumber and throws
+// a TypeError when the result is NaN or ±Infinity, before recording anything.
+// The fake does the same, so a non-finite time fails in unit tests too (I2b-29).
+function finiteArgs(method, args) {
+  for (const arg of args) {
+    if (!Number.isFinite(Number(arg))) {
+      throw new TypeError(`Failed to execute '${method}' on 'AudioParam': The provided value is non-finite.`);
+    }
+  }
+}
+
 /** An AudioParam that records its automation and can evaluate it. */
 export class FakeAudioParam {
   constructor(value = 1) {
@@ -38,11 +50,28 @@ export class FakeAudioParam {
     this.events.splice(i, 0, event);
     return this;
   }
-  setValueAtTime(value, time) { this.calls.push(['setValueAtTime', value, time]); return this._insert({type: 'set', value, time}); }
-  setTargetAtTime(value, time, timeConstant) { this.calls.push(['setTargetAtTime', value, time, timeConstant]); return this._insert({type: 'target', value, time, timeConstant}); }
-  linearRampToValueAtTime(value, time) { this.calls.push(['linearRampToValueAtTime', value, time]); return this._insert({type: 'linear', value, time}); }
-  exponentialRampToValueAtTime(value, time) { this.calls.push(['exponentialRampToValueAtTime', value, time]); return this._insert({type: 'exponential', value, time}); }
+  setValueAtTime(value, time) {
+    finiteArgs('setValueAtTime', [value, time]);
+    this.calls.push(['setValueAtTime', value, time]);
+    return this._insert({type: 'set', value, time});
+  }
+  setTargetAtTime(value, time, timeConstant) {
+    finiteArgs('setTargetAtTime', [value, time, timeConstant]);
+    this.calls.push(['setTargetAtTime', value, time, timeConstant]);
+    return this._insert({type: 'target', value, time, timeConstant});
+  }
+  linearRampToValueAtTime(value, time) {
+    finiteArgs('linearRampToValueAtTime', [value, time]);
+    this.calls.push(['linearRampToValueAtTime', value, time]);
+    return this._insert({type: 'linear', value, time});
+  }
+  exponentialRampToValueAtTime(value, time) {
+    finiteArgs('exponentialRampToValueAtTime', [value, time]);
+    this.calls.push(['exponentialRampToValueAtTime', value, time]);
+    return this._insert({type: 'exponential', value, time});
+  }
   cancelScheduledValues(time) {
+    finiteArgs('cancelScheduledValues', [time]);
     this.calls.push(['cancelScheduledValues', time]);
     this.events = this.events.filter((e) => e.time < time);
     return this;
