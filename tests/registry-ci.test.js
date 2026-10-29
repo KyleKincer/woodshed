@@ -23,6 +23,10 @@ const DEFINITION_MODULES = [
   () => import('../src/stage/commands.js'),
   // The Stems surface registers §3.3 on mount (I2b); defineStemsCommands() registers them once.
   () => import('../src/stage/surfaces/stems-surface.js').then(m => m.defineStemsCommands()),
+  // Wave 3a (I3a): the Edit postures register on import.
+  () => import('../src/edit/commands.js'),
+  () => import('../src/edit/map/commands.js'),
+  () => import('../src/edit/chart/commands.js'),
 ];
 /** Modules exporting CONTROL_SET or CONTROLS tables whose command fields must exist (e.g. src/stage/controls.js). */
 const CONTROL_MODULES = [
@@ -39,9 +43,14 @@ const CONTROL_MODULES = [
   () => import('../src/stage/surfaces/roadmap-surface.js'),
   () => import('../src/stage/surfaces/stems-surface.js'),
   () => import('../src/library/library-actions.copy.js'),
+  // Wave 3a (I3a): Edit postures.
+  () => import('../src/edit/edit.js'),
+  () => import('../src/edit/chart/menus.js'),
+  () => import('../src/edit/map/find-panel.js'),
+  () => import('../src/edit/map/map.copy.js'),
 ];
 /** Electron menu sources whose fixed command ids must exist (e.g. 'desktop/menu.cjs'). */
-const ELECTRON_MENU_SOURCES = [];
+const ELECTRON_MENU_SOURCES = ['desktop/menu.cjs'];
 /** The ? sheet's group order (S2's export; set at I1). */
 const SHEET_GROUPS = (await import('../src/app/shortcuts-sheet.js')).SHEET_GROUPS;
 /** Directories scanned for `command: '…'` references. */

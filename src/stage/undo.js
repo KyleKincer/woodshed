@@ -221,6 +221,10 @@ export function createPracticeUndo({limit = UNDO_LIMIT, coalesceMs = COALESCE_MS
     canUndo: readonly(canUndo), canRedo: readonly(canRedo),
     /** Steps on each stack (for the dev handle and tests). */
     get size() { return {undo: undoStack.length, redo: redoStack.length}; },
+    /** The entry the next Undo would undo, or null (read-only). */
+    get top() { return undoStack[undoStack.length - 1] ?? null; },
+    /** True while `entry` is the step the next Undo would undo. */
+    isTop(entry) { return !!entry && undoStack[undoStack.length - 1] === entry; },
   };
 }
 
