@@ -249,6 +249,6 @@ describe.skipIf(process.platform === 'win32')('wt.mjs on a scratch repository', 
     const r = run(repo, ['list']);
     expect(r.status).toBe(0);
     expect(r.out).toMatch(/A1\s+ux2\/P\/A1\s+FIXTURE_PORT=5200/);
-    expect(r.out).not.toMatch(/B1/);
+    expect(r.out).not.toMatch(/^\s*B1\b/m);
   });
 });

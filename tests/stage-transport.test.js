@@ -1279,7 +1279,7 @@ describe('mix (rule 18)', () => {
     tb.transport.minusMe(true);
     expect(tb.track('other').muted).toBe(true);
     expect(tb.statuses).toHaveLength(1);
-    expect(tb.statuses[0].text).toBe("This song wasn't split with a guitar part. Muting Other instead.");
+    expect(tb.statuses[0].text).toBe("This song wasn't split with a guitar part. Muting 'Other' instead.");
     expect(tb.statuses[0].action.label).toBe('Re-split with 6 stems');
     tb.statuses[0].action.run();
     expect(resplit).toHaveBeenCalledTimes(1);
@@ -1287,7 +1287,7 @@ describe('mix (rule 18)', () => {
 
     tb = await bed({stems: ['drums', 'bass', 'vocals', 'other']});
     tb.transport.minusMe(true);
-    expect(tb.statuses[0].text).toBe("This song wasn't split with a guitar part. Muting Other instead. Re-split it from Woodshed for desktop.");
+    expect(tb.statuses[0].text).toBe("This song wasn't split with a guitar part. Muting 'Other' instead. Re-split it from Woodshed for desktop.");
     expect(tb.statuses[0].action).toBeUndefined();
   });
 

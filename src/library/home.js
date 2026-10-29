@@ -561,7 +561,7 @@ export function mount(el, match, ctx = {}) {
   /** New-song jobs (the "Adding" group) that the filter and search let through. */
   function addingJobs(state, songs) {
     if (state.artist || state.album) return [];
-    const all = addingJobsOf(model.items.value ?? [], songs);
+    const all = addingJobsOf(model.items.value ?? [], songs, {jobs: lib.jobs?.value});
     const byFilter = all.filter(j => (state.filter == null ? true : state.filter === 'processing' ? !isFailed(j) : state.filter === 'failed' ? isFailed(j) : false));
     const q = state.q.trim();
     return q ? byFilter.filter(j => matches({title: j.title ?? ''}, q)) : byFilter;

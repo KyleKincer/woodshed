@@ -237,10 +237,29 @@ export function queryOf(state) {
 /** Jobs that put a song in a new card: a split, an upload or an import whose song does not exist yet. */
 export const NEW_SONG_KINDS = Object.freeze(['separate', 'upload', 'import']);
 
-/** The "Adding" group's jobs: live or failed new-song jobs whose song is not in `songs` yet. */
-export function addingJobsOf(items = [], songs = null) {
+/**
+ * The "Adding" group's jobs: live or failed new-song jobs whose song is not in `songs` yet, the new card at the front
+ * (spec §3.2): uploads in progress first, then the jobs newest first by `createdAt` (read from the job view-model, or
+ * from the raw `jobs` rows, store.library.jobs, by jobId), then anything without a time (a failed upload) in its order.
+ */
+export function addingJobsOf(items = [], songs = null, {jobs = null} = {}) {
   const ids = songs instanceof Map ? songs : new Set([...iterate(songs)].map(s => s?.id));
-  return (items ?? []).filter(j => onCard(j) && NEW_SONG_KINDS.includes(j.kind) && !(j.songId && ids.has(j.songId)));
+  const adding = (items ?? []).filter(j => onCard(j) && NEW_SONG_KINDS.includes(j.kind) && !(j.songId && ids.has(j.songId)));
+  const created = new Map();
+  for (const row of iterate(jobs)) if (row?.jobId != null && Number.isFinite(row.createdAt)) created.set(row.jobId, row.createdAt);
+  const rank = j => (j.kind === 'upload' && j.status === 'running' ? 0 : createdAtOf(j, created) != null ? 1 : 2);
+  return adding.map((job, i) => ({job, i})).sort((a, b) => {
+    const ra = rank(a.job), rb = rank(b.job);
+    if (ra !== rb) return ra - rb;
+    if (ra === 1) return (createdAtOf(b.job, created) - createdAtOf(a.job, created)) || a.i - b.i;
+    return a.i - b.i;
+  }).map(x => x.job);
+}
+
+function createdAtOf(job, created) {
+  if (Number.isFinite(job.createdAt)) return job.createdAt;
+  const at = job.jobId != null ? created.get(job.jobId) : undefined;
+  return Number.isFinite(at) ? at : null;
 }
 
 /**

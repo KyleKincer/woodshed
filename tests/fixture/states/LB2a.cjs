@@ -4,9 +4,9 @@
 //   lb2a-drop-target      a 3-file drag over the Library: the "Drop to add 3 files" target is a popover in the
 //                         top layer over the dimmed window, takes no focus, is announced, and a dragover anywhere is
 //                         accepted; captured
-//   lb2a-drop-add         the drop stages the three files and opens /add (LB2b's sheet takes them and lists them by
-//                         name; until it lands /add is the placeholder and they stay staged); nothing is uploaded
-//                         and no job is created
+//   lb2a-drop-add         the drop stages the three files and opens /add; once the route is ready LB2b's sheet has
+//                         taken them and lists the audio by name with notes.pdf flagged as not audio (while /add is
+//                         the placeholder they stay staged); nothing is uploaded and no job is created
 //   lb2a-drop-elsewhere   on /welcome (Library place, but not the Library): no target, and a dropped file is
 //                         swallowed: the app stays where it is
 'use strict';
@@ -89,21 +89,31 @@ module.exports = [
       const drop = await page.evaluate(dispatchDrag, ['drop', FILES, x, y]);
       t.expect(drop.prevented, 'the drop is taken (the browser does not open the file)');
       await page.waitForFunction(() => location.pathname === '/add');
+      // The route has mounted (the sheet, or the placeholder) before the stage is read: reading it on the pathname
+      // alone races the sheet's mount and takes the files from under it.
+      await page.waitForSelector('html[data-view-ready=add]');
       t.expect(!(await page.evaluate(targetFacts)), 'the target is gone after the drop');
+      const placeholder = await page.evaluate(() => document.body.textContent.includes('Not built yet'));
       const staged = await page.evaluate(async () => {
         const mod = await import('/src/library/dropzone.js');
         return mod.takeStagedFiles().map(f => f.name);
       });
-      // LB2b's sheet takes the files when it mounts; while /add is the placeholder they wait here for it.
-      const placeholder = await page.evaluate(() => document.body.textContent.includes('Not built yet'));
       if (placeholder) {
+        // While /add is the placeholder the files wait here for LB2b's sheet.
         t.expect(JSON.stringify(staged) === JSON.stringify(FILES), `the three files are staged for the sheet (placeholder: ${staged})`);
       } else {
-        // The sheet took them: it lists each dropped file by name (notes.pdf in its "isn't audio" line).
-        await page.waitForFunction(names => names.every(name => document.body.innerText.includes(name.replace(/\.[^.]+$/, ''))), FILES, {timeout: 5000}).catch(() => {});
-        const shown = await page.evaluate(names => names.filter(name => document.body.innerText.includes(name.replace(/\.[^.]+$/, ''))), FILES);
-        t.expect(staged.length === 0 && shown.length === FILES.length,
-          `the sheet took the three staged files and lists them (left staged: ${staged}; listed: ${shown})`);
+        // The sheet took them on mount: the two audio files are listed by name and notes.pdf gets its "isn't audio" flag.
+        const audio = FILES.filter(name => !name.endsWith('.pdf'));
+        const sheet = () => ({
+          listed: [...document.querySelectorAll('.lib-add-file-name')].map(el => el.textContent),
+          flags: [...document.querySelectorAll('.lib-add-flag')].map(el => el.textContent),
+        });
+        await page.waitForFunction(n => document.querySelectorAll('.lib-add-file-name, .lib-add-flag').length >= n, FILES.length, {timeout: 5000}).catch(() => {});
+        const {listed, flags} = await page.evaluate(sheet);
+        t.expect(staged.length === 0, `the sheet took the staged files (left staged: ${staged})`);
+        t.expect(JSON.stringify(listed) === JSON.stringify(audio), `the sheet lists ${audio.join(', ')} (listed: ${listed})`);
+        t.expect(flags.length === 1 && flags[0].includes('notes.pdf') && /isn.t audio/.test(flags[0]),
+          `notes.pdf is flagged as not audio (flags: ${JSON.stringify(flags)})`);
       }
       const after = await page.evaluate(() => window.fixture.db().jobs.length);
       t.expect(after === before, `nothing was uploaded or queued (${before} → ${after} jobs)`);

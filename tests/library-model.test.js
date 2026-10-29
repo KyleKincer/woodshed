@@ -245,6 +245,19 @@ describe('jobCounts / addingJobsOf', () => {
     expect(addingJobsOf(items, songs).map(j => j.id)).toEqual(['n']);
     expect(addingJobsOf(items, [song('a')]).map(j => j.id)).toEqual(['n']);
   });
+  it('addingJobsOf puts the newest card first (spec §3.2): uploads in progress, then newest createdAt, then untimed', () => {
+    const items = [
+      {id: 'failed', jobId: 'jf', kind: 'separate', status: 'error', failure: {sentence: 'x'}},
+      {id: 'old', jobId: 'jo', kind: 'separate', status: 'running'},
+      {id: 'new', jobId: 'jn', kind: 'separate', status: 'queued'},
+      {id: 'up', kind: 'upload', status: 'running'},
+      {id: 'mid', kind: 'separate', status: 'running', createdAt: 150},
+    ];
+    const jobs = [{jobId: 'jo', createdAt: 100}, {jobId: 'jn', createdAt: 300}, {jobId: 'jf', createdAt: 50}];
+    expect(addingJobsOf(items, songs, {jobs}).map(j => j.id)).toEqual(['up', 'new', 'mid', 'old', 'failed']);
+    // without the raw rows only the view-model times count; the rest keep their order after them
+    expect(addingJobsOf(items, songs).map(j => j.id)).toEqual(['up', 'mid', 'failed', 'old', 'new']);
+  });
 });
 
 describe('album order', () => {

@@ -41,7 +41,7 @@ export const COPY = Object.freeze({
   trainerDone: (rate) => `Trainer done — ${percent(rate)}%`,
   trainerStopped: 'Trainer stopped',
   interrupted: 'Paused — audio was interrupted. Press Play to continue.',
-  noPartFallback: (instruments) => `This song wasn't split with a ${instruments} part. Muting Other instead.`,
+  noPartFallback: (instruments) => `This song wasn't split with a ${instruments} part. Muting 'Other' instead.`,
   resplitAction: 'Re-split with 6 stems',
   resplitWeb: 'Re-split it from Woodshed for desktop.',
   countInPlate: (display) => (display == null ? 'Count-in · pickup' : `Count-in · bar ${display}`),
