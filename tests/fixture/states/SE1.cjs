@@ -16,7 +16,9 @@
 //   se1-app-device-desktop  fx-desktop=1 fx-update=ready: the desktop version, Check for updates, the
 //                           update line; no install row
 //   se1-app-account         email, Google account, Sign out; fx-admin=1 adds Administration
-//   se1-app-nav             laptop: the nav replaces the URL and keeps focus; Back leaves Settings
+//   se1-app-nav             laptop: the nav replaces the URL and keeps focus; the nav lists every section
+//                           in spec order and Tab moves along it (Appearance, Plan & storage, This device);
+//                           Back leaves Settings
 // The harness (/__harness/settings), with an in-memory settings.patch:
 //   se1-save-failed         a failed save reverts the control: "Couldn't save · Retry"; Retry saves it
 //   se1-custom-count-in     a custom count-in (3 beats): the length stepper and Bars | Beats
@@ -30,6 +32,8 @@ const {walkFocus} = require('../probes/probe-focus.cjs');
 const app = (path, query = '') => `${path}?fx-reset=1${query ? `&${query}` : ''}`;
 const HARNESS = '/__harness/settings';
 const SECTION_PAGE = {ready: 'settingsPage'};
+/** The Settings nav on the web once every section is built (spec §6.2). */
+const NAV_ORDER = ['practice', 'instruments', 'pedals', 'processing', 'appearance', 'plan', 'device', 'account'];
 
 async function expectTargets(t, page, where = 'page') {
   const problems = await checkTargets(page);
@@ -262,9 +266,16 @@ module.exports = [
       await page.waitForFunction(() => document.querySelector('.settings-content h2')?.textContent === 'Appearance' && document.querySelector('[data-row=theme]'));
       const f = await page.evaluate(() => ({path: location.pathname, idx: history.state.idx, focus: document.activeElement?.dataset?.section}));
       t.expect(f.path === '/settings/appearance' && f.idx === 0 && f.focus === 'appearance', `replaced, focus kept on the nav ${JSON.stringify(f)}`);
-      await page.keyboard.press('Tab');
-      const next = await page.evaluate(() => document.activeElement?.dataset?.section);
-      t.expect(next === 'device', `Tab moves along the nav (${next})`);
+      // I2b-26: every section is built, so the nav lists all eight in spec §6.2 order and Plan & storage
+      // (SE2's plan.js) sits between Appearance and This device.
+      const order = await page.evaluate(() => [...document.querySelectorAll('.settings-nav .settings-nav-link')].map(a => a.dataset.section));
+      t.expect(JSON.stringify(order) === JSON.stringify(NAV_ORDER), `the nav in spec order ${JSON.stringify(order)}`);
+      const stops = [];
+      for (let i = 0; i < 2; i++) {
+        await page.keyboard.press('Tab');
+        stops.push(await page.evaluate(() => document.activeElement?.dataset?.section));
+      }
+      t.expect(stops.join() === 'plan,device', `Tab moves along the nav (${stops.join(', ')})`);
     },
   },
 
