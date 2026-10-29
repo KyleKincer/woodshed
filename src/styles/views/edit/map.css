@@ -59,6 +59,8 @@
     min-width: 0;
     border-bottom: 1px solid var(--line);
   }
+  /* Coarse pointers: the sections lane grows from 32 px to hold 44 px targets (names, starts, ✓ / ✕) above its border. */
+  .map-view[data-compact] .map-lanes { grid-template-rows: 24px 45px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
   .map-view[data-mapped=false] .map-lanes { grid-template-rows: 24px 0 0 0 minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
   .map-view[data-mapped=false] :is(.map-key-sections, .map-cell-sections, .map-cell-sections-bar, .map-key-tempo, .map-cell-tempo) {
     display: none;
@@ -245,7 +247,7 @@
   .map-suggested-toggle[aria-pressed=true][data-choice=keep] { border-color: var(--ok); color: var(--ok); background: var(--surface-2); }
   .map-suggested-toggle[aria-pressed=true][data-choice=drop] { border-color: var(--danger); color: var(--danger); background: var(--surface-2); }
   .map-suggested[data-accepted=false] .map-suggested-input { color: var(--ink-3); text-decoration: line-through; }
-  .map-view[data-compact] .map-suggested-toggle { width: 44px; height: 30px; }
+  .map-view[data-compact] .map-suggested-toggle { width: 44px; height: 44px; }
 
   .map-sections-bar {
     display: flex;

@@ -90,7 +90,7 @@ module.exports = [
       // 40 px on fine pointers; on iPad it grows to hold its 44 px targets.
       t.expect(portrait ? f.toolbar.h >= 44 && f.toolbar.h <= 46 : near(f.toolbar.h, 40, 0.5), `the toolbar is 40 px (44 coarse) (got ${f.toolbar.h})`);
       t.expect(near(f.ruler.h, 24, 0.5), `the ruler is 24 px (got ${f.ruler.h})`);
-      t.expect(near(f.sections.h, 32, 0.5), `the sections lane is 32 px (got ${f.sections.h})`);
+      t.expect(portrait ? near(f.sections.h, 45, 0.5) : near(f.sections.h, 32, 0.5), `the sections lane is 32 px (45 coarse, for 44 px targets) (got ${f.sections.h})`);
       t.expect(near(f.tempo.h, 96, 0.5), `the tempo lane is 96 px (got ${f.tempo.h})`);
       t.expect(f.rulerMode === 'bars' && f.marks[0] === '1' && f.meters[0] === '4/4', `bar numbers with the meter chip (got ${f.marks.slice(0, 3)} ${f.meters})`);
       t.expect(f.blocks.join() === 'Intro,Verse,Chorus,Verse 2,Chorus 2,Bridge,Chorus 3,Outro', `eight section blocks (got ${f.blocks})`);
