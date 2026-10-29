@@ -12,7 +12,7 @@
    *   aside.map-inspector[data-mode=mapped|unmapped] inside Edit's inspector container */
   .map-view {
     --map-key: 136px;
-    --map-row-min: 64px;
+    --map-row-min: 96px;   /* name · M S level · fader: three lines without overlap */
     --map-rows: 1;
     display: flex;
     flex-direction: column;
@@ -23,7 +23,7 @@
     user-select: none;
     -webkit-user-select: none;
   }
-  .map-view[data-compact] { --map-key: 120px; --map-row-min: 72px; }
+  .map-view[data-compact] { --map-key: 120px; --map-row-min: 80px; }
 
   /* ---- toolbar ---- */
   .map-toolbar {
@@ -126,7 +126,8 @@
     color: var(--ink);
     background: var(--surface-2);
   }
-  .map-mark-label { color: var(--ink-3); font-family: var(--font-ui); }
+  /* The sections lane right below names the sections; in the narrow ruler the names collided with bar numbers. */
+  .map-mark-label { display: none; }
 
   /* ---- sections lane (32 px) ---- */
   .map-sections { position: absolute; inset: 0; }
@@ -320,6 +321,7 @@
     height: 100%;
     padding: var(--s1) var(--s2) var(--s1) var(--s3);
     box-sizing: border-box;
+    overflow: hidden;
   }
   .map-row-color {
     position: absolute;
@@ -375,8 +377,9 @@
     color: var(--ink);
     font-size: var(--fs-14);
   }
-  .map-insp-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
-  .map-insp-name { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
+  .map-insp-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); }
+  .map-insp-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s2); min-width: 0; }
+  .map-insp-title, .map-insp-sub { white-space: nowrap; }
   .map-insp-title { margin: 0; font-size: var(--fs-20); font-weight: var(--fw-bold); letter-spacing: 0.02em; }
   .map-insp-sub { color: var(--ink-3); font-size: var(--fs-14); }
   .map-insp-steps { display: inline-flex; gap: var(--s1); flex: none; }
@@ -397,7 +400,8 @@
   }
   .map-insp-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
   .map-field-label { min-width: 72px; color: var(--ink-2); }
-  .map-goto-field { width: 96px; }
+  .map-goto-field { width: 72px; }
+  .map-insp-row:has(.map-goto-field) { align-items: flex-end; }
   .map-tempo-read { margin: 0; display: flex; flex-direction: column; gap: 2px; }
   .map-tempo-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-16); }
   .map-pin-state { margin: 0; display: flex; flex-direction: column; gap: 2px; }

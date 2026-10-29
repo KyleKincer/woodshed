@@ -91,6 +91,9 @@ function viewOf({t0 = 0, span = 0, width = 0, duration} = {}, map) {
  * for a pickup), the meter chip text where the meter changes (and on bar 0), the label and x.
  *   view: {t0, span, width, duration?, selected?: measure index}
  */
+/** The room a ruler mark's meter chip ('4/4') takes past the bar number. */
+const METER_CHIP_PX = 36;
+
 export function rulerMarks(map, view = {}) {
   const v = viewOf(view, map);
   if (!(v.span > 0) || !(v.width > 0)) return [];
@@ -106,7 +109,7 @@ export function rulerMarks(map, view = {}) {
     if (!forced && (!due || x - last < RULER_MIN_PX)) continue;
     out.push({index: b.index, display: b.display, x, meter: change ? `${b.numerator}/${b.denominator}` : null,
       label: b.label || '', selected, change});
-    last = x;
+    last = change ? x + METER_CHIP_PX : x;   // the meter chip widens its mark: the next number keeps clear of it
   }
   return out;
 }
