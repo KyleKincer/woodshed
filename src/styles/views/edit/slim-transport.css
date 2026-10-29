@@ -1,0 +1,18 @@
+/* Edit's slim transport (src/edit/slim-transport.js; spec §5.0): one 56 px row holding the Stage's
+ * control set in its 'slim' variant (controls.css lays the controls out). The row never grows
+ * taller; on a narrow window the controls scroll sideways inside it rather than wrap. */
+@layer views {
+  .edit-slim {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    block-size: 56px;
+    min-width: 0;
+  }
+  .edit-slim > .ctl-set {
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    block-size: 56px;
+    min-width: 0;
+  }
+}
