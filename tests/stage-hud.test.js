@@ -349,6 +349,20 @@ describe('the mounted HUD', () => {
     expect(pos()).toMatch(/^2 · /);
   });
 
+  test.each([[true, true], [false, false]])('the downbeat edge flash follows prefs practice.edgeFlash (%s) while playing (I2b-27)', async (on, expected) => {
+    const b = await bed({practice: {v: 2, cue: 32, rate: 1, loop: {on: false, a: 0, b: 0}, tracks: [], minusMe: false, trainer: null, spots: [], markers: [],
+      click: {countIn: {on: false, length: 1, unit: 'bars'}, mode: 'off', accent: true, volume: 0.7, preRoll: false}}});
+    b.prefValues['practice.edgeFlash'] = on;
+    b.ts.session.frame.start();
+    await b.ts.play();
+    let flashed = false;
+    for (let i = 0; i < 60 && !flashed; i++) {
+      await b.ts.advance(0.05);
+      flashed = !!document.querySelector('.stage-edge-flash[data-on]');
+    }
+    expect(flashed).toBe(expected);
+  });
+
   test('the count-in plate counts down over the music, the lamps count with it (a silent count too), announced once', async () => {
     const b = await bed({practice: {v: 2, cue: 32, rate: 1, loop: {on: false, a: 0, b: 0}, tracks: [], minusMe: false, trainer: null, spots: [], markers: [],
       click: {countIn: {on: true, length: 1, unit: 'bars'}, mode: 'off', accent: true, volume: 0.7, preRoll: false}}});

@@ -432,6 +432,24 @@ export function mountHud(el, {
     return null;
   }
 
+  // The optional edge flash on downbeats (Click sheet / Settings → Practice, prefs practice.edgeFlash; spec §4.7):
+  // a 6 px --now inset glow on the screen edges, 60 ms in and 180 ms out (hud.css), held on briefly with reduced motion.
+  const edgeFlash = h('div', {class: 'stage-edge-flash', 'aria-hidden': 'true'});
+  let edgeTimer = null;
+  function flashEdges() {
+    let on = false;
+    try { on = !!prefs?.get?.('practice.edgeFlash'); } catch { on = false; }
+    if (!on || !isPlaying(snap().phase)) return;
+    const doc = root.ownerDocument;
+    if (!edgeFlash.isConnected) doc.body?.append(edgeFlash);
+    edgeFlash.removeAttribute('data-on');
+    void edgeFlash.offsetWidth;   // restart the animation
+    edgeFlash.setAttribute('data-on', '');
+    clearTimeout(edgeTimer);
+    edgeTimer = setTimeout(() => edgeFlash.removeAttribute('data-on'), 240);
+  }
+  destroyers.push(() => { clearTimeout(edgeTimer); edgeFlash.remove(); });
+
   let lampKey = '';
   let lastBeatKey = '';
   let lastCount = null;
@@ -452,7 +470,9 @@ export function mountHud(el, {
     }
     lastCount = null;
     const beatKey = `${bar.index}:${bar.before ? 'b' : ''}${bar.groupIndex}`;
-    lamps.frame(bar.unitIndex, beatKey !== lastBeatKey);
+    const newBeat = beatKey !== lastBeatKey;
+    lamps.frame(bar.unitIndex, newBeat);
+    if (newBeat && lastBeatKey !== '' && bar.unitIndex === 0 && !bar.before) flashEdges();
     lastBeatKey = beatKey;
   }
 

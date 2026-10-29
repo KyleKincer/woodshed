@@ -145,6 +145,20 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* The downbeat edge flash (prefs practice.edgeFlash): a 6 px --now inset glow, 60 ms in, 180 ms out. */
+  .stage-edge-flash {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    pointer-events: none;
+    box-shadow: inset 0 0 0 6px var(--now);
+    opacity: 0;
+  }
+  .stage-edge-flash[data-on] { animation: stage-edge-flash 240ms linear; }
+  @keyframes stage-edge-flash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .stage-edge-flash[data-on] { animation: none; opacity: 1; }
+  }
   /* 'Pickup · 3': the word at half the numeral size in the UI face, so it never overflows the rail (ORCH-2). */
   .hud-position[data-word=true] .hud-pos-bar {
     font-family: var(--font-ui);
