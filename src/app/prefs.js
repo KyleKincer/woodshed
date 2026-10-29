@@ -28,9 +28,9 @@ export const PREFS_DEFAULTS = deepFreeze({
   stage: 'dark',                   // 'dark'|'match'   (Appearance → Stage)
   library: {layout: 'grid', group: 'none', sort: null, filter: null, opened: []},
   practice: {distance: 'stand', focus: false, follow: {rail: 'scroll', band: 'page'}, edgeFlash: false, announceSections: false},
-  chart: {display: {layout: null}, pinchScale: null},
+  chart: {display: {layout: null}, pinchScale: null, pinchDistance: null},   // pinchDistance: the Distance pinchScale was set at
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
-  roadmap: {waveRowSec: null},
+  roadmap: {waveRowSec: null, follow: null},                         // follow: 'scroll'|'page'; null → 'scroll' (spec §4.4B)
   edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
   pedals: {enabled: false, profile: 'practice', pedals: [], custom: {}},
   midi: {enabled: false, bindings: []},
@@ -68,14 +68,17 @@ const ENUMS = {
   'edit.chart.paging': ['pages', 'scroll'],
 };
 
-// Paths whose default is null, and the type a stored value must have.
+// Paths whose default is null, and the type a stored value must have
+// (or, for a nullable enum, the values it may take).
 const NULLABLE = {
   'library.sort': 'string',
   'library.filter': 'string',
   'chart.display.layout': 'string',
   'chart.pinchScale': 'number',
+  'chart.pinchDistance': ['near', 'stand', 'kit'],
   'stems.zoom': 'number',
   'roadmap.waveRowSec': 'number',
+  'roadmap.follow': ['scroll', 'page'],
   deviceId: 'string',
   pendingAccount: 'object',
 };
@@ -92,7 +95,8 @@ function deepFreeze(value) {
 
 const isPlainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
-const typeOk = (v, type) => (type === 'object' ? isPlainObject(v) : type === 'number' ? Number.isFinite(v) : typeof v === type);
+const typeOk = (v, type) => (Array.isArray(type) ? type.includes(v)
+  : type === 'object' ? isPlainObject(v) : type === 'number' ? Number.isFinite(v) : typeof v === type);
 
 function mergeOver(def, value, path) {
   if (isPlainObject(def)) {
@@ -129,6 +133,9 @@ export function normalizePrefs(raw) {
     frecency.length = FRECENCY_CAP;
   }
   p.palette.frecency = Object.fromEntries(frecency);
+  // One-way upgrade: a pinch override stored before chart.pinchDistance existed belongs to
+  // the Distance that was current, so it is not applied at the others.
+  if (p.chart.pinchScale !== null && p.chart.pinchDistance === null) p.chart.pinchDistance = p.practice.distance;
   return p;
 }
 
@@ -196,7 +203,10 @@ export function migrateLegacy(storage) {
   // ws.overview and ws.practice.view are dropped.
 
   const scale = parseJson(read('ws.chart.scale'));
-  if (Number.isFinite(scale)) p.chart.pinchScale = snapScale(scale);
+  if (Number.isFinite(scale)) {
+    p.chart.pinchScale = snapScale(scale);
+    p.chart.pinchDistance = p.practice.distance;   // 1.x had one chart size: the default Distance's
+  }
 
   const chartLayout = parseJson(read('ws.chart.layout'));
   if (typeof chartLayout === 'string' && chartLayout) p.chart.display.layout = chartLayout;
