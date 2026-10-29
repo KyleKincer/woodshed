@@ -122,6 +122,7 @@ export const COPY = Object.freeze({
     solo: 'Solo',
     soloHint: 'Long-press a pad, or Shift-click it, to solo.',
     stems: 'Stems',
+    stemMenu: (stem) => `${stem} stem`,
     noStems: 'The stems are still loading.',
     chartAudio: 'Chart playback',
     chartLevels: Object.freeze({off: 'Off', quiet: 'Quiet', loud: 'Loud'}),

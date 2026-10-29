@@ -4,7 +4,11 @@
 //   mode switch  Tap to: Mute · Solo, so solo is visible on touch (a long-press or Shift-click on a
 //                pad always solos)
 //   stem pads    StemPads in canonical order (drums, bass, guitar, piano, vocals, other; a two-part
-//                song shows its pair), 120×168 on the band, 160×96 in the rail popover, key-caps 1–9
+//                song shows its pair), 120×168 on the band, 160×96 in the rail popover, key-caps 1–9;
+//                right-click (a pen's barrel button, a Mac's Ctrl-click), Shift+F10 or the ContextMenu
+//                key on a pad opens its stem menu (spec §7.7: Mute · Solo · Reset level · This is my
+//                instrument; ST8a's menus.stemMenu through Menu.open). A touch long-press keeps
+//                soloing (spec §4.7, §7.6), so it never also opens the menu
 //   chart        Chart playback Off · Quiet · Loud when the song has a drum part
 //   no stem      the honest lines when the profile's instrument has no stem of its own: on the
 //                desktop with [Re-split with 6 stems] (song.resplit), on the web pointing to Woodshed
@@ -20,6 +24,8 @@
 //     account    {value | profile, patch(partial)}; default src/app/account.js. The picker writes
 //                `account.patch({profile})`; the transport follows the profile on its own
 //     desktop    {available}; default src/app/desktop.js
+//     menus      {stemMenu(session, stemName, opts)}; default src/stage/menus.js
+//     Menu       the Menu primitive ({open(items, opts)}); default src/ui/menu.js
 //
 // Every mix change goes through the transport (one practice-undo step, saved with the song;
 // level drags coalesce per stem). When Minus me / Only me find no stem for the player (the
@@ -40,10 +46,12 @@ import {Button} from '../../ui/button.js';
 import {Toggle} from '../../ui/toggle.js';
 import {Segmented} from '../../ui/segmented.js';
 import {StemPad} from '../../ui/stem-pad.js';
+import {Menu as AppMenu} from '../../ui/menu.js';
 import {InlineStatus} from '../../ui/status.js';
 import {InstrumentPicker, normaliseProfile} from '../../onboarding/instruments.js';
 import {INSTRUMENT_LABELS} from '../../onboarding/onboarding.copy.js';
 import {stemLabel} from '../transport-commands.js';   // also registers the mix.* commands
+import * as appMenus from '../menus.js';
 import {COPY} from './sheets-a.copy.js';
 
 const M = COPY.mix;
@@ -100,7 +108,7 @@ const profileOf = (account) => {
 
 /** The Mix sheet (see the header). */
 export function render(container, {session, close, layout = null, registry = appRegistry, account = appAccount,
-  desktop = appDesktop} = {}) {
+  desktop = appDesktop, menus = appMenus, Menu = AppMenu} = {}) {
   if (!session?.transport) throw new TypeError('mix sheet: a session with a transport is required');
   void close;
   const transport = session.transport;
@@ -188,9 +196,53 @@ export function render(container, {session, close, layout = null, registry = app
       onSolo: () => { transport.setSoloed(name, !current().soloed); },
       onLevel: (v) => { transport.setVolume(name, v); },
     });
-    const entry = {el: pad.el, pad, update: (item) => pad.set(padProps(item.track, item.index)), destroy: () => pad.destroy()};
+    const offMenu = bindStemMenu(pad.el, name);
+    const entry = {el: pad.el, pad, update: (item) => pad.set(padProps(item.track, item.index)),
+      destroy: () => { offMenu(); pad.destroy(); }};
     padEntries.set(name, entry);
     return entry;
+  }
+
+  // ---- the stem menu (spec §7.7) ---------------------------------------------------------------------------------
+  let stemMenuHandle = null;
+  const closeStemMenu = () => { const m = stemMenuHandle; stemMenuHandle = null; if (m?.open) m.close('dismiss'); };
+  function openStemMenu(name, anchor) {
+    let items;
+    try {
+      items = menus.stemMenu(session, name, {registry, account});
+    } catch (err) {
+      console.error('[mix sheet] the stem menu could not be built', err);
+      return false;
+    }
+    if (!Array.isArray(items) || !items.length) return false;
+    closeStemMenu();
+    const handle = Menu.open(items, {anchor, label: M.stemMenu(stemLabel(name)), registry,
+      onClose: () => { if (stemMenuHandle === handle) stemMenuHandle = null; }});
+    stemMenuHandle = handle ?? null;
+    return true;
+  }
+  /** Right-click, Shift+F10 and the ContextMenu key on a pad open its stem menu. Returns `off`. */
+  function bindStemMenu(padEl, name) {
+    const ac = new AbortController();
+    const on = {signal: ac.signal};
+    // A Mac's Ctrl-click is a right-click: its button-0 press must not reach the pad, or the pad would
+    // later solo (long-press) or mute (tap) under the open menu.
+    padEl.addEventListener('pointerdown', (e) => {
+      if (e.ctrlKey && e.button === 0 && e.pointerType === 'mouse') e.stopImmediatePropagation();
+    }, {capture: true, signal: ac.signal});
+    padEl.addEventListener('contextmenu', (e) => {
+      // The pad cancels the context menu of its own touch long-press (that solos); leave it alone.
+      if (e.defaultPrevented) return;
+      if (stemMenuHandle?.open) { e.preventDefault(); return; }
+      const keyboard = e.button !== 2 && e.clientX === 0 && e.clientY === 0;
+      if (openStemMenu(name, keyboard ? padEl : {x: e.clientX, y: e.clientY})) e.preventDefault();
+    }, on);
+    padEl.addEventListener('keydown', (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      const key = (e.key === 'ContextMenu' && !e.shiftKey) || (e.key === 'F10' && e.shiftKey);
+      if (key && openStemMenu(name, padEl)) e.preventDefault();
+    }, on);
+    return () => ac.abort();
   }
 
   // ---- chart playback ----------------------------------------------------------------------------------------
@@ -292,6 +344,7 @@ export function render(container, {session, close, layout = null, registry = app
     el,
     destroy() {
       destroyed = true;
+      closeStemMenu();
       for (const off of offs.splice(0)) { try { off?.(); } catch (err) { console.error('[mix sheet] cleanup failed', err); } }
       for (const entry of padEntries.values()) entry.destroy();
       padEntries.clear();
