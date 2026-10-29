@@ -40,13 +40,17 @@ export function setSheetModules(next) { modules = next ?? MODULES; }
 
 const isElement = (v) => !!v && typeof v === 'object' && v.nodeType === 1;
 
-/** The anchor a sheet opens from: the given element, else the Stage's `[data-stage-anchor=<name>]`, else its controls. */
+/**
+ * The anchor a sheet opens from: the given element, else the Stage's `[data-stage-anchor=<name>]`, else its
+ * controls. Get bars has no control of its own on the rail: it opens left of the rail's controls like the
+ * others. (The full-width strip is no anchor: a popover placed left of it has no room and, in CSS-anchor
+ * mode, flips between its widths every frame over the rail.)
+ */
 function anchorFor(name, anchor, doc) {
   if (isElement(anchor)) return anchor;
   const stage = doc.querySelector('[data-stage-layout]');
   if (!stage) return null;
   return stage.querySelector(`[data-stage-anchor="${name}"]`)
-    ?? (name === 'getBars' ? stage.querySelector('[data-stage-anchor="strip"]') : null)
     ?? stage.querySelector('[data-stage-anchor="controls"]');
 }
 

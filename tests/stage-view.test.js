@@ -56,7 +56,7 @@ vi.mock('../src/stage/strip.js', () => ({
 import {createRegistry, registry as appRegistry} from '../src/app/commands.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {signal, store} from '../src/app/store.js';
-import {prefs} from '../src/app/prefs.js';
+import {PREFS_DEFAULTS, prefs} from '../src/app/prefs.js';
 import * as feedback from '../src/app/feedback.js';
 import {defineGlobalCommands} from '../src/app/global-commands.js';
 import {ApiError} from '../src/api/client.js';
@@ -138,6 +138,7 @@ beforeEach(() => {
     d.practice.distance = 'stand';
     d.practice.focus = false;
     d.practice.follow = {rail: 'scroll', band: 'page'};
+    d.roadmap = {...d.roadmap, follow: null};   // F2's nullable prefs.roadmap.follow (I2b-3)
     d.library.opened = [];
     d.chart.display.layout = null;
     d.edit.lastTab = 'map';
@@ -454,7 +455,11 @@ describe('the Stage commands (§3.2)', () => {
     surface.value = 'stems';
     expect(b.state('view.smaller').title).toBe(COPY.commands.smallerStems);
     b.run('view.bigger');
-    expect(stage.zoom).toHaveBeenCalledWith(1);
+    // The key event goes along: the Stage commits a deferred size change on its keyup (D54, I2b-6).
+    expect(stage.zoom).toHaveBeenCalledWith(1, {source: 'key', event: null});
+    const keydown = new KeyboardEvent('keydown', {key: '-', code: 'Minus'});
+    b.registry.run('view.smaller', {source: 'key', event: keydown});
+    expect(stage.zoom).toHaveBeenLastCalledWith(-1, {source: 'key', event: keydown});
     expect(b.state('view.distance.stand').checked).toBe(true);
     b.run('view.distance.kit');
     expect(stage.setDistance).toHaveBeenCalledWith('kit');
@@ -559,6 +564,31 @@ describe('the sheets host', () => {
     expect(document.querySelector('[data-sheet="speed"]').dataset.presentation).toBe('popover');
   });
 
+  test('Get bars on the rail opens left of the controls, never off the full-width strip (I2b-12)', () => {
+    setSheetModules({});
+    const {stage} = railStage();
+    const strip = stage.appendChild(document.createElement('div'));
+    strip.dataset.stageAnchor = 'strip';
+    const controls = stage.appendChild(document.createElement('div'));
+    controls.dataset.stageAnchor = 'controls';
+    const rect = {x: 1176, y: 500, left: 1176, top: 500, width: 264, height: 400, right: 1440, bottom: 900};
+    const onControls = vi.spyOn(controls, 'getBoundingClientRect').mockReturnValue(rect);
+    const onStrip = vi.spyOn(strip, 'getBoundingClientRect');
+    openSheet('getBars', {});
+    const el = document.querySelector('[data-sheet="getBars"]');
+    expect(el.dataset.presentation).toBe('popover');
+    expect(onControls).toHaveBeenCalled();
+    expect(onStrip).not.toHaveBeenCalled();
+    expect(el.dataset.side).toBe('left');
+    closeSheets();
+    // A control that marks itself the Get bars anchor wins.
+    const own = stage.appendChild(document.createElement('button'));
+    own.dataset.stageAnchor = 'getBars';
+    const onOwn = vi.spyOn(own, 'getBoundingClientRect').mockReturnValue(rect);
+    openSheet('getBars', {});
+    expect(onOwn).toHaveBeenCalled();
+  });
+
   test('Notes is a non-modal card in the music’s notes host, closed by ✕ or Esc', async () => {
     setSheetModules({});
     const {notes} = railStage();
@@ -630,9 +660,10 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
         scroller.scrollTo = vi.fn();
         el.append(scroller);
         host.append(el);
-        const s = {el, scroller, kind: kind === 'roadmap' && !opts.session.map.isReal ? 'wave' : kind, opts, frame: vi.fn(), setLoop: vi.fn(), setGlass: vi.fn(),
-          setFollow: vi.fn(), reveal: vi.fn(), anchor: vi.fn(() => ({time: 12.5, bar: 7})), zoom: vi.fn(), setLayout: vi.fn(), setDistance: vi.fn(),
-          destroy: vi.fn(() => el.remove())};
+        // The Road map's kind is a live getter (Appendix C item 111): the Wave page while the song is unmapped.
+        const s = {el, scroller, get kind() { return kind === 'roadmap' && !opts.session.map.isReal ? 'wave' : kind; }, opts, frame: vi.fn(),
+          setLoop: vi.fn(), setGlass: vi.fn(), setFollow: vi.fn(), reveal: vi.fn(), anchor: vi.fn(() => ({time: 12.5, bar: 7})), zoom: vi.fn(),
+          setLayout: vi.fn(), setDistance: vi.fn(), commitSize: vi.fn(), destroy: vi.fn(() => el.remove())};
         log.push(s);
         return s;
       },
@@ -718,7 +749,9 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     expect(b.api.anchors.get('play').textContent).toBe('Play');
     expect(b.api.anchors.get('mix').textContent).toBe('Mix');
     expect(b.api.anchors.get('speed')).toBe(b.el.querySelector('.stage-controls'));
-    expect(b.api.anchors.get('getBars')).toBe(b.el.querySelector('.stage-strip'));
+    // Get bars has no rail control: it opens left of the controls, never off the full-width strip (I2b-12).
+    expect(b.api.anchors.get('getBars')).toBe(b.el.querySelector('.stage-controls'));
+    expect(b.api.anchors.get('strip')).toBe(b.el.querySelector('.stage-strip'));
   });
 
   test('820×1180 is the band with the dock', async () => {
@@ -1308,7 +1341,7 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     expect(b.state('stage.menu').enabled).toBe(true);
     b.run('stage.menu');
     await settle();
-    expect(stageMenu).toHaveBeenCalledWith(b.ts.session, b.api);
+    expect(stageMenu).toHaveBeenCalledWith(b.ts.session, b.api, expect.objectContaining({registry: b.registry, feedback}));
     expect(b.menuOpen).toHaveBeenCalled();
   });
 
@@ -1464,5 +1497,248 @@ describe.skipIf(missingPeers.length)('the mounted Stage', () => {
     const row = CONTROLS.find((r) => r.where === 'resume');
     const el = b.statusButton(row.name);
     expect(el?.tagName).toBe('BUTTON');
+  });
+
+  // ---------------- wave 2bx (I2b tickets) ----------------
+
+  test('followStyle is per surface: the Road map scrolls on both layouts; the Chart keeps rail scroll · band page (I2b-4)', async () => {
+    const b = await mountStage();
+    expect(b.api.surface.value).toBe('roadmap');
+    expect(b.api.followStyle.value).toBe('scroll');
+    b.api.setSurface('chart');
+    await settle();
+    expect(b.api.surface.value).toBe('chart');
+    expect(b.api.followStyle.value).toBe('scroll');
+    await b.resize(820, 1180);
+    vi.advanceTimersByTime(200);
+    expect(b.root.getAttribute('data-stage-layout')).toBe('band');
+    expect(b.api.followStyle.value).toBe('page');
+    expect(b.state('view.followStyle', {style: 'page'}).checked).toBe(true);
+    b.api.setSurface('roadmap');
+    await settle();
+    expect(b.api.followStyle.value).toBe('scroll');   // not the band's page turns (ST10 handoff finding 9)
+    expect(b.state('view.followStyle', {style: 'scroll'}).checked).toBe(true);
+    // setFollowStyle writes the shown surface's own key.
+    const set = vi.spyOn(prefs, 'set');
+    b.run('view.followStyle', {style: 'page'});
+    expect(set).toHaveBeenCalledWith('roadmap.follow', 'page');
+    expect(prefs.get('practice.follow.band')).toBe('page');
+    b.api.setSurface('chart');
+    await settle();
+    b.run('view.followStyle', {style: 'scroll'});
+    expect(set).toHaveBeenLastCalledWith('practice.follow.band', 'scroll');
+    expect(b.api.followStyle.value).toBe('scroll');
+    set.mockRestore();
+  });
+
+  test('the Wave page follows like the Road map; the chart’s choice does not reach it', async () => {
+    const b = await mountStage({sessionOptions: {mapped: false}, vw: 820, vh: 1180});
+    expect(b.api.surface.value).toBe('wave');
+    expect(b.api.followStyle.value).toBe('scroll');
+    prefs.set('practice.follow.band', 'page');
+    expect(b.api.followStyle.value).toBe('scroll');
+  });
+
+  test.skipIf(!('follow' in (PREFS_DEFAULTS.roadmap ?? {})))('the Road map honours its own choice (prefs.roadmap.follow) on both layouts', async () => {
+    prefs.set('roadmap.follow', 'page');
+    try {
+      const b = await mountStage();
+      expect(b.api.followStyle.value).toBe('page');
+      b.api.setSurface('chart');
+      await settle();
+      expect(b.api.followStyle.value).toBe('scroll');   // the chart's rail default
+      await b.resize(820, 1180);
+      vi.advanceTimersByTime(200);
+      b.api.setSurface('roadmap');
+      await settle();
+      expect(b.api.followStyle.value).toBe('page');
+      b.run('view.followStyle', {style: 'scroll'});
+      expect(prefs.get('roadmap.follow')).toBe('scroll');
+      expect(b.api.followStyle.value).toBe('scroll');
+    } finally {
+      prefs.set('roadmap.follow', null);
+    }
+  });
+
+  test('D54 release: a Distance change commits a deferred size at once, or when the menu it came from closes (I2b-6)', async () => {
+    const menus = {'./menus.js': async () => ({stageMenu: vi.fn(() => [{label: 'Focus'}])})};
+    const log = [];
+    const b = await mountStage({later: {...fakeLater(log), ...menus}});
+    const s = log.at(-1);
+    b.run('view.distance.kit');
+    expect(s.setDistance).toHaveBeenCalledWith('kit');
+    expect(s.commitSize).toHaveBeenCalledTimes(1);
+    // A menu still open (a sheet-style menu that stays up): the commit waits for it to close.
+    let onClose = null;
+    const handle = {open: true, close() { this.open = false; onClose?.(); }};
+    b.menuOpen.mockImplementation((items, opts) => { onClose = opts.onClose; return handle; });
+    b.run('stage.menu');
+    await settle();
+    b.run('view.distance.near');
+    expect(s.setDistance).toHaveBeenLastCalledWith('near');
+    expect(s.commitSize).toHaveBeenCalledTimes(1);
+    handle.close();
+    expect(s.commitSize).toHaveBeenCalledTimes(2);
+    // A menu closing without a Distance change commits nothing.
+    handle.open = true;
+    b.run('stage.menu');
+    await settle();
+    handle.close();
+    expect(s.commitSize).toHaveBeenCalledTimes(2);
+    // Settings (another tab) changing Distance applies at once too.
+    prefs.set('practice.distance', 'stand');
+    expect(s.commitSize).toHaveBeenCalledTimes(3);
+  });
+
+  test('D54 release: =/− from the keyboard commits on the key’s keyup, once per hold; other sources at once (I2b-6)', async () => {
+    const b = await mountStage();
+    const s = b.surface;
+    const key = (type, init) => new KeyboardEvent(type, {bubbles: true, cancelable: true, ...init});
+    const target = document.body.appendChild(document.createElement('button'));
+    const down = (k, code, repeat = false) => {
+      const e = key('keydown', {key: k, code, repeat});
+      target.dispatchEvent(e);   // gives the event its target
+      return b.registry.run(k === '-' ? 'view.smaller' : 'view.bigger', {source: 'key', event: e});
+    };
+    down('=', 'Equal');
+    down('=', 'Equal', true);
+    down('=', 'Equal', true);
+    expect(s.zoom).toHaveBeenCalledTimes(3);
+    expect(s.zoom).toHaveBeenLastCalledWith(1);
+    expect(s.commitSize).not.toHaveBeenCalled();
+    target.dispatchEvent(key('keyup', {key: 'Shift', code: 'ShiftLeft'}));
+    expect(s.commitSize).not.toHaveBeenCalled();
+    target.dispatchEvent(key('keyup', {key: '=', code: 'Equal'}));
+    expect(s.commitSize).toHaveBeenCalledTimes(1);
+    target.dispatchEvent(key('keyup', {key: '=', code: 'Equal'}));
+    expect(s.commitSize).toHaveBeenCalledTimes(1);   // the listener went with the release
+    down('-', 'Minus');
+    expect(s.zoom).toHaveBeenLastCalledWith(-1);
+    target.dispatchEvent(key('keyup', {key: '-', code: 'Minus'}));
+    expect(s.commitSize).toHaveBeenCalledTimes(2);
+    // The palette or a menu (Enter, a click) is a release already; a held stepper ('repeat') commits on its own release.
+    b.registry.run('view.bigger', {source: 'pointer'});
+    expect(s.commitSize).toHaveBeenCalledTimes(3);
+    b.registry.run('view.bigger', {source: 'key', event: key('keydown', {key: 'Enter', code: 'Enter'})});
+    expect(s.commitSize).toHaveBeenCalledTimes(4);
+    b.api.zoom(1, {source: 'repeat'});
+    expect(s.commitSize).toHaveBeenCalledTimes(4);
+    b.api.commitSize();
+    expect(s.commitSize).toHaveBeenCalledTimes(5);
+    // Unmounting drops a pending keyup listener.
+    down('=', 'Equal');
+    await b.unmount();
+    target.dispatchEvent(key('keyup', {key: '=', code: 'Equal'}));
+    expect(s.commitSize).toHaveBeenCalledTimes(5);
+  });
+
+  test('a live unmapped → mapped switch turns the Wave page into the Road map: surface, layer and titles (I2b-8)', async () => {
+    const b = await mountStage({sessionOptions: {mapped: false}});
+    const layer = b.el.querySelector('.stage-surface');
+    expect(b.api.surface.value).toBe('wave');
+    expect(layer.dataset.surface).toBe('wave');
+    expect(b.state('view.bigger').title).toBe(COPY.commands.biggerWave);
+    expect(b.api.followStyle.value).toBe('scroll');
+    b.ts.session.mapChange('Bars found', (m) => m.adopt(structuredClone(sectioned.tempo.songMap)));
+    await settle();
+    expect(b.api.surface.value).toBe('roadmap');
+    expect(layer.dataset.surface).toBe('roadmap');
+    expect(store.stage.value.surface).toBe('roadmap');
+    expect(b.state('view.bigger').title).toBe(COPY.commands.bigger);
+    expect(b.state('view.smaller').title).toBe(COPY.commands.smaller);
+    expect(b.surfacesLog).toHaveLength(1);   // the same surface, not a remount
+  });
+
+  test('Follow paused marks the Stage so the floating status line clears the Back to playhead pill (I2b-10)', async () => {
+    const practice = {v: 2, cue: CHORUS.t0, rate: 0.75, loop: {on: false, a: 0, b: 0, eachPassCount: true, playTimes: 0, between: 'none'},
+      tracks: [], minusMe: false, trainer: null, spots: [], markers: []};
+    const b = await mountStage({sessionOptions: {practice}, vw: 820, vh: 1180});
+    expect(b.statusText()).toContain('Back at');
+    expect(b.root.hasAttribute('data-follow-paused')).toBe(false);
+    b.surface.opts.onFollowChange(false);
+    expect(b.root.hasAttribute('data-follow-paused')).toBe(true);
+    expect(b.el.querySelector('.stage-float .stage-status')).toBeTruthy();
+    b.run('view.followResume');
+    expect(b.root.hasAttribute('data-follow-paused')).toBe(false);
+    b.surface.opts.onFollowChange(false);
+    b.api.setSurface('chart');
+    await settle();
+    expect(b.root.hasAttribute('data-follow-paused')).toBe(false);   // a new surface starts following
+  });
+
+  test('the status Undo of "Started over" undoes only its own step; after a later change it says so (I2b-11)', async () => {
+    const practice = {v: 2, cue: CHORUS.t0, rate: 0.75, loop: {on: true, a: CHORUS.t0, b: CHORUS.t1, eachPassCount: true, playTimes: 0, between: 'none'},
+      tracks: [], minusMe: false, trainer: null, spots: [], markers: []};
+    const menusModule = await import('../src/stage/menus.js');
+    const later = {...fakeLater([]), './menus.js': async () => menusModule};
+    const b = await mountStage({sessionOptions: {practice}, later});
+    b.statusButton(COPY.startOver).click();
+    expect(b.statusText()).toContain(COPY.startedOver);
+    const first = feedback.statusLine.peek();
+    // A later step on top: the old line's Undo must not undo it.
+    b.ts.transport.loopRange(10, 20, {snap: 'none'});
+    expect(b.ts.snapshot.loop).toMatchObject({on: true, a: 10, b: 20});
+    expect(first.action.run()).toBe(false);
+    expect(b.ts.snapshot.loop).toMatchObject({on: true, a: 10, b: 20});
+    expect(b.ts.snapshot.rate).toBe(1);
+    expect(b.statusText()).toContain(menusModule.COPY.undoStale);
+    await b.unmount();
+
+    // On top, it undoes Start over.
+    const c = await mountStage({sessionOptions: {practice}, later});
+    c.statusButton(COPY.startOver).click();
+    c.statusButton(COPY.undo).click();
+    expect(c.ts.snapshot.rate).toBe(0.75);
+    expect(c.ts.snapshot.loop.on).toBe(true);
+  });
+
+  test('openMenu builds and opens the spot, marker, loop-band and stem menus; a surface’s long-press target picks one (I2b-13)', async () => {
+    const built = {
+      spotMenu: vi.fn(() => [{label: 'Open'}]), markerMenu: vi.fn(() => [{label: 'Rename…'}]),
+      loopBandMenu: vi.fn(() => [{label: 'Clear'}]), stemMenu: vi.fn(() => [{label: 'Mute'}]), barMenu: vi.fn(() => [{label: 'Play from here'}]),
+    };
+    const log = [];
+    const b = await mountStage({later: {...fakeLater(log), './menus.js': async () => built}});
+    const anchor = b.el.querySelector('.stage-music');
+    const spot = {id: 's1', name: 'Chorus', a: 32, b: 48};
+    const marker = {id: 'm1', t: 16, label: 'Verse'};
+    const onOpen = vi.fn(), zoomToLoop = vi.fn();
+    const withOpts = expect.objectContaining({registry: b.registry, feedback});
+
+    await b.api.openMenu('spot', {spot, anchor, onOpen});
+    expect(built.spotMenu).toHaveBeenCalledWith(b.ts.session, spot, expect.objectContaining({registry: b.registry, feedback, onOpen}));
+    expect(b.menuOpen).toHaveBeenLastCalledWith([{label: 'Open'}], expect.objectContaining({anchor, label: COPY.menuLabels.spot, registry: b.registry}));
+    await b.api.openMenu('marker', {marker, anchor});
+    expect(built.markerMenu).toHaveBeenCalledWith(b.ts.session, marker, withOpts);
+    expect(b.menuOpen).toHaveBeenLastCalledWith([{label: 'Rename…'}], expect.objectContaining({label: COPY.menuLabels.marker}));
+    await b.api.openMenu('loopBand', {anchor, zoomToLoop});
+    expect(built.loopBandMenu).toHaveBeenCalledWith(b.ts.session, expect.objectContaining({registry: b.registry, zoomToLoop}));
+    await b.api.openMenu('stem', {stemName: 'drums', anchor});
+    expect(built.stemMenu).toHaveBeenCalledWith(b.ts.session, 'drums', withOpts);
+    expect(b.menuOpen).toHaveBeenLastCalledWith([{label: 'Mute'}], expect.objectContaining({label: COPY.menuLabels.stem}));
+    // No target: nothing opens.
+    const opened = b.menuOpen.mock.calls.length;
+    expect(await b.api.openMenu('spot', {anchor})).toBeNull();
+    expect(await b.api.openMenu('stem', {anchor})).toBeNull();
+    expect(b.menuOpen).toHaveBeenCalledTimes(opened);
+
+    // A surface reports what a right-click or long-press hit; without a target it is the bar menu.
+    const s = log.at(-1);
+    s.opts.onActivate({kind: 'context', t: 33, bar: 17, pointerType: 'mouse', clientX: 40, clientY: 50, target: {kind: 'spot', spot}});
+    await settle();
+    expect(built.spotMenu).toHaveBeenCalledTimes(2);
+    expect(b.menuOpen).toHaveBeenLastCalledWith([{label: 'Open'}], expect.objectContaining({anchor: {x: 40, y: 50}}));
+    s.opts.onActivate({kind: 'long', t: 16, pointerType: 'touch', clientX: 1, clientY: 2, target: {kind: 'marker', marker}});
+    await settle();
+    expect(built.markerMenu).toHaveBeenCalledTimes(2);
+    s.opts.onActivate({kind: 'context', t: 20, pointerType: 'mouse', target: {kind: 'stem', stemName: 'bass'}});
+    await settle();
+    expect(built.stemMenu).toHaveBeenLastCalledWith(b.ts.session, 'bass', withOpts);
+    s.opts.onActivate({kind: 'context', t: 34, pointerType: 'mouse', target: {kind: 'loopBand'}});
+    await settle();
+    expect(built.loopBandMenu).toHaveBeenCalledTimes(2);
+    s.opts.onActivate({kind: 'context', t: 35, bar: 18, pointerType: 'mouse', target: {kind: 'nonsense'}});
+    await settle();
+    expect(built.barMenu).toHaveBeenCalledWith(b.ts.session, {t: 35, bar: 18}, withOpts);
   });
 });

@@ -407,11 +407,11 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
     distanceRadio('kit'),
     {
       id: 'view.bigger', title: zoomTitle(1), group: 'View', keys: ['='], scopes: [S], repeat: true, icon: 'zoom-in',
-      palette: {keywords: ['bigger', 'larger', 'zoom in']}, when: canStage('zoom'), run: (c) => stageOf(c).zoom(1),
+      palette: {keywords: ['bigger', 'larger', 'zoom in']}, when: canStage('zoom'), run: (c) => stageOf(c).zoom(1, {source: c.source, event: c.event}),
     },
     {
       id: 'view.smaller', title: zoomTitle(-1), group: 'View', keys: ['-'], scopes: [S], repeat: true, icon: 'zoom-out',
-      palette: {keywords: ['smaller', 'zoom out']}, when: canStage('zoom'), run: (c) => stageOf(c).zoom(-1),
+      palette: {keywords: ['smaller', 'zoom out']}, when: canStage('zoom'), run: (c) => stageOf(c).zoom(-1, {source: c.source, event: c.event}),
     },
     {
       id: 'view.followResume', title: C.followResume, group: 'View', scopes: [S], pedal: true, icon: 'arrow-down-to-line',

@@ -27,10 +27,19 @@
 // The 'stage' command context (§2.14.10; commands.js and transport-commands.js read it):
 //   {session, layout, surface, focus, distance, following, display, followStyle, setlist, wakeHeld,
 //    load, loadLabel, menuAvailable, shareAvailable (signals, read with peek()),
-//    setSurface(kind), cycleSurface(), toggleFocus(), setDistance(d), zoom(dir), resumeFollow(),
-//    setDisplay(layout), setFollowStyle(style), openSheet(name, {anchor}), closeSheets(),
-//    openMenu(kind, {anchor, t, bar, region}), share(), startOver(), leave(), close(), leaveHint(),
-//    goSetlist(dir), scrollBy(screens), scrollTop(), batch(fn), statusLine, anchors, plateHost (the music area: the count-in plate)}
+//    setSurface(kind), cycleSurface(), toggleFocus(), setDistance(d), zoom(dir, {source, event}), commitSize(),
+//    resumeFollow(), setDisplay(layout), setFollowStyle(style), openSheet(name, {anchor}), closeSheets(),
+//    openMenu(kind, {anchor, t, bar, region, spot, marker, stemName, rename, onOpen, zoomToLoop}), share(), startOver(),
+//    leave(), close(), leaveHint(), goSetlist(dir), scrollBy(screens), scrollTop(), batch(fn), statusLine, anchors,
+//    plateHost (the music area: the count-in plate)}
+// followStyle is per surface (spec §4.4B, Appendix C item 117): the Road map and the Wave page follow with
+// prefs.roadmap.follow, else 'scroll' (the current row held at 30%), on both layouts; the Chart and Stems with
+// prefs.practice.follow[layout] (rail 'scroll', band 'page'). setFollowStyle writes the shown surface's key.
+// D54 release (Appendix C item 118): a Distance change applies a deferred chart size at once, or when the menu it came
+// from closes; =/− from the keyboard on the key's keyup; a held stepper calls commitSize() on release.
+// openMenu kinds: 'stage' | 'bar' | 'section' | 'spot' | 'marker' | 'loopBand' | 'stem' (ST8a's builders). A surface's
+// 'context'/'long' activation that carries `target: {kind: 'spot'|'marker'|'loopBand'|'stem', spot?, marker?,
+// stemName?}` opens that menu instead of the bar menu.
 // `anchors` is a Map: explicit entries (anchors.set(name, el)) first, then the Stage's
 // `[data-stage-anchor=<name>]` element (HUD, controls and strip mark theirs), then the controls area.
 //
@@ -70,6 +79,13 @@ const SURFACE_MODULES = Object.freeze({
   stems: ['./surfaces/stems-surface.js', 'createStemsSurface'],
 });
 const MENUS_PATH = './menus.js';
+/** The menus a surface's 'context'/'long' activation can open on its target (spec §8 "Defined menus"). */
+const TARGET_MENUS = new Set(['spot', 'marker', 'loopBand', 'stem']);
+/** The surfaces that follow with prefs.roadmap.follow (spec §4.4B). */
+const ROADMAP_KINDS = new Set(['roadmap', 'wave']);
+const FOLLOW_STYLES = new Set(['scroll', 'page']);
+/** The keys view.bigger/smaller are bound to ('=', '−', with their shifted and numpad forms). */
+const SIZE_KEY = /^[=+\-_]$/;
 const SHARE_PATH = '../share/share-dialog.js';
 
 /** The surface crossfade (--motion-slow). */
@@ -232,7 +248,13 @@ async function mountStage(el, match, ctx, guard) {
   const snapshot = () => transport.snapshot.peek();
   const playing = computed(() => PLAYING.has(transport.snapshot.value.phase));
   const display = computed(() => store.prefs.value?.chart?.display?.layout ?? null);
-  const followStyle = computed(() => store.prefs.value?.practice?.follow?.[layout.value] ?? (layout.value === 'rail' ? 'scroll' : 'page'));
+  // Per surface (spec §4.4B): the Road map and the Wave page scroll unless the user chose Page for them.
+  const followStyle = computed(() => {
+    const p = store.prefs.value;
+    if (ROADMAP_KINDS.has(surface.value)) return FOLLOW_STYLES.has(p?.roadmap?.follow) ? p.roadmap.follow : 'scroll';
+    const own = p?.practice?.follow?.[layout.value];
+    return FOLLOW_STYLES.has(own) ? own : layout.value === 'rail' ? 'scroll' : 'page';
+  });
   const loadLabelSig = computed(() => loadingLabel(session.load.value));
   const menuAvailable = signal(!!deps.later[MENUS_PATH]);
   const shareAvailable = signal(!!deps.later[SHARE_PATH]);
@@ -263,7 +285,7 @@ async function mountStage(el, match, ctx, guard) {
       if (isElement(own) && own.isConnected) return own;
       const marked = root.querySelector(`[data-stage-anchor="${name}"]`);
       if (marked) return marked;
-      if (name === 'getBars' || name === 'strip') return stripHost;
+      if (name === 'strip') return stripHost;   // Get bars opens left of the controls like every rail sheet (host.js)
       if (name === 'menu') return hudHost;
       return controlsHost;
     }
@@ -282,10 +304,11 @@ async function mountStage(el, match, ctx, guard) {
     cycleSurface,
     toggleFocus,
     setDistance,
-    zoom: (dir) => current?.instance?.zoom?.(dir < 0 ? -1 : 1),
+    zoom,
+    commitSize,
     resumeFollow,
     setDisplay: (value) => prefs.set('chart.display.layout', value ?? null),
-    setFollowStyle: (style) => prefs.set(`practice.follow.${layout.peek()}`, style),
+    setFollowStyle: (style) => prefs.set(ROADMAP_KINDS.has(surface.peek()) ? 'roadmap.follow' : `practice.follow.${layout.peek()}`, style),
     openSheet: (name, {anchor} = {}) => hostOpenSheet(name, {session, anchor: isElement(anchor) ? anchor : anchors.get(name)}),
     closeSheets: hostCloseSheets,
     openMenu,
@@ -306,9 +329,12 @@ async function mountStage(el, match, ctx, guard) {
   function attributes() {
     applyStageAttributes(root, {layout: layout.peek(), distance: distance.peek(), focus: focus.peek(), playing: playing.peek(), narrow: narrow.peek()});
     if (reveal.peek()) root.dataset.reveal = ''; else delete root.dataset.reveal;
+    // Follow paused: the surface shows "⤓ Back to playhead" (56 px, bottom centre of the music), so the
+    // floating status line and banner lift above it (status.css; ST10 handoff 4).
+    if (following.peek()) delete root.dataset.followPaused; else root.dataset.followPaused = '';
   }
   cleanup(effect(() => {
-    layout.value; distance.value; focus.value; playing.value; narrow.value; reveal.value;
+    layout.value; distance.value; focus.value; playing.value; narrow.value; reveal.value; following.value;
     attributes();
   }));
 
@@ -350,13 +376,53 @@ async function mountStage(el, match, ctx, guard) {
       distance.value = next;
       prefs.set('practice.distance', next);
       current?.instance?.setDistance?.(next);
+      releaseDistance();
     });
+  }
+
+  // ---------------- D54 release (Appendix C item 118) ----------------
+  // A deferred chart size change (the last relayouts were slow) applies on release instead of after its
+  // 400 ms settle: the menu that changed Distance closing, the =/− key's keyup, a held stepper let go.
+  let menuHandle = null;          // the Stage menu open now (openMenu)
+  let commitOnMenuClose = false;  // a Distance change made while it was open
+  let keyRelease = null;          // {target, code, off}: the =/− key held now
+
+  function commitSize() {
+    try { current?.instance?.commitSize?.(); } catch (err) { console.error('[stage] commitSize failed', err); }
+  }
+  /** A Distance change is released at once, unless the menu it came from is still open (then on its close). */
+  function releaseDistance() {
+    if (menuHandle?.open) commitOnMenuClose = true;
+    else commitSize();
+  }
+  function dropKeyRelease() { keyRelease?.off(); keyRelease = null; }
+  cleanup(dropKeyRelease);
+
+  /** =/− (view.bigger/smaller): a key step commits on that key's keyup; a held stepper ('repeat') calls commitSize itself. */
+  function zoom(dir, {source, event} = {}) {
+    current?.instance?.zoom?.(dir < 0 ? -1 : 1);
+    if (source === 'repeat') return;
+    // Only the =/− key itself is held: Enter in a menu or the palette is a release already.
+    const held = source === 'key' && event?.type === 'keydown' && SIZE_KEY.test(event.key ?? '');
+    const target = held ? event.target : null;
+    const code = event?.code || event?.key;
+    if (!target?.isConnected || typeof target.addEventListener !== 'function' || !code) { dropKeyRelease(); commitSize(); return; }
+    if (keyRelease && keyRelease.target === target && keyRelease.code === code) return;   // auto-repeat of the held key
+    dropKeyRelease();
+    // The key's own target (not the window: dispatch.js owns the document listeners, §2.6) gets its keyup.
+    const onUp = (e) => {
+      if ((e.code || e.key) !== code) return;
+      dropKeyRelease();
+      commitSize();
+    };
+    target.addEventListener('keyup', onUp);
+    keyRelease = {target, code, off: () => target.removeEventListener('keyup', onUp)};
   }
 
   // Settings → Practice (and another tab) change Distance and Focus too.
   cleanup(store.prefs.subscribe?.((p) => {
     const d = distanceOf(p?.practice?.distance);
-    if (d !== distance.peek()) keepingAnchor(() => { distance.value = d; current?.instance?.setDistance?.(d); });
+    if (d !== distance.peek()) keepingAnchor(() => { distance.value = d; current?.instance?.setDistance?.(d); commitSize(); });
     const f = !!p?.practice?.focus;
     if (f !== focus.peek()) keepingAnchor(() => { focus.value = f; hud?.setFocus?.(f); mountControlsFor(); });
   }));
@@ -474,6 +540,25 @@ async function mountStage(el, match, ctx, guard) {
     registry.invalidate();
   }
 
+  /**
+   * The Road map turns into the Wave page (and back) when the song's map changes under it: its `kind`
+   * is a live getter (also el[data-kind]), so the shown kind is read again (ST10 handoff 2).
+   */
+  function syncKind() {
+    const entry = current;
+    if (!entry || unmounted) return;
+    const kind = entry.instance.kind ?? entry.instance.el?.dataset?.kind ?? null;
+    if (!kind || kind === entry.kind) return;
+    entry.kind = kind;
+    entry.layer.dataset.surface = kind;
+    surface.value = kind;
+    registry.invalidate();
+  }
+  // The surface hears the change in its own subscription, which may run after this one: read again after it.
+  if (session.position?.mapped?.subscribe) {
+    cleanup(session.position.mapped.subscribe(() => { syncKind(); queueMicrotask(syncKind); }));
+  }
+
   function retire(entry) {
     try { entry.instance.destroy?.(); } catch (err) { console.error('[stage] surface cleanup failed', err); }
     entry.layer.remove();
@@ -540,7 +625,12 @@ async function mountStage(el, match, ctx, guard) {
       case 'pill': showPill(e); break;
       case 'playFrom': void transport.playFrom(e.t); break;
       case 'jump': transport.jump(e.t, {label: pillLabel(e)}); break;
-      case 'menu': openMenu('bar', {t: e.t, bar: e.bar, anchor: {x: e.clientX ?? 0, y: e.clientY ?? 0}}); break;
+      case 'menu': {
+        // A surface names what was pressed (a spot, a marker, the loop band, a stem); else the bar menu.
+        const target = e.target && typeof e.target === 'object' && TARGET_MENUS.has(e.target.kind) ? e.target : null;
+        void openMenu(target ? target.kind : 'bar', {...(target ?? {}), t: e.t, bar: e.bar, anchor: {x: e.clientX ?? 0, y: e.clientY ?? 0}});
+        break;
+      }
       default: break;
     }
   }
@@ -551,16 +641,51 @@ async function mountStage(el, match, ctx, guard) {
   }
 
   // ---------------- menus, share ----------------
-  async function openMenu(kind, {anchor = null, t, bar, region} = {}) {
+  /** ST8a's builders, by kind (spec §8 "Defined menus"); [] when the kind's target is missing. */
+  function menuItems(menus, kind, o) {
+    const opts = {registry, feedback};
+    if (typeof o.rename === 'function') opts.rename = o.rename;
+    switch (kind) {
+      case 'stage': return menus.stageMenu(session, api, opts);
+      case 'section': return o.region ? menus.sectionMenu(session, o.region, {...opts, ...(finite(o.t) ? {t: o.t} : {})}) : [];
+      case 'spot': return o.spot ? menus.spotMenu(session, o.spot, {...opts, ...(typeof o.onOpen === 'function' ? {onOpen: o.onOpen} : {})}) : [];
+      case 'marker': return o.marker ? menus.markerMenu(session, o.marker, opts) : [];
+      case 'loopBand': return menus.loopBandMenu(session, {...opts, ...(typeof o.zoomToLoop === 'function' ? {zoomToLoop: o.zoomToLoop} : {})});
+      case 'stem': {
+        const name = o.stemName ?? (typeof o.stem === 'string' ? o.stem : o.stem?.name);
+        return name ? menus.stemMenu(session, name, opts) : [];
+      }
+      default: return menus.barMenu(session, {t: o.t, bar: o.bar}, opts);
+    }
+  }
+
+  // ST8a's menus.js, loaded once: the menus and boundUndo (the status line's Undo).
+  let menusModule = null, menusPromise = null;
+  function loadMenus() {
     const load = deps.later[MENUS_PATH];
-    if (!load) return null;
+    if (!load) return Promise.resolve(null);
+    menusPromise ??= Promise.resolve().then(load).then((mod) => { menusModule = mod; return mod; }, (err) => { menusPromise = null; throw err; });
+    return menusPromise;
+  }
+
+  async function openMenu(kind, options = {}) {
+    const o = options ?? {};
+    if (!deps.later[MENUS_PATH]) return null;
     try {
-      const menus = await load();
-      const items = kind === 'stage' ? menus.stageMenu(session, api)
-        : kind === 'section' ? menus.sectionMenu(session, region)
-          : menus.barMenu(session, {t, bar});
+      const menus = await loadMenus();
+      const items = menuItems(menus, kind, o);
       if (!items?.length || unmounted) return null;
-      return deps.Menu.open(items, {anchor: anchor ?? anchors.get('menu'), label: COPY.commands.menu, registry});
+      let handle = null;
+      handle = deps.Menu.open(items, {
+        anchor: o.anchor ?? anchors.get('menu'), label: COPY.menuLabels?.[kind] ?? COPY.commands.menu, registry,
+        onClose: () => {
+          if (menuHandle === handle) menuHandle = null;
+          // D54: the menu that changed Distance closed.
+          if (commitOnMenuClose && !menuHandle?.open) { commitOnMenuClose = false; commitSize(); }
+        },
+      });
+      menuHandle = handle ?? null;
+      return handle;
     } catch (err) {
       console.error(`[stage] the ${kind} menu could not open`, err);
       return null;
@@ -585,9 +710,29 @@ async function mountStage(el, match, ctx, guard) {
     const changed = transport.startOver();
     current?.instance?.reveal?.(0);
     if (changed) {
-      feedback.status?.(COPY.startedOver, {key: 'start-over', action: {label: COPY.undo, run: () => registry.run('practice.undo', {source: 'pointer'})}});
+      // The Undo undoes Start over only while its step is still the latest (spec §7.8); else "can't undo".
+      const step = undoFor();
+      feedback.status?.(COPY.startedOver, {key: 'start-over', action: {label: COPY.undo, run: () => step.run({source: 'pointer'})}});
     }
     return changed;
+  }
+
+  /** An Undo bound to the step just pushed: ST8a's boundUndo (loaded now if menus.js has not been yet). */
+  function undoFor() {
+    const opts = {registry, feedback};
+    let bound = menusModule?.boundUndo ? menusModule.boundUndo(session, null, opts) : null;
+    // Before menus.js loads: bound a microtask later, and until then only while the stack has not grown.
+    const size = session.undo?.size?.undo;
+    if (!bound) {
+      loadMenus().then((mod) => { if (!bound && mod?.boundUndo && session.undo?.size?.undo === size) bound = mod.boundUndo(session, null, opts); }, () => {});
+    }
+    return {
+      run({source = 'pointer'} = {}) {
+        if (bound) return bound.run({source});
+        if (session.disposed || session.undo?.size?.undo !== size) return false;
+        return registry.run('practice.undo', {source});
+      },
+    };
   }
 
   function saveAnchor() {
@@ -941,6 +1086,8 @@ async function mountStage(el, match, ctx, guard) {
   }
   applyQuery(match?.query ?? {});
   registry.invalidate();
+  // The menus (and the status line's bound Undo) are ready before the first right-click or Start over.
+  void loadMenus().catch((err) => console.warn('[stage] the menus could not load', err));
 
   return {
     update(next) { if (!unmounted) applyQuery(next?.query ?? {}); },

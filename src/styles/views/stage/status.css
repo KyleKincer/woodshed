@@ -50,6 +50,18 @@
   /* The band's Focus has no strip under the music. */
   .stage[data-stage-layout=band][data-focus] .stage-float { margin-bottom: calc(var(--s3) + var(--safe-bottom)); }
 
+  /* Follow paused: the surfaces' "⤓ Back to playhead" pill (56 px, --s5 above the music's bottom, centred)
+   * shows, so the stack lifts above it and the two never overlap (ST10 handoff 4). */
+  .stage {
+    --stage-follow-pill-clear: calc(56px + var(--s5) + var(--s2));
+  }
+  .stage[data-follow-paused] .stage-float {
+    margin-bottom: calc(var(--stage-strip-h) + var(--stage-follow-pill-clear));
+  }
+  .stage[data-stage-layout=band][data-focus][data-follow-paused] .stage-float {
+    margin-bottom: calc(var(--stage-follow-pill-clear) + var(--safe-bottom));
+  }
+
   .stage-status[data-empty] {
     visibility: hidden;
     pointer-events: none;
