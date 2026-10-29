@@ -47,6 +47,7 @@ import {desktop as appDesktop} from '../app/desktop.js';
 import * as settingsApi from '../api/settings.js';
 import {onlineDevices, RECHECK_MS} from '../api/devices.js';
 import {sharedJobsModel} from './jobs.js';
+import {selectionClick, selectionContext, sharedSelection} from './selection.js';
 import {ReviewChip} from './review-chip.js';
 import {COPY} from './home.copy.js';
 import {
@@ -71,6 +72,8 @@ const LATER = import.meta.glob('./card-menu.js');
 /** The app's one jobs model (LB1b), shared with the top bar's Jobs chip and the Jobs popover. */
 const jobs = () => sharedJobsModel();
 
+/** Opens the Add sheet at most once per page load after the desktop processor's first run. */
+let firstRunAddOpened = false;
 const isPlainClick = e => !e || (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey);
 const isTextInput = el => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName ?? '') || !!el.closest?.('[data-text-input]'));
 const URL_RE = /^https?:\/\/\S+$/i;
@@ -332,9 +335,12 @@ export function mount(el, match, ctx = {}) {
     return {
       job: model.bySong.peek()?.get?.(song.id) ?? null,
       isNew: isNew(song, {now, opened}),
-      selecting: false, selected: false, now,
+      selecting: selection.active.peek(), selected: selection.has(song.id), now,
       onOpen: (s, {event, cover}) => {
+        // ⌘/Ctrl-click and Shift-click select; a plain click toggles while selecting (spec §2.6).
+        if (selectionClick(selection, s.id, event)) return true;
         if (!isPlainClick(event)) return false;
+        selection.clear();
         openSong(s, cover);
         return true;
       },
@@ -568,6 +574,8 @@ export function mount(el, match, ctx = {}) {
   }
 
   let visibleSongs = [];
+  const selection = sharedSelection();
+  selection.setOrder(() => visibleSongs.map(s => s.id));
 
   disposers.push(effect(() => {
     const state = view.value;
@@ -576,6 +584,8 @@ export function mount(el, match, ctx = {}) {
     const now = tick.value;
     const opened = prefs.value.value?.library?.opened ?? [];
     void cardMenu.value;
+    void selection.ids.value;
+    void selection.active.value;
     void lib.devices.value;
     void demo.value;
     const bySong = model.bySong.value ?? new Map();
@@ -802,9 +812,31 @@ export function mount(el, match, ctx = {}) {
     const key = doc.activeElement?.closest?.('[data-key]')?.dataset?.key;
     return key && key.startsWith('song:') && body.contains(doc.activeElement) ? key.slice(5) : null;
   };
+  // Desktop first run (spec §6.6 item 6, §2.19): when the processor finishes setting up, open the Add sheet once.
+  // The sheet itself marks onboarding.desktopFirstRun when it shows its first-song placeholder.
+  if (desktop?.available && desktop.processor) {
+    let sawFirstRun = false;
+    disposers.push(effect(() => {
+      const p = desktop.processor.value ?? {};
+      if (p.firstRun) { sawFirstRun = true; return; }
+      if (!sawFirstRun || firstRunAddOpened || !['ready', 'busy'].includes(p.phase)) return;
+      if (!account.loaded.value || account.onboarding.value?.desktopFirstRun === true) return;
+      firstRunAddOpened = true;
+      untracked(() => navigate('/add'));
+    }));
+  }
+
+  // Selection mode (spec §2.6): the floating bar lives at the end of the page; mounting it lets the card menu offer Select.
+  const barHost = h('div', {class: 'lib-selbar-host'});
+  content.append(barHost);
+  const selBar = selection.mountBar(barHost, {router, store, desktop});
+  const selCtx = selectionContext(selection, {deleteSelected: () => selBar.deleteSelected(), order: () => visibleSongs.map(s => s.id)});
   const libraryContext = {
-    get selecting() { return false; },
-    exitSelection() {},
+    get selecting() { return selCtx.selecting; },
+    exitSelection: () => selCtx.exitSelection(),
+    select: () => selCtx.select(),
+    selectAll: () => selCtx.selectAll(),
+    deleteSelected: () => selCtx.deleteSelected(),
     get focusedSongId() { return focusedSongId(); },
     get layout() { return view.peek().layout; },
     openFocused() {
@@ -837,6 +869,7 @@ export function mount(el, match, ctx = {}) {
     unmount() {
       ac.abort();
       menu?.destroy?.();
+      selBar.destroy();
       for (const d of disposers.splice(0).reverse()) { try { d(); } catch (err) { console.error(err); } }
       for (const p of primitives) p.destroy?.();
       for (const entry of [...entries.values()]) entry.card?.destroy?.();

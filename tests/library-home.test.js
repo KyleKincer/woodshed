@@ -671,6 +671,7 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
 
   async function mountHome({query = {}, desktop = false, songs = LIBRARY, loaded = true} = {}) {
     home ??= await import('../src/library/home.js');
+    (await import('../src/library/selection.js')).sharedSelection().clear();
     registry = createRegistry();
     defineLibraryCommands({registry});
     const jobsCalls = [];
@@ -889,7 +890,7 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     expect(ctx.router.setQuery).toHaveBeenLastCalledWith(expect.objectContaining({sort: '-title'}), {debounceMs: 400});
   });
 
-  it('a card opens the Stage with the cover named for the View Transition; ⌘-click stays native', async () => {
+  it('a card opens the Stage with the cover named for the View Transition; ⌘-click selects instead (spec §2.6)', async () => {
     await mountHome();
     const card = el.querySelector('[data-key="song:glasshouse"]');
     card.querySelector('a.lib-open').click();
@@ -899,7 +900,10 @@ describe.skipIf(missingPeers.length)('Library home (mounted)', () => {
     const meta = new MouseEvent('click', {bubbles: true, cancelable: true, button: 0, metaKey: true});
     card.querySelector('a.lib-open').dispatchEvent(meta);
     expect(ctx.router.navigate).not.toHaveBeenCalled();
-    expect(meta.defaultPrevented).toBe(false);
+    const {sharedSelection} = await import('../src/library/selection.js');
+    expect(sharedSelection().active.peek()).toBe(true);
+    expect(sharedSelection().has('glasshouse')).toBe(true);
+    expect(registry.context().library.selecting).toBe(true);
   });
 
   it('Enter in the search field opens the top result; ↓ moves into the grid', async () => {
