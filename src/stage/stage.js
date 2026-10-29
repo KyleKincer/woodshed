@@ -993,6 +993,14 @@ async function mountStage(el, match, ctx, guard) {
   cleanup(deps.watchInterruptions({engine: session.engine, transport, platform}));
   cleanup(deps.startMediaSession({transport, session}));
   cleanup(deps.startGestureAudio({transport, engine: session.engine}));
+  // First-Stage coach marks (spec §6.6.5): owner sessions only; never while playing; loaded lazily.
+  if (!session.readOnly) {
+    let stopCoach = null;
+    import('./coach.js')
+      .then((m) => { if (!unmounted) stopCoach = m.startStageCoach({stage: api, session, registry}); })
+      .catch((err) => console.warn('coach marks:', err));
+    cleanup(() => { try { stopCoach?.(); } catch {} });
+  }
   session.frame?.start?.();
   cleanup(session.frame?.subscribe?.((f) => current?.instance?.frame?.(f)));
   cleanup(() => session.frame?.stop?.());

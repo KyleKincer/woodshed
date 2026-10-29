@@ -1,0 +1,24 @@
+/* The first Stage coach marks (src/stage/coach.js; spec §6.6 item 5). The CoachMark primitive
+ * (src/styles/primitives/coachmark.css) draws the callout; this sheet lays out the Stage's content
+ * in it: the bold key and control names, and step 4's [Get bars] action. */
+@layer views {
+  .stage-coach .ui-coachmark-body strong {
+    font-weight: var(--fw-bold);
+    white-space: nowrap;
+  }
+  /* Step 4: the action sits on its own line under the sentence, left-aligned with it. */
+  .stage-coach .stage-coach-action {
+    display: flex;
+    inline-size: max-content;
+    margin-block-start: var(--s2);
+  }
+  /* Left of the rail (src/stage/coach.js anchors Play's and Mix's marks to the first cell of their
+   * row): rise from the row's bottom edge, so the mark beside the bottom row (Again · Play) stays on
+   * screen and level with it instead of falling back over the controls. */
+  .stage-coach[data-anchor="css"][data-placement="left"] {
+    position-area: inline-start span-block-start;
+  }
+  .stage-coach[data-coach-step="bars"] .ui-coachmark-foot {
+    justify-content: flex-end;
+  }
+}
