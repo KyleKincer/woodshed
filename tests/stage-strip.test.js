@@ -16,7 +16,7 @@ import {startDispatcher} from '../src/app/dispatch.js';
 import {clock as appClock} from '../src/app/clock.js';
 import {signal} from '../src/app/store.js';
 import {defineTransportCommands} from '../src/stage/transport-commands.js';
-import {COPY, CONTROLS, MIN_SEGMENT_PX, SPRING_MS, mountStrip, spanMapper, stripLayout} from '../src/stage/strip.js';
+import {COPY, CONTROLS, MENU_HIT_PX, MIN_SEGMENT_PX, SPRING_MS, mountStrip, spanMapper, stripLayout} from '../src/stage/strip.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
 import {contextOf, installCanvasShim, installPopoverShim, installResizeObserverShim, keydown, pointer, restoreDomShims, setRect, triggerResize} from './helpers/dom.js';
@@ -678,6 +678,145 @@ describe('the section menu (menus.sectionMenu, ST8a)', () => {
     pointer(b.slider, 'pointerup', {x: 250, y: 20, pointerType: 'touch', pointerId: 2});
     await vi.advanceTimersByTimeAsync(10);
     expect(document.querySelector('[role=menu]')).not.toBeNull();
+  });
+});
+
+describe('the spot, marker and loop-band menus (I2b-14)', () => {
+  const SPOT = {id: 's1', name: 'Fill', a: 96, b: 112, rate: 0.8, passes: 0, updatedAt: 1};
+  const MARKER = {id: 'm1', t: 24, label: 'Hit', updatedAt: 1};
+  const overlays = () => practiceOf({loop: {on: true, a: 64, b: 80}, spots: [SPOT], markers: [MARKER]});
+  const rightClick = (b, x, y = 20) => b.slider.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2}));
+  const longPress = (b, x, y = 20) => {
+    pointer(b.slider, 'pointerdown', {x, y, pointerType: 'touch', pointerId: 3});
+    vi.advanceTimersByTime(360);
+    pointer(b.slider, 'pointerup', {x, y, pointerType: 'touch', pointerId: 3});
+  };
+  /** The overlays' x (px) as drawn: the spot diamond, the marker tick, the loop bracket's edges. */
+  const xs = (b) => {
+    const loop = b.nav.querySelector('.strip-loop');
+    return {
+      spot: left(b.nav.querySelector('.strip-spot[data-id=s1]')),
+      marker: left(b.nav.querySelector('.strip-tick[data-id=m1]')),
+      loop0: left(loop), loop1: left(loop) + widthOf(loop),
+    };
+  };
+  /** A Stage api on the registry's 'stage' context (what stage.js provides), recording openMenu. */
+  const withStage = (b) => {
+    const openMenu = vi.fn(async () => null);
+    b.reg.provide('stage', () => ({openMenu}));
+    return openMenu;
+  };
+  const items = () => [...document.querySelectorAll('[role=menu] [role^=menuitem]')].map((n) => n.textContent.trim());
+
+  test('with the Stage: a right-click on a spot, a marker tick or the loop bracket opens stage.openMenu for it at the press point', async () => {
+    const b = await bed({practice: overlays()});
+    const openMenu = withStage(b);
+    const x = xs(b);
+    expect(x.loop1 - x.loop0).toBeGreaterThan(2 * MENU_HIT_PX.fine);
+    rightClick(b, x.spot + 4, 44);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('spot', {spot: expect.objectContaining({id: 's1', a: 96}), anchor: {x: x.spot + 4, y: 44}});
+    rightClick(b, x.marker - 3);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('marker', {marker: {id: 'm1', t: 24, label: 'Hit'}, rename: expect.any(Function), anchor: {x: x.marker - 3, y: 20}});
+    rightClick(b, (x.loop0 + x.loop1) / 2);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('loopBand', {anchor: {x: (x.loop0 + x.loop1) / 2, y: 20}});
+    expect(openMenu).toHaveBeenCalledTimes(3);
+    // Nothing changed: no cue, no loop edit, no jump.
+    expect(b.snap.cue).toBe(0);
+    expect(b.snap.loop).toMatchObject({on: true, a: 64, b: 80});
+  });
+
+  test('elsewhere (and with the keyboard) the section menu opens as before, without the Stage router', async () => {
+    const b = await bed({practice: overlays()});
+    const openMenu = withStage(b);
+    rightClick(b, 10);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu).not.toHaveBeenCalled();
+    if (HAS_MENUS) expect(document.querySelector('[role=menu]')?.getAttribute('aria-label')).toBe('Intro');
+    document.querySelector('[role=menu]') && keydown('Escape');
+    // Shift+F10 with the cue on the spot's start still targets the section there.
+    b.ts.transport.cue(96);
+    b.slider.focus();
+    keydown('F10', {target: b.slider, shiftKey: true});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test('the hit area is MENU_HIT_PX either side: 44 px for touch, 24 px for a mouse; a narrow bracket is widened to it', async () => {
+    const b = await bed({practice: overlays()});
+    const openMenu = withStage(b);
+    const x = xs(b);
+    const between = MENU_HIT_PX.fine + 4;   // outside the mouse's area, inside the finger's
+    expect(between).toBeLessThan(MENU_HIT_PX.coarse);
+    rightClick(b, x.spot + between);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu).not.toHaveBeenCalled();
+    if (HAS_MENUS) expect(document.querySelector('[role=menu]')).not.toBeNull();   // the section menu instead
+    if (document.querySelector('[role=menu]')) keydown('Escape');
+    longPress(b, x.spot + between);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('spot', expect.objectContaining({spot: expect.objectContaining({id: 's1'})}));
+    vi.advanceTimersByTime(1000);   // press.js drops the browser's own contextmenu after a long press for a moment
+    // A one-beat loop is a few px wide; its menu still has the whole hit area.
+    b.ts.transport.loopRange(40, 40.5, {snap: 'none'});
+    await settle();
+    const loop = b.nav.querySelector('.strip-loop');
+    const mid = left(loop) + widthOf(loop) / 2;
+    expect(widthOf(loop)).toBeLessThan(2 * MENU_HIT_PX.fine);
+    rightClick(b, mid + MENU_HIT_PX.fine - 1);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('loopBand', expect.anything());
+  });
+
+  test('a spot wins over a marker and the loop bracket under the same press; a loop that is off is not a target', async () => {
+    const b = await bed({practice: practiceOf({loop: {on: false, a: 96, b: 112}, spots: [SPOT], markers: [{...MARKER, t: 96}]})});
+    const openMenu = withStage(b);
+    const x = left(b.nav.querySelector('.strip-spot[data-id=s1]'));
+    rightClick(b, x);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('spot', expect.anything());
+    b.ts.practice.deleteSpot('s1');
+    await settle();
+    rightClick(b, x);
+    await settle();
+    expect(openMenu).toHaveBeenLastCalledWith('marker', expect.anything());
+    b.ts.practice.deleteMarker('m1');
+    await settle();
+    openMenu.mockClear();
+    rightClick(b, x + MENU_HIT_PX.fine + 20);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(openMenu).not.toHaveBeenCalled();
+  });
+
+  test.runIf(HAS_MENUS)('without a Stage (the harness) the strip opens menus.spotMenu, markerMenu and loopBandMenu itself', async () => {
+    const b = await bed({practice: overlays()});
+    const x = xs(b);
+    rightClick(b, x.spot);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(document.querySelector('[role=menu]').getAttribute('aria-label')).toBe('Fill');
+    expect(items()).toEqual(expect.arrayContaining(['Open', 'Rename…', 'Delete']));
+    keydown('Escape');
+    rightClick(b, (x.loop0 + x.loop1) / 2);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(document.querySelector('[role=menu]').getAttribute('aria-label')).toBe('Loop');
+    expect(items().some((t) => t.startsWith('Save as spot'))).toBe(true);
+  });
+
+  test.runIf(HAS_MENUS)('unmapped: the marker menu’s Rename… opens the strip’s inline field over that marker', async () => {
+    const b = await bed({mapped: false, practice: practiceOf({markers: [{id: 'm1', t: 12, label: 'Groove', updatedAt: 1}]})});
+    rightClick(b, left(b.nav.querySelector('.strip-tick[data-id=m1]')));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(document.querySelector('[role=menu]').getAttribute('aria-label')).toBe('Groove');
+    const rename = [...document.querySelectorAll('[role=menu] [role^=menuitem]')].find((n) => n.textContent.includes('Rename'));
+    rename.click();
+    await vi.advanceTimersByTimeAsync(10);
+    const input = b.host.querySelector('input.strip-rename');
+    expect(input?.getAttribute('aria-label')).toBe(COPY.rename('Groove'));
+    input.value = 'Big groove';
+    keydown('Enter', {target: input});
+    expect(b.ts.value.markers[0].label).toBe('Big groove');
   });
 });
 
