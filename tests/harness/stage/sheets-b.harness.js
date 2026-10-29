@@ -17,6 +17,7 @@ import '/src/stage/transport-commands.js';
 import '/src/stage/commands.js';
 import {startDispatcher} from '/src/app/dispatch.js';
 import * as feedback from '/src/app/feedback.js';
+import {set as setClock} from '/src/app/clock.js';
 import {platform} from '/src/app/platform.js';
 import {store} from '/src/app/store.js';
 import {createTestSession} from '/tests/helpers/test-session.js';
@@ -24,6 +25,8 @@ import {stemUrl} from '/tests/fixture/audio.js';
 
 const NOW = Date.parse('2026-10-28T12:00:00Z');
 const DAY = 86_400_000;
+// The seed's spot times are relative to NOW, so the app clock runs from it too ('practised 2 days ago' on any date).
+setClock(NOW, {ticking: true});
 const SHEETS = ['spots', 'notes', 'tapBeat', 'getBars'];
 
 const SPOTS = [

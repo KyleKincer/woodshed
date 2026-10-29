@@ -84,6 +84,8 @@ module.exports = [
       await touch.drag({x: b.x + b.width - 40, y: b.y + b.height / 2}, {x: b.x + b.width - 160, y: b.y + b.height / 2 + 2}, {steps: 10});
       await page.waitForSelector('.spots-row[data-spot-id="spot-outro"][data-revealed] .spots-tray', {state: 'visible', timeout: 3000});
       await t.capture('tray');
+      // A tap inside the swipe's fling window is dropped by the browser; a finger lifts and comes back.
+      await page.waitForTimeout(300);
       await touch.tap(page.locator('.spots-row[data-spot-id="spot-outro"] .spots-tray').getByRole('button', {name: 'Delete'}));
       await page.waitForSelector('.spots-row[data-spot-id="spot-outro"]', {state: 'detached', timeout: 3000});
       const spots = await spotsOf(page);

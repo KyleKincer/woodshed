@@ -108,7 +108,7 @@ module.exports = [
       t.expect(g.columns === (coarse ? 3 : 6), `${g.columns} columns (6 at 1440, 3 on iPad portrait)`);
       t.expect(g.square && g.radius === '0px', `covers are square with radius 0 (${g.radius})`);
       t.expect(g.contentVisibility !== 'auto' && !g.clipsRing, `nothing clips the cover link's focus ring (${g.contentVisibility}, ${g.clipsRing})`);
-      t.expect(g.more === 0, 'no ⋯ until the card menu exists (LB3)');
+      t.expect(g.more > 0, `every card has its ⋯ menu button (LB3; got ${g.more})`);
       if (coarse) {
         // The 12.9" iPad Pro in portrait (1024 wide) is an iPad portrait too: 3 columns, not 5.
         const size = page.viewportSize();
