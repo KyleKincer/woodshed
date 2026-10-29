@@ -56,7 +56,8 @@ export default async function mount(el, {query, h}) {
     d.practice.distance = ['near', 'stand', 'kit'].includes(distance) ? distance : 'stand';
     d.practice.focus = query.get('focus') === '1';
     if (follow === 'scroll' || follow === 'page') d.practice.follow = {rail: follow, band: follow};
-    d.chart = {display: {layout: display === 'split' || display === 'combined' ? display : null}, pinchScale: Number.isFinite(pinch) && pinch > 0 ? pinch : null};
+    d.chart = {display: {layout: display === 'split' || display === 'combined' ? display : null}, pinchScale: Number.isFinite(pinch) && pinch > 0 ? pinch : null,
+      pinchDistance: Number.isFinite(pinch) && pinch > 0 ? d.practice.distance : null};
   });
   const shared = query.get('shared') === '1';
   const score = shared ? null : scoreFor(query.get('part') || 'dense');

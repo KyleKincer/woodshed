@@ -3,14 +3,16 @@
 // dark tokens. The chart only draws, follows and reports; this module owns everything around it:
 //
 // - Size: the scale is the Distance default for the layout (layout.js chartScale: rail 1.1/1.3/1.6,
-//   band 1.0/1.2/1.5) unless this device pinched or stepped it (prefs.chart.pinchScale, which a
-//   Distance change clears). The label floors are 14 × d and 20 × d px. Dense parts (more than
-//   DENSE_HITS hits per notated bar) are engraved 2 bars per system on the band and 4 on the rail.
+//   band 1.0/1.2/1.5) unless this device pinched or stepped it at the current Distance
+//   (prefs.chart.pinchScale, written with prefs.chart.pinchDistance: a pinch made at another
+//   Distance is ignored, wherever that Distance was changed, and applies again on going back).
+//   The label floors are 14 × d and 20 × d px. Dense parts (more than DENSE_HITS hits per notated
+//   bar) are engraved 2 bars per system on the band and 4 on the rail.
 // - D54 (R1): while the last two size changes took ≤ 300 ms a Distance change or a =/− step relayouts
 //   at once; otherwise it applies once, on release (commitSize(), e.g. the Distance menu closing) or
-//   400 ms after the last step, with the status "Resizing…". A size change is judged as a whole: the
-//   relayouts one change starts are summed into one sample (until chart.js can take scale, floors
-//   and bars per system in one relayout, a Distance change or a dense layout switch costs two).
+//   400 ms after the last step, with the status "Resizing…". A size change (scale, label floors and
+//   bars per system) is one chart.configure call, so one relayout; any further relayout reported
+//   within BATCH_IDLE_MS of it is summed into the same sample and counted in data-relayouts.
 // - Pinch (src/stage/pinch.js, 80–200 %): a CSS preview while the fingers move, one relayout on
 //   release. ⌘/Ctrl-wheel is the same gesture for a trackpad or mouse, refused while playing
 //   (glass.pressPolicy 'pinch').
@@ -58,7 +60,7 @@ export const IDLE_RESUME_MS = 8000;
 /** D54: the live-relayout budget and the settle delay of a deferred size change. */
 export const LIVE_RELAYOUT_MS = 300;
 export const SETTLE_MS = 400;
-/** A size change whose relayouts have not all reported is closed this long after its last report. */
+/** A size change's sample stays open this long after its last relayout report (later ones are summed in). */
 const BATCH_IDLE_MS = 1000;
 /** A part is dense above this many hits per notated bar (maps/notation.md §11.1). */
 export const DENSE_HITS = 8;
@@ -125,9 +127,12 @@ export function fontsFor(distance) {
   return {barNumber: LABEL_FLOORS.barNumber * d, marker: LABEL_FLOORS.marker * d};
 }
 
-/** The scale: this device's pinch override when it has one, else the Distance default for the layout. */
-export function scaleFor({distance, layout, pinch}) {
-  if (finite(pinch) && pinch > 0) return Math.min(PINCH_MAX, Math.max(PINCH_MIN, pinch));
+/**
+ * The scale: this device's pinch override when it was made at this Distance (pinchDistance), else
+ * the Distance default for the layout. A pinch made at another Distance, or with none recorded, is ignored.
+ */
+export function scaleFor({distance, layout, pinch, pinchDistance}) {
+  if (pinchDistance === distanceOf(distance) && finite(pinch) && pinch > 0) return Math.min(PINCH_MAX, Math.max(PINCH_MIN, pinch));
   return chartScale({distance, layout});
 }
 
@@ -142,8 +147,10 @@ export function createRelayoutGate({limitMs = LIVE_RELAYOUT_MS, settleMs = SETTL
   let pending = null;
   const cancel = () => { if (pending) { clearTimer(pending.id); pending = null; } };
   return {
-    record(ms) {
+    /** With `replace`, the latest sample is revised (a size change that relayouted again). */
+    record(ms, {replace = false} = {}) {
       if (!finite(ms)) return;
+      if (replace && samples.length) { samples[samples.length - 1] = ms; return; }
       samples.push(ms);
       if (samples.length > 2) samples.shift();
     },
@@ -259,7 +266,9 @@ export async function createChartSurface(host, opts = {}) {
 
     // ---------------- size ----------------
     const pinchPref = () => { const v = Number(prefs.get('chart.pinchScale')); return Number.isFinite(v) && v > 0 ? v : null; };
-    const targetScale = () => scaleFor({distance, layout, pinch: pinchPref()});
+    const targetScale = () => scaleFor({distance, layout, pinch: pinchPref(), pinchDistance: prefs.get('chart.pinchDistance')});
+    /** A pinch or =/− step: this device's override, for the Distance it was made at. */
+    const writePinch = (value) => prefs.update((d) => { d.chart.pinchScale = value; d.chart.pinchDistance = distance; });
     let dense = isDense(partView.score);
     const gate = createRelayoutGate();
 
@@ -269,10 +278,7 @@ export async function createChartSurface(host, opts = {}) {
     const liveLayout = peek(stage?.layout);
     if (liveLayout != null) layout = liveLayout === 'rail' ? 'rail' : 'band';
     const liveDistance = peek(stage?.distance);
-    if (liveDistance != null && distanceOf(liveDistance) !== distance) {
-      distance = distanceOf(liveDistance);
-      if (pinchPref() != null) prefs.set('chart.pinchScale', null);   // a Distance replaces any pinch
-    }
+    if (liveDistance != null) distance = distanceOf(liveDistance);
     chart = chartModule.createChart({
       host: chartHost, part: partView, engine: session.engine,
       scale: targetScale(),
@@ -304,57 +310,45 @@ export async function createChartSurface(host, opts = {}) {
       const next = isDense(partView.score);
       if (next === dense) return;
       dense = next;
+      closeChange();
       chart?.setDisplay?.({barsPerRow: barsPerSystem({dense, layout})});
     }
 
-    // ---------------- D54 samples: one size change, however many relayouts it takes ----------------
-    let batch = null;   // {expected, count, sum, timer}
+    // ---------------- D54 samples: one size change, and every relayout it takes ----------------
+    // A change is open from its first relayout report until BATCH_IDLE_MS pass without another, or
+    // the next change starts: a relayout reported inside it is summed into its sample (the gate's
+    // latest) and counted, so data-relayouts shows a change that engraved more than once.
+    let change = null;   // {count, sum, timer}
     function showCost(ms, count) {
       // Like data-rendered, test-visible facts for the R1 state: the change's cost and its relayouts.
       root.dataset.relayoutMs = String(Math.round(ms * 10) / 10);
       root.dataset.relayouts = String(count);
     }
-    function closeBatch() {
-      if (!batch) return;
-      const done = batch;
-      batch = null;
-      clearTimeout(done.timer);
-      if (done.count) gate.record(done.sum);
+    function closeChange() {
+      if (change) clearTimeout(change.timer);
+      change = null;
     }
     function reportRelayout(ms) {
       if (!finite(ms) || destroyed) return;
-      if (!batch) { gate.record(ms); showCost(ms, 1); return; }
-      batch.sum += ms;
-      batch.count += 1;
-      showCost(batch.sum, batch.count);
-      if (batch.count >= batch.expected) closeBatch();
-      else { clearTimeout(batch.timer); batch.timer = setTimeout(closeBatch, BATCH_IDLE_MS); }
+      const first = !change;
+      if (first) change = {count: 0, sum: 0, timer: null};
+      change.sum += ms;
+      change.count += 1;
+      gate.record(change.sum, {replace: !first});
+      showCost(change.sum, change.count);
+      clearTimeout(change.timer);
+      change.timer = setTimeout(closeChange, BATCH_IDLE_MS);
     }
-    cleanup(() => { if (batch) clearTimeout(batch.timer); batch = null; });
+    cleanup(closeChange);
 
     /**
-     * Applies the current target size: bars per system, the label floors and the scale (each a
-     * relayout only when it changes), sampled for D54 as one change.
+     * Applies the current target size (scale, label floors and bars per system) in one
+     * chart.configure call: one relayout when any of them changed, sampled for D54 as one change.
      */
     function applySize() {
       if (destroyed) return;
-      closeBatch();
-      const st = chart.state;
-      const barsPerRow = barsPerSystem({dense, layout});
-      const fonts = fontsFor(distance);
-      const scale = targetScale();
-      const steps = {
-        display: st.barsPerRow !== barsPerRow,
-        fonts: Math.abs(st.floors.barNumber - fonts.barNumber) > 1e-9 || Math.abs(st.floors.marker - fonts.marker) > 1e-9,
-        scale: Math.abs(st.scale - scale) > 1e-9,
-      };
-      const expected = Object.values(steps).filter(Boolean).length;
-      if (expected) batch = {expected, count: 0, sum: 0, timer: null};
-      if (steps.display) chart.setDisplay({barsPerRow});
-      if (steps.fonts) chart.setFonts(fonts);
-      if (steps.scale) chart.setScale(scale);
-      // Engravings that report later (or never: no view yet) close the sample when they go quiet.
-      if (batch && batch.count < batch.expected && batch.timer == null) batch.timer = setTimeout(closeBatch, BATCH_IDLE_MS);
+      closeChange();
+      chart.configure({scale: targetScale(), fonts: fontsFor(distance), barsPerRow: barsPerSystem({dense, layout})}, {anchor: true});
       pinch?.setBase(chart.state.scale);
     }
     /** A stepped or menu size change (Distance, =/−): live or on release, per D54. */
@@ -422,7 +416,7 @@ export async function createChartSurface(host, opts = {}) {
       onPreview: (g) => chart.previewScale(g.factor, {clientX: g.cx, clientY: g.cy}),
       onCommit: (g) => {
         chart.previewScale(null);
-        prefs.set('chart.pinchScale', Math.round(g.value * 100) / 100);
+        writePinch(Math.round(g.value * 100) / 100);
         // The pinch replaces a deferred step, but not the Distance's label floors that step held.
         gate.cancel();
         applySize();
@@ -583,7 +577,7 @@ export async function createChartSurface(host, opts = {}) {
     }, () => { if (!destroyed) { ready = true; renderState(); } });
 
     // ---------------- device prefs from the Stage: Display and Follow style ----------------
-    if (stage?.display?.subscribe) cleanup(stage.display.subscribe((value) => chart.setDisplay({layout: value ?? null})));
+    if (stage?.display?.subscribe) cleanup(stage.display.subscribe((value) => { closeChange(); chart.setDisplay({layout: value ?? null}); }));
     if (stage?.followStyle?.subscribe) {
       cleanup(stage.followStyle.subscribe(() => {
         // A layout switch changes the style first (the Stage's batch); setLayout then moves the line once.
@@ -642,14 +636,13 @@ export async function createChartSurface(host, opts = {}) {
       },
       zoom(dir) {
         const step = chartModule.stepScale(targetScale(), dir < 0 ? -1 : 1);
-        prefs.set('chart.pinchScale', step);
+        writePinch(step);
         requestSize();
       },
       setDistance(d) {
         const next = distanceOf(d);
         if (next === distance) return;
-        distance = next;
-        if (pinchPref() != null) prefs.set('chart.pinchScale', null);   // a Distance replaces any pinch
+        distance = next;   // a pinch made at another Distance stops applying (scaleFor); it is kept for its own
         requestSize();
       },
       setLayout(l) {
