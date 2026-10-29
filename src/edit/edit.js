@@ -72,7 +72,7 @@ import {mountSlimTransport} from './slim-transport.js';
 import * as mapView from './map/view.js';
 import * as chartView from './chart/chart-edit.js';
 import * as detailsView from './details/details.js';
-import {armEditOrigin, cameFromStage, COMMAND_COPY, EDIT_TABS, UNDO_COMMANDS} from './commands.js';
+import {armEditOrigin, cameFromStage, COMMAND_COPY, EDIT_COMMANDS, EDIT_TABS, UNDO_COMMANDS} from './commands.js';
 
 export const COPY = Object.freeze({
   done: COMMAND_COPY.done,
@@ -98,14 +98,14 @@ export const COPY = Object.freeze({
 
 /** The frame's controls (role, accessible name, command), for the table test and registry CI (§9.0). */
 export const CONTROLS = Object.freeze([
-  {role: 'button', name: COPY.done, command: 'edit.done'},
-  ...EDIT_TABS.map((tab) => ({role: 'tab', name: COPY.tabs[tab], command: `edit.tab.${tab}`})),
+  {role: 'button', name: COPY.done, command: EDIT_COMMANDS.done},
+  ...EDIT_TABS.map((tab) => ({role: 'tab', name: COPY.tabs[tab], command: EDIT_COMMANDS.tab[tab]})),
   {role: 'button', name: COPY.undo, command: UNDO_COMMANDS.map.undo, when: 'map'},
   {role: 'button', name: COPY.redo, command: UNDO_COMMANDS.map.redo, when: 'map'},
   {role: 'button', name: COPY.undo, command: UNDO_COMMANDS.chart.undo, when: 'chart'},
   {role: 'button', name: COPY.redo, command: UNDO_COMMANDS.chart.redo, when: 'chart'},
   {role: 'button', name: COPY.inspector, when: 'portrait'},
-  {role: 'button', name: COPY.done, command: 'edit.done', variant: 'bulk'},
+  {role: 'button', name: COPY.done, command: EDIT_COMMANDS.done, variant: 'bulk'},
 ].map(Object.freeze));
 
 /** The inspector's width on a laptop (px) and its share of the body in iPad portrait (%); the collapsed header (px). */
@@ -183,7 +183,7 @@ function hintCap(keys) {
 function createPostureBar({variant = 'song', title = '', label = '', tab = null, tabs = EDIT_TABS, onTab, hrefFor, saveStatus, registry}) {
   const parts = [];
   // Done runs edit.done (src/edit/commands.js registers it on import), which calls the 'edit' context's done().
-  const done = Button({label: COPY.done, icon: 'chevron-left', variant: 'quiet', size: 'sm', command: 'edit.done', registry,
+  const done = Button({label: COPY.done, icon: 'chevron-left', variant: 'quiet', size: 'sm', command: EDIT_COMMANDS.done, registry,
     className: 'edit-done'});
   const doneCap = hintCap('Escape');
   done.el.append(doneCap.el);

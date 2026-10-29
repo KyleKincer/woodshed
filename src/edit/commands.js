@@ -37,6 +37,12 @@ export const COMMAND_COPY = Object.freeze({
   redo: 'Redo',
 });
 
+/** The ids of the commands defined here, for the frame's controls (one source of truth). */
+export const EDIT_COMMANDS = Object.freeze({
+  done: 'edit.done',
+  tab: Object.freeze(Object.fromEntries(EDIT_TABS.map((t) => [t, `edit.tab.${t}`]))),
+});
+
 /** The undo / redo command of each stack the posture routes to (null: the posture has none). */
 export const UNDO_COMMANDS = Object.freeze({
   stage: Object.freeze({undo: 'practice.undo', redo: 'practice.redo'}),
@@ -142,7 +148,7 @@ export function defineEditCommands({registry = appRegistry, document: doc = glob
   }
 
   const tabDef = (tab) => ({
-    id: `edit.tab.${tab}`, title: COMMAND_COPY.tabs[tab], group: 'Edit', scopes: [E],
+    id: EDIT_COMMANDS.tab[tab], title: COMMAND_COPY.tabs[tab], group: 'Edit', scopes: [E],
     icon: tab === 'details' ? 'pencil' : tab === 'chart' ? 'drum' : 'grid-3x3',
     menu: {label: COMMAND_COPY.tabs[tab], radio: 'editTab'},
     palette: {keywords: ['edit', 'tab', tab]},
@@ -153,7 +159,7 @@ export function defineEditCommands({registry = appRegistry, document: doc = glob
 
   const off = registry.registerMany([
     {
-      id: 'edit.done', title: COMMAND_COPY.done, group: 'Edit', keys: ['Escape'], scopes: [E], icon: 'chevron-left',
+      id: EDIT_COMMANDS.done, title: COMMAND_COPY.done, group: 'Edit', keys: ['Escape'], scopes: [E], icon: 'chevron-left',
       palette: {keywords: ['done', 'leave', 'back', 'close', 'stage']},
       when: hasEdit,
       run: (c) => {
@@ -179,6 +185,6 @@ export function defineEditCommands({registry = appRegistry, document: doc = glob
 }
 
 /** The ids defined here (registry CI and tests). */
-export const EDIT_COMMAND_IDS = Object.freeze(['edit.done', ...EDIT_TABS.map((t) => `edit.tab.${t}`), 'app.undo', 'app.redo']);
+export const EDIT_COMMAND_IDS = Object.freeze([EDIT_COMMANDS.done, ...EDIT_TABS.map((t) => EDIT_COMMANDS.tab[t]), 'app.undo', 'app.redo']);
 
 defineEditCommands();
