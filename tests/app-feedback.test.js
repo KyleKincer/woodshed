@@ -5,12 +5,13 @@
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import * as clock from '../src/app/clock.js';
 import {
-  LIVE_SETTLE_MS, announce, attachStatusLine, cancelAnnounce, confirm, dismissStatus, feedback, form, resetFeedback, status, statusLine, toast, toastDuration,
-  toastState, TOAST_MS, STATUS_MS,
+  LIVE_SETTLE_MS, SHEET_CLEARANCE, announce, attachStatusLine, cancelAnnounce, confirm, dismissStatus, feedback, form, resetFeedback, status, statusLine, toast, toastDuration,
+  sheetClearance, toastState, TOAST_MS, STATUS_MS,
 } from '../src/app/feedback.js';
 import {store} from '../src/app/store.js';
 import {Dialog} from '../src/ui/dialog.js';
-import {installPopoverShim, keydown, pointer, restoreDomShims, tap} from './helpers/dom.js';
+import {Sheet} from '../src/ui/sheet.js';
+import {installPopoverShim, installResizeObserverShim, keydown, pointer, restoreDomShims, setRect, tap, triggerResize} from './helpers/dom.js';
 
 const region = () => document.querySelector('.ui-toast-region');
 const visible = () => [...document.querySelectorAll('.ui-toast-region .ui-toast')];
@@ -210,6 +211,96 @@ describe('toast', () => {
     expect(region().parentElement).toBe(d.el);
     d.close();
     expect(region().parentElement).toBe(document.body);
+  });
+});
+
+// I2b-33: on iPad the Delete-spot Undo toast landed on the Spots bottom sheet's rows. While a bottom Sheet is open the
+// region carries the sheet's height as --toast-sheet-clearance (primitives/toast.css lifts it above the sheet's top
+// edge; the geometry itself is the s2-toast-sheet fixture state, happy-dom has no layout).
+describe('toast over a bottom sheet (I2b-33)', () => {
+  const clearance = () => region().style.getPropertyValue(SHEET_CLEARANCE);
+  const bottomSheet = (height, props = {}) => {
+    const sheet = Sheet({title: 'Spots', layout: 'bottom', content: 'rows', autofocus: false, ...props});
+    setRect(sheet.el, {x: 0, y: 820 - height, width: 820, height});
+    return sheet;
+  };
+
+  test('a toast shown while a bottom sheet is open clears the sheet; closing the sheet drops the clearance', async () => {
+    const sheet = bottomSheet(492);
+    expect(sheetClearance()).toBe(492);
+    toast('Deleted Bridge fill', {action: {label: 'Undo', run() {}}, durationMs: 8000});
+    expect(clearance()).toBe('492px');
+    sheet.close();
+    await flush();
+    expect(clearance()).toBe('');
+    expect(visibleText()).toEqual(['Deleted Bridge fill']);
+  });
+
+  test('a sheet that opens under a visible toast lifts it; the tallest of two open sheets wins', async () => {
+    toast('Deleted Bridge fill', {durationMs: Infinity});
+    expect(clearance()).toBe('');
+    const low = bottomSheet(300);
+    await flush();
+    expect(clearance()).toBe('300px');
+    const tall = bottomSheet(600, {modal: true});
+    await flush();
+    expect(clearance()).toBe('600px');
+    tall.close();
+    await flush();
+    expect(clearance()).toBe('300px');
+    low.close();
+    await flush();
+    expect(clearance()).toBe('');
+  });
+
+  test('a detent change (a resize) keeps the clearance current; popover sheets and closed toasts leave it alone', async () => {
+    installResizeObserverShim();
+    const sheet = bottomSheet(328);
+    toast('Deleted Bridge fill', {durationMs: 8000});
+    expect(clearance()).toBe('328px');
+    sheet.setDetent(90);
+    expect(triggerResize(sheet.el, {x: 0, y: 82, width: 820, height: 738})).toBeGreaterThan(0);
+    expect(clearance()).toBe('738px');
+    vi.advanceTimersByTime(8000);
+    expect(visible()).toEqual([]);
+    expect(clearance()).toBe('');
+    expect(triggerResize(sheet.el)).toBe(0);   // nothing watches the sheet without a visible toast
+    sheet.close();
+
+    const anchor = document.body.appendChild(document.createElement('button'));
+    const popover = Sheet({title: 'Spots', layout: 'popover', anchor, content: 'rows', autofocus: false});
+    setRect(popover.el, {x: 400, y: 100, width: 360, height: 400});
+    toast('Deleted Bridge fill');
+    expect(clearance()).toBe('');
+    popover.close();
+  });
+
+  test('a region kept from an earlier toast comes above a sheet opened since: tapping Undo leaves the sheet open', () => {
+    toast('Saved');
+    vi.advanceTimersByTime(TOAST_MS);
+    const closed = vi.fn();
+    const sheet = bottomSheet(420, {onClose: closed});
+    const undo = vi.fn();
+    toast('Deleted Bridge fill', {action: {label: 'Undo', run: undo}, durationMs: Infinity});
+    expect(clearance()).toBe('420px');
+    const action = region().querySelector('.ui-toast-action');
+    pointer(action, 'pointerdown');
+    action.click();
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(closed).not.toHaveBeenCalled();
+    expect(sheet.open).toBe(true);
+    sheet.close();
+  });
+
+  test('a held toast stops watching; it clears the sheet again when it shows on stop', async () => {
+    const sheet = bottomSheet(410);
+    toast('Deleted Bridge fill', {durationMs: Infinity});
+    store.stage.value = {songId: 'gh', playing: true};
+    expect(visible()).toEqual([]);
+    expect(clearance()).toBe('');
+    store.stage.value = {songId: 'gh', playing: false};
+    expect(clearance()).toBe('410px');
+    sheet.close();
   });
 });
 

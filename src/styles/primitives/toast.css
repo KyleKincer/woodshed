@@ -1,10 +1,16 @@
 /* Toast (src/ui/toast.js) and the region feedback.js mounts toasts in: one at
  * a time, bottom-centre above the dock or transport (spec §7.9). A tone
- * stripe marks ok, warn and error; the text stays --ink. */
+ * stripe marks ok, warn and error; the text stays --ink. While a bottom Sheet
+ * is open, feedback.js sets --toast-sheet-clearance (the sheet's height) and
+ * the region sits a --s2 gap above the sheet's top edge, never over its rows
+ * (I2b-33). */
 @layer primitives {
   .ui-toast-region {
     position: fixed;
-    inset: auto 0 calc(var(--toast-offset, 0px) + var(--safe-bottom, 0px) + var(--s5)) 0;
+    inset: auto 0 max(
+      calc(var(--toast-offset, 0px) + var(--safe-bottom, 0px) + var(--s5)),
+      calc(var(--toast-sheet-clearance, 0px) + var(--s2))
+    ) 0;
     z-index: var(--z-toast);
     display: flex;
     flex-direction: column;

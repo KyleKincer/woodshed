@@ -11,6 +11,8 @@
 //   s2-palette-keys       ⌘K / Ctrl+K opens it, typing filters, ↓ and Enter run the section; Esc returns focus
 //   s2-shortcuts          the ? sheet: Here (the Stage chain) first, then Elsewhere; ? opens and closes it
 //   s2-toasts             a toast bottom-centre; held while playing and released on stop; Undo clickable
+//   s2-toast-sheet        I2b-33: the Delete-spot Undo toast over the Spots bottom sheet sits above the sheet's top edge
+//                         (never over its rows) at 60% and 90%, and drops back above the bottom edge once the sheet closes
 'use strict';
 
 const {checkTargets} = require('../probes/probe-targets.cjs');
@@ -215,6 +217,55 @@ async function toastFlow(page, t) {
   await settle(page.locator('.ui-toast-region .ui-toast'));
 }
 
+async function toastSheetFlow(page, t) {
+  const toast = page.locator('.ui-toast-region .ui-toast');
+  const sheet = page.locator('.ui-sheet[data-presentation=bottom]');
+  await toast.waitFor();
+  await sheet.waitFor();
+  await settle(sheet);
+  await settle(toast);
+  const v = await viewport(page);
+  const clear = async label => {
+    await settle(sheet);
+    await page.waitForFunction(() => {
+      const s = document.querySelector('.ui-sheet[data-presentation=bottom]').getBoundingClientRect();
+      const b = document.querySelector('.ui-toast-region .ui-toast').getBoundingClientRect();
+      return b.bottom <= s.top;
+    }, null, {timeout: 2000}).catch(() => null);
+    const s = await sheet.boundingBox();
+    const b = await toast.boundingBox();
+    const gap = s.y - (b.y + b.height);
+    t.expect(gap >= 4 && gap <= 24, `${label}: the toast sits just above the sheet's top edge (gap ${gap.toFixed(1)})`);
+    t.expect(b.y >= 0, `${label}: the toast stays on screen (${b.y})`);
+    t.expect(Math.abs(b.x + b.width / 2 - v.w / 2) <= 2, `${label}: bottom-centre`);
+    const hits = await page.evaluate(() => {
+      const b = document.querySelector('.ui-toast-region .ui-toast').getBoundingClientRect();
+      return [...document.querySelectorAll('.ui-sheet .fb-spot-row, .ui-sheet-head')].filter(r => {
+        const q = r.getBoundingClientRect();
+        return q.height > 0 && q.top < b.bottom && q.bottom > b.top && q.left < b.right && q.right > b.left;
+      }).map(r => r.textContent.trim());
+    });
+    t.expect(!hits.length, `${label}: the toast covers no sheet row (${hits.join(', ')})`);
+  };
+  await clear('60%');
+  await t.capture('open');
+  await page.evaluate(() => window.__feedback.sheet.setDetent(90));
+  await page.waitForTimeout(400);   // max-block-size transition (--motion-nav)
+  await clear('90%');
+  if (t.device === 'ipad') await (await t.touch()).tap(page.locator('.ui-toast-action')); else await page.locator('.ui-toast-action').click();
+  t.expect((await calls(page)).some(c => c[0] === 'spot.undoDelete'), 'Undo is clickable over the sheet');
+  await page.evaluate(() => window.__feedback.sheet.close());
+  await sheet.waitFor({state: 'detached'});
+  await page.locator('#fb-toast').click();
+  await toast.waitFor();
+  await settle(toast);
+  const b = await toast.boundingBox();
+  const below = v.h - (b.y + b.height);
+  t.expect(below >= 16 && below <= 120, `without a sheet it is back above the bottom edge (${below})`);
+  t.expect(await page.evaluate(() => document.querySelector('.ui-toast-region').style.getPropertyValue('--toast-sheet-clearance')) === '',
+    'no clearance without a sheet');
+}
+
 module.exports = [
   {name: 's2-palette-empty', url: `${STAGE}&demo=palette`, fn: emptyFlow},
   {name: 's2-palette-bar', url: `${STAGE}&demo=palette&q=57`, fn: barFlow},
@@ -226,4 +277,5 @@ module.exports = [
   {name: 's2-palette-keys', url: STAGE, fn: keysFlow, opts: {devices: ['laptop']}},
   {name: 's2-shortcuts', url: `${STAGE}&demo=shortcuts`, fn: shortcutsFlow, opts: {devices: ['laptop']}},
   {name: 's2-toasts', url: `${STAGE}&demo=toast`, fn: toastFlow},
+  {name: 's2-toast-sheet', url: `${STAGE}&layout=band&demo=sheet-toast`, fn: toastSheetFlow},
 ];

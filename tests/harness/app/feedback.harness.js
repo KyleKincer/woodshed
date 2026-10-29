@@ -3,6 +3,8 @@
 //   ?demo=palette [&q=<query>]   opens the palette at load (q: '', '57', '75%', 'loop 41-48', 're-split', 'harb', …)
 //   ?demo=shortcuts              opens the ? sheet at load (the Stage chain)
 //   ?demo=toast                  shows a toast with an action at load
+//   ?demo=sheet-toast            a bottom Sheet of spot rows (Spots, 60% detent) with a Delete-spot Undo toast over it
+//                                (I2b-33); window.__feedback.sheet is the Sheet handle (setDetent, close)
 //   ?layout=band                 the Stage band layout (store.stage.layout = 'band', [data-stage-layout=band])
 //   ?song=none                   no open song (the palette's In this song group disappears)
 // window.__feedback = {open(name, opts), calls, state(), play(on)} lets states open overlays and read what ran:
@@ -17,6 +19,7 @@ import {platform} from '/src/app/platform.js';
 import {openShortcuts} from '/src/app/shortcuts-sheet.js';
 import {effect, signal, store} from '/src/app/store.js';
 import {SongMapStore} from '/src/js/song-map.js';
+import {Sheet} from '/src/ui/sheet.js';
 
 const calls = [];
 const record = (name, ...args) => { calls.push([name, ...args]); };
@@ -174,12 +177,29 @@ export default async function mount(el, {fixture, query, h}) {
     },
   };
 
+  const spotsSheet = () => {
+    const names = ['Intro groove', 'Ride bell triplets', 'Chorus 2 push', 'Bridge fill', 'Outro hits', 'Verse 2 ghost notes',
+      'Pre-chorus build', 'Tag ending'];
+    const rows = h('ul', {class: 'fb-spot-rows', style: {listStyle: 'none', margin: 0, padding: 0, display: 'grid'}},
+      ...names.map(name => h('li', {class: 'fb-spot-row', style: {display: 'flex', alignItems: 'center', minBlockSize: '56px',
+        borderBlockEnd: '1px solid var(--line)'}}, name)));
+    const sheet = Sheet({title: 'Spots', layout: 'bottom', content: rows, autofocus: false, onClose: () => { window.__feedback.sheet = null; }});
+    window.__feedback.sheet = sheet;
+    return sheet;
+  };
+  window.__feedback.openSpots = spotsSheet;
+
   const demo = query.get('demo');
   if (demo === 'palette') openPalette({query: query.get('q') ?? ''});
   else if (demo === 'shortcuts') openShortcuts();
   else if (demo === 'toast') toast('Adding Harbor Lights', {action: {label: 'Undo', run: () => record('toast.undo')}, durationMs: Infinity});
+  else if (demo === 'sheet-toast') {
+    spotsSheet();
+    toast('Deleted Bridge fill', {action: {label: 'Undo', run: () => record('spot.undoDelete')}, durationMs: Infinity});
+  }
 
   return () => {
+    window.__feedback.sheet?.destroy();
     stopPlay();
     stopStatus();
     offStatus();

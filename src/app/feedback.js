@@ -8,6 +8,11 @@
 //     toast's. Toasts never take focus. While a pointer is over a toast or the focus is inside it, its timer pauses.
 //     While store.stage.playing is true nothing shows: new toasts queue, and a toast already showing goes back to the
 //     front of the queue (spec §0 rule 5, "nothing interrupts playback"). They are released, in order, on stop.
+//     While a bottom Sheet (.ui-sheet[data-presentation=bottom]) is open the region sits above the sheet's top edge,
+//     never over its rows: while a toast is visible, the tallest open bottom sheet's layout height is written to the
+//     region as --toast-sheet-clearance (primitives/toast.css), kept current as sheets open, close, change detent or
+//     resize (ticket I2b-33). Each toast brings the kept region above overlays opened since the last one, so its
+//     action is never under the sheet and tapping it is not a tap outside the sheet.
 //   status(text, {action, durationMs = 2500, key, tone = 'info'}) → void
 //     The Stage status line (role=status). The Stage's HUD attaches a renderer with attachStatusLine() and draws
 //     statusLine.value; status() replaces the line (one line, the latest wins) and clears it after durationMs
@@ -35,7 +40,7 @@ import {now} from './clock.js';
 import {effect, readonly, signal, store, untracked} from './store.js';
 import {Dialog} from '../ui/dialog.js';
 import {h} from '../ui/h.js';
-import {followLayerHost} from '../ui/popover.js';
+import {followLayerHost, showLayer} from '../ui/popover.js';
 import {TONES, Toast} from '../ui/toast.js';
 import '../styles/views/app/toast.css';
 
@@ -67,6 +72,7 @@ let current = null;          // the visible entry
 let view = null;             // its Toast view
 let region = null;           // .ui-toast-region, created on first use and kept (a stable container for the toasts)
 let offRegion = null;
+let sheetWatch = null;       // {mutations, resizes, observed, onResize}: watching bottom sheets while a toast is visible
 let stopHold = null;         // the effect watching store.stage.playing
 let held = false;
 let timer = null;            // the visible toast's auto-dismiss timer
@@ -102,11 +108,83 @@ function setHeld(next) {
 }
 
 function ensureRegion() {
-  if (region?.isConnected) return region;
+  if (region?.isConnected) {
+    raiseRegion();
+    return region;
+  }
   offRegion?.();            // a region someone removed from the document is replaced
   region = h('div', {class: 'ui-toast-region app-toasts', role: 'region', 'aria-label': 'Notifications'});
   offRegion = followLayerHost(region, 'toast');
   return region;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Clearance over bottom sheets (I2b-33)
+
+const SHEET_SELECTOR = '.ui-sheet[data-presentation=bottom]';
+export const SHEET_CLEARANCE = '--toast-sheet-clearance';
+
+const openBottomSheets = doc => [...doc.querySelectorAll(SHEET_SELECTOR)].filter(el => el.isConnected && !el.hidden);
+
+/**
+ * The px a bottom sheet occupies above the viewport's bottom edge: the tallest open bottom sheet's layout height (a
+ * bottom sheet is fixed to the bottom edge). offsetHeight ignores the slide-in and drag `translate`, so the toast sits
+ * where the sheet settles rather than following the animation. 0 with no open bottom sheet.
+ */
+export function sheetClearance(doc = globalThis.document) {
+  let px = 0;
+  for (const el of openBottomSheets(doc)) px = Math.max(px, el.offsetHeight || 0);
+  return Math.ceil(px);
+}
+
+function applyClearance() {
+  if (!region) return;
+  const doc = region.ownerDocument;
+  const px = current ? sheetClearance(doc) : 0;
+  if (px > 0) region.style.setProperty(SHEET_CLEARANCE, `${px}px`); else region.style.removeProperty(SHEET_CLEARANCE);
+  if (!sheetWatch?.resizes) return;
+  // Detent changes and content changes resize a sheet without any node being added or removed.
+  const sheets = new Set(current ? openBottomSheets(doc) : []);
+  for (const el of sheetWatch.observed) if (!sheets.has(el)) { sheetWatch.resizes.unobserve(el); sheetWatch.observed.delete(el); }
+  for (const el of sheets) if (!sheetWatch.observed.has(el)) { sheetWatch.resizes.observe(el); sheetWatch.observed.add(el); }
+}
+
+const touchesSheet = node => node.nodeType === 1 && (node.matches(SHEET_SELECTOR) || !!node.querySelector(SHEET_SELECTOR));
+
+function watchSheets() {
+  if (sheetWatch || !region) return;
+  const doc = region.ownerDocument;
+  const win = doc.defaultView;
+  const watch = {mutations: null, resizes: null, observed: new Set(), onResize: () => applyClearance()};
+  if (typeof win?.MutationObserver === 'function') {
+    // Sheets are appended to the body or to the topmost modal <dialog> when they open and removed when they close.
+    watch.mutations = new win.MutationObserver(records => {
+      if (records.some(r => [...r.addedNodes, ...r.removedNodes].some(touchesSheet))) applyClearance();
+    });
+    watch.mutations.observe(doc.body, {childList: true, subtree: true});
+  }
+  if (typeof win?.ResizeObserver === 'function') watch.resizes = new win.ResizeObserver(() => applyClearance());
+  win?.addEventListener('resize', watch.onResize);
+  sheetWatch = watch;
+}
+
+function unwatchSheets() {
+  if (!sheetWatch) return;
+  sheetWatch.mutations?.disconnect();
+  sheetWatch.resizes?.disconnect();
+  region?.ownerDocument.defaultView?.removeEventListener('resize', sheetWatch.onResize);
+  sheetWatch = null;
+  region?.style.removeProperty(SHEET_CLEARANCE);
+}
+
+/**
+ * Brings the kept region above every overlay opened since it was last shown (the Spots sheet opened after an earlier
+ * toast): first in the top layer, so it is never painted under the sheet, and last in the layer stack, so a tap on its
+ * Undo is not a tap outside the sheet that closes it.
+ */
+function raiseRegion() {
+  try { if (region.matches(':popover-open')) region.hidePopover(); } catch { /* no Popover API: the fallback layer */ }
+  showLayer(region, 'toast');
 }
 
 function clearTimer() {
@@ -160,6 +238,8 @@ function show(entry) {
   el.addEventListener('focusin', () => pauseTimer('focus'));
   el.addEventListener('focusout', e => { if (!el.contains(e.relatedTarget)) resumeTimer('focus'); });
   region.append(el);
+  watchSheets();
+  applyClearance();
   remaining = entry.durationMs;
   startTimer();
 }
@@ -171,6 +251,7 @@ function hideCurrent() {
   view = null;
   current = null;
   remaining = null;
+  unwatchSheets();
 }
 
 function pump() {
@@ -435,6 +516,7 @@ export function resetFeedback() {
   stopHold?.();
   stopHold = null;
   held = false;
+  unwatchSheets();
   offRegion?.();
   offRegion = null;
   region = null;
