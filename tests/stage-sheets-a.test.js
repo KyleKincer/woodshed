@@ -24,7 +24,9 @@ import {render as renderMix, mixNotes, padState} from '../src/stage/sheets/mix.j
 import {COPY, CONTROLS, PRESETS, COUNT_IN_CHOICES, TRAINER_RANGE} from '../src/stage/sheets/sheets-a.copy.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession} from './helpers/test-session.js';
-import {installPopoverShim, keydown, restoreDomShims} from './helpers/dom.js';
+import {installPopoverShim, keydown, pointer, restoreDomShims} from './helpers/dom.js';
+import {COPY as MC} from '../src/stage/menus.js';
+import {LONG_PRESS_MS} from '../src/ui/stem-pad.js';
 import {sevenEight} from './fixtures/maps.js';
 import {speedText} from '../src/stage/hud.js';
 
@@ -879,6 +881,110 @@ describe('Mix sheet', () => {
     expect(b.runs.map((r) => r.id)).toEqual(['mix.minusMe', 'mix.onlyMe', 'mix.full', 'mix.chartAudio']);
     expect(b.runs.at(-1).args).toEqual({level: 'loud'});
     expect(checked(must(must(b.body, 'radiogroup', M.chartAudio), 'radio', 'Loud'))).toBe(true);
+  });
+
+  describe('the stem pad menu (spec §7.7: Mute · Solo · Reset level · This is my instrument; I2b-17)', () => {
+    const menuEl = () => document.querySelector('[role=menu]');
+    const menuRows = () => [...(menuEl()?.querySelectorAll('[role^=menuitem]') ?? [])].map((el) => nameOf(el));
+    const contextmenu = (target, init = {}) => {
+      // Browsers report contextmenu as a PointerEvent carrying the pointer type ('' from the keyboard).
+      const e = new window.PointerEvent('contextmenu', {bubbles: true, cancelable: true, button: 2, clientX: 40, clientY: 50, pointerType: 'mouse', ...init});
+      target.dispatchEvent(e);
+      return e;
+    };
+    /** A spy pair for the sheet's `menus` and `Menu` options: records each build and open. */
+    const spies = () => {
+      const built = [], opened = [];
+      const menus = {stemMenu: (session, stem, opts) => { built.push({session, stem, opts}); return [{id: 'x', label: 'X', run: () => {}}]; }};
+      const Menu = {open: (items, opts) => { const handle = {open: true, close: () => { handle.open = false; }}; opened.push({items, opts, handle}); return handle; }};
+      return {built, opened, sheet: {menus, Menu}};
+    };
+
+    test('a right-click on a pad opens menus.stemMenu(session, stem) through Menu.open at the pointer', async () => {
+      const sp = spies();
+      const b = await bed('mix', {sheet: sp.sheet});
+      const e = contextmenu(must(b.body, 'button', 'Mute Bass'));
+      expect(e.defaultPrevented).toBe(true);
+      expect(sp.built).toHaveLength(1);
+      expect(sp.built[0].session).toBe(b.ts.session);
+      expect(sp.built[0].stem).toBe('bass');
+      expect(sp.built[0].opts).toMatchObject({registry: b.registry, account: b.account});
+      expect(sp.opened).toHaveLength(1);
+      expect(sp.opened[0].items).toEqual([expect.objectContaining({id: 'x'})]);
+      expect(sp.opened[0].opts).toMatchObject({anchor: {x: 40, y: 50}, registry: b.registry, label: M.stemMenu('Bass')});
+      // A second right-click while the menu is open does not stack a second one.
+      contextmenu(pad(b, 'bass'));
+      expect(sp.opened).toHaveLength(1);
+      // Nothing else happened to the mix.
+      vi.advanceTimersByTime(1000);
+      expect(b.s().mix.tracks.every((t) => !t.muted && !t.soloed)).toBe(true);
+    });
+
+    test('Shift+F10 and the ContextMenu key on a pad open its menu below the pad', async () => {
+      const sp = spies();
+      const b = await bed('mix', {sheet: sp.sheet});
+      const drums = must(b.body, 'button', 'Mute Drums');
+      expect(keydown('F10', {target: drums, shiftKey: true}).defaultPrevented).toBe(true);
+      expect(sp.opened.at(-1).opts.anchor).toBe(pad(b, 'drums'));
+      sp.opened.at(-1).handle.close();
+      expect(keydown('ContextMenu', {target: must(b.body, 'slider', 'Vocals level')}).defaultPrevented).toBe(true);
+      expect(sp.built.map((x) => x.stem)).toEqual(['drums', 'vocals']);
+      expect(sp.opened.at(-1).opts.anchor).toBe(pad(b, 'vocals'));
+      // The keyboard's own contextmenu event (at 0,0) anchors to the pad too.
+      sp.opened.at(-1).handle.close();
+      contextmenu(drums, {button: 0, clientX: 0, clientY: 0, pointerType: ''});
+      expect(sp.opened.at(-1).opts.anchor).toBe(pad(b, 'drums'));
+    });
+
+    test('a touch long-press still solos (spec §4.7, §7.6) and never also opens the menu', async () => {
+      const sp = spies();
+      const b = await bed('mix', {sheet: sp.sheet});
+      const target = must(b.body, 'button', 'Mute Bass');
+      pointer(target, 'pointerdown', {pointerType: 'touch', x: 40, y: 50});
+      vi.advanceTimersByTime(LONG_PRESS_MS + 10);
+      expect(b.s().mix.tracks.find((t) => t.name === 'bass').soloed).toBe(true);
+      const e = contextmenu(target, {button: 0, pointerType: 'touch'});
+      expect(e.defaultPrevented).toBe(true);
+      pointer(target, 'pointerup', {pointerType: 'touch', x: 40, y: 50});
+      expect(sp.built).toHaveLength(0);
+      expect(sp.opened).toHaveLength(0);
+    });
+
+    test('a Mac Ctrl-click opens the menu and neither mutes nor solos the pad under it', async () => {
+      const sp = spies();
+      const b = await bed('mix', {sheet: sp.sheet});
+      const target = must(b.body, 'button', 'Mute Vocals');
+      pointer(target, 'pointerdown', {x: 40, y: 50, ctrlKey: true});
+      contextmenu(target, {button: 0, ctrlKey: true});
+      expect(sp.opened).toHaveLength(1);
+      vi.advanceTimersByTime(2000);   // past the long-press and the double-tap wait; the pointerup lands on the menu
+      const vocals = b.s().mix.tracks.find((t) => t.name === 'vocals');
+      expect(vocals.soloed).toBe(false);
+      expect(vocals.muted).toBe(false);
+    });
+
+    test('the real menu: Mute · Solo · Reset level · This is my instrument; choosing Mute mutes the stem', async () => {
+      const b = await bed('mix');
+      contextmenu(must(b.body, 'button', 'Mute Bass'));
+      vi.advanceTimersByTime(1);
+      expect(menuEl()).toBeTruthy();
+      expect(menuEl().getAttribute('aria-label') ?? nameOf(menuEl())).toBe(M.stemMenu('Bass'));
+      expect(menuRows()).toEqual([MC.mute, MC.solo, MC.resetLevel, MC.mine]);
+      const mute = [...menuEl().querySelectorAll('[role^=menuitem]')].find((el) => nameOf(el) === MC.mute);
+      mute.click();
+      await b.ts.settle();
+      expect(b.s().mix.tracks.find((t) => t.name === 'bass').muted).toBe(true);
+      expect(menuEl()).toBeNull();
+    });
+
+    test('destroying the sheet closes an open stem menu', async () => {
+      const sp = spies();
+      const b = await bed('mix', {sheet: sp.sheet});
+      contextmenu(pad(b, 'drums'));
+      expect(sp.opened[0].handle.open).toBe(true);
+      b.handle.destroy();
+      expect(sp.opened[0].handle.open).toBe(false);
+    });
   });
 
   test('destroy removes every pad', async () => {
