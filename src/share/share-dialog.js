@@ -40,9 +40,12 @@ export const COPIED_MS = 2000;
 let dialogSeq = 0;
 
 /** The origin share links point at: VITE_SHARE_ORIGIN when set (desktop builds), else this page's origin. */
+export const PUBLIC_ORIGIN = 'https://woodshed.kylekincer.com';
 export function shareOrigin({env = import.meta.env, location = globalThis.location} = {}) {
   const configured = typeof env?.VITE_SHARE_ORIGIN === 'string' ? env.VITE_SHARE_ORIGIN.trim() : '';
-  return (configured || location?.origin || '').replace(/\/+$/, '');
+  // The desktop app serves the UI from 127.0.0.1: a link there would only work on this computer.
+  const local = /^(127\.0\.0\.1|localhost)$/.test(location?.hostname ?? '') && !!globalThis.woodshedDesktop;
+  return (configured || (local ? PUBLIC_ORIGIN : location?.origin) || '').replace(/\/+$/, '');
 }
 
 /** The public URL of a share token. */

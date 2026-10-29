@@ -101,6 +101,7 @@ jobs:
         shell: bash
         env:
           VITE_CONVEX_URL: https://tidy-kookabura-985.convex.cloud
+          VITE_SHARE_ORIGIN: https://woodshed.kylekincer.com
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}

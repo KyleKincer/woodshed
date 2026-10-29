@@ -40,7 +40,7 @@ const setlist = (id = 'set-friday', query = '') => `/set/${id}?fx-reset=1&${NOW}
 const harness = (query = '') => `/__harness/library-selection?fx-reset=1&${NOW}${query ? `&${query}` : ''}`;
 const APP = {ready: 'library'};
 // Share… shows its disabled reason "Not built yet" until SH1's share dialog lands (wave 3a, D2).
-const SHARE_PENDING = {structure: {placeholder: true}};
+const SHARE_PENDING = {};   // Share… is built (SH1); the "Not built yet" allowance is gone
 const SET = {ready: 'setlist'};
 const DARK = {themes: ['dark']};
 
@@ -335,7 +335,7 @@ module.exports = [
   {
     name: 'lb3-setlist-play',
     url: setlist(),
-    opts: {...SET, ...DARK, devices: ['laptop'], capture: false, structure: {placeholder: true}},   // the Stage's surfaces arrive in this wave
+    opts: {...SET, ...DARK, devices: ['laptop'], capture: false},   // the Stage's surfaces arrive in this wave
     async fn(page, t) {
       await page.getByRole('button', {name: 'Play from the top'}).click();
       await t.ready('stage');
