@@ -16,30 +16,45 @@ vi.mock('../src/js/notation/store.js',()=>({NotationStore:vi.fn(),loadSharedNota
 vi.mock('../src/js/notation/audio.js',()=>({DrumAudio:class{mode='recording';out={gain:{value:.65}};play(){}setScore(){}setMode(){}destroy(){}}}));
 import {createNotationWorkspace} from '../src/js/notation/editor.js';
 import {openPart} from '../src/js/notation/part.js';
+import {createRegistry} from '../src/app/commands.js';
+import {startDispatcher} from '../src/app/dispatch.js';
+import {defineChartCommands} from '../src/edit/chart/commands.js';
 import {emptyScore,fraction} from '../shared/notation.ts';
 
-let workspace,part,host,engine,persistence;
+// Keys reach the editor only as registry commands in the score's focus scope (D18, D45): the
+// dispatcher runs on an isolated registry with the Edit · Chart commands, and the workspace is the
+// 'chart' context. The frame's inspector slots are plain elements.
+let workspace,part,host,engine,persistence,registry,stopDispatch,offChart,slots,prefsData;
 const metronome={beats:[],sectionAt:()=>({bpm:120,beatsPerBar:4,unit:4})};
-beforeEach(()=>{views.length=0;localStorage.clear();document.body.innerHTML='<main class="player"><section class="notation-workspace"></section></main>';host=document.querySelector('section');
+const memoryPrefs=()=>({get:path=>path.split('.').reduce((o,k)=>o?.[k],prefsData),set(path,value){const keys=path.split('.');let o=prefsData;for(const k of keys.slice(0,-1))o=o[k]??={};o[keys.at(-1)]=value;}});
+beforeEach(()=>{views.length=0;prefsData={edit:{chart:{view:'score',paging:'pages',keys:{}}}};document.body.innerHTML='<main><section class="notation-workspace"></section></main>';host=document.querySelector('section');
+  slots={inspector:{kit:document.createElement('div'),properties:document.createElement('div'),listen:document.createElement('div')},status:document.createElement('p')};
+  for(const el of [...Object.values(slots.inspector),slots.status])document.body.append(el);
   engine={duration:8,playing:false,ctx:{currentTime:0},tracks:[],loop:{enabled:false},seek:vi.fn(),getPosition:()=>0,setLoop:vi.fn(),toggleMute:vi.fn()};
-  persistence={load:vi.fn(async()=>null),set:vi.fn(),destroy:vi.fn(),flush:vi.fn()};});
-afterEach(()=>{workspace?.destroy();part?.destroy();});
+  persistence={load:vi.fn(async()=>null),set:vi.fn(),destroy:vi.fn(),flush:vi.fn()};
+  registry=createRegistry();defineChartCommands({registry});stopDispatch=startDispatcher({registry,platform:'win'});
+  registry.provide('posture',()=>'edit');registry.provide('edit',()=>({tab:'chart'}));offChart=registry.provide('chart',()=>workspace);});
+afterEach(()=>{workspace?.destroy();part?.destroy();stopDispatch();offChart();workspace=null;});
 async function open(score=null,extra={}){persistence.load.mockResolvedValue(score);part=await openPart({song:{id:'song',title:'Song'},engine,metronome,persistence});
-  workspace=await createNotationWorkspace({host,part,song:{id:'song',title:'Song'},engine,getView:()=>({start:0,end:8}),setView:vi.fn(),setFollow:vi.fn(),play:vi.fn(),...extra});workspace.setVisible(true);}
-const key=(k,extra={})=>host.querySelector('[role="grid"]').dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true,...extra}));
-const clickAction=name=>host.querySelector(`[data-action="${name}"]`).click();
+  workspace=await createNotationWorkspace({host,slots,part,song:{id:'song',title:'Song'},engine,prefs:memoryPrefs(),drumKeys:{get:()=>prefsData.edit.chart.keys,save:vi.fn(),reserved:()=>({})},...extra});workspace.setVisible(true);workspace.focus();}
+const surface=()=>host.querySelector('[role="grid"]');
+const CODES={'/':'Slash','.':'Period','=':'Equal','-':'Minus',' ':'Space'};
+const codeOf=k=>/^[a-z]$/i.test(k)?`Key${k.toUpperCase()}`:/^\d$/.test(k)?`Digit${k}`:CODES[k]??k;
+// A key pressed with the score focused, as the dispatcher sees it (letters and digits on e.code, D56).
+const key=(k,extra={})=>{const target=document.activeElement&&document.activeElement!==document.body?document.activeElement:surface();const e=new KeyboardEvent('keydown',{key:k,code:codeOf(k),bubbles:true,cancelable:true,...extra});target.dispatchEvent(e);return e;};
+const run=(name,...args)=>workspace.run(name,...args);
 const saved=()=>persistence.set.mock.calls.at(-1)[0];
 const hits=()=>saved().bars.flatMap(b=>b.hits);
 const view=()=>views.at(-1);
 // Score gestures: down comes from the view, up from the window.
-const tap=(at,{x=10,y=10,shiftKey=false}={})=>{view().pointer('down',at,{clientX:x,clientY:y});window.dispatchEvent(new PointerEvent('pointerup',{clientX:x,clientY:y,shiftKey}));};
+const tap=(at,{x=10,y=10,shiftKey=false}={})=>{view().pointer('down',at,{clientX:x,clientY:y});window.dispatchEvent(new PointerEvent('pointerup',{clientX:x,clientY:y,shiftKey}));workspace.focus();};
 // happy-dom has no layout: give the lanes the 800 px width they are drawn at.
-const lane=(x,y,move)=>{const el=host.querySelector('.notation-lanes');Object.defineProperty(el,'clientWidth',{value:800,configurable:true});el.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:x,clientY:y}));if(move)el.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:move[0],clientY:move[1]}));el.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:move?.[0]??x,clientY:move?.[1]??y}));};
+const lane=(x,y,move)=>{const el=host.querySelector('.notation-lanes');Object.defineProperty(el,'clientWidth',{value:800,configurable:true});el.dispatchEvent(new PointerEvent('pointerdown',{button:0,pointerId:1,clientX:x,clientY:y}));if(move)el.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:move[0],clientY:move[1]}));el.dispatchEvent(new PointerEvent('pointerup',{pointerId:1,clientX:move?.[0]??x,clientY:move?.[1]??y}));workspace.focus();};
 // Lane rows at 120 bpm over an 8 s view: 50 px per quarter; core kit rows from the top.
 const ROW={snare:208,crossStick:236};
 
 test('drum keys write at the cursor and store only position, never written duration',async()=>{
-  await open();expect(document.querySelector('[role="dialog"]')).toBeNull();expect(persistence.set).not.toHaveBeenCalled();
+  await open();expect(document.querySelector('dialog')).toBeNull();expect(persistence.set).not.toHaveBeenCalled();
   key('s');expect(hits()).toHaveLength(1);expect(hits()[0]).toMatchObject({instrument:'snare',offset:fraction(0),voice:1});
   for(const field of ['duration','value','dotted','tuplet'])expect(hits()[0]).not.toHaveProperty(field);
   key('5');key('ArrowRight');key('k');expect(hits()[1]).toMatchObject({instrument:'kick',offset:fraction(1),voice:2});
@@ -55,8 +70,8 @@ test('R skips a step without writing, and the same key twice in one place does n
 });
 
 test('/ cycles tuplet steps and writes on the tuplet grid',async()=>{
-  // happy-dom keeps a re-rendered select's old value; read the option the toolbar marks.
-  await open();const tuplet=()=>host.querySelector('[data-field="tuplet"] [selected]').value;
+  // The toolbar draws the tuplet from state().
+  await open();const tuplet=()=>String(workspace.state().step.tuplet);
   key('4');key('/');expect(tuplet()).toBe('3');
   key('ArrowRight');key('s');expect(hits()[0].offset).toEqual(fraction(1,3));
   key('ArrowRight');key('ArrowRight');key('k');expect(hits()[1].offset).toEqual(fraction(1));
@@ -64,13 +79,13 @@ test('/ cycles tuplet steps and writes on the tuplet grid',async()=>{
 });
 
 test('an explicit tuplet refuses notes off its grid',async()=>{
-  await open();clickAction('tuplet');
-  const form=document.querySelector('[role="dialog"] form');form.querySelector('[name="count"]').value='3';
-  form.dispatchEvent(new Event('submit',{cancelable:true}));await vi.waitFor(()=>expect(document.querySelector('[role="dialog"]')).toBeNull());
+  await open();run('tuplet-dialog');
+  const form=document.querySelector('dialog form');form.querySelector('[name="count"]').value='3';
+  form.dispatchEvent(new Event('submit',{cancelable:true}));await vi.waitFor(()=>expect(document.querySelector('dialog[open]')).toBeNull());workspace.focus();
   expect(saved().bars[0].tuplets).toEqual([{start:fraction(0),length:fraction(1),count:3}]);
   const count=persistence.set.mock.calls.length;
   key('3');key('ArrowRight');key('s');
-  expect(persistence.set).toHaveBeenCalledTimes(count);expect(host.querySelector('.notation-message').textContent).toMatch(/cannot be written there/);
+  expect(persistence.set).toHaveBeenCalledTimes(count);expect(slots.status.textContent).toMatch(/cannot be written there/);expect(workspace.state().message).toMatch(/cannot be written there/);
 });
 
 test('A, G and Shift+A change the selected note, or arm the next one',async()=>{
@@ -84,12 +99,13 @@ test('A, G and Shift+A change the selected note, or arm the next one',async()=>{
 });
 
 test('kit pads write at the cursor unless they are set to audition',async()=>{
-  await open();clickAction('panel-kit');
-  host.querySelector('[data-kit="rideBell"]').click();expect(hits()[0].instrument).toBe('rideBell');
+  await open();
+  slots.inspector.kit.querySelector('[data-kit="rideBell"]').click();expect(hits()[0].instrument).toBe('rideBell');
   const count=persistence.set.mock.calls.length;
-  const audition=host.querySelector('[data-field="audition"]');audition.checked=true;audition.dispatchEvent(new Event('change',{bubbles:true}));
-  host.querySelector('[data-kit="snare"]').click();expect(persistence.set).toHaveBeenCalledTimes(count);
-  key('s');expect(hits().map(h=>h.instrument)).toEqual(['rideBell','snare']);
+  slots.inspector.kit.querySelector('[data-field="audition"]').click();
+  expect(slots.inspector.kit.querySelector('[data-field="audition"]').getAttribute('aria-pressed')).toBe('true');
+  slots.inspector.kit.querySelector('[data-kit="snare"]').click();expect(persistence.set).toHaveBeenCalledTimes(count);
+  workspace.focus();key('s');expect(hits().map(h=>h.instrument)).toEqual(['rideBell','snare']);
 });
 
 test('clicking the score places the cursor and seeks; double-click writes the piece on that line',async()=>{
@@ -108,35 +124,39 @@ test('clicking a note selects it for editing and deletion',async()=>{
   tap({index:0,q:0,hit:hits()[0],y:30,lineTop:0,lineHeight:80});
   expect([...view().calls.setSelection.at(-1)]).toEqual([hits()[0].id]);
   key('Delete');expect(hits()).toHaveLength(0);
-  clickAction('undo');expect(hits()).toHaveLength(1);
+  key('z',{ctrlKey:true});expect(hits()).toHaveLength(1);
 });
 
 test('the layout switch is saved with the part and re-engraves it',async()=>{
   await open();key('s');
-  host.querySelector('[data-layout="split"]').click();
+  slots.inspector.properties.querySelector('[data-layout="split"]').click();
   expect(saved().layout).toBe('split');expect(view().calls.setScore.at(-1)[0].layout).toBe('split');
-  host.querySelector('[data-layout="combined"]').click();expect(saved()).not.toHaveProperty('layout');
+  slots.inspector.properties.querySelector('[data-layout="combined"]').click();expect(saved()).not.toHaveProperty('layout');
 });
 
 test('lane drags move notes in time and across lanes; marquee and delete are undoable',async()=>{
-  await open();host.querySelector('[data-view="lanes"]').click();key('s');
+  await open();run('view','lanes');key('s');
   lane(5,ROW.snare,[55,ROW.crossStick]);expect(hits()[0]).toMatchObject({instrument:'crossStick',offset:fraction(1)});
-  clickAction('undo');expect(hits()[0]).toMatchObject({instrument:'snare',offset:fraction(0)});
-  clickAction('redo');
+  key('z',{ctrlKey:true});expect(hits()[0]).toMatchObject({instrument:'snare',offset:fraction(0)});
+  key('z',{ctrlKey:true,shiftKey:true});
   lane(40,195,[115,250]);key('Delete');expect(hits()).toHaveLength(0);
-  clickAction('undo');expect(hits()).toHaveLength(1);
+  run('undo');expect(hits()).toHaveLength(1);
 });
 
 test('double-click in a lane writes that piece; double-click on a lane note removes it',async()=>{
-  await open();host.querySelector('[data-view="lanes"]').click();
+  await open();run('view','lanes');
   lane(100,ROW.snare);lane(100,ROW.snare);expect(hits()[0]).toMatchObject({instrument:'snare',offset:fraction(2)});
   lane(103,ROW.snare);lane(103,ROW.snare);expect(hits()).toHaveLength(0);
 });
 
-test('workspace routing claims drum keys after waveform focus and preserves text editing',async()=>{
-  await open();const event=new KeyboardEvent('keydown',{key:'s',bubbles:true,cancelable:true});document.body.dispatchEvent(event);workspace.handleKey(event);expect(event.defaultPrevented).toBe(true);expect(hits()[0].instrument).toBe('snare');
-  const before=persistence.set.mock.calls.length;const input=document.createElement('input');host.append(input);const textKey=new KeyboardEvent('keydown',{key:'s',cancelable:true});input.dispatchEvent(textKey);workspace.handleKey(textKey);expect(textKey.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
-  const snap=new KeyboardEvent('keydown',{key:'S',shiftKey:true,cancelable:true});workspace.handleKey(snap);expect(snap.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
+test('drum keys apply only while the score has focus, and text editing keeps its keys (D18)',async()=>{
+  await open();surface().blur();
+  const outside=new KeyboardEvent('keydown',{key:'s',code:'KeyS',bubbles:true,cancelable:true});document.body.dispatchEvent(outside);
+  expect(outside.defaultPrevented).toBe(false);expect(persistence.set).not.toHaveBeenCalled();
+  workspace.focus();expect(key('s').defaultPrevented).toBe(true);expect(hits()[0].instrument).toBe('snare');
+  const before=persistence.set.mock.calls.length;const input=document.createElement('input');host.append(input);input.focus();
+  const textKey=key('s');expect(textKey.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
+  workspace.focus();const snap=key('S',{shiftKey:true});expect(snap.defaultPrevented).toBe(false);expect(persistence.set).toHaveBeenCalledTimes(before);
 });
 
 test('an imported draft is one undoable edit, upgraded to positions only, and never replaces written notes',async()=>{
@@ -149,5 +169,5 @@ test('an imported draft is one undoable edit, upgraded to positions only, and ne
   expect(saved().version).toBe(2);expect(hits()).toHaveLength(1);expect(hits()[0]).toMatchObject({id:'imported-kick',instrument:'kick'});expect(hits()[0]).not.toHaveProperty('duration');
   expect(view().calls.setScore.at(-1)[0]).toBe(part.score);
   expect(()=>part.importScore(draft)).toThrow('already has drum notation');
-  clickAction('undo');expect(saved().bars).toHaveLength(0);
+  key('z',{ctrlKey:true});expect(saved().bars).toHaveLength(0);
 });
