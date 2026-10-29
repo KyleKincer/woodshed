@@ -27,6 +27,12 @@ export const SLOP_PX = 8;              // tap vs drag, and the mouse drag thresh
 export const FOLLOW_GUARD_MS = 900;    // manual scrolls this soon after a programmatic one do not pause Follow
 export const PAGE_TURN_MS = 200;
 export const COMMIT_HOLD_MS = 1000;    // a committed loop edit is drawn until setLoopRange answers
+/**
+ * A width change (the music column resizing) re-engraves this long after it settles, so the size
+ * change that comes with it (the Stage's rail ↔ band switch, debounced 150 ms; a Distance change)
+ * takes the new width in its own relayout and the width costs no engraving of its own.
+ */
+export const RESIZE_SETTLE_MS = 250;
 const LINE_SLOP_PX = 2;
 const HAPTIC_MS = 8;
 const LAYOUTS = ['combined', 'split'];
@@ -87,7 +93,7 @@ export function createChart({
   const state = {
     scale: finite(Number(scale)) ? clampScale(scale) : DEFAULT_SCALE,
     layoutOverride: LAYOUTS.includes(initialLayout) ? initialLayout : null,
-    barsPerRow: Number.isInteger(display?.barsPerRow) && display.barsPerRow > 0 ? display.barsPerRow : -1,
+    barsPerRow: barsValue(display?.barsPerRow),
     floors: sanitizeFloors(fonts, FONT_FLOORS),
     followStyle: followStyle === 'page' ? 'page' : 'scroll',
     followAnchor: anchorValue(followAnchor, 0.33),
@@ -182,9 +188,27 @@ export function createChart({
     host.setAttribute('aria-busy', 'true');
     if (keepAnchor && view?.ready && !pendingAnchor) pendingAnchor = captureAnchor();
   }
+  /**
+   * Brings the view to the chart's size and display state with at most one engraving: a changed
+   * Display layout re-engraves the part (which also takes the new sizes), else changed sizes
+   * relayout. True when an engraving started; it is reported to onRelayout.
+   */
+  function engrave({anchor = true} = {}) {
+    if (!view) return false;
+    // The anchor is read from the current engraving, before the view takes the new sizes.
+    const kept = anchor && view.ready && !pendingAnchor ? captureAnchor() : null;
+    const newLayout = !!renderedScore && renderedLayout !== layout();
+    const resized = view.configure({scale: state.scale, fonts: floorsNow(), barsPerRow: state.barsPerRow});
+    if (!newLayout && !resized) return false;
+    if (kept) pendingAnchor = kept;
+    beginRelayout(false);
+    if (newLayout) { renderedLayout = layout(); view.setScore(part.score, {layout: layout()}); }
+    else view.relayout();
+    return true;
+  }
   function ensureView() {
     if (view) return;
-    view = createScoreView(scoreHost, {scale: state.scale, barsPerRow: state.barsPerRow, fonts: floorsNow(), onRender: rendered, onPointer: pointer});
+    view = createScoreView(scoreHost, {scale: state.scale, barsPerRow: state.barsPerRow, fonts: floorsNow(), resizeSettleMs: RESIZE_SETTLE_MS, onRender: rendered, onPointer: pointer});
     view.setLoopHandles(true);
     const stage = view.stage;
     stage.addEventListener('contextmenu', onContextMenu);
@@ -657,15 +681,27 @@ export function createChart({
       host.classList.remove('chart');
       for (const name of ['data-rendered', 'data-glass', 'aria-busy']) host.removeAttribute(name);
     },
+    /**
+     * Scale, on-screen label floors and bars per system together, in at most one relayout (D54, R1):
+     * a Distance change or a dense layout switch is one call. Omitted keys keep their value; with
+     * `anchor` the bar at the follow line keeps its screen position. Returns true when a relayout
+     * started (one onRelayout report follows); unchanged engraving sizes, or no view yet, start none.
+     */
+    configure(next = {}, {anchor = true} = {}) {
+      if ('scale' in next && next.scale != null) {
+        const value = clampScale(next.scale);
+        if (Number.isFinite(value)) state.scale = value;
+      }
+      if ('fonts' in next && next.fonts) state.floors = sanitizeFloors(next.fonts, state.floors);
+      if ('barsPerRow' in next) state.barsPerRow = barsValue(next.barsPerRow);
+      return engrave({anchor});
+    },
     /** One relayout; with `anchor` the bar at the follow line keeps its screen position. */
     setScale(value, {anchor = true} = {}) {
       const next = clampScale(value);
       if (!Number.isFinite(next) || Math.abs(next - state.scale) < 1e-9) return;
       state.scale = next;
-      if (!view) return;
-      beginRelayout(anchor);
-      view.configure({scale: next, fonts: floorsNow()});
-      view.relayout();
+      engrave({anchor});
     },
     /** Pinch preview: a CSS transform on .chart-score only, no relayout; null clears it. */
     previewScale(factor, {clientX, clientY} = {}) {
@@ -686,27 +722,19 @@ export function createChart({
     },
     /** Display (this device): layout ('combined'|'split'|null = the part's own) and bars per row, in one relayout. */
     setDisplay(next = {}) {
-      let changed = false;
       if ('layout' in next && (next.layout == null || LAYOUTS.includes(next.layout))) {
         const own = part?.score?.layout || 'combined';
         const value = next.layout === own ? null : next.layout ?? null;
         writePref('chart.display.layout', value);
-        if (value !== state.layoutOverride) { state.layoutOverride = value; changed = true; }
+        state.layoutOverride = value;
       }
-      if ('barsPerRow' in next) {
-        const value = Number.isInteger(next.barsPerRow) && next.barsPerRow > 0 ? next.barsPerRow : -1;
-        if (value !== state.barsPerRow) { state.barsPerRow = value; changed = true; }
-      }
-      if (!changed || !view) return;
-      beginRelayout(true);
-      view.configure({barsPerRow: state.barsPerRow});
-      if (renderedScore && renderedLayout !== layout()) { renderedLayout = layout(); view.setScore(part.score, {layout: layout()}); }
-      else view.relayout();
+      if ('barsPerRow' in next) state.barsPerRow = barsValue(next.barsPerRow);
+      engrave({anchor: true});
     },
     /** On-screen label floors in px ({barNumber: 14 × d, marker: 20 × d}); relayouts when the engraving sizes change. */
     setFonts(next = {}) {
       state.floors = sanitizeFloors(next, state.floors);
-      if (view && view.configure({fonts: floorsNow()})) { beginRelayout(true); view.relayout(); }
+      engrave({anchor: true});
     },
     setFollowStyle(style, {anchor} = {}) {
       if (style === 'scroll' || style === 'page') state.followStyle = style;
@@ -753,6 +781,10 @@ function sanitizeFloors(fonts, fallback) {
     if (Number.isFinite(value) && value > 0) out[key] = value;
   }
   return out;
+}
+/** Bars per system: a positive integer, else -1 (automatic by width). */
+function barsValue(value) {
+  return Number.isInteger(value) && value > 0 ? value : -1;
 }
 function anchorValue(value, fallback) {
   const v = Number(value);

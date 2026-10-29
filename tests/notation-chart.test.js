@@ -69,7 +69,7 @@ vi.mock('../src/js/notation/score-view.js', () => ({
   },
 }));
 
-import {createChart, COPY, EMPTY_ACTIONS, SCALE_STEPS, FONT_FLOORS, LONG_PRESS_MS, stepScale, fontFloors, clampScale} from '../src/js/notation/chart.js';
+import {createChart, COPY, EMPTY_ACTIONS, SCALE_STEPS, FONT_FLOORS, LONG_PRESS_MS, RESIZE_SETTLE_MS, stepScale, fontFloors, clampScale} from '../src/js/notation/chart.js';
 import {prefs} from '../src/app/prefs.js';
 import {demoScore} from './fixtures/drum-score.js';
 
@@ -746,7 +746,7 @@ describe('scale, pinch and fonts', () => {
     open({scale: 1.2});
     expect(view().options.fonts).toEqual({barNumber: 12, marker: 17});
     chart.setScale(2);
-    expect(view().calls.configure.at(-1)).toEqual({scale: 2, fonts: {barNumber: 7, marker: 10}});
+    expect(view().calls.configure.at(-1)).toEqual({scale: 2, fonts: {barNumber: 7, marker: 10}, barsPerRow: -1});
     const count = view().calls.relayout;
     chart.setFonts({barNumber: 14 * 1.3, marker: 20 * 1.3});   // Kit distance
     expect(view().settings.fonts).toEqual({barNumber: 10, marker: 13});
@@ -770,6 +770,75 @@ describe('scale, pinch and fonts', () => {
     expect(view().calls.relayout).toBe(count + 1);
     chart.setScale(1.8, {anchor: false});
     expect(scroller().scrollTop).toBeCloseTo(410, 6);
+  });
+
+  it('configure applies scale, label floors and bars per system in one relayout and one report (I2b-2)', () => {
+    open({scale: 1.2});
+    const count = view().calls.relayout, configures = view().calls.configure.length;
+    relayouts.length = 0;
+    // A Distance change to Kit on a dense part: everything the surface asks for, as one call.
+    const kit = {barNumber: 14 * 1.3, marker: 20 * 1.3};
+    expect(chart.configure({scale: 1.6, fonts: kit, barsPerRow: 2})).toBe(true);
+    expect(view().calls.relayout).toBe(count + 1);
+    expect(view().calls.configure.slice(configures)).toEqual([{scale: 1.6, fonts: fontFloors(kit, 1.6), barsPerRow: 2}]);
+    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 2, fonts: {barNumber: 12, marker: 17}});
+    expect(relayouts).toEqual([{ms: 0, bars: 32}]);
+    expect(chart.state).toMatchObject({scale: 1.6, barsPerRow: 2, floors: kit});
+    expect(host.dataset.rendered).toBe('2');
+    // Unchanged sizes start nothing; omitted keys keep their value.
+    expect(chart.configure({scale: 1.6, fonts: kit, barsPerRow: 2})).toBe(false);
+    expect(chart.configure({})).toBe(false);
+    expect(chart.configure({barsPerRow: 4})).toBe(true);
+    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 4, fonts: {barNumber: 12, marker: 17}});
+    expect(view().calls.relayout).toBe(count + 2);
+    expect(relayouts).toHaveLength(2);
+    // Floors whose engraving sizes round the same do not relayout; bad values are ignored.
+    expect(chart.configure({fonts: {barNumber: 14 * 1.3 + 0.1, marker: 20 * 1.3}})).toBe(false);
+    expect(chart.configure({scale: 'big', barsPerRow: 0})).toBe(true);   // 0 bars → -1, automatic by width
+    expect(chart.state.scale).toBe(1.6);
+    expect(view().settings.barsPerRow).toBe(-1);
+    // The scale is clamped to 80–200 %, and the floors follow it.
+    chart.configure({scale: 3});
+    expect(view().settings).toMatchObject({scale: 2, fonts: fontFloors(chart.state.floors, 2)});
+  });
+
+  it('configure keeps the anchor bar at its screen fraction, or not with {anchor: false}', () => {
+    open({scale: 1.2});
+    chart.setFollow(false);
+    scroller().scrollTop = 250;   // bar 16's system at y 480, (480 − 250) / 800 of the viewport above it
+    expect(chart.anchorBar()).toBe(16);
+    chart.configure({scale: 1.6, fonts: {barNumber: 14 * 1.3, marker: 20 * 1.3}});
+    expect(scroller().scrollTop).toBeCloseTo(640 - 230, 6);
+    expect(chart.anchorBar()).toBe(16);
+    chart.configure({scale: 1.8}, {anchor: false});
+    expect(scroller().scrollTop).toBeCloseTo(410, 6);
+  });
+
+  it('configure before the first engraving relayouts nothing and the first engraving takes it', () => {
+    chart = createChart({host, part, engine, scale: 1.2, onRelayout: r => relayouts.push(r)});
+    expect(chart.configure({scale: 1.5, fonts: {barNumber: 14 * 0.8, marker: 20 * 0.8}, barsPerRow: 2})).toBe(false);
+    sizeScroller();
+    chart.setVisible(true);
+    expect(view().options).toMatchObject({scale: 1.5, barsPerRow: 2, fonts: fontFloors({barNumber: 14 * 0.8, marker: 20 * 0.8}, 1.5)});
+    expect(view().calls.relayout).toBe(0);
+    expect(relayouts).toEqual([]);
+  });
+
+  it('a configure while an engraving is under way is timed from its own call', () => {
+    open({scale: 1.2});
+    relayouts.length = 0;
+    view().deferRender = true;
+    chart.configure({scale: 1.45, fonts: {barNumber: 14 * 1.3, marker: 20 * 1.3}, barsPerRow: 2});
+    expect(host.getAttribute('aria-busy')).toBe('true');
+    vi.advanceTimersByTime(90);
+    view().finish();
+    expect(relayouts).toEqual([{ms: 90, bars: 32}]);
+  });
+
+  it('gives the score view a width settle, so a width change merges with the size change that comes with it', () => {
+    expect(RESIZE_SETTLE_MS).toBeGreaterThan(150);   // longer than the Stage's rail ↔ band debounce (LAYOUT_DEBOUNCE_MS)
+    open();
+    expect(view().options.resizeSettleMs).toBe(RESIZE_SETTLE_MS);
   });
 
   it('previewScale transforms .chart-score only, around the pinch centre, clamped to 80–200 %', () => {
@@ -819,6 +888,24 @@ describe('display (this device) and prefs', () => {
     chart.setDisplay({layout: 'diagonal'});
     expect(view().calls.relayout).toBe(count + 1);
     expect(chart.state.layout).toBe('split');
+  });
+
+  it('a Display layout switch with new sizes is one engraving: the part re-engraves with them (configure + setDisplay)', () => {
+    open({scale: 1.2});
+    const scores = view().calls.setScore.length, count = view().calls.relayout;
+    relayouts.length = 0;
+    chart.configure({scale: 1.45, barsPerRow: 2});
+    chart.setDisplay({layout: 'split'});
+    expect(view().calls.relayout).toBe(count + 1);
+    expect(view().calls.setScore.length).toBe(scores + 1);
+    expect(relayouts).toHaveLength(2);
+    // Layout and bars per row in one setDisplay: the part re-engraves once, with the new bars.
+    relayouts.length = 0;
+    chart.setDisplay({layout: 'combined', barsPerRow: 4});
+    expect(view().calls.setScore.length).toBe(scores + 2);
+    expect(view().calls.relayout).toBe(count + 1);
+    expect(view().settings.barsPerRow).toBe(4);
+    expect(relayouts).toHaveLength(1);
   });
 
   it('an explicit display option wins over prefs', () => {

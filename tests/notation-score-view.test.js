@@ -3,8 +3,9 @@
 // happy-dom). What these prove: the label fonts and their defaults, theme
 // colours from the host's tokens, the first render waiting for the UI face
 // (and tolerating no document.fonts), the loop edges and their hit areas, one
-// render per configure + relayout, and the theme listener re-engraving only
-// when the host's tokens changed. Engraving geometry is probe-geometry.cjs.
+// render per configure + relayout, the theme listener re-engraving only when
+// the host's tokens changed, and the width settle (a width change waits for the
+// relayout that comes with it). Engraving geometry is probe-geometry.cjs.
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {installFontsStub, restoreDomShims} from './helpers/dom.js';
 
@@ -30,12 +31,17 @@ vi.mock('@coderline/alphatab', () => {
       this.root = root; this.settings = settings;
       this.renderFinished = event(); this.error = event();
       this.updates = 0; this.renders = []; this.relayouts = 0; this.boundsLookup = null; this.destroyed = false;
+      // Width: alphaTab renders at its container's width and re-engraves (triggerResize) when it changes.
+      this.container = {width: 800, isVisible: true}; this.renderer = {width: 0}; this.resizes = 0;
       apis.push(this);
     }
+    /** alphaTab's (throttled) container resize handler. */
+    containerResized(width) { this.container.width = width; if (this.container.width !== this.renderer.width) this.triggerResize(); }
+    triggerResize() { this.resizes += 1; this.renderer.width = this.container.width; }
     updateSettings() { this.updates += 1; this.snapshot = JSON.parse(JSON.stringify({scale: this.settings.display.scale, barsPerRow: this.settings.display.barsPerRow, fonts: Object.fromEntries(this.settings.display.resources.elementFonts), colours: this.colours()})); }
     colours() { const r = this.settings.display.resources; return {main: r.mainGlyphColor, lines: r.staffLineColor, bar: r.barNumberColor}; }
-    renderScore(score) { this.renders.push(score); }
-    render() { this.relayouts += 1; }
+    renderScore(score) { this.renders.push(score); this.renderer.width = this.container.width; }
+    render() { this.relayouts += 1; this.renderer.width = this.container.width; }
     /** Lays out `bars` bars, four to a 150 px system, 200 px each, and finishes the render. */
     finish(bars = 8) {
       this.boundsLookup = {
@@ -222,6 +228,66 @@ describe('layout calls', () => {
     await flush();
     expect(api().relayouts).toBe(0);
     expect(api().renders).toHaveLength(1);
+  });
+
+  it('re-engraves a width change at once by default (alphaTab’s own handler)', async () => {
+    view = createScoreView(host);
+    view.setScore(demoScore(32, 120));
+    await flush();
+    api().finish();
+    api().containerResized(600);
+    expect(api().resizes).toBe(1);
+  });
+
+  it('with resizeSettleMs a width change waits, and a relayout in the window takes the new width (one engraving)', async () => {
+    view = createScoreView(host, {resizeSettleMs: 250});
+    view.setScore(demoScore(32, 120));
+    await flush();
+    api().finish();
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    // The rail → band switch: the column narrows, then the layout's sizes arrive 150 ms later.
+    api().containerResized(600);
+    expect(api().resizes).toBe(0);
+    vi.advanceTimersByTime(150);
+    view.configure({scale: 1.5, barsPerRow: 2});
+    view.relayout();
+    expect(api().relayouts).toBe(1);
+    expect(api().renderer.width).toBe(600);
+    vi.advanceTimersByTime(250);
+    expect(api().resizes).toBe(0);
+    expect(api().relayouts).toBe(1);
+    // A width change with nothing else re-engraves once, after the last change settles.
+    api().containerResized(700);
+    vi.advanceTimersByTime(100);
+    api().containerResized(720);
+    vi.advanceTimersByTime(249);
+    expect(api().resizes).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(api().resizes).toBe(1);
+    expect(api().renderer.width).toBe(720);
+  });
+
+  it('with resizeSettleMs a hidden view waits until it is shown, and nothing fires after destroy', async () => {
+    view = createScoreView(host, {resizeSettleMs: 250});
+    view.setScore(demoScore(32, 120));
+    await flush();
+    api().finish();
+    vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+    api().container.isVisible = false;
+    api().containerResized(0);
+    vi.advanceTimersByTime(300);
+    expect(api().resizes).toBe(0);
+    // Shown again at the width it was engraved at: nothing to re-engrave.
+    api().container.isVisible = true;
+    api().containerResized(800);
+    vi.advanceTimersByTime(300);
+    expect(api().resizes).toBe(0);
+    api().containerResized(500);
+    const a = api();
+    view.destroy();
+    view = null;
+    vi.advanceTimersByTime(300);
+    expect(a.resizes).toBe(0);
   });
 
   it('reports the bars it laid out and their bounds', async () => {

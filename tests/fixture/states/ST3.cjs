@@ -12,6 +12,8 @@
 //   st3-chart-follow     page follow turns half a viewport when the playing system crosses the middle; scroll
 //                        follow holds the system at the follow line; a manual wheel pauses Follow
 //   st3-chart-scale      setScale relayouts once (reported), keeps the anchor bar, and the font floors follow
+//   st3-chart-configure  configure({scale, fonts, barsPerRow}) is one engraving and one report (I2b-2); a width
+//                        change followed within RESIZE_SETTLE_MS by a configure is one engraving too
 //   st3-chart-empty      the empty state and its three actions
 //   st3-chart-shared     the shared empty state
 'use strict';
@@ -282,6 +284,52 @@ module.exports = [
       t.expect(Math.abs(result.top - result.before) < 40, `the anchor bar keeps its screen position (${result.before} → ${result.top})`);
       const labels = await page.evaluate(readLabels, LABELS);
       t.expect(Math.min(...labels.barNumbers) >= 14 && Math.min(...labels.markers) >= 20, `the floors hold at 160 % (${Math.min(...labels.barNumbers)}, ${Math.min(...labels.markers)})`);
+    },
+  },
+  {
+    name: 'st3-chart-configure',
+    url: `${H}?at=40`,
+    opts: {devices: ['laptop'], themes: ['dark'], capture: false},
+    async fn(page, t) {
+      await harnessReady(page, t);
+      const result = await page.evaluate(async () => {
+        const {chart, log} = window.__chartHarness, host = document.querySelector('[data-rendered]');
+        const frames = n => new Promise(resolve => { const step = () => (n-- <= 0 ? resolve() : requestAnimationFrame(step)); step(); });
+        const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+        const revision = () => Number(host.dataset.rendered);
+        // A Distance change to Kit on a dense part, as the surface asks for it: one call.
+        let start = revision(), reported = log.relayouts.length;
+        const started = chart.configure({scale: 1.6, fonts: {barNumber: 14 * 1.3, marker: 20 * 1.3}, barsPerRow: 2});
+        await wait(600);
+        await frames(10);
+        const distance = {started, engravings: revision() - start, reported: log.relayouts.length - reported, state: chart.state};
+        // The rail → band switch: the music column narrows, then the layout's sizes arrive 150 ms later.
+        start = revision(); reported = log.relayouts.length;
+        host.style.width = '760px';
+        await wait(150);
+        chart.configure({scale: 1.2, fonts: {barNumber: 14, marker: 20}, barsPerRow: 4});
+        await wait(600);
+        await frames(10);
+        const layout = {engravings: revision() - start, reported: log.relayouts.length - reported, width: document.querySelector('.score-engraving svg')?.getBoundingClientRect().width ?? 0};
+        // A width change on its own still re-engraves, once, after it settles.
+        start = revision();
+        host.style.width = '640px';
+        await frames(2);
+        host.style.width = '620px';
+        await wait(700);
+        await frames(10);
+        const alone = {engravings: revision() - start, width: document.querySelector('.score-engraving svg')?.getBoundingClientRect().width ?? 0};
+        return {distance, layout, alone};
+      });
+      const {distance, layout, alone} = result;
+      t.expect(distance.started === true && distance.engravings === 1 && distance.reported === 1,
+        `configure is one engraving and one onRelayout report (${JSON.stringify({...distance, state: undefined})})`);
+      t.expect(distance.state.scale === 1.6 && distance.state.barsPerRow === 2, `configure took the scale and bars per system (${distance.state.scale}, ${distance.state.barsPerRow})`);
+      t.expect(layout.engravings === 1 && layout.reported === 1, `a width change and a configure 150 ms later engrave once (${JSON.stringify(layout)})`);
+      t.expect(layout.width > 0 && layout.width <= 762, `that engraving is at the new width (${layout.width})`);
+      t.expect(alone.engravings === 1 && alone.width > 0 && alone.width <= 622, `a width change alone re-engraves once, at the settled width (${JSON.stringify(alone)})`);
+      const labels = await page.evaluate(readLabels, LABELS);
+      t.expect(Math.min(...labels.barNumbers) >= 14 && Math.min(...labels.markers) >= 20, `the floors hold (${Math.min(...labels.barNumbers)}, ${Math.min(...labels.markers)})`);
     },
   },
   {
