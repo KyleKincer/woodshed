@@ -1,0 +1,163 @@
+{
+ "$comment": "SYNTHESIZED, not recorded: built by hand from yt-dlp 2026.10.26 extractor source (no live access to YouTube, SoundCloud, Bandcamp or Spotify from the build container). Replace with a live recording at gate G6.",
+ "id": "hL7aQ2mR9sE",
+ "title": "Ada Moreno - Harbor Lights (Official Audio)",
+ "formats": [
+  {
+   "format_id": "251",
+   "format_note": "medium",
+   "ext": "webm",
+   "acodec": "opus",
+   "vcodec": "none",
+   "url": "https://rr3---sn-example.googlevideo.com/videoplayback?expire=1793194225",
+   "abr": 129.4,
+   "asr": 48000,
+   "filesize": 3581234,
+   "protocol": "https",
+   "audio_ext": "webm",
+   "video_ext": "none",
+   "resolution": "audio only"
+  }
+ ],
+ "thumbnails": [
+  {
+   "url": "https://i.ytimg.com/vi_webp/hL7aQ2mR9sE/sd3.webp",
+   "preference": -37,
+   "id": "w3"
+  },
+  {
+   "url": "https://i.ytimg.com/vi_webp/hL7aQ2mR9sE/mq3.webp",
+   "preference": -38,
+   "id": "w2"
+  },
+  {
+   "url": "https://i.ytimg.com/vi_webp/hL7aQ2mR9sE/hq3.webp",
+   "preference": -39,
+   "id": "w1"
+  },
+  {
+   "url": "https://i.ytimg.com/vi_webp/hL7aQ2mR9sE/3.webp",
+   "preference": -40,
+   "id": "w0"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/default.jpg",
+   "preference": -10,
+   "id": "0",
+   "width": 120,
+   "height": 90,
+   "resolution": "120x90"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/mqdefault.jpg",
+   "preference": -9,
+   "id": "1",
+   "width": 320,
+   "height": 180,
+   "resolution": "320x180"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/hqdefault.jpg",
+   "preference": -8,
+   "id": "2",
+   "width": 480,
+   "height": 360,
+   "resolution": "480x360"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/sddefault.jpg",
+   "preference": -7,
+   "id": "3",
+   "width": 640,
+   "height": 480,
+   "resolution": "640x480"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/hL7aQ2mR9sE/maxresdefault.jpg",
+   "preference": -6,
+   "id": "4",
+   "width": 1280,
+   "height": 720,
+   "resolution": "1280x720"
+  }
+ ],
+ "thumbnail": "https://i.ytimg.com/vi/hL7aQ2mR9sE/maxresdefault.jpg",
+ "description": "Official audio for Harbor Lights.",
+ "channel_id": "UCx9c3f1hTn0bQyJmK3PqY2w",
+ "channel_url": "https://www.youtube.com/channel/UCx9c3f1hTn0bQyJmK3PqY2w",
+ "duration": 221,
+ "view_count": 1834201,
+ "average_rating": null,
+ "age_limit": 0,
+ "webpage_url": "https://www.youtube.com/watch?v=hL7aQ2mR9sE",
+ "categories": [
+  "Music"
+ ],
+ "tags": [
+  "Ada Moreno",
+  "Harbor Lights"
+ ],
+ "playable_in_embed": true,
+ "live_status": "not_live",
+ "media_type": "video",
+ "release_timestamp": null,
+ "_format_sort_fields": [
+  "quality",
+  "res",
+  "fps"
+ ],
+ "automatic_captions": {},
+ "subtitles": {},
+ "comment_count": 512,
+ "chapters": null,
+ "heatmap": null,
+ "like_count": 40211,
+ "channel": "Ada Moreno - Topic",
+ "channel_follower_count": 81200,
+ "channel_is_verified": true,
+ "uploader": "Ada Moreno - Topic",
+ "uploader_id": "@AdaMoreno",
+ "uploader_url": "https://www.youtube.com/@AdaMoreno",
+ "upload_date": "20240411",
+ "timestamp": 1712836800,
+ "availability": "public",
+ "original_url": "https://youtu.be/hL7aQ2mR9sE?si=Xc81",
+ "webpage_url_basename": "watch",
+ "webpage_url_domain": "youtube.com",
+ "extractor": "youtube",
+ "extractor_key": "Youtube",
+ "playlist": null,
+ "playlist_index": null,
+ "display_id": "hL7aQ2mR9sE",
+ "fulltitle": "Ada Moreno - Harbor Lights (Official Audio)",
+ "duration_string": "3:41",
+ "release_year": 2024,
+ "track": "Harbor Lights",
+ "artists": [
+  "Ada Moreno"
+ ],
+ "album": "Salt & Signal",
+ "creators": [
+  "Ada Moreno"
+ ],
+ "is_live": false,
+ "was_live": false,
+ "requested_subtitles": null,
+ "_has_drm": null,
+ "epoch": 1793172640,
+ "asr": 48000,
+ "filesize": 3581234,
+ "format_id": "251",
+ "format_note": "medium",
+ "acodec": "opus",
+ "vcodec": "none",
+ "ext": "webm",
+ "protocol": "https",
+ "_type": "video",
+ "_version": {
+  "version": "2026.10.26",
+  "current_git_head": null,
+  "release_git_head": "c91f8de0bfb3577894abad716eaaa01659e6bd14",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}

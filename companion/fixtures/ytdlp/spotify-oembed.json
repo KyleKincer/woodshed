@@ -1,0 +1,15 @@
+{
+ "$comment": "SYNTHESIZED, not recorded: built by hand from yt-dlp 2026.10.26 extractor source (no live access to YouTube, SoundCloud, Bandcamp or Spotify from the build container). Replace with a live recording at gate G6.",
+ "html": "<iframe style=\"border-radius: 12px\" width=\"100%\" height=\"152\" title=\"Spotify Embed: Harbor Lights\" frameborder=\"0\" allowfullscreen allow=\"autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture\" loading=\"lazy\" src=\"https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC?utm_source=oembed\"></iframe>",
+ "iframe_url": "https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC?utm_source=oembed",
+ "width": 456,
+ "height": 152,
+ "version": "1.0",
+ "provider_name": "Spotify",
+ "provider_url": "https://spotify.com",
+ "type": "rich",
+ "title": "Harbor Lights",
+ "thumbnail_url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02b5f0c8e1d2a3",
+ "thumbnail_width": 300,
+ "thumbnail_height": 300
+}

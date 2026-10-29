@@ -1,0 +1,89 @@
+/* Toast (src/ui/toast.js) and the region feedback.js mounts toasts in: one at
+ * a time, bottom-centre above the dock or transport (spec §7.9). A tone
+ * stripe marks ok, warn and error; the text stays --ink. While a bottom Sheet
+ * is open, feedback.js sets --toast-sheet-clearance (the sheet's height) and
+ * the region sits a --s2 gap above the sheet's top edge, never over its rows
+ * (I2b-33). */
+@layer primitives {
+  .ui-toast-region {
+    position: fixed;
+    inset: auto 0 max(
+      calc(var(--toast-offset, 0px) + var(--safe-bottom, 0px) + var(--s5)),
+      calc(var(--toast-sheet-clearance, 0px) + var(--s2))
+    ) 0;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s2);
+    /* As a [popover] (followLayerHost) the UA sizes it to fit its content and gives it a frame: undo that so it
+     * stays the full-width bottom-centre strip. */
+    inline-size: auto;
+    block-size: auto;
+    margin: 0;
+    padding: 0 var(--s4);
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    pointer-events: none;
+  }
+  .ui-toast-region > * { pointer-events: auto; }
+
+  .ui-toast {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    inline-size: max-content;
+    max-inline-size: min(560px, calc(100vw - 2 * var(--s4)));
+    min-block-size: var(--h-lg);
+    padding: var(--s2) var(--s2) var(--s2) var(--s4);
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+    border-inline-start: 4px solid var(--accent);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-popover);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-toast-in var(--motion-enter) var(--ease);
+  }
+  .ui-toast[data-tone=ok] { border-inline-start-color: var(--ok); }
+  .ui-toast[data-tone=warn] { border-inline-start-color: var(--warn); }
+  .ui-toast[data-tone=error] { border-inline-start-color: var(--danger); }
+  .ui-toast-icon { flex: none; display: inline-grid; place-items: center; color: var(--accent); }
+  .ui-toast[data-tone=ok] .ui-toast-icon { color: var(--ok); }
+  .ui-toast[data-tone=warn] .ui-toast-icon { color: var(--warn); }
+  .ui-toast[data-tone=error] .ui-toast-icon { color: var(--danger); }
+  .ui-toast .ui-icon { stroke-width: var(--icon-stroke); }
+  .ui-toast-message { flex: 1 1 auto; min-inline-size: 0; overflow-wrap: anywhere; }
+  .ui-toast-action {
+    flex: none;
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .ui-toast-close {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--h-sm);
+    block-size: var(--h-sm);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .ui-toast-close:hover { background: var(--surface-2); color: var(--ink); }
+
+  @keyframes ui-toast-in {
+    from { opacity: 0; translate: 0 var(--s2); }
+  }
+}

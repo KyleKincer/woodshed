@@ -1,0 +1,55 @@
+/* Stepper (architecture §2.12): `[ − | value | + ]` in one control-radius frame. Heights follow
+ * the size tokens (dock: --h-dock). The value uses tabular figures and a fixed min width in ch, so
+ * it never jitters while stepping. */
+@layer primitives {
+  .ui-stepper {
+    --ui-stepper-h: var(--h-md);
+    display: inline-flex;
+    align-items: stretch;
+    min-height: calc(var(--ui-stepper-h) + 2px);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .ui-stepper[data-size=sm] { --ui-stepper-h: var(--h-sm); }
+  .ui-stepper[data-size=lg] { --ui-stepper-h: var(--h-lg); }
+  .ui-stepper[data-size=dock] { --ui-stepper-h: calc(var(--h-dock) - 2px); }
+
+  .ui-stepper-button {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: var(--ui-stepper-h);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+    touch-action: none;
+  }
+  @media (hover: hover) {
+    .ui-stepper-button:hover { background: var(--surface-2); color: var(--ink); }
+  }
+  .ui-stepper-button:active { background: var(--surface-2); }
+  .ui-stepper-button[aria-disabled=true],
+  .ui-stepper-button[aria-disabled=true]:hover { color: var(--line-strong); background: transparent; cursor: not-allowed; }
+
+  .ui-stepper-value {
+    display: inline-grid;
+    place-items: center;
+    flex: 1 0 auto;
+    min-width: 6ch;
+    padding: 0 var(--s2);
+    border-inline: 1px solid var(--line);
+    font: var(--fw-bold) var(--fs-16)/1 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ui-stepper[data-size=dock] .ui-stepper-value { font-size: var(--fs-20); }
+  .ui-stepper-value[data-clickable] { cursor: pointer; }
+  @media (hover: hover) {
+    .ui-stepper-value[data-clickable]:hover { background: var(--surface-2); }
+  }
+}

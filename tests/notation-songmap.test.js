@@ -11,32 +11,40 @@ vi.mock('../src/js/notation/audio.js',()=>({DrumAudio:class{mode='recording';out
 import {createNotationWorkspace} from '../src/js/notation/editor.js';
 import {openPart} from '../src/js/notation/part.js';
 import {SongMapStore} from '../src/js/song-map.js';
+import {createRegistry} from '../src/app/commands.js';
+import {startDispatcher} from '../src/app/dispatch.js';
+import {defineChartCommands} from '../src/edit/chart/commands.js';
 import {defaultSongMap,editBars,setMeter,pin} from '../shared/song-map.ts';
 import {emptyScore,fraction} from '../shared/notation.ts';
 
-let workspace,part,host,engine,persistence,songMap;
+// Keys go through the dispatcher to the Edit · Chart commands (the score's focus scope, D18).
+let workspace,part,host,engine,persistence,songMap,registry,stopDispatch,offChart;
 const song={id:'song',title:'Song'},metronome={beats:[],sectionAt:()=>({bpm:120,beatsPerBar:4,unit:4})};
-beforeEach(()=>{localStorage.clear();document.body.innerHTML='<main class="player"><section class="notation-workspace"></section></main>';host=document.querySelector('section');
+const prefs={data:{},get(path){return this.data[path];},set(path,value){this.data[path]=value;}};
+beforeEach(()=>{prefs.data={};document.body.innerHTML='<main><section class="notation-workspace"></section></main>';host=document.querySelector('section');
   engine={duration:16,playing:false,ctx:{currentTime:0},tracks:[],loop:{enabled:false},seek:vi.fn(),getPosition:()=>0};
-  persistence={load:vi.fn(async()=>null),set:vi.fn(),destroy:vi.fn(),flush:vi.fn()};songMap=new SongMapStore(defaultSongMap(16,120),16);});
-afterEach(()=>{workspace?.destroy();part?.destroy();});
+  persistence={load:vi.fn(async()=>null),set:vi.fn(),destroy:vi.fn(),flush:vi.fn()};songMap=new SongMapStore(defaultSongMap(16,120),16);
+  registry=createRegistry();defineChartCommands({registry});stopDispatch=startDispatcher({registry,platform:'win'});
+  registry.provide('posture',()=>'edit');registry.provide('edit',()=>({tab:'chart'}));offChart=registry.provide('chart',()=>workspace);});
+afterEach(()=>{workspace?.destroy();part?.destroy();stopDispatch();offChart();workspace=null;});
 const open=async(score=null,extra={})=>{persistence.load.mockResolvedValue(score);part=await openPart({song,engine,metronome,songMap,persistence});
-  workspace=await createNotationWorkspace({host,part,song,engine,songMap,getView:()=>({start:0,end:8}),setView:vi.fn(),setFollow:vi.fn(),play:vi.fn(),...extra});workspace.setVisible(true);};
-const key=(k,extra={})=>host.querySelector('[role="grid"]').dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true,...extra}));
+  workspace=await createNotationWorkspace({host,part,song,engine,songMap,prefs,drumKeys:{get:()=>({}),save(){},reserved:()=>({})},...extra});workspace.setVisible(true);workspace.focus();};
+const codeOf=k=>/^[a-z]$/i.test(k)?`Key${k.toUpperCase()}`:/^\d$/.test(k)?`Digit${k}`:k;
+const key=(k,extra={})=>host.querySelector('[role="grid"]').dispatchEvent(new KeyboardEvent('keydown',{key:k,code:codeOf(k),bubbles:true,cancelable:true,...extra}));
 const saved=()=>persistence.set.mock.calls.at(-1)[0];
 
 test('a new drum part uses the song map, and map edits retime it without touching notes',async()=>{
   await open();key('s');
   expect(saved().timeline.measures.map(m=>m.id)).toEqual(songMap.data.measures.map(m=>m.id));
-  songMap.edit(d=>pin(d,{n:16,d:1},7));          // bar 5 lands at 7 s instead of 8 s
+  songMap.edit(d=>pin(d,{n:16,d:1},7),'pin');          // bar 5 lands at 7 s instead of 8 s
   expect(saved().timeline.anchors.some(a=>a.time===7)).toBe(true);
   expect(saved().bars[0].hits).toEqual([expect.objectContaining({instrument:'snare',offset:fraction(0)})]);
 });
 
 test('undo after a map edit restores the notes on the new timing',async()=>{
   await open();key('s');
-  songMap.edit(d=>pin(d,{n:16,d:1},7));
-  host.querySelector('[data-action="undo"]').click();
+  songMap.edit(d=>pin(d,{n:16,d:1},7),'pin');
+  workspace.focus();key('z',{ctrlKey:true});
   expect(saved().bars.flatMap(b=>b.hits)).toHaveLength(0);
   expect(saved().timeline.anchors.some(a=>a.time===7)).toBe(true);
 });
@@ -44,9 +52,9 @@ test('undo after a map edit restores the notes on the new timing',async()=>{
 test('the song map refuses meter changes that would strand written notes',async()=>{
   await open();
   key('5');key('ArrowRight');key('ArrowRight');key('ArrowRight');key('k'); // a kick on beat 4 of bar 1
-  expect(()=>songMap.edit(d=>editBars(d,0,0,m=>setMeter(m,3,4)))).toThrow(/Bar 1 has drum notes/);
+  expect(()=>songMap.edit(d=>editBars(d,0,0,m=>setMeter(m,3,4)),'meter')).toThrow(/Bar 1 has drum notes/);
   expect(saved().timeline.measures[0].numerator).toBe(4);
-  expect(()=>songMap.edit(d=>editBars(d,1,1,m=>setMeter(m,3,4)))).not.toThrow();
+  expect(()=>songMap.edit(d=>editBars(d,1,1,m=>setMeter(m,3,4)),'meter')).not.toThrow();
   expect(saved().timeline.measures[1].numerator).toBe(3);
 });
 
@@ -67,23 +75,15 @@ test('an imported draft takes the song map timing',async()=>{
   expect(saved().bars).toEqual([expect.objectContaining({measureId:songMap.data.measures[1].id})]);
 });
 
-test('bar properties and align beat open the tempo map instead of a seconds dialog',async()=>{
+test('bar meter & label and align in tempo map switch to Edit · Map at that bar instead of a seconds dialog',async()=>{
   const openMap=vi.fn();
   await open(null,{openMap});
-  host.querySelector('[data-action="align-beat"]').click();
-  expect(openMap).toHaveBeenCalledWith(expect.objectContaining({n:0}));
-  host.querySelector('[data-action="align"]').click();
-  expect(openMap).toHaveBeenLastCalledWith(expect.objectContaining({n:0}),{edit:true});
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-});
-
-test('keys go to the tempo map while it is active',async()=>{
-  let active=false;
-  await open(null,{mapActive:()=>active});
-  active=true;
-  const event=new KeyboardEvent('keydown',{key:'s',bubbles:true,cancelable:true});workspace.handleKey(event);key('s');
-  expect(event.defaultPrevented).toBe(false);expect(persistence.set).not.toHaveBeenCalled();
-  active=false;key('s');expect(saved().bars[0].hits).toHaveLength(1);
+  key('5');key('ArrowRight');key('ArrowRight');key('ArrowRight');key('ArrowRight');   // bar 2
+  registry.run('chart.align');
+  expect(openMap).toHaveBeenCalledWith(expect.objectContaining({n:4}),{bar:1});
+  registry.run('chart.barMeter');
+  expect(openMap).toHaveBeenLastCalledWith(expect.objectContaining({n:4}),{edit:true,bar:1});
+  expect(document.querySelector('dialog')).toBeNull();
 });
 
 test('map subscription echoes with reordered object fields never write notation',async()=>{

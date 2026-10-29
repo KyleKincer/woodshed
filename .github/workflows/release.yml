@@ -47,7 +47,7 @@ jobs:
         id: cuda
         with:
           path: build/processor
-          key: processor-cuda-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/requirements.txt', 'scripts/build-processor.py') }}
+          key: processor-cuda-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/ytdlp-args.json', 'companion/requirements.txt', 'scripts/build-processor.py') }}
       - name: Build NVIDIA processor
         if: matrix.platform != 'mac' && steps.cuda.outputs.cache-hit != 'true'
         shell: bash
@@ -77,7 +77,7 @@ jobs:
         id: processor
         with:
           path: build/processor
-          key: processor-cpu-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/requirements.txt', 'scripts/build-processor.py') }}
+          key: processor-cpu-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('companion/*.py', 'companion/ytdlp-args.json', 'companion/requirements.txt', 'scripts/build-processor.py') }}
       - name: Build bundled processor
         if: steps.processor.outputs.cache-hit != 'true'
         shell: bash
@@ -101,6 +101,7 @@ jobs:
         shell: bash
         env:
           VITE_CONVEX_URL: https://tidy-kookabura-985.convex.cloud
+          VITE_SHARE_ORIGIN: https://woodshed.kylekincer.com
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}

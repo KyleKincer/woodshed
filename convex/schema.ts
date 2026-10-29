@@ -2,6 +2,10 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { metadataFields, fingerprintValidator } from './lib/songMetadata';
 import {headerValidator,barValidator} from './lib/notationValidators';
+import {
+  practiceSummaryValidator, mapSummaryValidator, metadataCandidateValidator, sectionSuggestionValidator,
+  jobKindValidator, jobStatusValidator, revokedByValidator, presenceStateValidator,
+} from './lib/validators';
 
 // A source is how a song got here. `upload` carries an R2 key the browser
 // PUT the original file to; the others are handed straight to yt-dlp.
@@ -39,6 +43,8 @@ export default defineSchema({
   notationBars: defineTable({partId:v.id('notationParts'),bar:barValidator}).index('by_partId',['partId']),
   songShares: defineTable({
     songId:v.id('songs'), userId:v.string(), token:v.string(), active:v.boolean(), createdAt:v.number(),includeNotation:v.optional(v.boolean()),
+    // Absent means true (1.9 links always carried the map); spec §6.1 'Sections and tempo map', architecture §6.7.
+    includeMap:v.optional(v.boolean()),
   }).index('by_songId',['songId']).index('by_token',['token']),
   shareImports: defineTable({
     userId:v.string(), sourceSongId:v.id('songs'), token:v.string(), attempt:v.string(),
@@ -69,7 +75,20 @@ export default defineSchema({
   adminAudit: defineTable({ actorId: v.string(), targetId: v.string(), action: v.string(), reason: v.string(), before: v.any(), after: v.any(), at: v.number() }).index('by_targetId', ['targetId']),
   devices: defineTable({
     userId: v.string(), tokenHash: v.string(), name: v.string(), revoked: v.boolean(),
+    // The user's own name for the computer (B5); `name` stays the friendly name refreshed on every pair.
+    displayName: v.optional(v.string()),
+    // Absent on 1.9 rows. An admin revoke blocks re-pairing; a user revoke does not.
+    revokedBy: v.optional(revokedByValidator),
   }).index('by_token', ['tokenHash']).index('by_user', ['userId']),
+  // High-churn heartbeat state, kept off `devices` (D11). Written by the device
+  // token (`worker.heartbeat`), one row per device. Queries never read the
+  // clock: the client computes "online" from `lastSeenAt`.
+  devicePresence: defineTable({
+    deviceId: v.id('devices'), userId: v.string(), lastSeenAt: v.number(),
+    state: presenceStateValidator,
+    currentJobId: v.optional(v.id('jobs')), appVersion: v.optional(v.string()),
+    platform: v.optional(v.string()), accelerator: v.optional(v.string()),
+  }).index('by_deviceId', ['deviceId']).index('by_userId', ['userId']),
   storageUsage: defineTable({scope: v.string(), bytes: v.number()}).index('by_scope', ['scope']),
   audioObjects: defineTable({
     userId: v.string(), jobId: v.optional(v.id('jobs')), songId: v.optional(v.id('songs')), verified: v.optional(v.boolean()), key: v.string(), name: v.string(),
@@ -143,19 +162,57 @@ export default defineSchema({
     // Metronome state: tempo map, time signatures, corrected beat track.
     // Opaque to the backend — the player owns this shape.
     tempo: v.optional(v.any()),
+    // 1.9 practice blob. Read-only after the B1 backfill moves it to
+    // `songPractice`; the field is removed in wave 4 (V1, owner gate G7).
     practice: v.optional(v.any()),
     localImportId: v.optional(v.string()),
+    // ---- 2.0 (all optional: 1.9 rows have none of these) ----
+    // Denormalised for the slim `songs.list` row (B1, D4, D5).
+    hasChart: v.optional(v.boolean()),
+    lastPracticedAt: v.optional(v.number()),
+    practiceSummary: v.optional(practiceSummaryValidator),
+    mapSummary: v.optional(mapSummaryValidator),
+    // Bumped on every tempo write; `saveTempo` refuses to replace a real map with a non-real one from a stale base.
+    tempoRev: v.optional(v.number()),
+    // The last tempo save's id, so a session ignores its own echoes (D53).
+    tempoSaveId: v.optional(v.string()),
+    // G5: a candidate that was not strong enough to apply.
+    metadataSuggestion: v.optional(metadataCandidateValidator),
+    // G6: an untitled upload whose metadata needs a look (metadata only, D43).
+    needsReview: v.optional(v.boolean()),
+    // B4 / spec §3.5: a search the user did not confirm (D43).
+    recordingUnconfirmed: v.optional(v.boolean()),
+    // B7 section suggestions, never written into the map until kept (D47).
+    sectionSuggestion: v.optional(sectionSuggestionValidator),
+    // Where a URL or search resolved to, and which site served it (B4).
+    resolvedUrl: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    // The device that holds an upload's original file; re-splits must run there (D38).
+    originDeviceId: v.optional(v.id('devices')),
   })
     .index('by_user', ['userId'])
     .index('by_user_added', ['userId', 'addedAt'])
     .index('by_user_import', ['userId', 'localImportId']),
+
+  // A song's practice state (practice blob v2, `shared/practice.ts`), out of
+  // `songs` so a practice save re-runs only the narrow `songs.getPractice`
+  // query (D4, D52). One row per song.
+  songPractice: defineTable({
+    songId: v.id('songs'), userId: v.string(), practice: v.any(), updatedAt: v.number(),
+  }).index('by_songId', ['songId']),
+
+  // B3. `songIds` holds at most 100 ids (enforced by `setlists.ts`).
+  setlists: defineTable({
+    userId: v.string(), name: v.string(), songIds: v.array(v.id('songs')),
+    createdAt: v.number(), updatedAt: v.number(), lastOpenedAt: v.optional(v.number()),
+  }).index('by_userId_and_updatedAt', ['userId', 'updatedAt']),
 
   // One row per processing run. The browser subscribes to these for live
   // progress; Modal drives them forward over HTTP callbacks.
   jobs: defineTable({
     userId: v.string(),
     deviceId: v.optional(v.id('devices')),
-    kind: v.union(v.literal('separate'), v.literal('beats'), v.literal('import')),
+    kind: jobKindValidator,
     importMeta: v.optional(v.any()),
     // Set once we know which song this produces. For a reprocess it is set
     // up front so the UI can overlay the existing card.
@@ -163,26 +220,33 @@ export default defineSchema({
     label: v.string(),
     source: v.optional(sourceValidator),
     settings: v.optional(v.any()),
-    status: v.union(
-      v.literal('queued'),
-      v.literal('running'),
-      v.literal('done'),
-      v.literal('error'),
-      v.literal('canceled')
-    ),
-    stage: v.string(), // queued | download | separate | finalize | detect
+    status: jobStatusValidator,
+    stage: v.string(), // queued | download | separate | finalize | detect | done
     percent: v.number(),
     message: v.optional(v.string()),
     error: v.optional(v.string()),
     // Partial metadata streamed back early so the card can show real art.
     meta: v.optional(v.any()),
-    // Beat detection result, for kind === 'beats'.
+    // Detection result: `{beats, sections?}` for kind 'beats', `{sections}` for kind 'sections'.
     result: v.optional(v.any()),
     // Dispatches so far. YouTube's bot check comes and goes in windows of
     // minutes, so a blocked job is requeued rather than failed; this bounds it.
     attempts: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
+    // ---- 2.0 (all optional: 1.9 rows have none of these) ----
+    // A classified failure (§6.1 job codes), set by the companion.
+    errorCode: v.optional(v.string()),
+    // When a bot-check failure re-queues itself (§6.6 `worker.autoRetry`).
+    retryAt: v.optional(v.number()),
+    // First claim by a device.
+    startedAt: v.optional(v.number()),
+    // The separation that queued this beats job automatically (B6).
+    chainedFrom: v.optional(v.id('jobs')),
+    // The user chose this recording: a B4 candidate or a pasted URL (D43).
+    confirmed: v.optional(v.boolean()),
+    // A detection result the open session applied (D44).
+    appliedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])

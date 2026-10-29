@@ -20,3 +20,5 @@ release/
 artifacts/
 release-assets/
 tests/local/
+tests/fixture/.vite-cache/
+tests/fixture/out/

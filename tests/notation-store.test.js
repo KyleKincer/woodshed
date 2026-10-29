@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import {beforeEach,afterEach,expect,test,vi} from 'vitest';
-vi.mock('../src/js/auth.js',()=>({convex:{query:vi.fn(),mutation:vi.fn()}}));
-import {convex} from '../src/js/auth.js';
+vi.mock('../src/api/client.js',()=>({query:vi.fn(),mutation:vi.fn(),publicClient:vi.fn()}));
+import * as convex from '../src/api/client.js';
 import {NotationStore} from '../src/js/notation/store.js';
 import {emptyScore,fraction,durationOf} from '../shared/notation.ts';
 let disk,stores=[];

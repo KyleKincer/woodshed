@@ -1,0 +1,101 @@
+/* The Speed sheet (src/stage/sheets/speed.js; spec §4.7): the value (56) with its bpm, preset chips
+ * (56 px; two rows of five), fine −1 / +1, Keep pitch and the trainer. Fits the 360 px rail
+ * popover and the band's bottom sheet; controls never scale with Distance (spec §4.11). */
+@layer views {
+  .sheet-speed {
+    display: grid;
+    gap: var(--s4);
+    padding-block: var(--s1) var(--s2);
+  }
+
+  .sheet-speed-readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s1) var(--s3);
+    margin: 0;
+  }
+  .sheet-speed-value {
+    min-width: 4ch;
+    color: var(--ink);
+    font-size: 3.5rem;
+    font-weight: var(--fw-bold);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .sheet-speed-value[data-at100=true] { color: var(--ink-3); }
+  .sheet-speed-bpm {
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+  }
+
+  .sheet-speed-presets {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+  .sheet-speed-preset.ui-button {
+    min-width: 0;
+    min-height: 56px;
+    padding: 0 var(--s1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sheet-speed-fine {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+  .sheet-speed-fine-button.ui-button { min-width: 0; min-height: 56px; }
+
+  .sheet-speed-pitch,
+  .sheet-speed-trainer {
+    display: grid;
+    gap: var(--s2);
+  }
+  .sheet-speed-pitch-toggle.ui-button { justify-self: start; }
+  .sheet-speed-hint {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+  }
+
+  .sheet-speed-trainer {
+    padding-block-start: var(--s3);
+    border-block-start: 1px solid var(--line);
+  }
+  .sheet-speed-heading {
+    margin: 0;
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: var(--fw-bold);
+  }
+  .sheet-speed-steppers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s3) var(--s3);
+  }
+  .sheet-speed-field {
+    display: grid;
+    gap: var(--s1);
+    min-width: 0;
+  }
+  .sheet-speed-field-label {
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+  }
+  .sheet-speed-stepper.ui-stepper { width: 100%; }
+  .sheet-speed-plan,
+  .sheet-speed-trains-on,
+  .sheet-speed-progress {
+    margin: 0;
+    font-size: 0.9375rem;
+  }
+  .sheet-speed-plan { color: var(--ink-2); }
+  .sheet-speed-trains-on { color: var(--ink); font-weight: var(--fw-semibold); }
+  .sheet-speed-progress { color: var(--now); font-weight: var(--fw-bold); }
+  .sheet-speed-progress[data-done=true] { color: var(--ok); }
+  .sheet-speed-trainer-button.ui-button { min-height: 56px; }
+}

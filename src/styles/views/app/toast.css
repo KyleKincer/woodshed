@@ -1,0 +1,15 @@
+/* The app's toast region (src/app/feedback.js, spec §7.9): bottom-centre above
+ * the dock or the transport. The region itself is .ui-toast-region
+ * (primitives/toast.css); this file only lifts it clear of each place's bottom
+ * chrome through --toast-offset. */
+@layer views {
+  /* Stage, band layout: above the 64 px dock (the rail layout has no bottom dock). */
+  :root[data-place=stage]:has([data-stage-layout=band]) .app-toasts {
+    --toast-offset: calc(var(--h-dock) + var(--s2));
+  }
+
+  /* Edit postures: above the slim transport. */
+  :root[data-posture=edit] .app-toasts {
+    --toast-offset: calc(var(--h-lg) + var(--s2));
+  }
+}

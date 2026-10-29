@@ -1,0 +1,294 @@
+/* The Edit posture frame (src/edit/edit.js; spec §5.0, wireframe §10.10; architecture §2.15).
+ *
+ *   .edit[data-edit-layout=wide|portrait][data-tab=map|chart|details][data-inspector=open|collapsed|none][data-kbd-hints]
+ *     .edit-bar          the 48 px posture bar, a 2 px --edit top border: ‹ Done · title · label · tabs · ↶ ↷ · save status
+ *     .edit-body
+ *       .edit-main       the tab's view (role=tabpanel; the place's one [data-scroller])
+ *       .edit-inspector  wide: the 320 px right column · portrait: a docked bottom sheet of 45%, collapsing to its 56 px header
+ *     .edit-transport    the 56 px slim transport (slim-transport.css)
+ *   .edit-bulk           the bulk Details posture bar alone ("Editing details · 3 songs", Done)
+ *
+ * Edit follows the app theme (paper / night, html[data-place=edit]); nothing here reads the Stage's
+ * tokens. Key-cap hints (Kbd hint caps) show only inside [data-kbd-hints] (kbd.css). */
+@layer views {
+  .edit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "bar" "body" "transport";
+    box-sizing: border-box;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  /* The root takes focus only so keys reach Edit before anything inside is focused; it is not a control. */
+  .edit:focus-visible { outline: none; }
+
+  /* ---- the posture bar ---- */
+  .edit-bar {
+    grid-area: bar;
+    position: relative;
+    z-index: var(--z-sticky);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    box-sizing: border-box;
+    block-size: 48px;
+    min-width: 0;
+    padding: 0 var(--s4) 0 var(--s2);
+    border-block-start: 2px solid var(--edit);
+    background: var(--surface);
+    box-shadow: var(--shadow-sticky);
+  }
+  .edit-bar-lead {
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+  }
+  .edit-done { flex: none; }
+  .edit-title {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-16)/1.2 var(--font-ui);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .edit-label {
+    flex: none;
+    margin: 0;
+    color: var(--edit);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .edit-bar[data-variant=bulk] .edit-label {
+    color: var(--ink);
+    font-size: var(--fs-16);
+  }
+  .edit-tabs {
+    flex: none;
+    flex-wrap: nowrap;
+    margin-inline-start: var(--s2);
+  }
+  .edit-bar-trail {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s1);
+    margin-inline-start: auto;
+  }
+  .edit-hint-cap { margin-inline-start: var(--s2); }
+
+  /* The save status slot: Saved / Saving… / Saved on this device / Another version exists [Review]. */
+  .edit-save {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-inline-size: 7ch;
+    margin-inline-start: var(--s2);
+    color: var(--ink-3);
+    font: var(--fw-regular) var(--fs-14)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .edit-save[data-state=local],
+  .edit-save[data-state=conflict] { color: var(--warn); }
+  .edit-save[data-state=error] { color: var(--danger); }
+  .edit-save-actions:empty { display: none; }
+
+  /* Below 900 px (iPad portrait) Undo and Redo keep their icon; their names stay as aria-label. */
+  @media (max-width: 899px) {
+    .edit-undo .ui-button-text,
+    .edit-redo .ui-button-text { display: none; }
+    .edit-bar { gap: var(--s2); }
+  }
+
+  /* ---- the body: main and the inspector ---- */
+  .edit-body {
+    grid-area: body;
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+  .edit[data-edit-layout=wide]:not([data-inspector=none]) .edit-body {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+  .edit[data-edit-layout=portrait][data-inspector=open] .edit-body {
+    grid-template-rows: minmax(0, 55fr) minmax(0, 45fr);
+  }
+  .edit[data-edit-layout=portrait][data-inspector=collapsed] .edit-body {
+    grid-template-rows: minmax(0, 1fr) 56px;
+  }
+
+  .edit-main {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+  }
+  .edit-main:focus-visible { outline-offset: -3px; }
+
+  .edit-inspector {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--surface);
+  }
+  .edit-inspector-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .edit[data-edit-layout=wide] .edit-inspector {
+    border-inline-start: 1px solid var(--line);
+  }
+  .edit[data-edit-layout=wide] .edit-inspector-head { display: none; }
+
+  /* Portrait: a docked bottom sheet (not an overlay: it never covers the music it edits). */
+  .edit[data-edit-layout=portrait] .edit-inspector {
+    z-index: var(--z-local);
+    border-start-start-radius: var(--r-surface);
+    border-start-end-radius: var(--r-surface);
+    box-shadow: var(--shadow-sheet);
+  }
+  .edit-inspector-head {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s3);
+    box-sizing: border-box;
+    block-size: 56px;
+    padding: 0 var(--s4);
+  }
+  .edit[data-inspector=open] .edit-inspector-head { border-block-end: 1px solid var(--line); }
+  .edit-inspector-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: var(--h-md);
+    padding: 0 var(--s2);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-16)/1.2 var(--font-ui);
+    cursor: pointer;
+  }
+  @media (hover: hover) {
+    .edit-inspector-toggle:hover { background: var(--surface-2); }
+  }
+  .edit-inspector-toggle .ui-icon { transition: rotate var(--motion-fast) var(--ease); }
+  .edit-inspector-toggle[aria-expanded=false] .ui-icon { rotate: 180deg; }
+  .edit-inspector-grabber {
+    position: absolute;
+    inset-block-start: var(--s1);
+    inset-inline-start: 50%;
+    inline-size: 36px;
+    block-size: 4px;
+    border-radius: var(--r-pill);
+    background: var(--line-strong);
+    translate: -50% 0;
+  }
+  .edit-inspector-hint {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    margin: 0 0 0 auto;
+    color: var(--ink-3);
+    font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui);
+  }
+  .edit-inspector-hint .ui-icon { flex: none; }
+
+  /* ---- the slim transport row ---- */
+  .edit-transport {
+    grid-area: transport;
+    position: relative;
+    z-index: var(--z-sticky);
+    padding-block-end: var(--safe-bottom);
+    border-block-start: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  /* ---- a tab that could not open ---- */
+  .edit-tab-error {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
+    max-inline-size: 560px;
+    margin: var(--s7) auto;
+    padding: var(--s5);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .edit-tab-error-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-20)/1.3 var(--font-ui);
+  }
+  .edit-tab-error-body {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.4 var(--font-mono);
+  }
+
+  /* ---- a song Edit cannot open (deleted, or shared with you) ---- */
+  .edit-notice {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    padding: var(--s5);
+    box-sizing: border-box;
+    background: var(--bg);
+  }
+  .edit-notice-card {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
+    max-inline-size: 480px;
+    padding: var(--s6);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .edit-notice-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-24)/1.2 var(--font-ui);
+  }
+  .edit-notice-body {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.4 var(--font-ui);
+  }
+  .edit-notice-link {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--h-md);
+    color: var(--accent);
+    font: var(--fw-semibold) var(--fs-16)/1.2 var(--font-ui);
+  }
+
+  /* ---- the bulk Details posture bar ---- */
+  .edit-bulk {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: var(--z-sticky);
+    padding-block-start: var(--safe-top);
+    background: var(--surface);
+  }
+}

@@ -18,7 +18,7 @@ export function scoreFromTiming(duration,metronome){
     const end=next<0?beats.length:next,count=end-begin;
     // Edited/detected downbeats define bars. Split implausibly long runs at
     // the existing meter, retaining every pulse and its exact timestamp.
-    const nominal=Math.max(1,Math.min(16,(metronome.source==='detected'&&next<0?measures.at(-1)?.numerator:section.beatsPerBar)||4));
+    const nominal=Math.max(1,Math.min(16,section.beatsPerBar||4));
     const take=count>16?nominal:count,n=next>=0&&count<=16?count:Math.max(take,nominal);
     const pickup=begin===0&&!beats[begin].downbeat;
     measures.push({id:id(),numerator:pickup?Math.max(n,nominal):n,denominator:d,

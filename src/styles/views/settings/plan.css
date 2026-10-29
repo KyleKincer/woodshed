@@ -1,0 +1,190 @@
+/* Settings → Plan & storage (src/settings/sections/plan.js; spec §6.2, §6.3): the usage meter and the
+ * largest songs, the Free and Plus cards, the export and the playback cache. */
+@layer views {
+  /* Cloud storage: a meter and its words. */
+  .settings-usage {
+    display: grid;
+    gap: var(--s2);
+    flex-basis: 100%;
+    max-width: 480px;
+  }
+  .settings-meter {
+    position: relative;
+    height: 12px;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    background: var(--surface-2);
+  }
+  .settings-meter-fill {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: calc(var(--settings-meter, 0) * 100%);
+    border-radius: var(--r-pill);
+    background: var(--accent-fill);
+    transition: width var(--motion-slow) var(--ease);
+  }
+  .settings-meter[data-full=true] .settings-meter-fill { background: var(--danger); }
+  .settings-usage-value { font-variant-numeric: tabular-nums; }
+  .settings-usage-note {
+    flex-basis: 100%;
+    max-width: 60ch;
+    color: var(--warn);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    line-height: 1.4;
+  }
+
+  .settings-largest-block {
+    display: grid;
+    gap: var(--s2);
+    flex-basis: 100%;
+    max-width: 560px;
+  }
+  .settings-largest {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .settings-largest-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--s2);
+    padding-block: var(--s1);
+    border-top: 1px solid var(--line);
+  }
+  .settings-largest-link {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    min-height: var(--h-sm);
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+    overflow-wrap: anywhere;
+  }
+  @media (pointer: coarse) {
+    .settings-largest-link { min-height: 44px; }
+  }
+  .settings-largest-artist {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .settings-largest-size {
+    margin-inline-start: auto;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* Plan: notices, the interval, the two cards. */
+  .settings-plan-body {
+    display: grid;
+    gap: var(--s4);
+    flex-basis: 100%;
+  }
+  .settings-notices {
+    display: grid;
+    gap: var(--s2);
+  }
+  .settings-notices:empty { display: none; }
+  .settings-plans {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--s4);
+  }
+  .settings-plan {
+    display: grid;
+    align-content: start;
+    gap: var(--s2);
+    padding: var(--s4) var(--s5);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .settings-plan[data-current=true] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .settings-plan-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s2);
+  }
+  .settings-plan-title {
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--fs-20);
+    font-weight: var(--fw-bold);
+  }
+  .settings-plan-badge {
+    padding: 2px var(--s2);
+    border-radius: var(--r-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+  }
+  .settings-plan-amount { margin: 0; color: var(--ink-2); font-size: var(--fs-14); }
+  .settings-plan-price {
+    color: var(--ink);
+    font-size: var(--fs-32);
+    font-weight: var(--fw-bold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .settings-plan-cadence,
+  .settings-plan-songs {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-plan-storage {
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .settings-plan-features {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding-inline-start: var(--s4);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .settings-plan-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    padding-block-start: var(--s2);
+  }
+  .settings-plan-actions:empty { display: none; }
+
+  /* Export: the running line. */
+  .settings-export-running {
+    display: grid;
+    gap: var(--s2);
+    flex-basis: 100%;
+    max-width: 480px;
+  }
+  .settings-export-progress { font-size: var(--fs-14); }
+
+  /* Playback cache: "412 MB · Clear". */
+  .settings-cache {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+  .settings-cache-value { font-variant-numeric: tabular-nums; }
+  .settings-cache-sep { color: var(--ink-3); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-meter-fill { transition: none; }
+  }
+}

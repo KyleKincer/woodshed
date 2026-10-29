@@ -1,0 +1,35 @@
+/* Engraved score (src/js/notation/score-view.js). alphaTab draws transparent
+   SVG over an underlay that holds the playing bar, loop, selection and caret,
+   so highlights sit behind notes. The loop edges (brackets, grip dots and
+   their hit areas) sit in a separate layer above the notes. */
+@layer views {
+  .score-view { position: relative; }
+  .score-stage { position: relative; min-height: 120px; }
+  .score-engraving { position: relative; z-index: var(--z-local); }
+  .score-engraving .at-surface { cursor: inherit; }
+  .score-overlay,
+  .score-handles { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .score-overlay { z-index: var(--z-base); }
+  .score-handles { z-index: var(--z-local-2); }
+
+  /* The playing bar and the beat cursor (spec §4.4A). */
+  .score-now-bar { fill: var(--now-soft); }
+  .score-playhead { stroke: var(--now); stroke-width: 3; stroke-linecap: round; }
+
+  /* The loop: a band under the notes, brackets and handles above them. */
+  .score-loop { fill: var(--loop-fill); }
+  .score-loop-edge { transition: transform var(--motion-fast) var(--ease); }
+  .score-handles.is-dragging .score-loop-edge { transition: none; }
+  .score-loop-hit { fill: transparent; pointer-events: all; cursor: ew-resize; touch-action: none; }
+  .score-loop-line,
+  .score-loop-bracket { fill: none; stroke: var(--loop); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .score-loop-grip { fill: var(--loop); stroke: var(--bg); stroke-width: 2; pointer-events: none; }
+
+  /* Editing marks (Edit · Chart). */
+  .score-range { fill: var(--accent-soft); opacity: .7; }
+  .score-selected { fill: var(--accent); fill-opacity: .28; stroke: var(--accent); stroke-width: 1.5; }
+  .score-caret { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; }
+  .score-caret-label { fill: var(--accent); font: var(--fw-semibold) var(--fs-12) var(--font-ui); }
+  .score-mark-reviewed { fill: var(--ok); opacity: .08; }
+  .score-mark-untranscribed { fill: var(--ink-3); opacity: .07; }
+}

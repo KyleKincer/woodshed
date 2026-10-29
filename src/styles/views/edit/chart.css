@@ -1,0 +1,78 @@
+/* Edit · Chart (src/edit/chart/chart-edit.js, toolbar.js, kit-bank.js; spec §5.2): the toolbar
+   (44 px, 52 on coarse pointers), the message line, the score or lanes, the inspector tabs and,
+   in iPad portrait, the inspector buttons and the kit pad bank (4 × 7 pads of 56 px). The Edit
+   tab panel is the place's one scroller (D26): the toolbar sticks to its top and the kit bank
+   to its bottom, so nothing else scrolls. */
+@layer views {
+  .chart-edit { display: flex; flex-direction: column; min-height: 100%; min-width: 0; background: var(--bg); color: var(--ink); }
+  .chart-edit-tools { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg); border-bottom: 1px solid var(--line); }
+  .chart-edit-main { flex: 1; min-width: 0; padding: var(--s3) var(--s4) var(--s4); }
+  .chart-edit-message { min-height: 1.4em; margin: var(--s2) var(--s4) 0; color: var(--ink-2); font: var(--fs-14)/1.4 var(--font-ui); }
+  .chart-edit-message:empty { visibility: hidden; }
+  .chart-edit-notice { display: grid; justify-items: center; gap: var(--s4); padding: var(--s8) var(--s5); text-align: center; }
+  .chart-edit-notice-text { color: var(--ink-2); font: var(--fs-16)/1.5 var(--font-ui); }
+  .chart-edit:not([data-state=ready]) .chart-edit-main { display: none; }
+
+  /* ---- toolbar ------------------------------------------------------------------------------------------- */
+  .chart-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0 var(--s3); min-height: 44px; padding: 0 var(--s3); }
+  .chart-tool-group { display: flex; align-items: center; gap: var(--s1); min-height: 44px; }
+  .chart-tool-group[hidden] { display: none; }
+  .chart-tool-steps { gap: var(--s1); }
+  .chart-tool-step { position: relative; font-variant-numeric: tabular-nums; }
+  .chart-tool-step .ui-kbd,
+  .chart-tool-skip .ui-kbd { margin-left: var(--s1); }
+  .chart-tool-writing { display: flex; align-items: center; gap: var(--s1); margin: 0; min-height: 44px; color: var(--ink-2);
+    font: var(--fs-14)/1 var(--font-ui); white-space: nowrap; }
+  .chart-tool-piece-name { color: var(--ink); font-weight: var(--fw-bold); }
+  .chart-tool-range { gap: var(--s1); }
+  .chart-tool-view .ui-segmented-options { padding: 2px; }
+  .chart-tool-range-text { min-width: 7.5em; color: var(--ink); font: var(--fw-semibold) var(--fs-14)/1 var(--font-ui);
+    font-variant-numeric: tabular-nums; text-align: right; }
+  .chart-tool-menus { margin-left: auto; }
+  .chart-tool-save { display: flex; align-items: center; gap: var(--s2); min-height: 44px; color: var(--ink-3);
+    font: var(--fs-14)/1 var(--font-ui); white-space: nowrap; }
+  .chart-toolbar[data-save=conflict] .chart-tool-save,
+  .chart-toolbar[data-save=offline] .chart-tool-save,
+  .chart-toolbar[data-save=storage-error] .chart-tool-save { color: var(--warn); }
+
+  /* Undo / Redo: text and glyph at ≥ 1200 px; below, the glyph (the accessible name stays). */
+  @media (max-width: 1199px) {
+    .chart-tool-history .ui-button-text { display: none; }
+  }
+
+  /* ---- inspector (laptop: the frame's right column) ------------------------------------------------------ */
+  .chart-edit-inspector { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3) var(--s4) var(--s5); }
+  .chart-edit-inspector .ui-tabs { position: sticky; top: 0; z-index: var(--z-sticky); background: inherit; }
+  .chart-edit-panel { min-width: 0; }
+  .chart-edit-panel:focus { outline: none; }
+  .chart-edit-sheet .chart-edit-panel { padding: var(--s3) var(--s4) var(--s5); }
+
+  /* ---- iPad portrait: the score on top; the toolbar, inspector buttons and kit bank docked below ---------- */
+  .chart-edit-dock { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; background: var(--bg); }
+  .chart-edit[data-layout=portrait] .chart-edit-tools { position: static; border-top: 1px solid var(--line); border-bottom: 0; }
+  .chart-edit-panels { display: flex; gap: var(--s2); padding: var(--s1) var(--s4) var(--s2); }
+  .chart-edit-panels[hidden] { display: none; }
+  .chart-edit-panels .ui-button { flex: 1; }
+  .chart-edit-bank { background: var(--surface); border-top: 1px solid var(--line); }
+
+  .chart-bank { display: flex; gap: var(--s2); padding: var(--s3) var(--s4); }
+  .chart-bank-pads { flex: 1; display: grid; gap: var(--s1); min-width: 0; }
+  .chart-bank-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--s1); }
+  .chart-bank-pad.ui-button { min-width: 0; height: 56px; min-height: 56px; padding: 0 var(--s1);
+    border-bottom: 4px solid var(--family, var(--line-strong)); font-variant-numeric: tabular-nums; }
+  .chart-bank-pad[data-family=cymbal] { --family: var(--warn); }
+  .chart-bank-pad[data-family=drum] { --family: var(--stem-drums); }
+  .chart-bank-pad[data-family=foot] { --family: var(--stem-bass); }
+  .chart-bank-pad[data-family=aux] { --family: var(--stem-guitar); }
+  .chart-bank-pad[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .chart-bank-skip.ui-button { --family: var(--accent); }
+  .chart-bank-nav { display: grid; grid-template-rows: 1fr 1fr; gap: var(--s1); }
+  .chart-bank-step.ui-button { width: 56px; height: auto; min-height: 56px; }
+
+  @media (pointer: coarse) {
+    .chart-toolbar,
+    .chart-tool-group,
+    .chart-tool-writing,
+    .chart-tool-save { min-height: 52px; }
+  }
+}

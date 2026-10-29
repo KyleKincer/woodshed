@@ -1,0 +1,348 @@
+@layer views {
+  /* Find a chart (src/edit/map/find-panel.js, spec §5.1.2): the side panel in the inspector's place
+   * (320 px on a laptop, the inspector sheet on iPad portrait). Header, one status line, the search,
+   * radio rows, Import a file…, Other sources, Align, and the commit row pinned at the bottom. App-theme
+   * tokens (Edit is never a Stage place). Nothing outside the panel is made inert. */
+  .find-panel {
+    container: find-panel / inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .find-header {
+    display: grid;
+    gap: var(--s1);
+    padding: var(--s4) var(--s4) 0;
+  }
+  .find-title {
+    font-size: var(--fs-20);
+    font-weight: var(--fw-bold);
+    line-height: 1.2;
+  }
+  .find-intro,
+  .find-hint,
+  .find-scope,
+  .find-reason {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .find-status {
+    margin-inline: var(--s4);
+  }
+
+  /* The scrolling body: every control except the commit row. */
+  .find-controls {
+    display: grid;
+    align-content: start;
+    gap: var(--s4);
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0 var(--s4) var(--s4);
+    border: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .find-legend {
+    padding: 0;
+    margin-bottom: var(--s2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    color: var(--ink);
+  }
+
+  /* Search */
+  .find-search {
+    display: grid;
+    gap: var(--s1);
+  }
+  .find-search-row {
+    display: flex;
+    align-items: end;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .find-query {
+    flex: 1 1 auto;
+  }
+  .find-search-button {
+    flex: none;
+  }
+
+  /* Results: radio rows */
+  .find-results {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .find-rows {
+    display: grid;
+    gap: var(--s1);
+  }
+  .find-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: var(--s2);
+    row-gap: var(--s1);
+    min-height: var(--h-lg);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    cursor: pointer;
+  }
+  .find-row:hover {
+    border-color: var(--line-strong);
+  }
+  .find-row[data-state=selected] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .find-row:has(.find-radio:focus-visible) {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .find-radio {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--accent-fill);
+  }
+  .find-radio:focus-visible {
+    outline: none;
+  }
+  .find-row-main {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .find-row-title {
+    overflow-wrap: anywhere;
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .find-row-meta {
+    overflow-wrap: anywhere;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .find-badge {
+    padding: 2px var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink-2);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    white-space: nowrap;
+  }
+  .find-row-time {
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    font-variant-numeric: tabular-nums;
+  }
+  .find-row-busy {
+    grid-column: 2 / -1;
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+
+  /* Import a file… and Other sources */
+  .find-import {
+    display: grid;
+    justify-items: start;
+    gap: var(--s1);
+  }
+  .find-others {
+    border-top: 1px solid var(--line);
+    padding-top: var(--s3);
+  }
+  .find-others-summary {
+    min-height: var(--h-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+    list-style: none;
+  }
+  .find-others-summary::-webkit-details-marker {
+    display: none;
+  }
+  .find-others-summary .ui-icon {
+    flex: none;
+    color: var(--ink-2);
+    transition: transform var(--motion-fast) var(--ease);
+  }
+  .find-others[open] > .find-others-summary .ui-icon {
+    transform: rotate(90deg);
+  }
+  .find-others-body {
+    margin-top: var(--s2);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    line-height: 1.5;
+  }
+  .find-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--accent);
+    font-weight: var(--fw-semibold);
+  }
+  .find-link .ui-icon {
+    flex: none;
+  }
+
+  /* Align */
+  .find-align {
+    display: grid;
+    gap: var(--s2);
+    min-width: 0;
+    margin: 0;
+    padding: var(--s3) 0 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+  .find-listening {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+  }
+  .find-current {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .find-current-label {
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .find-current-name {
+    overflow-wrap: anywhere;
+    font-size: var(--fs-16);
+  }
+  .find-current-detail {
+    overflow-wrap: anywhere;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .find-warnings {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding: var(--s2) var(--s3);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    list-style: none;
+  }
+  .find-warning {
+    display: flex;
+    align-items: start;
+    gap: var(--s2);
+    color: var(--ink);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .find-warning .ui-icon {
+    flex: none;
+    margin-top: 1px;
+    color: var(--warn);
+  }
+  .find-align-controls {
+    display: grid;
+    gap: var(--s2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  /* [−100] [−10] [ offset ] [+10] [+100]: the field's own frame (label, hint, error) is laid out by this
+   * grid (display: contents), so the label sits above the row and the hint below it at full width. */
+  .find-offset-row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: var(--s1);
+    row-gap: var(--s1);
+  }
+  .find-offset {
+    display: contents;
+  }
+  .find-offset > .ui-field-label {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .find-offset > .ui-field-row {
+    grid-column: 3;
+    grid-row: 2;
+    min-width: 0;
+  }
+  .find-offset > .ui-field-hint {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+  .find-offset > .ui-field-error {
+    grid-column: 1 / -1;
+    grid-row: 4;
+  }
+  .find-offset .ui-field-input {
+    width: 100%;
+    min-width: 0;
+    padding-inline: var(--s1);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .find-shift {
+    grid-row: 2;
+    padding-inline: var(--s2);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .find-shift[data-shift="-100"] { grid-column: 1; }
+  .find-shift[data-shift="-10"] { grid-column: 2; }
+  .find-shift[data-shift="10"] { grid-column: 4; }
+  .find-shift[data-shift="100"] { grid-column: 5; }
+  .find-align-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+
+  /* Commit: pinned under the scrolling body */
+  .find-commit {
+    display: grid;
+    gap: var(--s2);
+    padding: var(--s3) var(--s4) var(--s4);
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .find-commit .ui-button {
+    width: 100%;
+  }
+  /* A wide panel (the iPad portrait sheet): the commits share one row, so the sheet keeps room for the rows. */
+  @container find-panel (min-width: 520px) {
+    .find-commit {
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
+  }
+}

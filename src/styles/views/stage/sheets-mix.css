@@ -1,0 +1,94 @@
+/* The Mix sheet (src/stage/sheets/mix.js; spec §4.7): the top row (56 px Minus me, I play ▾, Only
+ * me, Full mix), the inline instrument picker, the no-stem note, the Mute · Solo switch, the stem
+ * pads (band: 120×168, three per row; rail popover: 160×96, two per row) and Chart playback. */
+@layer views {
+  .sheet-mix {
+    display: grid;
+    gap: var(--s4);
+    padding-block: var(--s1) var(--s2);
+  }
+
+  .sheet-mix-top {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+  .sheet-mix-top > .ui-button {
+    min-width: 0;
+    min-height: 56px;
+    padding-inline: var(--s3);
+  }
+  /* Minus me and I play name stems and instruments: each gets the whole row. */
+  .sheet-mix-top > .sheet-mix-minus-me,
+  .sheet-mix-top > .sheet-mix-i-play { grid-column: 1 / -1; }
+
+  .sheet-mix-picker {
+    display: grid;
+    gap: var(--s2);
+    padding: var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface-2);
+  }
+
+  /* In the 360 px popover the picker's chips go two per row, so the Primary badge always fits. */
+  .sheet-mix[data-layout=rail] .sheet-mix-picker .onboarding-instruments-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+
+  .sheet-mix-note {
+    display: grid;
+    gap: var(--s2);
+    justify-items: start;
+  }
+  .sheet-mix-note-text {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+  }
+
+  .sheet-mix-mode-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+  .sheet-mix-mode-label {
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    font-weight: var(--fw-semibold);
+  }
+  .sheet-mix-hint {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+  }
+
+  .sheet-mix-pads {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 120px);
+    justify-content: start;
+    gap: var(--s3);
+    max-width: calc(3 * 120px + 2 * var(--s3));   /* three per row on the band */
+  }
+  .sheet-mix[data-layout=rail] .sheet-mix-pads {
+    grid-template-columns: repeat(2, 160px);       /* two per row in the 360 px popover */
+    gap: var(--s2);
+    max-width: none;
+  }
+
+  .sheet-mix-chart-row {
+    display: grid;
+    gap: var(--s2);
+    padding-block-start: var(--s3);
+    border-block-start: 1px solid var(--line);
+  }
+  .sheet-mix-heading {
+    margin: 0;
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: var(--fw-bold);
+  }
+}

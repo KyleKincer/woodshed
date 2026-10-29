@@ -1,0 +1,434 @@
+@layer views {
+  /* Edit · Map (src/edit/map/{view,lane,sections,inspector}.js; spec §5.1, wireframe §10.10). App
+   * theme tokens (never the Stage's). Positions along the time axis (ruler marks, blocks, handles,
+   * the cursor and the playhead) are set inline by the modules as --x / --x0 / --w / translateX;
+   * everything else is here.
+   *   section.map-view[data-mapped][data-compact][data-grid][data-snap]
+   *     .map-toolbar (40 px)
+   *     .map-lanes: a grid of key column | content: ruler (24) · sections (32) · the sections bar ·
+   *       tempo (96) · one row per stem (.map-heads | .map-cell-rows canvas), with .map-overlay
+   *       (cursor, playhead) over the content column
+   *     .map-banners (markers → sections) · .map-strip (the song strip)
+   *   aside.map-inspector[data-mode=mapped|unmapped] inside Edit's inspector container */
+  .map-view {
+    --map-key: 136px;
+    --map-row-min: 96px;   /* name · M S level · fader: three lines without overlap */
+    --map-rows: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .map-view[data-compact] { --map-key: 120px; --map-row-min: 80px; }
+
+  /* ---- toolbar ---- */
+  .map-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-local-2);
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 40px;
+    padding: 0 var(--s3);
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .map-toolbar::-webkit-scrollbar { display: none; }
+  .map-toolbar > * { flex: none; }
+  .map-tool-group { display: inline-flex; align-items: center; gap: var(--s1); }
+
+  /* Key-cap hints (Kbd hint) only after keyboard use on fine pointers (Edit adds [data-kbd-hints]). */
+  .map-hint { margin-inline-start: var(--s1); }
+
+  /* ---- lanes ---- */
+  .map-lanes {
+    position: relative;
+    display: grid;
+    flex: none;
+    grid-template-columns: var(--map-key) minmax(0, 1fr);
+    grid-template-rows: 24px 32px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), auto);
+    min-width: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  /* Coarse pointers: the sections lane grows from 32 px to hold 44 px targets (names, starts, ✓ / ✕) above its border. */
+  .map-view[data-compact] .map-lanes { grid-template-rows: 24px 45px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
+  .map-view[data-mapped=false] .map-lanes { grid-template-rows: 24px 0 0 0 minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
+  .map-view[data-mapped=false] :is(.map-key-sections, .map-cell-sections, .map-cell-sections-bar, .map-key-tempo, .map-cell-tempo) {
+    display: none;
+  }
+
+  .map-key {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 0 var(--s3);
+    box-sizing: border-box;
+    border-inline-end: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .map-key-ruler { grid-area: 1 / 1; }
+  .map-key-sections { grid-area: 2 / 1; }
+  .map-key-tempo { grid-area: 4 / 1; align-items: flex-start; padding-top: var(--s1); }
+
+  .map-cell {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+  }
+  .map-cell-ruler { grid-area: 1 / 2; background: var(--surface); }
+  .map-cell-sections { grid-area: 2 / 2; }
+  .map-cell-sections-bar { grid-area: 3 / 1 / 4 / 3; border-bottom: 0; }
+  .map-cell-tempo { grid-area: 4 / 2; }
+  .map-cell-rows { grid-area: 5 / 2; border-bottom: 0; cursor: text; }
+
+  /* ---- bar ruler (marks at --x) ---- */
+  .map-ruler { position: absolute; inset: 0; cursor: pointer; }
+  .map-ruler-marks { position: absolute; inset: 0; }
+  .map-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    padding-inline-start: var(--s1);
+    border-inline-start: 1px solid var(--line-strong);
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    transform: translateX(var(--x, 0));
+  }
+  .map-mark[data-selected] { color: var(--accent); font-weight: var(--fw-bold); border-inline-start-color: var(--accent); }
+  .map-meter {
+    padding: 2px var(--s1);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink);
+    background: var(--surface-2);
+  }
+  /* The sections lane right below names the sections; in the narrow ruler the names collided with bar numbers. */
+  .map-mark-label { display: none; }
+
+  /* ---- sections lane (32 px) ---- */
+  .map-sections { position: absolute; inset: 0; }
+  .map-sections-blocks { position: absolute; inset: 0; }
+  .map-section,
+  .map-suggested {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--x0, 0);
+    width: var(--w, 0);
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    box-sizing: border-box;
+    border-inline-start: 1px solid var(--line-strong);
+  }
+  .map-section { background: var(--surface); }
+  .map-section[data-alt="1"] { background: var(--surface-2); }
+  .map-section-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    padding: 0 var(--s2);
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    text-align: start;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .map-section-name:hover { background: var(--accent-soft); }
+  .map-section-input,
+  .map-suggested-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 26px;
+    margin: 0 var(--s1);
+    padding: 0 var(--s1);
+    border: 1px solid var(--accent);
+    border-radius: var(--r-control);
+    background: var(--bg);
+    color: var(--ink);
+    font-size: var(--fs-14);
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .map-suggested-input { border-color: var(--line-strong); }
+  .map-sections-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 var(--s3);
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .map-section-name:focus-visible,
+  .map-suggested-toggle:focus-visible,
+  .map-boundary:focus-visible { outline-offset: -3px; }
+
+  /* A section start (or a suggested block's start): a 24 px hit area (44 coarse) centred on the edge. */
+  .map-boundary {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--x, 0px) - var(--hit-handle) / 2);
+    width: var(--hit-handle);
+    z-index: var(--z-local);
+    cursor: ew-resize;
+    touch-action: none;
+  }
+  .map-boundary::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(50% - 1.5px);
+    width: 3px;
+    background: var(--edit);
+  }
+  .map-boundary[data-dragging]::before { background: var(--accent); }
+
+  /* Suggested sections (D47): dashed blocks; in the review each has ✓ / ✕, a name and a start. */
+  .map-suggested {
+    border: 1px dashed var(--line-strong);
+    border-inline-start-style: dashed;
+    background: var(--bg);
+    gap: var(--s1);
+    padding-inline-start: var(--s2);
+  }
+  .map-suggested-name {
+    min-width: 0;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .map-suggested-toggle {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .map-suggested-toggle[aria-pressed=true][data-choice=keep] { border-color: var(--ok); color: var(--ok); background: var(--surface-2); }
+  .map-suggested-toggle[aria-pressed=true][data-choice=drop] { border-color: var(--danger); color: var(--danger); background: var(--surface-2); }
+  .map-suggested[data-accepted=false] .map-suggested-input { color: var(--ink-3); text-decoration: line-through; }
+  .map-view[data-compact] .map-suggested-toggle { width: 44px; height: 44px; }
+
+  .map-sections-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    font-size: var(--fs-14);
+  }
+  .map-sections-bar-text { color: var(--ink-2); }
+  .map-sections-bar-actions { display: inline-flex; gap: var(--s2); margin-inline-start: auto; }
+
+  /* ---- tempo lane (96 px) ---- */
+  .map-tempo { position: absolute; inset: 0; }
+  .map-tempo-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .map-tempo-canvas[data-hover=pin] { cursor: ew-resize; }
+  .map-tempo-guides { position: absolute; inset: 0; pointer-events: none; }
+  .map-guide {
+    position: absolute;
+    right: var(--s2);
+    top: var(--y, 0);
+    transform: translateY(-50%);
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .map-tip {
+    position: absolute;
+    top: var(--s1);
+    left: var(--x, 0);
+    z-index: var(--z-local-2);
+    max-width: 240px;
+    padding: 2px var(--s2);
+    border-radius: var(--r-control);
+    background: var(--ink);
+    color: var(--bg);
+    font-size: var(--fs-12);
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateX(-50%);
+  }
+
+  /* ---- stem rows ---- */
+  .map-heads {
+    grid-area: 5 / 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-inline-end: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .map-head {
+    flex: 1 1 var(--map-row-min);
+    min-height: var(--map-row-min);
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--line);
+  }
+  .map-head:last-child { border-bottom: 0; }
+  .map-head-body {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--s1);
+    height: 100%;
+    padding: var(--s1) var(--s2) var(--s1) var(--s3);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .map-row-color {
+    position: absolute;
+    top: var(--s1);
+    bottom: var(--s1);
+    left: 0;
+    width: 4px;
+    background: var(--map-row-color, var(--stem-other));
+  }
+  .map-head-line { display: flex; align-items: center; gap: var(--s1); min-width: 0; }
+  .map-row-name { min-width: 0; font-size: var(--fs-14); font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .map-row-word { flex: none; color: var(--ink-2); font-size: var(--fs-12); font-weight: var(--fw-bold); letter-spacing: 0.04em; }
+  .map-head[data-state=out] .map-row-word { text-decoration: line-through; }
+  .map-head[data-state=solo] .map-row-word { color: var(--accent); }
+  .map-ms { min-width: var(--h-sm); padding-inline: 0; }
+  .map-row-level { margin-inline-start: auto; color: var(--ink-3); font-family: var(--font-mono); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
+  .map-head-fader > * { flex: 1 1 auto; min-width: 0; }
+  .map-view[data-compact] :is(.map-head-fader, .map-row-level) { display: none; }
+
+  .map-rows-canvas { display: block; position: absolute; inset: 0; }
+
+  /* ---- the cursor (selected line) and the playhead, over every lane ---- */
+  .map-overlay {
+    grid-area: 1 / 2 / -1 / 3;
+    position: relative;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .map-cursor,
+  .map-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -1px;
+    width: 2px;
+  }
+  .map-cursor { background: var(--accent); }
+  .map-playhead { background: var(--now); }
+
+  /* ---- banner and strip ---- */
+  .map-banners { flex: none; padding: var(--s3) var(--s3) 0; }
+  .map-banners:empty, .map-banners:has(> [hidden]:only-child) { padding: 0; }
+  .map-banner-note { color: var(--ink-2); font-size: var(--fs-14); }
+  .map-strip { flex: none; margin-top: auto; padding: var(--s3); }
+
+  /* ---- the inspector ---- */
+  .map-inspector {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    padding: var(--s4);
+    box-sizing: border-box;
+    color: var(--ink);
+    font-size: var(--fs-14);
+  }
+  .map-insp-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); }
+  .map-insp-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s2); min-width: 0; }
+  .map-insp-title, .map-insp-sub { white-space: nowrap; }
+  .map-insp-title { margin: 0; font-size: var(--fs-20); font-weight: var(--fw-bold); letter-spacing: 0.02em; }
+  .map-insp-sub { color: var(--ink-3); font-size: var(--fs-14); }
+  .map-insp-steps { display: inline-flex; gap: var(--s1); flex: none; }
+  .map-insp-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    padding-top: var(--s3);
+    border-top: 1px solid var(--line);
+  }
+  .map-insp-heading {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .map-insp-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+  .map-field-label { min-width: 72px; color: var(--ink-2); }
+  .map-goto-field { width: 72px; }
+  .map-insp-row:has(.map-goto-field) { align-items: flex-end; }
+  .map-tempo-read { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+  .map-tempo-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-16); }
+  .map-pin-state { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+  .map-pin-text { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-16); }
+  .map-pin-state[data-pinned=true] .map-pin-text { color: var(--accent); }
+  .map-insp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+  .map-insp-grid > * { width: 100%; }
+  /* The longest tool label gets the whole row (two 136 px columns would clip it). */
+  .map-insp-grid > .map-snap-taps { grid-column: 1 / -1; }
+  .map-insp-status:empty { display: none; }
+
+  /* Get a map (unmapped, spec §5.1.1) */
+  .map-getmap { display: flex; flex-direction: column; gap: var(--s3); }
+  .map-getmap-intro, .map-getmap-body, .map-getmap-needs { margin: 0; color: var(--ink-2); }
+  .map-getmap-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    padding: var(--s3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--bg);
+  }
+  .map-getmap-link { color: var(--accent); }
+
+  /* iPad portrait (Edit's 45 % sheet): 48 px buttons in a 3-column grid, no key-caps (spec wireframe §10.10). */
+  :where(.edit[data-edit-layout=portrait]) .map-insp-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :where(.edit[data-edit-layout=portrait]) .map-inspector :is(.ui-button, .ui-toggle) { min-height: var(--h-lg); }
+  :where(.edit[data-edit-layout=portrait]) .map-inspector .map-hint { display: none; }
+}

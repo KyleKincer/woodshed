@@ -1,0 +1,71 @@
+/* The Stage status line (src/stage/stage.js; spec §4.3 "Status line", §4.12 step 5, §7.9): one
+ * transient line (role=status), the only in-Stage feedback while playing. It floats over the
+ * bottom of the music, above the strip, on every layout, so a line coming or going never moves or
+ * resizes anything (spec §4.10). */
+@layer views {
+  /* The floating stack: the recording banner (review-banner.css) above the status line. */
+  .stage-float {
+    grid-area: main;
+    align-self: end;
+    justify-self: stretch;
+    z-index: var(--z-local-2);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s2);
+    min-width: 0;
+    margin: 0 var(--s4) calc(var(--stage-strip-h) + var(--s3));
+    pointer-events: none;
+  }
+  .stage-float > * { pointer-events: auto; }
+
+  .stage-status {
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    min-width: 0;
+    max-width: min(640px, 100%);
+    padding: var(--s2) var(--s3);
+    background: var(--surface);
+    color: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-overlay);
+    font-size: var(--fs-stage-identity);
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .stage-status-text { min-width: 0; }
+  .stage-status-strong { color: var(--ink); font-weight: var(--fw-bold); }
+  .stage-status[data-tone=error] .stage-status-text { color: var(--danger); }
+  .stage-status-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+  }
+  .stage-status-actions:empty { display: none; }
+
+  /* The band's Focus has no strip under the music. */
+  .stage[data-stage-layout=band][data-focus] .stage-float { margin-bottom: calc(var(--s3) + var(--safe-bottom)); }
+
+  /* Follow paused: the surfaces' "⤓ Back to playhead" pill (56 px, --s5 above the music's bottom, centred)
+   * shows, so the stack lifts above it and the two never overlap (ST10 handoff 4). */
+  .stage {
+    --stage-follow-pill-clear: calc(56px + var(--s5) + var(--s2));
+  }
+  .stage[data-follow-paused] .stage-float {
+    margin-bottom: calc(var(--stage-strip-h) + var(--stage-follow-pill-clear));
+  }
+  .stage[data-stage-layout=band][data-focus][data-follow-paused] .stage-float {
+    margin-bottom: calc(var(--stage-follow-pill-clear) + var(--safe-bottom));
+  }
+
+  .stage-status[data-empty] {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /* Under a showing banner an empty line takes no room (the banner then sits on the strip's margin). */
+  .stage-float:has(.stage-review:not([hidden])) .stage-status[data-empty] { display: none; }
+}

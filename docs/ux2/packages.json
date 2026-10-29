@@ -1,0 +1,1382 @@
+{
+  "$comment": "Package ownership for the Woodshed 2.0 build (docs/ux2/architecture.md §9). Written by P0 from §9; an integration may amend it only for its follow-up tickets. Checked by scripts/check-ownership.mjs and tests/scripts/check-ownership.test.js. Globs use node:path matchesGlob after brace expansion; entries starting with \"!\" exclude.",
+  "packages": [
+    {
+      "id": "P0",
+      "wave": "P",
+      "kind": "package",
+      "title": "Toolchain",
+      "owns": [
+        "package.json",
+        "package-lock.json",
+        "docs/ux2/packages.json",
+        "scripts/{check-ownership,wt}.mjs",
+        "tests/scripts/check-ownership.test.js",
+        "tests/scripts/toolchain.test.js",
+        "tests/fixture/vite.config.mjs",
+        ".gitignore"
+      ],
+      "deps": [],
+      "notes": "Deviation from the \u00a79 row, approved at I0A: tests/scripts/toolchain.test.js (devDependency pins, npm scripts, FIXTURE_PORT servers) is listed explicitly because it is named after no P0 module. tests/scripts/wt.test.js is allowed by the naming rule (scripts/wt.mjs)."
+    },
+    {
+      "id": "FX0",
+      "wave": "P",
+      "kind": "package",
+      "title": "1.9 baselines from a pristine tree",
+      "owns": [
+        "tests/fixture/baselines/legacy/**",
+        "tests/fixture/harness/score-geometry.html",
+        "tests/fixture/harness/score-geometry.js",
+        "tests/fixture/probes/probe-geometry.cjs",
+        "tests/fixture/probes/probe-perf-legacy.cjs"
+      ],
+      "deps": []
+    },
+    {
+      "id": "F1",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Styles system, fonts, icons, guards",
+      "owns": [
+        "src/styles/{main,reset,tokens,fonts,base,layout,utilities}.css",
+        "src/styles/fonts/*",
+        "src/styles/icons.svg",
+        "src/styles/icons-custom/*",
+        "scripts/{vendor-fonts,build-icons,check-css,check-source}.mjs",
+        "tests/guards.test.js",
+        "tests/tokens-contrast.test.js",
+        "public/licenses/atkinson-hyperlegible-{next,mono}.txt",
+        "package.json",
+        "scripts/prepare-desktop.mjs",
+        "build/THIRD-PARTY-NOTICES.txt"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "F2",
+      "wave": "0A",
+      "kind": "package",
+      "title": "App core: store, prefs, router, clock, h, API client, DOM test kit",
+      "owns": [
+        "src/app/{store,prefs,router,clock}.js",
+        "src/ui/h.js",
+        "src/api/client.js",
+        "public/theme-init.js",
+        "tests/helpers/dom.js",
+        "tests/app-store.test.js",
+        "tests/app-prefs.test.js",
+        "tests/app-router.test.js",
+        "tests/app-clock.test.js",
+        "tests/ui-h.test.js",
+        "tests/api-client.test.js",
+        "tests/theme.test.js",
+        "tests/helpers-dom.test.js"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "F3",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Keys, registry, dispatcher, pedal classifier",
+      "owns": [
+        "src/app/{keys,commands,dispatch}.js",
+        "src/app/pedals.js",
+        "tests/app-keys.test.js",
+        "tests/app-commands.test.js",
+        "tests/app-dispatch.test.js",
+        "tests/app-pedals.test.js",
+        "tests/registry-ci.test.js",
+        "tests/registry-shadows.js"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "F4a",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Engine: plan model, events, scheduling, E1",
+      "owns": [
+        "src/js/engine.js",
+        "src/js/metronome.js",
+        "src/js/musical-position.js",
+        "tests/playback-engine.test.js",
+        "tests/engine-schedule.test.js",
+        "tests/helpers/fake-audio.js",
+        "src/js/notation/entry.js"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ],
+      "notes": "I0A follow-up (ticket I0A-1): src/js/notation/entry.js is owned only to delete the dead metronome.source branch at line 21 (architecture \u00a75.2)."
+    },
+    {
+      "id": "F5",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Song-map model",
+      "owns": [
+        "shared/song-map.ts",
+        "src/js/song-map.js",
+        "tests/song-map.test.js",
+        "tests/song-map-store.test.js",
+        "tests/song-map-helpers.test.js",
+        "tests/song-map-reasons.test.js",
+        "tests/has-real-map.test.js",
+        "tests/fixtures/maps.js",
+        "tests/map-mode.test.js",
+        "src/js/{map-mode,map-lane,player}.js"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ],
+      "notes": "I0A follow-up (ticket I0A-2): src/js/{map-mode,map-lane,player}.js are owned only to rename SongMapStore.barIndexAt( to barIndexAtQ( at the quarter-note call sites (architecture \u00a74.3, Appendix C item 6). Size exception recorded (Appendix C item 18)."
+    },
+    {
+      "id": "F6",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Practice model and profile",
+      "owns": [
+        "shared/practice.ts",
+        "src/app/profile.js",
+        "tests/practice-model.test.js",
+        "tests/profile.test.js"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "BK0",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Convex schema, error codes, validators, compat",
+      "owns": [
+        "convex/schema.ts",
+        "convex/lib/errors.ts",
+        "convex/lib/validators.ts",
+        "convex/lib/auth.ts",
+        "convex/convex.config.ts",
+        "convex/setlists.ts",
+        "convex/migrations.ts",
+        "convex/_generated/api.d.ts",
+        "convex/errors.test.ts",
+        "convex/schema-compat.test.ts"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "DT1",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Electron main and preload",
+      "owns": [
+        "desktop/{main,preload,menu,window-state,update-controller,ipc-handlers,permissions,flush,static-server}.cjs",
+        "desktop/*.test.cjs"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ]
+    },
+    {
+      "id": "FX1",
+      "wave": "0A",
+      "kind": "package",
+      "title": "Fixture restructure, seed v2, preamble fakes, harness host",
+      "owns": [
+        "tests/fixture/**",
+        "!tests/fixture/baselines/legacy/**",
+        "!tests/fixture/harness/score-geometry.*",
+        "!tests/fixture/probes/probe-geometry.cjs",
+        "!tests/fixture/probes/probe-perf-legacy.cjs",
+        "!tests/fixture/states/*.cjs",
+        "scripts/compare-shots.py",
+        "tests/fixture/lib/{runner,count,touch,structure}.cjs"
+      ],
+      "deps": [
+        "P0",
+        "FX0"
+      ],
+      "notes": "Creates tests/fixture/db/{songs,jobs,devices,settings,sharing,setlists,metadata}.js with today's handlers moved verbatim; wave 0B packages own their bodies. tests/fixture/states/<ID>.cjs belong to each package through the \u00a79.0 naming rule (FX1's own is tests/fixture/states/FX1.cjs), so FX1's glob excludes them. Amended at I0A: harness discovery also covers tests/fixture/harness/*.harness.js (the fixture smoke harness, \u00a711.2); size exception recorded (Appendix C item 18). I0B follow-ups (tickets I0B-2 to I0B-4): the tests/fixture/db/songs.js change is limited to deleting the fixture-only songs:rename handler, the tests/fixture/db/jobs.js change to liveDetection (both bodies otherwise belong to BK1/BK2)."
+    },
+    {
+      "id": "I0A",
+      "wave": "0A",
+      "kind": "integration",
+      "title": "Integration I0A",
+      "owns": [],
+      "deps": [
+        "F1",
+        "F2",
+        "F3",
+        "F4a",
+        "F5",
+        "F6",
+        "BK0",
+        "DT1",
+        "FX1"
+      ]
+    },
+    {
+      "id": "U1",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Primitives: actions and inputs",
+      "owns": [
+        "src/ui/{icon,button,toggle,hold-button,segmented,chip,stepper,slider,fader,field,stem-pad}.js",
+        "src/styles/primitives/{icon,button,toggle,hold-button,segmented,chip,stepper,slider,fader,field,stem-pad}.css",
+        "tests/ui-actions.test.js",
+        "tests/ui-inputs.test.js",
+        "tests/ui-stem-pad.test.js",
+        "tests/harness/ui/actions.harness.js",
+        "tests/fixture/states/U1.cjs"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "U2",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Primitives: overlays",
+      "owns": [
+        "src/ui/{position,popover,menu,sheet,dialog,toast,status,banner,coachmark}.js",
+        "src/styles/primitives/{position,popover,menu,sheet,dialog,toast,status,banner,coachmark}.css",
+        "tests/ui-position.test.js",
+        "tests/ui-overlays.test.js",
+        "tests/ui-menu.test.js",
+        "tests/harness/ui/overlays.harness.js",
+        "tests/fixture/states/U2.cjs"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "U3",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Primitives: display",
+      "owns": [
+        "src/ui/{progress,tabs,kbd,tooltip,empty,skeleton,readout,beat-lamps}.js",
+        "src/styles/primitives/{progress,tabs,kbd,tooltip,empty,skeleton,readout,beat-lamps}.css",
+        "tests/ui-display.test.js",
+        "tests/harness/ui/display.harness.js",
+        "tests/fixture/states/U3.cjs"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "PL1",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Platform, desktop wrapper, error copy, PWA assets",
+      "owns": [
+        "src/app/{platform,desktop,error-copy}.js",
+        "src/app/error-copy.copy.js",
+        "src/js/stemcache.js",
+        "src/js/download-release.js",
+        "public/manifest.webmanifest",
+        "public/icon-{180,192,512}.png",
+        "public/icon-maskable-512.png",
+        "vercel.json",
+        "tests/app-platform.test.js",
+        "tests/app-desktop.test.js",
+        "tests/error-copy.test.js",
+        "tests/downloads.test.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "AU1",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Auth core",
+      "owns": [
+        "src/app/auth.js",
+        "tests/app-auth.test.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "ST0",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Stage kernels: position, practice state, undo, glass, frame",
+      "owns": [
+        "src/stage/{position,practice-state,undo,glass,frame}.js",
+        "tests/stage-position.test.js",
+        "tests/stage-practice-state.test.js",
+        "tests/stage-undo.test.js",
+        "tests/stage-glass.test.js",
+        "tests/stage-frame.test.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "ST2",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Waveform renderer, grid, loop handles, pinch, press",
+      "owns": [
+        "src/stage/{wave-render,grid,loop-handles,pinch,press}.js",
+        "src/js/waveform.js",
+        "src/styles/views/stage/loop-handles.css",
+        "tests/stage-wave-render.test.js",
+        "tests/stage-grid.test.js",
+        "tests/stage-loop-handles.test.js",
+        "tests/stage-pinch.test.js",
+        "tests/stage-press.test.js",
+        "tests/harness/stage/wave.harness.js",
+        "tests/fixture/states/ST2.cjs"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "ST3",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Chart API (chrome-less) and score view",
+      "owns": [
+        "src/js/notation/{chart,score-view}.js",
+        "src/styles/views/notation/{chart,score-view}.css",
+        "src/js/notation/{chart,score-view}.css",
+        "tests/notation-chart.test.js",
+        "tests/notation-render.test.js",
+        "tests/harness/notation/chart.harness.js",
+        "tests/fixture/states/ST3.cjs"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "ED1",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Map editing session (no DOM)",
+      "owns": [
+        "src/edit/map/session.js",
+        "tests/map-session.test.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "F4b",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Segmented loops and metronome",
+      "owns": [
+        "src/js/engine.js",
+        "src/js/metronome.js",
+        "tests/engine-segmented.test.js",
+        "tests/metronome-gaps.test.js",
+        "tests/metronome-configure.test.js",
+        "src/stage/transport.js",
+        "tests/playback-engine.test.js"
+      ],
+      "deps": [
+        "F4a"
+      ],
+      "notes": "I1 follow-up (ticket I1-2): src/stage/transport.js is owned only to call the new public engine.cancelStopAt() instead of engine._clearStopAt() (and to drop the upcomingWrap() workaround once nextWrapAt() is strictly later, with tests/stage-transport.test.js unchanged and green); tests/playback-engine.test.js only to stop using the deleted Metronome.load() in its sectionAt test."
+    },
+    {
+      "id": "BK1",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Songs, notation, B1, B2, migration",
+      "owns": [
+        "convex/songs.ts",
+        "convex/notation.ts",
+        "convex/migrations.ts",
+        "convex/songs.test.ts",
+        "convex/migrations.test.ts",
+        "convex/{export,sync,notation,admin,billing}.test.ts",
+        "src/api/{songs,media,storage}.js",
+        "tests/fixture/db/songs.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "BK2",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Jobs",
+      "owns": [
+        "convex/jobs.ts",
+        "convex/jobs.test.ts",
+        "src/api/jobs.js",
+        "tests/fixture/db/jobs.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "BK3",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Worker, devices, presence, storage, admin (B4/B5/B6/B7 server)",
+      "owns": [
+        "convex/{worker,devices,storage,admin}.ts",
+        "convex/worker.test.ts",
+        "convex/devices.test.ts",
+        "src/api/devices.js",
+        "tests/fixture/db/devices.js",
+        "convex/renditions.ts"
+      ],
+      "deps": [
+        "I0A"
+      ],
+      "notes": "I0B follow-up (ticket I0B-6): convex/renditions.ts is owned only to write hasChart and mapSummary on the song it inserts."
+    },
+    {
+      "id": "BK4",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Settings, presets, account client, demo",
+      "owns": [
+        "convex/settings.ts",
+        "convex/lib/presets.ts",
+        "convex/settings.test.ts",
+        "src/api/settings.js",
+        "src/app/account.js",
+        "tests/app-account.test.js",
+        "tests/fixture/db/settings.js",
+        "convex/_generated/server.d.ts"
+      ],
+      "deps": [
+        "I0A"
+      ],
+      "notes": "Amended at I0A: convex/_generated/server.d.ts is owned for one hand edit only, readonly DEMO_SHARE_TOKEN: string | undefined; in Env after BILLING_SITE_URL (Appendix C item 16); gate G1's codegen regenerates it identically."
+    },
+    {
+      "id": "BK5",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Sharing v2",
+      "owns": [
+        "convex/sharing.ts",
+        "convex/shareAudio.ts",
+        "convex/sharing.test.ts",
+        "src/api/sharing.js",
+        "tests/fixture/db/sharing.js",
+        "convex/schema.ts",
+        "src/api/client.js",
+        "tests/api-client.test.js"
+      ],
+      "deps": [
+        "I0A"
+      ],
+      "notes": "I0B follow-ups: convex/schema.ts is owned only to add songShares.includeMap: v.optional(v.boolean()) (ticket I0B-7, Appendix C item 33); src/api/client.js and tests/api-client.test.js only to add publicClient().action (ticket I0B-8, Appendix C item 31). Size exception subsumed by Appendix C item 40."
+    },
+    {
+      "id": "BK6",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Setlists (B3)",
+      "owns": [
+        "convex/setlists.ts",
+        "convex/setlists.test.ts",
+        "src/api/setlists.js",
+        "tests/fixture/db/setlists.js"
+      ],
+      "deps": [
+        "I0A"
+      ]
+    },
+    {
+      "id": "BK7",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Metadata (D6)",
+      "owns": [
+        "shared/metadata.ts",
+        "convex/lib/songMetadata.ts",
+        "convex/metadata.ts",
+        "convex/metadataLookup.ts",
+        "convex/metadata.test.ts",
+        "tests/metadata-shared.test.js",
+        "src/api/metadata.js",
+        "tests/fixture/db/metadata.js",
+        "convex/artworkUpload.ts",
+        "convex/lib/catalogRequest.ts",
+        "convex/catalogRequest.test.ts"
+      ],
+      "deps": [
+        "I0A"
+      ],
+      "notes": "I0B follow-up (ticket I0B-9): convex/artworkUpload.ts and convex/lib/catalogRequest.ts (and catalogRequest.test.ts) are owned only to replace bare-string ConvexErrors with coded fail() errors."
+    },
+    {
+      "id": "CPA",
+      "wave": "0B",
+      "kind": "package",
+      "title": "Companion lookup (B4) and client",
+      "owns": [
+        "companion/lookup.mjs",
+        "companion/ytdlp-args.json",
+        "companion/lookup.test.mjs",
+        "companion/fixtures/ytdlp/*.json",
+        "companion/server.mjs",
+        "companion/pipeline.py",
+        "src/js/companion.js",
+        "tests/companion.test.js",
+        "package.json",
+        "scripts/build-processor.py",
+        "companion/desktop_entry.py",
+        ".github/workflows/release.yml"
+      ],
+      "deps": [
+        "I0A"
+      ],
+      "notes": "I0B follow-up (ticket I0B-10): scripts/build-processor.py, companion/desktop_entry.py and .github/workflows/release.yml are owned only to bundle, self-check and cache-key companion/ytdlp-args.json. I1b follow-up (ticket I1b-3): scripts/build-processor.py and companion/desktop_entry.py are also owned to add the 'sections' and 'errors' hidden imports and the --self-check imports of sections.suggest, errors and process."
+    },
+    {
+      "id": "I0B",
+      "wave": "0B",
+      "kind": "integration",
+      "title": "Integration I0B",
+      "owns": [],
+      "deps": [
+        "U1",
+        "U2",
+        "U3",
+        "PL1",
+        "AU1",
+        "ST0",
+        "ST2",
+        "ST3",
+        "ED1",
+        "F4b",
+        "BK1",
+        "BK2",
+        "BK3",
+        "BK4",
+        "BK5",
+        "BK6",
+        "BK7",
+        "CPA"
+      ],
+      "notes": "Amended at I0B (orchestrator-authorised integration wiring; integrations own no globs, so recorded here): I0B wrote convex/crons.ts and convex/crons.test.ts (the self-running B1 backfill, Appendix C item 22) and made one hand edit to convex/_generated/api.d.ts adding the crons module lines, which gate G1 codegen reproduces. Later changes to convex/crons.ts go to the package that owns the job it schedules."
+    },
+    {
+      "id": "S1",
+      "wave": "1a",
+      "kind": "package",
+      "title": "App shell and boot",
+      "owns": [
+        "index.html",
+        "src/app/{main,routes,topbar,fatal,placeholder,data,global-commands,boot-common,dev-handle}.js",
+        "src/js/startup.js",
+        "src/styles/views/shell/{topbar,fatal,placeholder}.css",
+        "tests/app-shell.test.js",
+        "tests/app-routes.test.js",
+        "tests/app-boot.test.js",
+        "tests/harness/app/shell.harness.js",
+        "tests/fixture/states/S1.cjs"
+      ],
+      "deps": [
+        "I0B"
+      ]
+    },
+    {
+      "id": "S2",
+      "wave": "1a",
+      "kind": "package",
+      "title": "Feedback, palette, shortcut sheet",
+      "owns": [
+        "src/app/{feedback,palette,shortcuts-sheet}.js",
+        "src/styles/views/app/{toast,palette,shortcuts}.css",
+        "tests/app-feedback.test.js",
+        "tests/app-palette.test.js",
+        "tests/app-shortcuts.test.js",
+        "tests/harness/app/feedback.harness.js",
+        "tests/fixture/states/S2.cjs"
+      ],
+      "deps": [
+        "I0B"
+      ]
+    },
+    {
+      "id": "ST1a",
+      "wave": "1a",
+      "kind": "package",
+      "title": "Transport",
+      "owns": [
+        "src/stage/transport.js",
+        "tests/stage-transport.test.js"
+      ],
+      "deps": [
+        "I0B"
+      ]
+    },
+    {
+      "id": "ST1b",
+      "wave": "1a",
+      "kind": "package",
+      "title": "Session, notation session, detect flow",
+      "owns": [
+        "src/stage/{session,notation-session,detect}.js",
+        "src/js/notation/{part,audio}.js",
+        "tests/stage-session.test.js",
+        "tests/stage-notation-session.test.js",
+        "tests/stage-detect.test.js"
+      ],
+      "deps": [
+        "I0B"
+      ]
+    },
+    {
+      "id": "DL1",
+      "wave": "1a",
+      "kind": "package",
+      "title": "Download page",
+      "owns": [
+        "src/download/download.js",
+        "src/download/download.copy.js",
+        "src/styles/views/download/download.css",
+        "tests/download-page.test.js",
+        "tests/harness/download/download.harness.js",
+        "tests/fixture/states/DL1.cjs"
+      ],
+      "deps": [
+        "I0B"
+      ]
+    },
+    {
+      "id": "CPB",
+      "wave": "1a",
+      "kind": "package",
+      "title": "Companion processing core (B5, B6, D12)",
+      "owns": [
+        "companion/{process.py,pipeline.py,errors.py,server.mjs,heartbeat.mjs,test_errors.py,heartbeat.test.mjs}",
+        "convex/worker.ts",
+        "convex/metadata.test.ts"
+      ],
+      "deps": [
+        "I0B"
+      ],
+      "notes": "Amended at I0B: convex/metadata.test.ts is owned only to delete the 1.9 case \"update cancellation is scoped to the device and preserves completed jobs\" together with worker.cancelForUpdate (D12)."
+    },
+    {
+      "id": "I1",
+      "wave": "1a",
+      "kind": "integration",
+      "title": "Integration I1 (the switch)",
+      "owns": [],
+      "deps": [
+        "S1",
+        "S2",
+        "ST1a",
+        "ST1b",
+        "DL1",
+        "CPB"
+      ]
+    },
+    {
+      "id": "LB1a",
+      "wave": "1b",
+      "kind": "package",
+      "title": "Library home, cards, continue",
+      "owns": [
+        "src/library/{home,library-model,song-labels,cards,continue,first-run,setlists,commands}.js",
+        "src/library/home.copy.js",
+        "src/styles/views/library/{home,cards,continue,first-run}.css",
+        "tests/library-model.test.js",
+        "tests/library-labels.test.js",
+        "tests/library-home.test.js",
+        "tests/harness/library/home.harness.js",
+        "tests/fixture/states/LB1a.cjs"
+      ],
+      "deps": [
+        "I1"
+      ]
+    },
+    {
+      "id": "LB1b",
+      "wave": "1b",
+      "kind": "package",
+      "title": "Jobs model, chip, popover, review chip",
+      "owns": [
+        "src/library/{jobs,review-chip}.js",
+        "src/library/jobs.copy.js",
+        "src/styles/views/library/{jobs,review}.css",
+        "tests/library-jobs.test.js",
+        "tests/library-review-chip.test.js",
+        "tests/harness/library/jobs.harness.js",
+        "tests/fixture/states/LB1b.cjs"
+      ],
+      "deps": [
+        "I1"
+      ]
+    },
+    {
+      "id": "ON1",
+      "wave": "1b",
+      "kind": "package",
+      "title": "Sign-in, welcome, instruments picker",
+      "owns": [
+        "src/onboarding/{signin,instruments,welcome}.js",
+        "src/onboarding/onboarding.copy.js",
+        "src/styles/views/onboarding/*.css",
+        "tests/onboarding.test.js",
+        "tests/harness/onboarding/onboarding.harness.js",
+        "tests/fixture/states/ON1.cjs"
+      ],
+      "deps": [
+        "I1"
+      ]
+    },
+    {
+      "id": "ST1c",
+      "wave": "1b",
+      "kind": "package",
+      "title": "Transport commands and the test session",
+      "owns": [
+        "src/stage/transport-commands.js",
+        "tests/helpers/{test-session,fake-session}.js",
+        "tests/stage-transport-commands.test.js",
+        "tests/helpers-test-session.test.js"
+      ],
+      "deps": [
+        "I1"
+      ]
+    },
+    {
+      "id": "CPC",
+      "wave": "1b",
+      "kind": "package",
+      "title": "Section suggestions (B7)",
+      "owns": [
+        "companion/{sections.py,test_sections.py}",
+        "companion/fixtures/sections/*.npz",
+        "companion/process.py"
+      ],
+      "deps": [
+        "I1"
+      ]
+    },
+    {
+      "id": "I1b",
+      "wave": "1b",
+      "kind": "integration",
+      "title": "Integration I1b",
+      "owns": [],
+      "deps": [
+        "LB1a",
+        "LB1b",
+        "ON1",
+        "ST1c",
+        "CPC"
+      ]
+    },
+    {
+      "id": "VF1",
+      "wave": "1b",
+      "kind": "verification",
+      "title": "Verification VF1 (§10.3)",
+      "owns": [
+        "tests/fixture/flows/**",
+        "tests/fixture/probes/{probe-axe,probe-readouts,probe-perf}.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ],
+      "notes": "Changes only these test files; returns tickets like an integration."
+    },
+    {
+      "id": "ST4",
+      "wave": "2a",
+      "kind": "package",
+      "title": "Stage frame",
+      "owns": [
+        "src/stage/{stage,layout,commands,review-banner}.js",
+        "src/stage/stage.copy.js",
+        "src/stage/sheets/host.js",
+        "src/styles/views/stage/{stage,status,focus,review-banner}.css",
+        "tests/stage-layout.test.js",
+        "tests/stage-view.test.js",
+        "tests/stage-review-banner.test.js",
+        "tests/harness/stage/frame.harness.js",
+        "tests/fixture/states/ST4.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "ST5",
+      "wave": "2a",
+      "kind": "package",
+      "title": "HUD and controls",
+      "owns": [
+        "src/stage/{hud,controls}.js",
+        "src/stage/hud.copy.js",
+        "src/styles/views/stage/{hud,controls,count-in}.css",
+        "tests/stage-hud.test.js",
+        "tests/stage-controls.test.js",
+        "tests/harness/stage/hud.harness.js",
+        "tests/fixture/states/ST5.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "ST6",
+      "wave": "2a",
+      "kind": "package",
+      "title": "Song strip",
+      "owns": [
+        "src/stage/strip.js",
+        "src/styles/views/stage/strip.css",
+        "tests/stage-strip.test.js",
+        "tests/harness/stage/strip.harness.js",
+        "tests/fixture/states/ST6.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "LB2a",
+      "wave": "2a",
+      "kind": "package",
+      "title": "Add model, uploads, drop zone",
+      "owns": [
+        "src/library/{add-model,upload,dropzone}.js",
+        "tests/library-add-model.test.js",
+        "tests/library-upload.test.js",
+        "tests/library-dropzone.test.js"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "SE1",
+      "wave": "2a",
+      "kind": "package",
+      "title": "Settings frame and sections (practice, instruments, appearance, device, account, pedals stub)",
+      "owns": [
+        "src/settings/settings.js",
+        "src/settings/sections/{practice,instruments,appearance,device,account,pedals}.js",
+        "src/settings/settings.copy.js",
+        "src/styles/views/settings/{frame,sections}.css",
+        "tests/settings-frame.test.js",
+        "tests/settings-sections-a.test.js",
+        "tests/harness/settings/settings.harness.js",
+        "tests/fixture/states/SE1.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "SE3",
+      "wave": "2a",
+      "kind": "package",
+      "title": "Admin",
+      "owns": [
+        "src/settings/admin/{admin,account,reason-dialog}.js",
+        "src/api/admin.js",
+        "src/styles/views/settings/admin.css",
+        "tests/admin.test.js",
+        "tests/harness/settings/admin.harness.js",
+        "tests/fixture/states/SE3.cjs"
+      ],
+      "deps": [
+        "I1b"
+      ]
+    },
+    {
+      "id": "I2a",
+      "wave": "2a",
+      "kind": "integration",
+      "title": "Integration I2a",
+      "owns": [],
+      "deps": [
+        "ST4",
+        "ST5",
+        "ST6",
+        "LB2a",
+        "SE1",
+        "SE3"
+      ]
+    },
+    {
+      "id": "ST7",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Speed, Click, Mix sheets",
+      "owns": [
+        "src/stage/sheets/{speed,click,mix}.js",
+        "src/stage/sheets/sheets-a.copy.js",
+        "src/styles/views/stage/sheets-{speed,click,mix}.css",
+        "tests/stage-sheets-a.test.js",
+        "tests/harness/stage/sheets-a.harness.js",
+        "tests/fixture/states/ST7.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "ST8a",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Loop card and menus",
+      "owns": [
+        "src/stage/sheets/loop.js",
+        "src/stage/menus.js",
+        "src/styles/views/stage/sheets-loop.css",
+        "tests/stage-sheets-loop.test.js",
+        "tests/stage-menus.test.js",
+        "tests/harness/stage/loop.harness.js",
+        "tests/fixture/states/ST8a.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "ST8b",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Spots, notes, tap the beat, get bars",
+      "owns": [
+        "src/stage/sheets/{spots,notes,tap-beat,get-bars}.js",
+        "src/stage/sheets/sheets-b.copy.js",
+        "src/styles/views/stage/sheets-{spots,notes,tap-beat,get-bars}.css",
+        "tests/stage-sheets-b.test.js",
+        "tests/harness/stage/sheets-b.harness.js",
+        "tests/fixture/states/ST8b.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "ST9",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Chart surface",
+      "owns": [
+        "src/stage/surfaces/chart-surface.js",
+        "src/styles/views/stage/surface-chart.css",
+        "tests/stage-chart-surface.test.js",
+        "tests/harness/stage/chart-surface.harness.js",
+        "tests/fixture/states/ST9.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "ST10",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Road map and Wave page",
+      "owns": [
+        "src/stage/surfaces/{roadmap-surface,roadmap-layout}.js",
+        "src/styles/views/stage/surface-roadmap.css",
+        "tests/stage-roadmap-layout.test.js",
+        "tests/stage-roadmap-surface.test.js",
+        "tests/harness/stage/roadmap.harness.js",
+        "tests/fixture/states/ST10.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "ST11",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Stems surface",
+      "owns": [
+        "src/stage/surfaces/stems-surface.js",
+        "src/styles/views/stage/surface-stems.css",
+        "tests/stage-stems-surface.test.js",
+        "tests/harness/stage/stems.harness.js",
+        "tests/fixture/states/ST11.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "LB2b",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Add sheet UI (B4, B5)",
+      "owns": [
+        "src/library/add-sheet.js",
+        "src/library/add-sheet.copy.js",
+        "src/styles/views/library/add.css",
+        "tests/library-add-sheet.test.js",
+        "tests/harness/library/add.harness.js",
+        "tests/fixture/states/LB2b.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "LB3",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Selection, card menu, re-split, pins, setlists UI (B3)",
+      "owns": [
+        "src/library/{selection,card-menu,resplit-dialog,setlist-page}.js",
+        "src/library/library-actions.copy.js",
+        "src/styles/views/library/{selection,setlists}.css",
+        "tests/library-selection.test.js",
+        "tests/library-setlists.test.js",
+        "tests/harness/library/actions.harness.js",
+        "tests/fixture/states/LB3.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "SE2",
+      "wave": "2b",
+      "kind": "package",
+      "title": "Settings: processing, plan and storage, export",
+      "owns": [
+        "src/settings/sections/{processing,plan}.js",
+        "src/js/export.js",
+        "src/api/billing.js",
+        "src/styles/views/settings/{processing,plan}.css",
+        "tests/settings-sections-b.test.js",
+        "tests/harness/settings/settings-b.harness.js",
+        "tests/fixture/states/SE2.cjs"
+      ],
+      "deps": [
+        "I2a"
+      ]
+    },
+    {
+      "id": "I2b",
+      "wave": "2b",
+      "kind": "integration",
+      "title": "Integration I2b",
+      "owns": [],
+      "deps": [
+        "ST7",
+        "ST8a",
+        "ST8b",
+        "ST9",
+        "ST10",
+        "ST11",
+        "LB2b",
+        "LB3",
+        "SE2"
+      ]
+    },
+    {
+      "id": "VF2",
+      "wave": "2b",
+      "kind": "verification",
+      "title": "Verification VF2 (§10.4)",
+      "owns": [
+        "tests/fixture/flows/**",
+        "tests/fixture/probes/{probe-axe,probe-readouts,probe-perf}.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ],
+      "notes": "Changes only these test files; returns tickets like an integration."
+    },
+    {
+      "id": "ED2",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Edit frame and slim transport",
+      "owns": [
+        "src/edit/{edit,slim-transport,commands}.js",
+        "src/styles/views/edit/{frame,slim-transport}.css",
+        "tests/edit-frame.test.js",
+        "tests/harness/edit/frame.harness.js",
+        "tests/fixture/states/ED2.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "ED3",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Edit · Map view, lanes, inspector, sections",
+      "owns": [
+        "src/edit/map/{view,lane,inspector,sections,commands}.js",
+        "src/edit/map/map.copy.js",
+        "src/js/map-lane.js",
+        "src/styles/views/edit/map.css",
+        "tests/edit-map-view.test.js",
+        "tests/edit-map-lane.test.js",
+        "tests/edit-map-inspector.test.js",
+        "tests/map-lane.test.js",
+        "tests/harness/edit/map.harness.js",
+        "tests/fixture/states/ED3.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "ED4",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Find a chart panel and drum import",
+      "owns": [
+        "src/edit/map/find-panel.js",
+        "src/edit/drum-import.js",
+        "src/api/tempo-sources.js",
+        "src/styles/views/edit/find.css",
+        "tests/edit-find-panel.test.js",
+        "tests/tempo-sources.test.js",
+        "tests/harness/edit/find.harness.js",
+        "tests/fixture/states/ED4.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "ED5",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Edit · Chart re-frame",
+      "owns": [
+        "src/edit/chart/{chart-edit,toolbar,menus,kit-bank,commands}.js",
+        "src/js/notation/{editor,lanes}.js",
+        "src/js/{modal-focus,interactions}.js",
+        "src/js/notation/notation.css",
+        "src/styles/views/notation/{editor,lanes}.css",
+        "src/styles/views/edit/chart.css",
+        "tests/notation-editor.test.js",
+        "tests/notation-songmap.test.js",
+        "tests/interactions-ui.test.js",
+        "tests/edit-chart.test.js",
+        "tests/harness/edit/chart.harness.js",
+        "tests/fixture/states/ED5.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "ED6",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Edit · Details",
+      "owns": [
+        "src/edit/details/{details,fields,artwork,match,bulk}.js",
+        "src/edit/details/details.copy.js",
+        "src/styles/views/edit/details.css",
+        "tests/edit-details.test.js",
+        "tests/harness/edit/details.harness.js",
+        "tests/fixture/states/ED6.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "SH1",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Share dialog, Shared Stage, demo",
+      "owns": [
+        "src/share/{share-dialog,shared-stage,shared-practice,demo}.js",
+        "src/share/share.copy.js",
+        "src/styles/views/share/*.css",
+        "tests/share.test.js",
+        "tests/shared-stage-boot.test.js",
+        "tests/harness/share/share.harness.js",
+        "tests/fixture/states/SH1.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "PD1",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Pedal mode, MIDI, Pedals & keys settings",
+      "owns": [
+        "src/app/pedals.js",
+        "src/app/midi.js",
+        "src/settings/sections/pedals.js",
+        "src/styles/views/settings/pedals.css",
+        "tests/app-pedals-runtime.test.js",
+        "tests/pedal-session.test.js",
+        "tests/harness/settings/pedals.harness.js",
+        "tests/fixture/states/PD1.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "CM1",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Stage coach marks",
+      "owns": [
+        "src/stage/coach.js",
+        "src/styles/views/stage/coach.css",
+        "tests/stage-coach.test.js",
+        "tests/fixture/states/CM1.cjs"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "DT2",
+      "wave": "3a",
+      "kind": "package",
+      "title": "Desktop renderer integration",
+      "owns": [
+        "src/app/{desktop-menu,notify-ready}.js",
+        "tests/app-desktop-menu.test.js",
+        "tests/app-notify-ready.test.js"
+      ],
+      "deps": [
+        "I2b"
+      ]
+    },
+    {
+      "id": "I3a",
+      "wave": "3a",
+      "kind": "integration",
+      "title": "Integration I3a",
+      "owns": [],
+      "deps": [
+        "ED2",
+        "ED3",
+        "ED4",
+        "ED5",
+        "ED6",
+        "SH1",
+        "PD1",
+        "CM1",
+        "DT2"
+      ]
+    },
+    {
+      "id": "ED7",
+      "wave": "3b",
+      "kind": "package",
+      "title": "Continuous-scroll Transcribe view (D48)",
+      "owns": [
+        "src/edit/chart/scroll-view.js",
+        "src/styles/views/edit/scroll-view.css",
+        "tests/edit-chart-scroll.test.js",
+        "tests/harness/edit/scroll.harness.js",
+        "tests/fixture/states/ED7.cjs",
+        "src/js/notation/editor.js"
+      ],
+      "deps": [
+        "I3a"
+      ]
+    },
+    {
+      "id": "I3b",
+      "wave": "3b",
+      "kind": "integration",
+      "title": "Integration I3b",
+      "owns": [],
+      "deps": [
+        "ED7"
+      ]
+    },
+    {
+      "id": "VF3",
+      "wave": "3b",
+      "kind": "verification",
+      "title": "Verification VF3 (§10.5)",
+      "owns": [
+        "tests/fixture/flows/**",
+        "tests/fixture/probes/{probe-axe,probe-readouts,probe-perf}.cjs"
+      ],
+      "deps": [
+        "I3b"
+      ],
+      "notes": "Changes only these test files; returns tickets like an integration."
+    },
+    {
+      "id": "V1",
+      "wave": "4",
+      "kind": "package",
+      "title": "Cleanup and release",
+      "owns": [
+        "src/app/placeholder.js",
+        "docs/ux2/release-notes.md",
+        "package.json",
+        "convex/schema.ts",
+        "src/js/**",
+        "tests/*.test.js",
+        "convex/schema-compat.test.ts"
+      ],
+      "deps": [
+        "I3b"
+      ],
+      "notes": "src/js/** and tests/*.test.js cover the orphan modules found by check-source --orphans and their tests; convex/schema-compat.test.ts drops the v1-practice-row case in the schema commit."
+    },
+    {
+      "id": "VF4",
+      "wave": "4",
+      "kind": "verification",
+      "title": "Full baselines, audits",
+      "owns": [
+        "tests/fixture/baselines/2.0/**",
+        "tests/fixture/probes/{probe-axe,probe-readouts,probe-perf}.cjs",
+        "tests/fixture/flows/*.cjs"
+      ],
+      "deps": [
+        "I3b"
+      ]
+    }
+  ]
+}

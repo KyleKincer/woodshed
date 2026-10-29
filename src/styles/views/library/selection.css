@@ -1,0 +1,146 @@
+/* Library selection mode and the actions that share it (src/library/selection.js, card-menu.js, resplit-dialog.js;
+ * spec §2.6, §3.7): the 56 px floating bar at the bottom centre, the selected state of list rows and the check on a
+ * selected card's badge (cards.css draws the badge), the partial-failure report, and the Re-split dialog's body. */
+@layer views {
+  /* ---------- the floating bar ---------- */
+  .lib-selbar {
+    position: fixed;
+    inset-block-end: calc(var(--s5) + env(safe-area-inset-bottom, 0px));
+    inset-inline: 0;
+    z-index: var(--z-overlay);
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    inline-size: max-content;
+    max-inline-size: calc(100% - 2 * var(--s4));
+    min-block-size: 56px;
+    margin-inline: auto;
+    padding: var(--s2) var(--s2) var(--s2) var(--s4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    box-shadow: var(--shadow-popover);
+    color: var(--ink);
+  }
+  .lib-selbar[hidden] { display: none; }
+  .lib-selbar-status {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-inline-size: 7.5em;
+    padding-inline-end: var(--s2);
+    border-inline-end: 1px solid var(--line);
+  }
+  .lib-selbar-count {
+    font: var(--fw-semibold) var(--fs-16)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .lib-selbar-cap {
+    color: var(--ink-3);
+    font: var(--fw-regular) var(--fs-12)/1.2 var(--font-ui);
+    white-space: nowrap;
+  }
+  .lib-selbar-cap[hidden] { display: none; }
+  .lib-selbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+  .lib-selbar-action { white-space: nowrap; }
+  .lib-selbar-action[hidden] { display: none; }
+  /* A disabled reason ("Paused on this account") would wrap under the label and grow the 56 px bar: it stays the
+     button's description (aria-describedby) and its tooltip. */
+  .lib-selbar-action .ui-button-reason { display: none; }
+  .lib-selbar-action[data-tone=danger]:not([aria-disabled=true]) { color: var(--danger); }
+  .lib-selbar-done { margin-inline-start: var(--s1); border-radius: var(--r-pill); }
+
+  /* The bar takes the bottom centre: lift the toast region above it, and keep the last cards reachable. */
+  :root:has(.lib-selbar:not([hidden])) .app-toasts {
+    --toast-offset: calc(56px + var(--s5) + var(--s3));
+  }
+  :root:has(.lib-selbar:not([hidden])) .lib-home {
+    padding-block-end: calc(56px + var(--s7));
+  }
+
+  /* Narrow and coarse layouts: the actions show their icons only when the labels would not fit. */
+  @media (max-width: 720px) {
+    .lib-selbar { gap: var(--s1); padding-inline-start: var(--s3); }
+    .lib-selbar-action .ui-button-label {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+
+  /* ---------- selected cards and rows ---------- */
+  /* The check inside the selected badge (cards.css draws the 24 px disc at the cover's top start corner). */
+  .lib-card[data-selected] .lib-card-cover::after {
+    content: '';
+    position: absolute;
+    inset-block-start: calc(var(--s2) + 6px);
+    inset-inline-start: calc(var(--s2) + 9px);
+    z-index: var(--z-local-2);
+    inline-size: 6px;
+    block-size: 11px;
+    border: solid var(--on-accent);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    pointer-events: none;
+  }
+  .lib-row[data-selecting] { cursor: default; }
+  .lib-row[data-selected] {
+    background: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .lib-row[data-selected] .lib-thumb { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---------- the partial-failure report ---------- */
+  .lib-fail-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .lib-fail-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+  }
+  .lib-fail-raw {
+    padding: var(--s2);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-12)/1.4 var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- the Re-split dialog ---------- */
+  .lib-resplit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+  }
+  .lib-resplit-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .lib-resplit-label {
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+  }
+  .lib-resplit-group .ui-segmented { max-inline-size: 100%; }
+  .lib-resplit-group .ui-segmented-options { flex-wrap: wrap; }
+  .lib-resplit-cost {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.45 var(--font-ui);
+  }
+}

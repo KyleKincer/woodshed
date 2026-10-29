@@ -15,6 +15,7 @@ function createUpdateController({
 }) {
   let state = publicUpdateState("idle"),
     dialogOpen = false,
+    playing = false,
     lastCheck = 0,
     checkPromise = null;
   const prompted = new Set();
@@ -51,7 +52,9 @@ function createUpdateController({
     return checkPromise;
   }
   async function show(automatic = false) {
-    if (dialogOpen || (automatic && !isFocused())) return;
+    // Automatic prompts never interrupt playback (spec §6.5); the stop
+    // transition re-runs this check. Manual requests are never deferred.
+    if (dialogOpen || (automatic && (playing || !isFocused()))) return;
     if (
       automatic &&
       (!["available", "ready"].includes(state.status) ||
@@ -102,7 +105,7 @@ function createUpdateController({
             type: activity.busy ? "warning" : "info",
             message: `Restart to update to Woodshed ${state.version}?`,
             detail: activity.busy
-              ? "Song processing is in progress and will be cancelled when Woodshed restarts."
+              ? "Song processing will pause and resume after the restart."
               : "The update is ready. Woodshed will close and reopen.",
             buttons: ["Restart now", "Later"],
             defaultId: 1,
@@ -170,6 +173,14 @@ function createUpdateController({
     getState: () => state,
     show: () => show(false),
     focus: () => show(true),
+    /** desktop:activity {playing}: playing → stopped re-runs the automatic prompt check. */
+    setPlaying: (next) => {
+      const wasPlaying = playing;
+      playing = next === true;
+      if (wasPlaying && !playing) return show(true);
+      return Promise.resolve();
+    },
+    isPlaying: () => playing,
     wake: () => {
       if (now() - lastCheck >= CHECK_INTERVAL) void check();
     },

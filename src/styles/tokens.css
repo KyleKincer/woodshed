@@ -1,0 +1,210 @@
+/* Design tokens (architecture §7.2, spec §8). The only stylesheet with colour
+ * literals (the guard in scripts/check-css.mjs enforces it). Imported by
+ * main.css into @layer tokens.
+ *
+ * Colour sets, chosen by attributes the router and public/theme-init.js set on
+ * <html>:
+ *   :root                                           paper (light)
+ *   :root[data-theme=dark]                          night
+ *   :root[data-place=stage][data-stage-theme=dark]  stage (D3)
+ *
+ * Contrast (tests/tokens-contrast.test.js) is asserted in all three sets.
+ * Recorded adjustment (§7.2 "adjusts that single value by the smallest
+ * lightness change that passes"):
+ *   paper --now  #c25700 → #b85200  (HSL lightness 38.0% → 36.0%): the spec
+ *                value is 4.13:1 on --bg, below the 4.5:1 text minimum for the
+ *                count-in and "next" readouts; #b85200 is 4.53:1.
+ */
+
+/* ---------- paper ---------- */
+:root {
+  --bg: #f6f5f0;
+  --surface: #ffffff;
+  --surface-2: #efede6;
+  --line: #d9d6cc;
+  --line-strong: #b9b4a6;
+  --ink: #17201f;
+  --ink-2: #3f4a46;
+  --ink-3: #626d68;
+  --accent: #174bd1;
+  --accent-fill: #174bd1;
+  --on-accent: #ffffff;
+  --accent-soft: #e4eafb;
+  --now: #b85200;
+  --now-soft: #ffe9d4;
+  --loop: #174bd1;
+  --loop-fill: rgb(23 75 209 / .10);
+  --edit: #6b45c4;
+  --out: #626d68;
+  --ok: #2f7a4c;
+  --warn: #8f5400;
+  --danger: #b13a30;
+  --focus-ring: #174bd1;
+  --stem-drums: #b85029;
+  --stem-bass: #347052;
+  --stem-vocals: #174bd1;
+  --stem-other: #5d6470;
+  --stem-guitar: #804759;
+  --stem-piano: #3b7371;
+  --grid-beat: color-mix(in srgb, var(--ink) 8%, transparent);
+  --grid-bar: color-mix(in srgb, var(--ink) 18%, transparent);
+  --backdrop: rgb(0 0 0 / .4);
+  --print-ink: #111111;
+}
+
+/* ---------- night ---------- */
+:root[data-theme=dark] {
+  --bg: #121615;
+  --surface: #1a1f1e;
+  --surface-2: #232a28;
+  --line: #3a4441;
+  --line-strong: #4c5753;
+  --ink: #eef0ea;
+  --ink-2: #b9c2bd;
+  --ink-3: #8b9692;
+  --accent: #8aafff;
+  --accent-fill: #3d63d6;
+  --on-accent: #ffffff;
+  --accent-soft: #22304d;
+  --now: #ffb547;
+  --now-soft: #3a2b12;
+  --loop: #8aafff;
+  --loop-fill: rgb(138 175 255 / .16);
+  --edit: #b39bff;
+  --out: #8b9692;
+  --ok: #80c79b;
+  --warn: #f3b77d;
+  --danger: #ff8a7d;
+  --focus-ring: #9cbcff;
+  --stem-drums: #ed9870;
+  --stem-bass: #80c79b;
+  --stem-vocals: #8aafff;
+  --stem-other: #b4becd;
+  --stem-guitar: #d79db4;
+  --stem-piano: #85c9c3;
+  --grid-beat: color-mix(in srgb, var(--ink) 8%, transparent);
+  --grid-bar: color-mix(in srgb, var(--ink) 18%, transparent);
+  --backdrop: rgb(0 0 0 / .5);
+  --print-ink: #111111;
+}
+
+/* ---------- stage (the stems are night + 8% HSL lightness) ---------- */
+:root[data-place=stage][data-stage-theme=dark] {
+  --bg: #08090a;
+  --surface: #111414;
+  --surface-2: #191d1c;
+  --line: #2a302e;
+  --line-strong: #3b4340;
+  --ink: #ffffff;
+  --ink-2: #d3dad6;
+  --ink-3: #9aa5a0;
+  --accent: #9cbcff;
+  --accent-fill: #3d63d6;
+  --on-accent: #ffffff;
+  --accent-soft: #1b2742;
+  --now: #ffc14d;
+  --now-soft: #2e220e;
+  --loop: #7fa6ff;
+  --loop-fill: rgb(127 166 255 / .18);
+  --edit: #b39bff; /* never used on the Stage */
+  --out: #8b9692;
+  --ok: #80c79b;
+  --warn: #f3b77d;
+  --danger: #ff8a7d;
+  --focus-ring: #9cbcff;
+  --stem-drums: #f2b294;
+  --stem-bass: #9cd3b1;
+  --stem-vocals: #b3cbff;
+  --stem-other: #ccd3dd;
+  --stem-guitar: #e3baca;
+  --stem-piano: #a1d6d1;
+  --grid-beat: color-mix(in srgb, var(--ink) 8%, transparent);
+  --grid-bar: color-mix(in srgb, var(--ink) 18%, transparent);
+  --backdrop: rgb(0 0 0 / .6);
+  --print-ink: #111111;
+}
+
+/* ---------- set-independent ---------- */
+:root {
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
+
+  --r-control: 8px; --r-surface: 12px; --r-pill: 999px;   /* covers stay 0 (literal 0 allowed) */
+
+  /* Control heights and handle hit areas: fine pointers (coarse below). */
+  --h-sm: 32px; --h-md: 40px; --h-lg: 48px; --hit-handle: 24px; --hit-handle-visual: 8px;
+  --h-dock: 64px; --h-play: 80px;                          /* band; rail below */
+
+  --z-under: -1; --z-base: 0; --z-local: 1; --z-local-2: 2; --z-sticky: 10; --z-overlay: 20; --z-popover: 30; --z-sheet: 40;
+  --z-dialog: 50; --z-toast: 60; --z-coachmark: 70; --z-drag: 80;
+
+  --shadow-sticky: 0 1px 0 var(--line);
+  --shadow-overlay: 0 2px 8px rgb(0 0 0 / .18);
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / .18);
+  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / .22);
+  --shadow-dialog: 0 16px 48px rgb(0 0 0 / .24);
+
+  --motion-fast: 120ms; --motion-enter: 160ms; --motion-nav: 220ms; --motion-slow: 260ms; --ease: cubic-bezier(.2, .8, .2, 1);
+
+  --font-ui: 'Atkinson Hyperlegible Next', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --fs-12: 12px; --fs-14: 14px; --fs-16: 16px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;   /* desk scale */
+  --fw-regular: 400; --fw-semibold: 600; --fw-bold: 700; --fw-heavy: 800;
+
+  /* Icons (§7.4): the sprite's symbols carry no stroke-width; it comes from here. */
+  --icon-stroke: 1.75;
+
+  /* Stage scale. Distance (near .8 · stand 1 · kit 1.3) is set on the Stage
+   * root by layout.js through [data-distance]; the rail/band layout through
+   * [data-stage-layout]. Controls never scale with Distance. */
+  --distance: 1;                                                              /* [data-distance=near] .8, [data-distance=kit] 1.3 */
+  --fs-stage-identity: max(15px, calc(15px * var(--distance)));
+  --fs-stage-sub: max(15px, calc(17px * var(--distance)));
+  --fs-stage-loop: max(15px, calc(17px * var(--distance)));                  /* rail: 20px base */
+  --fs-stage-speed: calc(40px * var(--distance));
+  --fs-stage-section: 40px;          /* near 32px · stand 40px · kit 52px (explicit, spec §4.11 table) */
+  --fs-stage-position: 56px;         /* band: near 44 · stand 56 · kit 72;  rail: near 52 · stand 64 · kit 84 (explicit) */
+  --fs-stage-count: calc(120px * var(--distance));
+  --lamp: 18px;                      /* rail 20px; × distance */
+  --rail-w: 264px;                   /* near 232 · stand 264 · kit 312; [data-rail-narrow] −32px */
+}
+
+@media (pointer: coarse) {
+  :root { --h-sm: 44px; --h-md: 48px; --h-lg: 56px; --hit-handle: 44px; --hit-handle-visual: 20px; }
+}
+
+/* The Stage's handles take 44px hit areas on every pointer (spec §8.2 Stage column). */
+:root[data-place=stage] { --icon-stroke: 2; --hit-handle: 44px; }
+
+/* Distance-derived sizes, declared again on the element that carries the
+ * Stage attributes: a custom property's var() is resolved where it is
+ * declared, so the values computed on :root (distance 1) would not follow the
+ * Stage root's --distance. */
+[data-stage-layout], [data-distance] {
+  --fs-stage-identity: max(15px, calc(15px * var(--distance)));
+  --fs-stage-sub: max(15px, calc(17px * var(--distance)));
+  --fs-stage-loop: max(15px, calc(17px * var(--distance)));
+  --fs-stage-speed: calc(40px * var(--distance));
+  --fs-stage-count: calc(120px * var(--distance));
+  --lamp: calc(18px * var(--distance));
+}
+
+/* Rail layout (laptop and iPad landscape). */
+[data-stage-layout=rail] {
+  --h-dock: 56px; --h-play: 72px;
+  --fs-stage-loop: max(15px, calc(20px * var(--distance)));
+  --lamp: calc(20px * var(--distance));
+  --fs-stage-position: 64px;
+}
+
+/* Distance. */
+[data-distance=near] { --distance: .8; --fs-stage-section: 32px; --fs-stage-position: 44px; --rail-w: 232px; }
+[data-distance=stand] { --distance: 1; --fs-stage-section: 40px; --fs-stage-position: 56px; --rail-w: 264px; }
+[data-distance=kit] { --distance: 1.3; --fs-stage-section: 52px; --fs-stage-position: 72px; --rail-w: 312px; }
+[data-stage-layout=rail][data-distance=near] { --fs-stage-position: 52px; }
+[data-stage-layout=rail][data-distance=stand] { --fs-stage-position: 64px; }
+[data-stage-layout=rail][data-distance=kit] { --fs-stage-position: 84px; }
+
+/* A narrow rail (viewport < 1280 px) is 32 px slimmer at every Distance. */
+[data-rail-narrow] { --rail-w: 232px; }
+[data-rail-narrow][data-distance=near] { --rail-w: 200px; }
+[data-rail-narrow][data-distance=kit] { --rail-w: 280px; }

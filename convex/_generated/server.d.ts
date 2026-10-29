@@ -32,6 +32,7 @@ type Env = {
   readonly AUTH_JWKS: string;
   readonly AUTH_PRIVATE_KEY: string;
   readonly BILLING_SITE_URL: string | undefined;
+  readonly DEMO_SHARE_TOKEN: string | undefined;
   readonly OWNER_GOOGLE_ACCOUNT_ID: string | undefined;
   readonly PRO_STORAGE_BYTES: string | undefined;
   readonly STRIPE_BILLING_ENABLED: string | undefined;

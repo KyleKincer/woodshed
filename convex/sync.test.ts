@@ -54,6 +54,12 @@ test('completion is idempotent and only grants media and exports to owner',async
  expect(await bob.query(internal.media.authorizedKeys,{keys:[rows[0].key]})).toEqual([]);
  expect((await bob.query(api.songs.exportPage,{paginationOpts:{cursor:null,numItems:50}})).page).toEqual([]);
  await expect(bob.mutation(api.songs.savePractice,{id,practice:{}})).rejects.toThrow('Not your song');
+ // Practice lives in songPractice (B1): the owner reads it back, nobody else does.
+ await alice.mutation(api.songs.savePractice,{id,practice:{v:2,rate:.5},final:true});
+ expect(await alice.query(api.songs.getPractice,{id})).toEqual({v:2,rate:.5});
+ expect(await bob.query(api.songs.getPractice,{id})).toBeNull();
+ expect((await alice.query(api.songs.list,{})).songs[0]).toMatchObject({id,practiceSummary:{rate:.5}});
+ expect((await alice.query(api.songs.list,{})).songs[0]).not.toHaveProperty('practice');
 });
 test('cancellation wins over progress and completion; revoked device loses access',async()=>{
  const {t,alice,deviceId,makeJob}=await setup();const jobId=await makeJob();

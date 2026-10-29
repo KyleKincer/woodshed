@@ -1,0 +1,171 @@
+/* The ? shortcut sheet (src/app/shortcuts-sheet.js, spec §7.2): a centred
+ * modal up to 880 px wide with the groups in two columns, or a full-height
+ * sheet in the band layout and on narrow screens. Shadowed and blocked keys
+ * are struck through with a note naming what wins here. */
+@layer views {
+  .app-shortcuts {
+    box-sizing: border-box;
+    inline-size: min(880px, calc(100vw - 2 * var(--s4)));
+    max-inline-size: none;
+    block-size: min(80dvh, 760px);
+    max-block-size: calc(100dvh - 2 * var(--s4));
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-dialog);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+  .app-shortcuts::backdrop { background: var(--backdrop); }
+  .app-shortcuts[data-layout=band] {
+    inline-size: 100%;
+    block-size: 90dvh;
+    max-block-size: 90dvh;
+    margin: auto 0 0;
+    border-inline: 0;
+    border-block-end: 0;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    box-shadow: var(--shadow-sheet);
+  }
+
+  .app-shortcuts-box {
+    display: flex;
+    flex-direction: column;
+    block-size: 100%;
+  }
+
+  .app-shortcuts-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s4);
+    padding: var(--s5) var(--s5) var(--s3);
+  }
+  .app-shortcuts-heading { display: flex; flex-direction: column; gap: var(--s1); min-inline-size: 0; }
+  .app-shortcuts-title { margin: 0; font-size: var(--fs-20); font-weight: var(--fw-semibold); }
+  .app-shortcuts-sub { margin: 0; color: var(--ink-3); font-size: var(--fs-14); }
+  .app-shortcuts-close {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--h-md);
+    block-size: var(--h-md);
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .app-shortcuts-close:hover { background: var(--surface-2); color: var(--ink); }
+  .app-shortcuts-close .ui-icon { stroke-width: var(--icon-stroke); }
+
+  .app-shortcuts-filter-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: 0 var(--s5) var(--s3);
+    padding-inline: var(--s3);
+    min-block-size: var(--h-md);
+    background: var(--surface-2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    color: var(--ink-3);
+  }
+  .app-shortcuts-filter-row .ui-icon { flex: none; stroke-width: var(--icon-stroke); }
+  .app-shortcuts-filter {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    min-block-size: var(--h-md);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+  }
+
+  .app-shortcuts-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 var(--s5) var(--s5);
+  }
+  /* The scroll region takes the focus when the sheet opens (arrows and PageDown scroll it): keep its ring inside. */
+  .app-shortcuts-body:focus-visible { outline-offset: -3px; }
+
+  .app-shortcuts-section + .app-shortcuts-section,
+  .app-shortcuts-elsewhere + .app-shortcuts-section { margin-block-start: var(--s5); }
+  .app-shortcuts-section-title {
+    margin: 0 0 var(--s2);
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .app-shortcuts-elsewhere {
+    margin: var(--s6) 0 var(--s2);
+    padding-block-start: var(--s4);
+    border-block-start: 1px solid var(--line);
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .app-shortcuts-section[data-section=here] .app-shortcuts-section-title { color: var(--accent); }
+
+  .app-shortcuts-groups {
+    columns: 2 320px;
+    column-gap: var(--s6);
+  }
+  .app-shortcuts[data-layout=band] .app-shortcuts-groups { columns: 1; }
+  .app-shortcuts-group {
+    break-inside: avoid;
+    margin-block-end: var(--s4);
+  }
+  .app-shortcuts-group-title {
+    margin: 0 0 var(--s1);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .app-shortcuts-rows { margin: 0; padding: 0; list-style: none; }
+  .app-shortcuts-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    min-block-size: var(--h-sm);
+    padding-block: var(--s1);
+    border-block-end: 1px solid var(--line);
+  }
+  .app-shortcuts-name { min-inline-size: 0; font-size: var(--fs-14); color: var(--ink); }
+  .app-shortcuts-keys {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--s1) var(--s2);
+    max-inline-size: 60%;
+  }
+  .app-shortcuts-key { display: inline-flex; align-items: center; gap: var(--s1); }
+  .app-shortcuts-key[data-shadowed] .ui-kbd,
+  .app-shortcuts-key[data-blocked] .ui-kbd {
+    color: var(--ink-3);
+    text-decoration: line-through;
+  }
+  .app-shortcuts-note { color: var(--ink-3); font-size: var(--fs-12); }
+
+  .app-shortcuts-none,
+  .app-shortcuts-empty {
+    margin: 0;
+    padding-block: var(--s3);
+    color: var(--ink-2);
+  }
+}

@@ -1,0 +1,20 @@
+/* Icon (architecture §7.4): the sprite's symbols carry no stroke-width, so it comes from
+ * --icon-stroke (1.75 on desk places, 2 under [data-place=stage]). The sprite root stays out of
+ * layout and out of the accessibility tree. */
+@layer primitives {
+  .ui-icon {
+    flex: none;
+    display: inline-block;
+    vertical-align: middle;
+    stroke-width: var(--icon-stroke);
+    overflow: visible;
+  }
+
+  .ui-icon-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+}

@@ -1,0 +1,41 @@
+/* The Shared Stage (src/share/shared-stage.js; spec §4.13): the identity row's action (in the HUD's
+ * action slot) and the calm full page for a link that does not work. The Stage itself is stage.css. */
+@layer views {
+  /* ---------- the identity row's action */
+  .share-action[hidden] { display: none; }
+  /* The Stage's 15 px type floor (hud.css sets the identity row's chips the same way). */
+  .share-action { flex: none; font-size: var(--fs-stage-identity); white-space: nowrap; }
+
+  /* ---------- a link that does not work, or could not be read */
+  .share-page {
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    min-block-size: 100dvh;
+    padding: var(--s6) var(--s4);
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .share-page-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    inline-size: min(480px, 100%);
+    padding: var(--s6);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+    box-shadow: var(--shadow-popover);
+  }
+  .share-page-title {
+    margin: 0;
+    font: var(--fw-bold) var(--fs-24)/1.25 var(--font-ui);
+  }
+  .share-page-body {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui);
+  }
+  .share-page-actions { display: flex; margin-block-start: var(--s2); }
+  .share-page-link { text-decoration: none; }
+}

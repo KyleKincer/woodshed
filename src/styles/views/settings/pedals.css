@@ -1,0 +1,158 @@
+/* Settings → Pedals & keys (src/settings/sections/pedals.js; spec §6.2, §7.5): the learned pedals, the mapping
+ * table, the learn and MIDI dialogs, background shortcuts and MIDI pedals. Rows, the "This device" tag and the
+ * inline Saved come from frame.css and sections.css. */
+@layer views {
+  .settings-pedals .settings-row-control {
+    flex-wrap: wrap;
+  }
+
+  /* Your pedals, bound MIDI triggers and background shortcuts: one line each. */
+  .pedals-list,
+  .pedals-midi-list,
+  .pedals-bg-list,
+  .pedals-learn-list {
+    display: grid;
+    gap: var(--s2);
+    flex-basis: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .pedals-item,
+  .pedals-midi-item,
+  .pedals-bg-item,
+  .pedals-learn-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: var(--h-sm);
+    color: var(--ink);
+    font-size: var(--fs-16);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .pedals-item-none {
+    color: var(--ink-3);
+  }
+  .pedals-item-icon,
+  .pedals-bg-icon,
+  .pedals-learn-check {
+    display: inline-flex;
+    flex: none;
+    color: var(--ink-2);
+  }
+  .pedals-learn-check,
+  .pedals-bg-item[data-ok=true] .pedals-bg-icon {
+    color: var(--ok);
+  }
+  .pedals-bg-item[data-ok=false] .pedals-bg-icon,
+  .pedals-bg-item[data-ok=false] .pedals-bg-status {
+    color: var(--warn);
+  }
+  .pedals-midi-text,
+  .pedals-bg-name {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .pedals-bg-status {
+    flex: none;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+
+  /* What your pedals do. */
+  .pedals-table-host {
+    flex-basis: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .pedals-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-16);
+  }
+  .pedals-table th,
+  .pedals-table td {
+    padding: var(--s2) var(--s3);
+    border-bottom: 1px solid var(--line);
+    text-align: start;
+    vertical-align: middle;
+  }
+  .pedals-table thead th {
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .pedals-cell-pedal {
+    font-weight: var(--fw-semibold);
+  }
+  .pedals-slot,
+  .pedals-key {
+    display: block;
+  }
+  .pedals-key {
+    margin-top: var(--s1);
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-regular);
+  }
+  .pedals-cell {
+    color: var(--ink);
+  }
+  .pedals-cell[data-empty=true] {
+    color: var(--ink-3);
+  }
+  /* The column header names each menu; the label stays for assistive technology. */
+  .pedals-select .ui-field-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .pedals-table-notes {
+    display: grid;
+    gap: var(--s1);
+    flex-basis: 100%;
+  }
+
+  /* Background shortcuts: the macOS Accessibility prompt. */
+  .pedals-bg-access {
+    display: grid;
+    justify-items: start;
+    gap: var(--s2);
+    flex-basis: 100%;
+  }
+  .pedals-bg-allow {
+    max-width: 100%;
+    white-space: normal;
+    text-align: start;
+  }
+
+  .pedals-midi-devices {
+    flex-basis: 100%;
+  }
+
+  /* The learn and MIDI dialogs. */
+  .pedals-learn {
+    display: grid;
+    gap: var(--s4);
+  }
+  .pedals-learn-intro {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.45;
+  }
+  .pedals-learn-prompt {
+    min-height: calc(var(--fs-24) * 1.3);
+    color: var(--ink);
+    font-size: var(--fs-24);
+    font-weight: var(--fw-bold);
+    line-height: 1.3;
+  }
+  .pedals-midi-pick {
+    display: grid;
+  }
+}

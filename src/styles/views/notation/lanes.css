@@ -1,0 +1,21 @@
+/* Drum lanes (src/js/notation/lanes.js): the time-aligned event grid of
+   Edit · Chart. The SVG carries classes only; every colour is a token, so a
+   theme change needs no redraw. */
+@layer views {
+  .lanes { display: block; overflow: visible; }
+  .lane-row { stroke: var(--line); stroke-opacity: .6; }
+  .lane-bar { stroke: var(--grid-bar); }
+  .lane-bar-label { fill: var(--ink-3); font: var(--fs-12)/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+  .lane-unstarted { fill: var(--surface-2); fill-opacity: .6; }
+  .lane-grid { stroke: var(--grid-beat); }
+  .lane-beat { stroke: var(--grid-bar); stroke-opacity: .7; stroke-width: 2; }
+  .lane-hit { fill: var(--stem-drums); stroke: var(--stem-drums); stroke-width: 1; }
+  .lane-hit.is-accent { stroke-width: 3; }
+  .lane-hit.is-ghost { fill: var(--surface); }
+  .lane-hit.is-selected { fill: var(--accent); stroke: var(--accent); }
+  .lane-hit.is-ghost.is-selected { fill: var(--accent-soft); }
+  .lane-grace { fill: var(--stem-drums); }
+  .lane-grace.is-selected { fill: var(--accent); }
+  .lane-roll { stroke: var(--surface); stroke-width: 1.5; }
+  .lane-cursor { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.5; }
+}

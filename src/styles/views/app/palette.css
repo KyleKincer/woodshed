@@ -1,0 +1,181 @@
+/* The ⌘K palette (src/app/palette.js, spec §7.3): 640 px wide and top-centred,
+ * a 52 px input, 44 px rows with eight visible; a full-width top sheet in the
+ * band layout and on narrow screens. */
+@layer views {
+  .app-palette {
+    --palette-row: 44px;
+    --palette-input: 52px;
+    box-sizing: border-box;
+    inline-size: min(640px, calc(100vw - 2 * var(--s4)));
+    max-inline-size: none;
+    max-block-size: none;
+    margin: 12vh auto auto;
+    padding: 0;
+    overflow: visible;
+    background: transparent;
+    color: var(--ink);
+    border: 0;
+    font: var(--fs-16)/1.4 var(--font-ui);
+  }
+  .app-palette::backdrop { background: var(--backdrop); }
+  .app-palette[data-layout=band] {
+    inline-size: 100%;
+    margin: 0 0 auto;
+  }
+
+  .app-palette-box {
+    display: flex;
+    flex-direction: column;
+    max-block-size: calc(100dvh - 24vh);
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-dialog);
+    animation: app-palette-in var(--motion-enter) var(--ease);
+  }
+  .app-palette[data-layout=band] .app-palette-box {
+    max-block-size: 90dvh;
+    padding-block-start: var(--safe-top, 0px);
+    border-block-start: 0;
+    border-inline: 0;
+    border-start-start-radius: 0;
+    border-start-end-radius: 0;
+  }
+
+  .app-palette-field {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: var(--palette-input);
+    padding-inline: var(--s4);
+    border-block-end: 1px solid var(--line);
+    color: var(--ink-3);
+  }
+  .app-palette-field .ui-icon { flex: none; stroke-width: var(--icon-stroke); }
+  .app-palette-input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    min-block-size: var(--palette-input);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: var(--fs-20)/1.2 var(--font-ui);
+  }
+  .app-palette-input::placeholder { color: var(--ink-3); }
+  /* The input always has the focus while the palette is open: its ring is an underline along the field's edge
+   * rather than an outline that would spill over the box's top edge. */
+  .app-palette-input:focus-visible {
+    outline: none;
+    box-shadow: inset 0 -3px 0 var(--focus-ring);
+  }
+
+  .app-palette-list {
+    flex: 0 1 auto;
+    /* Eight rows plus the group headings in view; more scroll. */
+    max-block-size: calc(8 * var(--palette-row) + 3 * var(--s6));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-block: var(--s1);
+  }
+
+  .app-palette-heading {
+    padding: var(--s2) var(--s4) var(--s1);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+    font-weight: var(--fw-semibold);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  .app-palette-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: var(--palette-row);
+    margin-inline: var(--s2);
+    padding: var(--s1) var(--s3);
+    border-radius: var(--r-control);
+    cursor: pointer;
+  }
+  .app-palette-row[aria-selected=true] {
+    background: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .app-palette-row[aria-disabled=true] { cursor: default; }
+  .app-palette-row[aria-disabled=true] .app-palette-title { color: var(--ink-3); }
+
+  .app-palette-icon {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--s5);
+    color: var(--ink-3);
+  }
+  .app-palette-icon .ui-icon { stroke-width: var(--icon-stroke); }
+  .app-palette-row[aria-selected=true] .app-palette-icon { color: var(--accent); }
+
+  .app-palette-text {
+    flex: 1 1 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .app-palette-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-inline-size: 100%;
+  }
+  .app-palette-sub {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .app-palette-reason {
+    flex-basis: 100%;
+    color: var(--ink-2);
+    font-size: var(--fs-14);
+  }
+  .app-palette-mod {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+  }
+  .app-palette-row:not([aria-selected=true]) .app-palette-mod { visibility: hidden; }
+  /* --ink-3 on --accent-soft falls short of 4.5:1 in both themes (WCAG 1.4.3): the selected row's
+   * secondary text steps up to --ink-2. */
+  .app-palette-row[aria-selected=true] :is(.app-palette-sub, .app-palette-mod) { color: var(--ink-2); }
+  .app-palette-key { flex: none; }
+
+  .app-palette-empty {
+    margin: 0;
+    padding: var(--s5) var(--s4);
+    color: var(--ink-2);
+  }
+
+  .app-palette-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s4);
+    padding: var(--s2) var(--s4);
+    border-block-start: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: var(--fs-12);
+  }
+  .app-palette-footer > span { display: inline-flex; align-items: center; gap: var(--s1); }
+  /* Touch-only devices: no keyboard hints (a hardware keyboard on an iPad still gets every key). */
+  @media (hover: none) and (pointer: coarse) {
+    .app-palette-footer,
+    .app-palette-mod { display: none; }
+  }
+
+  @keyframes app-palette-in {
+    from { opacity: 0; translate: 0 calc(-1 * var(--s2)); }
+  }
+}

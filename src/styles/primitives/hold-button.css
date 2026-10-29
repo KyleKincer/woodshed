@@ -1,0 +1,22 @@
+/* HoldButton (architecture §2.12, spec §4.9): a ring fills around the icon while a required
+ * hold runs. The fill is information (how long is left), so it tracks the hold in JS frames and
+ * does not depend on the motion tokens. */
+@layer primitives {
+  .ui-hold-icon {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+  }
+  .ui-hold-icon > .ui-icon { grid-area: 1 / 1; }
+  .ui-hold-icon > :not(.ui-icon) { grid-area: 1 / 1; }
+  .ui-hold-button:not([data-holding]) .ui-hold-icon[data-empty] { display: none; }
+
+  .ui-hold-button[data-holding] { border-color: var(--accent); }
+
+  /* At rest the ProgressRing does not show. */
+  .ui-hold-button:not([data-holding]) .ui-hold-icon > :not(.ui-icon) { visibility: hidden; }
+  /* The fill follows the hold frame by frame; the ring's own easing would trail it. */
+  .ui-hold-icon .ui-progress-ring-fill { transition: none; }
+  .ui-hold-button[data-holding] .ui-hold-icon .ui-progress-ring-fill { stroke: var(--accent); }
+}

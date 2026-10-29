@@ -1,0 +1,99 @@
+/* Dialog (src/ui/dialog.js): a native modal <dialog> on --backdrop, 480 px
+ * wide by default (--ui-dialog-w), with an inline error line and actions at
+ * the end. Danger styling is for the destructive confirm only. */
+@layer primitives {
+  .ui-dialog {
+    box-sizing: border-box;
+    inline-size: min(var(--ui-dialog-w, 480px), calc(100vw - 2 * var(--s4)));
+    max-inline-size: none;
+    max-block-size: calc(100dvh - 2 * var(--s4));
+    margin: auto;
+    padding: 0;
+    overflow: auto;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    box-shadow: var(--shadow-dialog);
+    font: var(--fs-16)/1.4 var(--font-ui);
+    animation: ui-grow var(--motion-enter) var(--ease);
+  }
+  .ui-dialog::backdrop { background: var(--backdrop); }
+  .ui-dialog-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    padding: var(--s5);
+  }
+  .ui-dialog-title {
+    margin: 0;
+    font-size: var(--fs-20);
+    font-weight: var(--fw-semibold);
+  }
+  .ui-dialog-body {
+    color: var(--ink-2);
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  .ui-dialog-body > * { margin: 0; }
+  .ui-dialog-body > * + * { margin-block-start: var(--s2); }
+
+  .ui-dialog-fields { display: flex; flex-direction: column; gap: var(--s4); }
+  .ui-dialog-field { display: flex; flex-direction: column; gap: var(--s1); }
+  .ui-dialog-label { font-size: var(--fs-14); font-weight: var(--fw-semibold); }
+  .ui-dialog-input {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-block-size: var(--h-md);
+    padding: var(--s2) var(--s3);
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    font: inherit;
+  }
+  textarea.ui-dialog-input { resize: vertical; }
+  .ui-dialog-input[aria-invalid=true] { border-color: var(--danger); }
+  .ui-dialog-hint { margin: 0; font-size: var(--fs-14); color: var(--ink-3); }
+  .ui-dialog-field-error,
+  .ui-dialog-error {
+    margin: 0;
+    font-size: var(--fs-14);
+    color: var(--danger);
+  }
+
+  .ui-dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--s2);
+    margin-block-start: var(--s2);
+  }
+  .ui-dialog-action {
+    min-block-size: var(--h-md);
+    min-inline-size: 88px;
+    padding: 0 var(--s4);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+  }
+  .ui-dialog-action:hover { border-color: var(--ink-3); }
+  .ui-dialog-action[data-variant=primary] {
+    background: var(--accent-fill);
+    border-color: var(--accent-fill);
+    color: var(--on-accent);
+  }
+  .ui-dialog-action[data-variant=quiet] { background: transparent; border-color: transparent; color: var(--accent); }
+  .ui-dialog-action[data-variant=danger] {
+    background: var(--surface);
+    border: 2px solid var(--danger);
+    color: var(--danger);
+  }
+  .ui-dialog-action[aria-disabled=true] { cursor: progress; }
+  .ui-dialog[data-busy] .ui-dialog-action[type=submit]::after {
+    content: '…';
+  }
+}

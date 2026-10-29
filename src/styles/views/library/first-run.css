@@ -1,0 +1,73 @@
+/* Library first run (src/library/first-run.js, spec §2.7): the Demo and Add cards side by side,
+ * stacked on iPad portrait. */
+@layer views {
+  .lib-first-run {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s5);
+    padding-block: var(--s4);
+  }
+  .lib-first-run[data-cards="1"] { grid-template-columns: minmax(0, 640px); }
+  @media (max-width: 999px) {
+    .lib-first-run { grid-template-columns: minmax(0, 1fr); }
+  }
+  .lib-first-card {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s5);
+    padding: var(--s6);
+    border: 1px solid var(--line);
+    border-radius: var(--r-surface);
+    background: var(--surface);
+  }
+  .lib-first-card[hidden] { display: none; }
+  @media (max-width: 599px) {
+    .lib-first-card { grid-template-columns: minmax(0, 1fr); padding: var(--s5); }
+  }
+  .lib-first-art {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1 / 1;
+    border-radius: 0;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .lib-first-text { display: flex; flex-direction: column; gap: var(--s2); min-inline-size: 0; }
+  .lib-first-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-24)/1.2 var(--font-ui);
+  }
+  .lib-first-body {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui);
+  }
+  .lib-first-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-block-start: var(--s3);
+  }
+  .lib-first-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-block-size: var(--h-lg);
+    padding: 0 var(--s5);
+    border-radius: var(--r-control);
+    background: var(--accent-fill);
+    color: var(--on-accent);
+    font: var(--fw-semibold) var(--fs-16)/1 var(--font-ui);
+    text-decoration: none;
+  }
+  @media (hover: hover) { .lib-first-link:hover { filter: brightness(1.08); } }
+  .lib-first-hint {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui);
+  }
+}

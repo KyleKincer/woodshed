@@ -1,0 +1,323 @@
+@layer views {
+  /* The Stage HUD (src/stage/hud.js; spec §4.3, §4.10, §4.11; architecture §4.4). Type comes from
+   * the --fs-stage-* tokens, which the Stage root's [data-stage-layout] and [data-distance]
+   * attributes set (layout.js): Section 40/700, Next 17, Position 56 band / 64 rail in tabular
+   * mono, lamps 18 / 20, Speed 40 + 15, the Loop line 17 / 20 in --loop, the Mix pill 15/700.
+   * Nothing in the Stage is set below 15 px. [data-layout] (band | rail) arranges the readouts;
+   * [data-focus] hides the identity row (band) or shrinks to the 120 px mini rail (rail). */
+  .hud {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.3 var(--font-ui);
+  }
+
+  /* ---- identity row (44 px band; two lines on the rail; dims to 40% while playing) ---- */
+  .hud-identity {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    min-block-size: 44px;
+    padding: 0 var(--s3) 0 var(--s1);
+    transition: opacity var(--motion-fast) var(--ease);
+  }
+  .hud[data-playing] .hud-identity { opacity: .4; }
+  .hud[data-playing] .hud-identity:has(:focus-visible) { opacity: 1; }
+  @media (hover: hover) and (pointer: fine) {
+    .hud[data-playing] .hud-identity:hover { opacity: 1; }
+  }
+
+  .hud-back { flex: none; }
+  .hud-cover-box { flex: none; inline-size: 32px; block-size: 32px; }
+  .hud-cover-box .hud-cover { inline-size: 32px; block-size: 32px; border-radius: 0; overflow: hidden; }
+  .hud-titles {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .hud-title {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-stage-identity)/1.3 var(--font-ui);
+  }
+  .hud-artist {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.3 var(--font-ui);
+  }
+  .hud-artist::before { content: '· '; color: var(--ink-3); }
+  /* The band lays the chip groups out inline in the identity row; the rail wraps them as one row. */
+  .hud-chips { display: contents; }
+  .hud-meta, .hud-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex: none;
+    min-inline-size: 0;
+  }
+  /* Key and tuning: display chips at the Stage's 15 px floor (not targets, so not 44 px tall). */
+  .hud-meta .ui-chip { min-block-size: 24px; font-size: var(--fs-stage-identity); }
+  .hud-meta .ui-chip-main { min-block-size: 22px; padding: 0 var(--s2); }
+  .hud-shared { color: var(--ink-2); white-space: nowrap; }
+  .hud-action-slot:empty { display: none; }
+  .hud-tools .ui-button { font-size: var(--fs-stage-identity); }
+  .hud-indicator {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 24px;
+    block-size: 24px;
+    color: var(--ink-2);
+  }
+  .hud-more { flex: none; }
+
+  .hud-set {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-basis: 100%;
+    min-inline-size: 0;
+    padding-inline-start: var(--s7);
+    color: var(--ink-2);
+  }
+  .hud-set-text { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- readouts ("Now playing") ---- */
+  .hud-readouts {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, .85fr) minmax(0, 1.3fr);
+    column-gap: var(--s4);
+    align-items: center;
+    min-block-size: 88px;
+    padding: 0 var(--s4);
+  }
+  .hud-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s1);
+    min-inline-size: 0;
+  }
+
+  .hud-section {
+    display: grid;
+    max-inline-size: 100%;
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-stage-section)/1.1 var(--font-ui);
+    white-space: nowrap;
+  }
+  .hud-section-layer {
+    grid-area: 1 / 1;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hud-section-layer[data-state=in] { animation: hud-fade-in var(--motion-enter) var(--ease) both; }
+  .hud-section-layer[data-state=out] { animation: hud-fade-out var(--motion-enter) var(--ease) both; }
+  @keyframes hud-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes hud-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+  .hud-next { max-inline-size: 100%; }
+  .hud-next .ui-readout-value { overflow: hidden; text-overflow: ellipsis; max-inline-size: 100%; }
+
+  .hud-position {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    max-inline-size: 100%;
+  }
+  .hud-pos-main {
+    display: inline-flex;
+    align-items: baseline;
+    min-inline-size: 4ch;
+    color: var(--ink);
+    font: var(--fw-heavy) var(--fs-stage-position)/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* The downbeat edge flash (prefs practice.edgeFlash): a 6 px --now inset glow, 60 ms in, 180 ms out. */
+  .stage-edge-flash {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    pointer-events: none;
+    box-shadow: inset 0 0 0 6px var(--now);
+    opacity: 0;
+  }
+  .stage-edge-flash[data-on] { animation: stage-edge-flash 240ms linear; }
+  @keyframes stage-edge-flash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .stage-edge-flash[data-on] { animation: none; opacity: 1; }
+  }
+  /* 'Pickup · 3': the word at half the numeral size in the UI face, so it never overflows the rail (ORCH-2). */
+  .hud-position[data-word=true] .hud-pos-bar {
+    font-family: var(--font-ui);
+    font-size: calc(var(--fs-stage-position) * .5);
+    font-weight: var(--fw-bold);
+  }
+  /* The separator in Next: Atkinson Mono spreads " · " to full cells (forward note to ST5). */
+  .hud-pos-sep {
+    padding: 0 .12em;
+    color: var(--ink-3);
+    font-family: var(--font-ui);
+    font-weight: var(--fw-bold);
+  }
+  .hud-lamp-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s3);
+    min-inline-size: 0;
+  }
+  .hud-pos-sub {
+    color: var(--ink-3);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.3 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .hud-speed { cursor: ns-resize; touch-action: none; }
+  .hud-speed .ui-readout-sub { font-family: var(--font-ui); }
+  .hud[data-speed-drag] .hud-speed .ui-readout-value { color: var(--accent); }
+
+  /* The Loop line: tap → Loop options (loop.card). */
+  .hud-loop {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    max-inline-size: 100%;
+    min-block-size: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    text-align: start;
+    cursor: pointer;
+  }
+  @media (pointer: coarse) {
+    .hud-loop { min-block-size: var(--h-sm); }
+  }
+  .hud-loop[aria-disabled=true] { cursor: default; }
+  .hud-loop-line1 {
+    color: var(--loop);
+    font: var(--fw-semibold) var(--fs-stage-loop)/1.2 var(--font-ui);
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .hud-loop-line2, .hud-loop-trainer {
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-stage-identity)/1.3 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  /* Band: the trainer line replaces the bars line (88 px band); the rail shows both. */
+  .hud[data-layout=band] .hud-loop[data-trainer=true] .hud-loop-line2 { display: none; }
+
+  /* Mix: a 15/700 caps pill; never opacity (spec §7.5). Solo has no hue: an accent ring + SOLO. */
+  .hud-mix {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 1px var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    color: var(--ink);
+    font: var(--fw-bold) var(--fs-stage-identity)/1.3 var(--font-ui);
+    letter-spacing: .04em;
+    white-space: nowrap;
+  }
+  .hud-mix[data-kind=solo] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .hud-mix-icon { display: inline-flex; color: var(--ink-2); }
+
+  /* ---- rail: one column of blocks (wireframe §10.3) ----
+   * The identity is two rows (spec §4.3 "two lines"; ORCH-1), at every Distance (rail 232/264/312):
+   *   1  ‹ · cover 32 · title (15/700) over artist (15, --ink-2), each one line with an ellipsis · ⋯
+   *   2  one wrapping chip row at 8 px gaps: key, tuning, Shared by + action slot, Notes, ☼, ⎍, `1 ready`
+   * then the set line. The Stage frame's rail padding is the identity's inline inset (stage.css). */
+  .hud[data-layout=rail] .hud-identity {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "back  cover titles more"
+      "chips chips chips  chips"
+      "set   set   set    set";
+    column-gap: var(--s2);
+    row-gap: var(--s2);
+    padding: 0 0 var(--s3);
+    align-items: center;
+  }
+  .hud[data-layout=rail] .hud-back { grid-area: back; }
+  .hud[data-layout=rail] .hud-cover-box { grid-area: cover; }
+  .hud[data-layout=rail] .hud-titles {
+    grid-area: titles;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .hud[data-layout=rail] .hud-title,
+  .hud[data-layout=rail] .hud-artist {
+    display: block;
+    margin: 0;
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hud[data-layout=rail] .hud-artist::before { content: none; }
+  .hud[data-layout=rail] .hud-more { grid-area: more; }
+  .hud[data-layout=rail] .hud-chips {
+    grid-area: chips;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .hud[data-layout=rail] .hud-meta,
+  .hud[data-layout=rail] .hud-tools { display: contents; }
+  .hud[data-layout=rail] .hud-shared {
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hud[data-layout=rail] .hud-set { grid-area: set; padding-inline-start: 0; }
+
+  .hud[data-layout=rail] .hud-readouts {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+  }
+  .hud[data-layout=rail] .hud-cell {
+    padding: var(--s3) var(--s4);
+    border-block-start: 1px solid var(--line);
+  }
+  .hud[data-layout=rail] .hud-lamp-row { flex-direction: column; align-items: flex-start; }
+  .hud[data-layout=rail] .hud-speed { flex-direction: row; align-items: baseline; justify-content: space-between; inline-size: 100%; }
+
+  /* ---- Focus ---- */
+  .hud[data-focus][data-layout=band] .hud-identity { display: none; }
+  /* The 120 px mini rail: Section, Position and the lamps (the mini controls carry Speed and Play). */
+  .hud[data-focus][data-layout=rail] .hud-identity,
+  .hud[data-focus][data-layout=rail] .hud-next,
+  .hud[data-focus][data-layout=rail] .hud-pos-sub,
+  .hud[data-focus][data-layout=rail] .hud-cell-speed,
+  .hud[data-focus][data-layout=rail] .hud-cell-loop { display: none; }
+  .hud[data-focus][data-layout=rail] .hud-cell { padding: var(--s2); border: 0; }
+  .hud[data-focus][data-layout=rail] .hud-section { font-size: var(--fs-24); }
+  .hud[data-focus][data-layout=rail] .hud-pos-main { font-size: var(--fs-32); }
+  .hud[data-focus][data-layout=rail] .ui-beat-lamps { gap: calc(var(--ui-lamp) * .5); }
+}

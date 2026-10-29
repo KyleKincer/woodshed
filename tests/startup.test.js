@@ -1,40 +1,81 @@
 // @vitest-environment happy-dom
-import {beforeEach,expect,test,vi} from 'vitest';
-import {finishStartup,showStartup,showSignIn,waitForAuthSession} from '../src/js/startup.js';
+// S1: src/js/startup.js, the boot status (#startup) and its 8 s "Still connecting… [Retry]".
+import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
+import * as startup from '../src/js/startup.js';
+import {SLOW_MS, STARTUP_COPY, finishStartup, showSignIn, showStartup} from '../src/js/startup.js';
+
+const root = document.documentElement;
+const status = () => document.getElementById('startup');
+
 beforeEach(() => {
-  document.body.innerHTML='<header id="app-header" inert></header><main id="content" inert></main><div id="signin" class="hidden"></div><div id="startup-status"></div>';
-  showStartup();
+  document.body.innerHTML = '<div id="app"></div><div id="startup" role="status">Opening Woodshed…</div>';
+  root.dataset.startup = 'loading';
+  vi.useFakeTimers();
 });
-function session(initial) {
-  let state=initial, listener;
-  const unsubscribe=vi.fn();
-  return {getSnapshot:()=>state,subscribe:callback=>{listener=callback;return unsubscribe;},unsubscribe,
-    update:next=>{state=next;listener();}};
-}
-test('restoring a session never exposes sign-in or an interactive empty shell',async()=>{
-  const auth=session({isLoading:true,isAuthenticated:false});
-  const signedOut=vi.fn(showSignIn);
-  const ready=waitForAuthSession(auth,{onSignedOut:signedOut,onLoading:showStartup});
-  expect(document.documentElement.dataset.startup).toBe('loading');
-  auth.update({isLoading:false,isAuthenticated:true});await ready;
-  expect(signedOut).not.toHaveBeenCalled();
-  expect(document.getElementById('signin').classList.contains('hidden')).toBe(true);
-  expect(document.getElementById('content').hasAttribute('inert')).toBe(true);
-  finishStartup();expect(document.getElementById('content').hasAttribute('inert')).toBe(false);
-  expect(document.getElementById('startup-status')).toBeNull();
-  expect(auth.unsubscribe).toHaveBeenCalled();
+afterEach(() => {
+  finishStartup();
+  vi.useRealTimers();
 });
-test('confirmed signed-out users see sign-in; OAuth completion returns to loading until content is ready',async()=>{
-  const auth=session({isLoading:false,isAuthenticated:false});
-  const ready=waitForAuthSession(auth,{onSignedOut:showSignIn,onLoading:showStartup});
-  expect(document.documentElement.dataset.startup).toBe('signin');
-  auth.update({isLoading:true,isAuthenticated:false});
-  expect(document.documentElement.dataset.startup).toBe('loading');
-  auth.update({isLoading:false,isAuthenticated:true});await ready;
-  expect(document.documentElement.dataset.startup).toBe('loading');
+
+describe('the boot status', () => {
+  test('shows "Opening Woodshed…" as a polite status while loading', () => {
+    showStartup({onRetry: vi.fn()});
+    expect(root.dataset.startup).toBe('loading');
+    expect(status().getAttribute('role')).toBe('status');
+    expect(status().textContent).toBe(STARTUP_COPY.opening);
+    expect(status().querySelector('button')).toBeNull();
+  });
+
+  test('after 8 s it reads "Still connecting…" with a Retry button', () => {
+    const onRetry = vi.fn();
+    showStartup({onRetry});
+    vi.advanceTimersByTime(SLOW_MS - 1);
+    expect(status().dataset.slow).toBe('false');
+    vi.advanceTimersByTime(1);
+    expect(SLOW_MS).toBe(8000);
+    expect(status().dataset.slow).toBe('true');
+    expect(status().textContent).toContain(STARTUP_COPY.slow);
+    const retry = status().querySelector('button');
+    expect(retry.textContent).toBe(STARTUP_COPY.retry);
+    retry.click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  test('showing it again restarts the 8 s window', () => {
+    showStartup({onRetry: vi.fn()});
+    vi.advanceTimersByTime(6000);
+    showStartup({onRetry: vi.fn()});
+    vi.advanceTimersByTime(6000);
+    expect(status().dataset.slow).toBe('false');
+    vi.advanceTimersByTime(2000);
+    expect(status().dataset.slow).toBe('true');
+  });
+
+  test('creates the status when index.html had none', () => {
+    document.body.replaceChildren();
+    showStartup({onRetry: vi.fn()});
+    expect(status().parentNode).toBe(document.body);
+    expect(status().getAttribute('role')).toBe('status');
+  });
+
+  test('finishStartup removes it, marks the page ready and cancels the slow notice', () => {
+    showStartup({onRetry: vi.fn()});
+    finishStartup();
+    expect(root.dataset.startup).toBe('ready');
+    expect(status()).toBeNull();
+    vi.advanceTimersByTime(SLOW_MS);
+    expect(status()).toBeNull();
+  });
+
+  test('showSignIn removes it and marks the page signin', () => {
+    showStartup({onRetry: vi.fn()});
+    showSignIn();
+    expect(root.dataset.startup).toBe('signin');
+    expect(status()).toBeNull();
+  });
 });
-test('an already authenticated session skips sign-in entirely',async()=>{
-  const onSignedOut=vi.fn();
-  await waitForAuthSession(session({isLoading:false,isAuthenticated:true}),{onSignedOut,onLoading:showStartup});
-  expect(onSignedOut).not.toHaveBeenCalled();
+
+// I1-6: the 1.9 auth bridge (waitForAuthSession) left with src/js/auth.js; the module is the boot status only.
+test('exports only the boot status API', () => {
+  expect(Object.keys(startup).sort()).toEqual(['SLOW_MS', 'STARTUP_COPY', 'finishStartup', 'showSignIn', 'showStartup']);
 });

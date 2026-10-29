@@ -1,0 +1,98 @@
+/* The Transcribe workspace's own DOM (src/js/notation/editor.js): the score or
+   lanes surface, the lane labels, the note list, the inspector panel bodies it
+   renders into Edit · Chart's slots, and its form dialogs. The frame around it
+   (toolbar, tabs, kit bank) is src/styles/views/edit/chart.css. */
+@layer views {
+  .notation-workspace { position: relative; display: flex; flex-direction: column; min-width: 0; color: var(--ink); }
+  .notation-body { display: flex; min-height: 200px; min-width: 0; }
+
+  /* The surface: the focus scope edit.chart.score (one tab stop, keys through the registry). */
+  .notation-surface { position: relative; flex: 1; min-width: 0; outline: none; user-select: none; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-surface); }
+  .notation-surface:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+  .notation-score { padding: var(--s3) var(--s3) var(--s5); }
+  .notation-score .score-stage { cursor: crosshair; touch-action: pan-y; }
+  .notation-lanes { position: relative; overflow: hidden; cursor: crosshair; touch-action: none; padding-bottom: var(--s2); }
+  .notation-playhead { position: absolute; width: 2px; background: var(--now); pointer-events: none; z-index: var(--z-local-2); }
+  .notation-drag-preview { position: absolute; pointer-events: none; border: 1px solid var(--accent); background: var(--accent-soft);
+    opacity: .75; z-index: var(--z-local-2); }
+  .notation-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%);
+    white-space: nowrap; border: 0; }
+
+  /* Lane labels: one audition button per row, aligned with lanes.js rows (26 px top, 28 px rows). */
+  .notation-lane-labels { flex: 0 0 132px; display: flex; flex-direction: column; padding-right: var(--s2); }
+  .notation-lane-gap { flex: none; }
+  .notation-lane-label { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+    padding: 0 var(--s2); border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-12)/1 var(--font-ui); text-align: left; cursor: pointer; }
+  .notation-lane-label:hover { background: var(--surface-2); }
+  .notation-lane-label[aria-pressed=true] { color: var(--accent); background: var(--accent-soft); }
+
+  .notation-help { margin: var(--s2) var(--s1) 0; color: var(--ink-3); font: var(--fs-12)/1.4 var(--font-ui); }
+  .notation-unavailable { padding: var(--s7) var(--s5); text-align: center; color: var(--ink-3); font: var(--fs-16)/1.5 var(--font-ui); }
+
+  /* The note list (Part ▾ → Note list): the visible page's notes. */
+  .notation-note-list { display: grid; gap: var(--s1); margin-top: var(--s3); padding: var(--s3); max-height: 240px; overflow: auto;
+    border: 1px solid var(--line); border-radius: var(--r-surface); background: var(--surface); }
+  .notation-note-list button { min-height: var(--h-sm); padding: var(--s1) var(--s3); border: 1px solid transparent;
+    border-radius: var(--r-control); background: transparent; color: var(--ink); font: var(--fs-14)/1.3 var(--font-ui);
+    text-align: left; cursor: pointer; }
+  .notation-note-list button:hover { background: var(--surface-2); }
+  .notation-note-list button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); }
+  .notation-note-list p { color: var(--ink-3); font: var(--fs-14)/1.4 var(--font-ui); }
+
+  /* Inspector panel bodies (Kit · Properties · Listen). */
+  .notation-panel-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s3); margin-bottom: var(--s3); }
+  .notation-panel-title { margin: 0 0 var(--s2); color: var(--ink); font: var(--fw-semibold) var(--fs-14)/1.3 var(--font-ui); }
+  .notation-panel-title .notation-hint { font-weight: var(--fw-regular); }
+  .notation-hint { color: var(--ink-3); font: var(--fs-12)/1.4 var(--font-ui); }
+  .notation-toggle,
+  .notation-action,
+  .notation-pad { display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); min-height: var(--h-sm);
+    padding: 0 var(--s3); border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface);
+    color: var(--ink); font: var(--fw-semibold) var(--fs-14)/1 var(--font-ui); cursor: pointer; white-space: nowrap; }
+  .notation-toggle:hover,
+  .notation-action:hover,
+  .notation-pad:hover { background: var(--surface-2); }
+  .notation-toggle[aria-pressed=true],
+  .notation-pad[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .notation-action:disabled { color: var(--ink-3); border-color: var(--line); cursor: default; }
+  .notation-toggles,
+  .notation-segments { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .notation-segments .notation-toggle { flex: 1; }
+
+  .notation-pads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); margin-bottom: var(--s4); }
+  .notation-pad-family { grid-column: 1 / -1; color: var(--ink-3); font: var(--fw-semibold) var(--fs-12)/1.2 var(--font-ui);
+    letter-spacing: .04em; text-transform: uppercase; }
+  .notation-pad { justify-content: space-between; min-width: 0; min-height: var(--h-md); white-space: normal; text-align: left;
+    border-left: 4px solid var(--family, var(--line-strong)); }
+  .notation-pad[data-family=cymbal] { --family: var(--warn); }
+  .notation-pad[data-family=drum] { --family: var(--stem-drums); }
+  .notation-pad[data-family=foot] { --family: var(--stem-bass); }
+  .notation-pad[data-family=aux] { --family: var(--stem-guitar); }
+  .notation-pad .ui-kbd,
+  .notation-lane-label .ui-kbd { flex: none; }
+
+  .notation-inspector,
+  .notation-audition { display: grid; gap: var(--s3); }
+  .notation-field { display: grid; gap: var(--s1); color: var(--ink-2); font: var(--fs-14)/1.3 var(--font-ui); }
+  .notation-field select,
+  .notation-field input:not([type=range]) { min-height: var(--h-sm); padding: 0 var(--s2); border: 1px solid var(--line-strong);
+    border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: var(--fs-14)/1 var(--font-ui); }
+  .notation-field input[type=range] { width: 100%; accent-color: var(--accent); }
+  .notation-part-layout,
+  .notation-recorded { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--line); }
+
+  /* Form dialogs (Move notes…, Repeat bars…, Tuplet on this beat…, Drum keys…, Load saved version). */
+  .notation-dialog-body { display: grid; gap: var(--s3); color: var(--ink-2); font: var(--fs-14)/1.5 var(--font-ui); }
+  .notation-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .notation-keys-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 50vh; overflow: auto; padding-right: var(--s1); }
+  .notation-keys-grid input { width: 4em; text-transform: uppercase; font-family: var(--font-mono); }
+  .notation-check { display: flex; align-items: center; gap: var(--s2); color: var(--ink-2); font: var(--fs-14)/1.3 var(--font-ui); }
+
+  @media (pointer: coarse) {
+    .notation-toggle,
+    .notation-action { min-height: var(--h-md); }
+    .notation-lane-labels { flex-basis: 112px; }
+  }
+}

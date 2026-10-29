@@ -3,9 +3,9 @@ import { beforeEach, expect, test, vi } from 'vitest';
 vi.mock('signalsmith-stretch', () => ({default: vi.fn()}));
 import SignalsmithStretch from 'signalsmith-stretch';
 vi.mock('../src/js/stemcache.js', () => ({fetchStem:vi.fn(async()=>new ArrayBuffer(0))}));
-import { MultitrackEngine } from '../src/js/engine.js';
-import { buildBarIndex, barPosition } from '../src/js/musical-position.js';
+import { MultitrackEngine, MIN_RATE } from '../src/js/engine.js';
 import { Metronome } from '../src/js/metronome.js';
+import { SongMapStore } from '../src/js/song-map.js';
 let engine;
 beforeEach(() => {
   const param = () => ({cancelScheduledValues:vi.fn(), setValueAtTime:vi.fn(), setTargetAtTime:vi.fn()});
@@ -33,7 +33,7 @@ test('disabling a loop after many passes continues from the audible position', a
   expect(engine.getPosition()).toBeCloseTo(11.25);
   settle(); expect(engine.getPosition()).toBeCloseTo(11.3);
   advance(2); expect(engine.getPosition()).toBeCloseTo(13.3);
-  engine.tickEnd(); expect(engine.playing).toBe(true);
+  engine._tick(); expect(engine.playing).toBe(true);
 });
 test('speed changes, clearing and editing loops stay on the same timeline as every stem', async () => {
   engine.setLoop(true, 4, 6); engine.seek(4); await engine.play(); settle(); advance(50.5);
@@ -71,7 +71,7 @@ test('seeking to the loop end wraps, seeking before A plays the lead-in, invalid
 });
 test('natural end stays at the end and replay starts at zero', async () => {
   engine.seek(99); await engine.play(); settle(); advance(1);
-  engine.onEnded = vi.fn(); engine.tickEnd(); engine.tickEnd();
+  engine.onEnded = vi.fn(); engine._tick(); engine._tick();
   expect(engine.getPosition()).toBe(100); expect(engine.onEnded).toHaveBeenCalledTimes(1);
   await engine.play(); expect(engine.getPosition()).toBe(0);
 });
@@ -89,15 +89,6 @@ test('metronome schedules the loop downbeat and follows pending rate changes', a
   engine.setSpeed(0.5); settle(); advance(0.9);
   expect(engine.beatsBetween(engine.ctx.currentTime, engine.ctx.currentTime + 0.2, beats)[0].when).toBeCloseTo(1.1);
 });
-test('bar progress follows irregular detected downbeats, pickups, and partial final bars', () => {
-  const index = buildBarIndex([{time:0,downbeat:false},{time:1,downbeat:true},{time:1.5,downbeat:false},{time:2,downbeat:false},{time:2.5,downbeat:true},{time:3,downbeat:false}]);
-  expect(index.total).toBe(2);
-  expect(barPosition(index, 0.2)).toMatchObject({bar:0});
-  expect(barPosition(index, 2)).toMatchObject({bar:1,beat:3});
-  expect(barPosition(index, 2.5)).toMatchObject({bar:2,beat:1});
-  expect(barPosition(index, 10)).toMatchObject({bar:2,beat:2});
-});
-
 test('normal speed bypasses DSP with sample-locked original buffers and no processed tail', async () => {
   engine.seek(10); await engine.play();
   const entries=engine.tracks.map(track=>[...track.nativeSources][0]);
@@ -157,6 +148,33 @@ test('audible pre-roll plays into a loop without changing its boundaries', async
   advance(3); expect(engine.getPosition()).toBe(11);
   expect(engine.loop).toEqual({enabled:true,a:10,b:12});
 });
+test('I2b-1: a segmented loop with a count-in plays, and every automation time is finite', async () => {
+  const params = () => [engine.master.gain, engine.pitchGate.gain, ...engine.tracks.map(t => t.gain.gain)];
+  // Like a real AudioParam, automation rejects a non-finite value or time (play then throws).
+  for (const p of params()) p.setValueAtTime.mockImplementation((v, t) => {
+    if (!Number.isFinite(v) || !Number.isFinite(t)) throw new TypeError('Failed to execute setValueAtTime on AudioParam: The provided double value is non-finite.');
+  });
+  for (const gap of ['silent', 'preroll']) for (const rate of [1, 0.75]) {
+    engine.stop(); for (const p of params()) p.setValueAtTime.mockClear();
+    engine.setSpeed(rate); engine.setLoop(true, 10, 12, {gapSec: 4, gap}); engine.seek(10);
+    await engine.play({countIn: {duration: 4, beats: [{offset: 0, downbeat: true}]}});
+    expect(engine.playing).toBe(true); expect(engine.countingIn).toBe(true);
+    // The last pass is open-ended: nothing is appended after it until it starts.
+    expect(engine.plan.at(-1).kind).toBe('pass');
+    const end = engine.countIn.audioWhen;
+    engine.ctx.currentTime = end + 0.5; engine._tick();
+    expect(engine.getPosition()).toBeCloseTo(10 + 0.5 * rate);
+    advance(30 / rate); engine._tick();
+    expect(engine.loop).toMatchObject({enabled: true, a: 10, b: 12});
+    const times = params().flatMap(p => p.setValueAtTime.mock.calls.map(([, t]) => t));
+    expect(times.length).toBeGreaterThan(0);
+    expect(times.every(Number.isFinite)).toBe(true);
+    // The stems stay silent through the count, then sound with the first pass.
+    const master = engine.master.gain.setValueAtTime.mock.calls;
+    expect(master.findLast(([, t]) => t <= end - 1e-6)?.[0]).toBe(0);
+    expect(master.some(([v, t]) => v === 1 && Math.abs(t - end) < 1e-9)).toBe(true);
+  }
+});
 test('pre-roll before song start retains a full count-in with silence for unavailable audio', async () => {
   engine.seek(1);
   await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
@@ -164,55 +182,57 @@ test('pre-roll before song start retains a full count-in with silence for unavai
   settle(); advance(2); expect(engine.getPosition()).toBe(0);
   advance(2); expect(engine.getPosition()).toBe(1);
 });
-test('cancel, seek, and speed changes during count-in cannot leave a delayed start armed', async () => {
-  engine.seek(10);
-  await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
-  settle();advance(1);engine.pause();
-  expect(engine.getPosition()).toBe(10);expect(engine.countIn).toBeNull();
-  advance(10); expect(engine.playing).toBe(false);
-  await engine.play({countIn:{duration:4,beats:[]}}); engine.seek(30);
-  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
-  await engine.play({countIn:{duration:4,beats:[]}});engine.setSpeed(0.75);
-  expect(engine.playing).toBe(false);expect(engine.getPosition()).toBe(30);
+test('pausing a count-in cannot leave a delayed start armed; a seek or speed change during a count never pauses the engine', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    engine.seek(10);
+    await engine.play({countIn:{duration:4,beats:[]},audiblePreRoll:true});
+    settle();advance(1);engine.pause();
+    expect(engine.getPosition()).toBe(10);expect(engine.countIn).toBeNull();
+    advance(10); expect(engine.playing).toBe(false);
+    // The transport restarts or cancels a count itself (rule 21). A stray call ends the count and plays on.
+    await engine.play({countIn:{duration:4,beats:[]}}); engine.seek(30);
+    expect(engine.playing).toBe(true);expect(engine.countingIn).toBe(false);expect(engine.getPosition()).toBe(30);
+    settle(); advance(1); expect(engine.getPosition()).toBeCloseTo(31);
+    engine.stop();
+    await engine.play({countIn:{duration:4,beats:[]}});engine.setSpeed(0.75);
+    expect(engine.playing).toBe(true);expect(engine.countingIn).toBe(false);expect(engine.rate).toBe(0.75);
+    expect(engine.getPosition()).toBe(30);
+    expect(warn).toHaveBeenCalledTimes(2);
+  } finally { warn.mockRestore(); }
 });
-test('count-in supports bars and beats, legacy defaults, and persisted audible pre-roll', () => {
-  const metro = new Metronome(engine);
-  metro.load({countIn:true,map:[{t:0,bpm:120,beatsPerBar:3,unit:4}]});
-  expect(metro.countInPlan()).toEqual({duration:1.5,beats:[{offset:0,downbeat:true},{offset:0.5,downbeat:false},{offset:1,downbeat:false}]});
-  expect(metro.audiblePreRoll).toBe(false);
-  metro.setCountInLength(2);
-  expect(metro.countInPlan().duration).toBe(3);
-  metro.setCountInUnit('beats');metro.setAudiblePreRoll(true);
-  expect(metro.countInPlan().duration).toBe(1);
-  const other = new Metronome(engine);other.load(metro.serialize());
-  expect(other.serialize()).toMatchObject({countInLength:2,countInUnit:'beats',audiblePreRoll:true});
-  metro.destroy();other.destroy();
+test('E1: the speed range reaches 25% on both paths and clamps below it', async () => {
+  expect(MIN_RATE).toBe(0.25);
+  engine.setSpeed(0.25); await engine.play();
+  expect(engine.rate).toBe(0.25);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.25,active:true});
+  engine.setPreservePitch(false);
+  expect(engine.stretch.schedule.mock.lastCall[0]).toMatchObject({rate:0.25,active:false});
+  expect([...engine.tracks[0].nativeSources].at(-1).source.playbackRate.value).toBe(0.25);
+  engine.setSpeed(0.2); expect(engine.rate).toBe(0.25);
+  engine.setSpeed(2); expect(engine.rate).toBe(1.5);
 });
-test('count-in clicks work with the metronome off and stop immediately on cancellation', async () => {
-  const metro = new Metronome(engine);
-  metro._click = vi.fn();
-  await engine.play({countIn:metro.countInPlan()});
-  metro.tick();expect(metro._click).toHaveBeenCalledWith(engine.lookahead,true);
-  metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
-  const stop = vi.fn();metro._scheduledClicks.add({stop});engine.pause();metro.tick();
-  expect(stop).toHaveBeenCalled();
-  advance(3);metro.tick();expect(metro._click).toHaveBeenCalledTimes(1);
-  metro.destroy();
+test('toggle() is gone; seek(t, {cue: false}) leaves the cue', async () => {
+  expect(engine.toggle).toBeUndefined();
+  engine.seek(12); engine.seek(20, {cue:false});
+  expect(engine.editPosition).toBe(12); expect(engine.getPosition()).toBe(20);
+  await engine.play(); settle(); advance(2); engine.seek(50, {cue:false});
+  engine.stop(); expect(engine.getPosition()).toBe(12);
 });
-test('detected count-in at the end uses the final local tempo and meter', () => {
-  const metro = new Metronome(engine);
-  metro.setDetected([[1,1],[1.5,2],[2,3],[2.5,1],[2.75,2],[3,3],[3.25,1],[3.5,2],[3.75,3]]);
-  engine.seek(3.8);
-  expect(metro.countInPlan().duration).toBe(0.75);
-  metro.destroy();
-});
-test('count-in follows tempo changes and extrapolates clicks beyond a detected grid', () => {
-  const metro = new Metronome(engine);
-  metro.setDetected([[0,1],[0.5,2],[1,3],[1.5,1],[2.5,2],[3.5,3],[4.5,1]]);
-  metro.setCountInUnit('beats');metro.setCountInLength(4);engine.seek(4.5);
-  expect(metro.countInPlan().duration).toBe(3.5);
-  engine.seek(10.5);
-  expect(metro.countInPlan().beats).toHaveLength(4);
+
+test('sectionAt finds the bar by quarters, not seconds, across a meter change (I0A-1)', () => {
+  // 120 qpm: two 4/4 bars (q 0-8, 0-4 s), then 6/8 bars of three quarters each (q 8, 11, 14, ...).
+  const bar = (id, numerator, denominator) => ({id, numerator, denominator, length: {n: 4 * numerator, d: denominator}, label: ''});
+  const songMap = {version: 1, origin: 'edited', tailQpm: 120, pins: [{position: {n: 0, d: 1}, time: 0}],
+    measures: [bar('a', 4, 4), bar('b', 4, 4), ...Array.from({length: 40}, (_, i) => bar(`c${i}`, 6, 8))]};
+  const metro = new Metronome(engine, new SongMapStore(songMap, engine.duration || 1));
+  // t = 1.5 s is q = 3: still bar 0 (a quarters-as-seconds lookup lands in bar 1 at 2 s).
+  expect(metro.sectionAt(1.5)).toMatchObject({t: 0, beatsPerBar: 4, unit: 4});
+  // t = 5 s is q = 10: the first 6/8 bar, starting at q 8 = 4 s (the seconds lookup lands at q 20 = 10 s).
+  expect(metro.sectionAt(5)).toMatchObject({t: 4, unit: 8});
+  expect(metro.sectionAt(5).beatsPerBar).toBe(metro.songMap.beatsPerBarAt(5));
+  // t = 6.25 s is q = 12.5: the second 6/8 bar, starting at q 11 = 5.5 s.
+  expect(metro.sectionAt(6.25).t).toBeCloseTo(5.5);
   metro.destroy();
 });
 

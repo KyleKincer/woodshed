@@ -1,0 +1,57 @@
+@layer primitives {
+  /* Tabs (src/ui/tabs.js): a roving tablist. 'posture' is Edit's Map · Chart ·
+   * Details (selected underline in --edit); 'section' is Settings and panels
+   * (selected underline in --accent). Targets use --h-sm (32 fine, 44 coarse). */
+  .ui-tabs {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    min-inline-size: 0;
+  }
+
+  .ui-tab {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-block-size: var(--h-sm);
+    min-inline-size: var(--h-sm);
+    padding: 0 var(--s3);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease), background-color var(--motion-fast) var(--ease);
+  }
+  .ui-tab::after {
+    content: '';
+    position: absolute;
+    inset-inline: var(--s3);
+    inset-block-end: 0;
+    block-size: 2px;
+    border-radius: var(--r-pill);
+    background: transparent;
+    transition: background-color var(--motion-fast) var(--ease);
+  }
+  @media (hover: hover) {
+    .ui-tab:hover { background: var(--surface-2); color: var(--ink); }
+  }
+  .ui-tab[aria-selected=true] { color: var(--ink); }
+  .ui-tab[aria-selected=true]::after { background: var(--accent); }
+  .ui-tabs[data-variant=posture] .ui-tab[aria-selected=true]::after { background: var(--edit); }
+  .ui-tabs[data-variant=posture] .ui-tab { font-size: var(--fs-16); }
+  .ui-tab[aria-disabled=true] {
+    color: var(--ink-3);
+    cursor: default;
+  }
+  @media (hover: hover) {
+    .ui-tab[aria-disabled=true]:hover { background: transparent; color: var(--ink-3); }
+  }
+  .ui-tab-label { pointer-events: none; }
+}

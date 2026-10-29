@@ -1,0 +1,34 @@
+@layer primitives {
+  /* EmptyState (src/ui/empty.js): a calm centred block, never a coloured band. */
+  .ui-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s3);
+    max-inline-size: 520px;
+    margin-inline: auto;
+    padding: var(--s6) var(--s4);
+    text-align: center;
+    color: var(--ink-2);
+  }
+  .ui-empty-title {
+    margin: 0;
+    color: var(--ink);
+    font: var(--fw-semibold) var(--fs-20)/1.2 var(--font-ui);
+  }
+  .ui-empty-body {
+    margin: 0;
+    font: var(--fw-regular) var(--fs-16)/1.4 var(--font-ui);
+    overflow-wrap: anywhere;
+  }
+  .ui-empty-body b, .ui-empty-body strong { color: var(--ink); font-weight: var(--fw-bold); }
+  .ui-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--s2);
+    margin-block-start: var(--s2);
+  }
+  /* An href action is a link wearing the Button look (button.css); only the underline differs. */
+  .ui-empty-actions > a.ui-button { text-decoration: none; }
+}

@@ -1,0 +1,69 @@
+@layer views {
+  /* The loop band and handles over the Road map and the Stems surface (src/stage/loop-handles.js,
+   * spec §4.8): a --loop-fill band per row, and per edge a 44 px × row-height hit area with a
+   * 3 px --loop edge and a 20 px grip dot. Positions are set inline by the module. */
+  .loop-handles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: var(--z-local);
+  }
+
+  .loop-band {
+    position: absolute;
+    background: var(--loop-fill);
+    pointer-events: auto;
+    touch-action: pan-y;
+  }
+
+  .loop-handle {
+    position: absolute;
+    pointer-events: auto;
+    touch-action: none;
+    cursor: ew-resize;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  .loop-handle-edge,
+  .loop-handle-grip {
+    position: absolute;
+    left: var(--edge-x, 50%);
+    background: var(--loop);
+    pointer-events: none;
+  }
+
+  .loop-handle-edge {
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    translate: -50% 0;
+  }
+
+  .loop-handle-grip {
+    top: 50%;
+    width: 20px;
+    height: 20px;
+    translate: -50% -50%;
+    border-radius: var(--r-pill);
+    box-shadow: 0 0 0 2px var(--bg);
+  }
+
+  .loop-handle[data-dragging] { cursor: grabbing; }
+  .loop-band[data-dragging] { cursor: grabbing; }
+
+  /* While playing: 50% (still mouse-draggable); touches on the handles scroll instead. */
+  .loop-handles[data-playing] .loop-handle { opacity: .5; touch-action: pan-y; }
+
+  /* The spring to the snapped bar lines after a drag (reduced motion: --motion-fast is 0ms). */
+  .loop-handles[data-spring] .loop-band,
+  .loop-handles[data-spring] .loop-handle {
+    transition-property: left, width, top, height;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--ease);
+  }
+
+  @media (hover: hover) {
+    .loop-band { cursor: grab; }
+  }
+}

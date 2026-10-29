@@ -2,139 +2,25 @@
 <html lang="en" data-startup="loading">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Woodshed</title>
+  <meta name="description" content="Practise along with any song: split it into stems, loop the hard part, slow it down, take your part out." />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="theme-color" content="#f6f5f0" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Woodshed" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="/woodshed-icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <meta name="referrer" content="no-referrer" />
-  <meta name="theme-color" content="#174bd1" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
   <script src="/theme-init.js"></script>
-  <link rel="stylesheet" href="/src/css/styles.css" />
-  <link rel="stylesheet" href="/src/css/record-club.css" />
-  <link rel="stylesheet" href="/src/css/motion.css" />
-  <link rel="stylesheet" href="/src/css/download.css" />
-  <link rel="stylesheet" href="/src/css/theme.css" />
-  <link rel="stylesheet" href="/src/css/sharing.css" />
-  <link rel="stylesheet" href="/src/css/tempo-map.css" />
 </head>
 <body>
-
-  <!-- Advisory banner (codec support, etc.) -->
-  <div id="deps-banner" class="deps-banner hidden"></div>
-
-  <header id="app-header" inert>
-    <div class="header-home">
-      <button id="header-back" class="header-back" type="button" data-view="library" aria-label="Back to library" title="Back to library">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
-      </button>
-      <button class="brand brand-home" data-view="library" title="Open library"><span class="brand-name">Woodshed</span></button>
-    </div>
-    <div id="header-song" class="header-song hidden"></div>
-    <div class="header-actions">
-      <button id="add-btn" class="add-btn" aria-label="Add song"><span aria-hidden="true">＋</span><span class="add-label"> Add song</span></button>
-      <div id="user-button" class="user-button"></div>
-    </div>
-  </header>
-
-  <main id="content" inert>
-    <!-- LIBRARY VIEW -->
-    <section id="view-library" class="view active">
-      <header class="view-header">
-        <h1>Library</h1>
-        <div class="lib-controls">
-          <div class="segmented" id="group-seg">
-            <button data-group="songs">Songs</button>
-            <button data-group="albums">Albums</button>
-            <button data-group="artists">Artists</button>
-          </div>
-          <div class="layout-toggle" id="layout-seg" role="group" aria-label="Layout">
-            <button type="button" data-layout="grid" title="Grid view" aria-label="Grid view">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <rect x="1" y="1" width="6" height="6" rx="1.5"/>
-                <rect x="9" y="1" width="6" height="6" rx="1.5"/>
-                <rect x="1" y="9" width="6" height="6" rx="1.5"/>
-                <rect x="9" y="9" width="6" height="6" rx="1.5"/>
-              </svg>
-            </button>
-            <button type="button" data-layout="list" title="List view" aria-label="List view">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <rect x="1" y="2" width="14" height="2.5" rx="1.25"/>
-                <rect x="1" y="6.75" width="14" height="2.5" rx="1.25"/>
-                <rect x="1" y="11.5" width="14" height="2.5" rx="1.25"/>
-              </svg>
-            </button>
-          </div>
-          <input id="lib-search" class="search" type="search" placeholder="Search songs, artists, albums" aria-label="Search library" />
-        </div>
-      </header>
-      <div class="library-selection startup-selection" aria-hidden="true"><span>Select songs</span></div>
-      <div id="library-grid"><div class="library-grid startup-skeleton" aria-hidden="true"><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div><div class="startup-card"><div></div><span></span><small></small></div></div></div>
-      <div id="library-empty" class="empty hidden">
-        <p>No songs yet.</p>
-        <button class="add-btn" data-add>＋ Add your first song</button>
-      </div>
-    </section>
-
-    <!-- PLAYER VIEW -->
-    <section id="view-player" class="view">
-      <div id="player-root"></div>
-    </section>
-
-<section id="view-billing" class="view"><div id="billing-root"></div></section>
-<section id="view-admin" class="view"><header class="view-header"><h1>Administration</h1></header><div id="admin-root"></div></section>
-
-    <!-- SETTINGS VIEW -->
-    <section id="view-settings" class="view">
-      <header class="view-header"><h1>Settings</h1></header>
-      <div id="settings-root"></div>
-    </section>
-  </main>
-
-  <div id="startup-status" role="status"><span class="startup-pulse" aria-hidden="true"></span>Opening your library…<button type="button" class="btn-ghost" id="startup-retry">Taking longer than expected? Retry</button></div>
-
-  <!-- ADD MODAL -->
-  <div id="add-modal" class="modal hidden">
-    <div class="modal-card">
-      <h2>Add a song</h2>
-      <label class="field">
-        <span>Link or search</span>
-        <input id="add-url" type="text" placeholder="YouTube / Spotify / SoundCloud link, or type to search…" />
-      </label>
-      <p class="hint">Paste a link, or type a song name to search.</p>
-      <div class="file-drop" id="file-drop">
-        <span>Drag audio files here, or</span>
-        <button id="add-pick" class="btn-ghost" type="button">Choose files…</button>
-        <input id="add-file-input" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aif,.aiff,.wma" multiple hidden />
-      </div>
-      <label class="field">
-        <span>Quality preset</span>
-        <select id="add-preset"></select>
-      </label>
-      <label class="field">
-        <span>Stems</span>
-        <select id="add-stemmode"></select>
-      </label>
-      <p id="add-preset-desc" class="hint"></p>
-      <div class="modal-actions">
-        <button id="add-cancel" class="btn-ghost">Cancel</button>
-        <button id="add-go" class="btn-primary">Process</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Global drag-drop overlay -->
-  <div id="drop-overlay" class="drop-overlay hidden"><div>Drop audio files to add</div></div>
-
-  <!-- Account sign-in gate. -->
-  <div id="signin" class="signin hidden">
-    <div class="signin-inner">
-      <div class="brand signin-brand"><span class="brand-name">Woodshed</span></div>
-      <div id="signin-mount"></div>
-      <label class="theme-control">Theme <select data-theme-choice aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-    </div>
-  </div>
-
-  <script type="module" src="/src/js/app.js"></script>
+  <div id="app"></div>
+  <div id="startup" role="status">Opening Woodshed…</div>
+  <script type="module" src="/src/app/main.js"></script>
 </body>
 </html>

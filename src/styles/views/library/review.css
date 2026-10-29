@@ -1,0 +1,32 @@
+/* The "Is this right?" chip and popover (src/library/review-chip.js, spec §2.4). */
+@layer views {
+  .lib-review-chip { align-self: flex-start; inline-size: fit-content; max-inline-size: 100%; }
+
+  .lib-review-popover .ui-popover-body { padding: var(--s4); }
+  .lib-review { display: flex; flex-direction: column; gap: var(--s3); }
+  .lib-review-title { margin: 0; font-size: var(--fs-16); font-weight: var(--fw-bold); }
+  .lib-review-lead { margin: 0; color: var(--ink-2); font-size: var(--fs-14); }
+  .lib-review-match {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: var(--s3);
+    align-items: center;
+  }
+  .lib-review-cover {
+    display: grid;
+    place-items: center;
+    inline-size: 64px;
+    block-size: 64px;
+    overflow: hidden;
+    border-radius: 0;
+    background: var(--surface-2);
+    color: var(--ink-3);
+  }
+  .lib-review-cover-image { inline-size: 100%; block-size: 100%; object-fit: cover; border-radius: 0; }
+  .lib-review-fields { min-inline-size: 0; }
+  .lib-review-fields p { margin: 0; overflow-wrap: anywhere; }
+  .lib-review-song { font-weight: var(--fw-semibold); }
+  .lib-review-artist { color: var(--ink-2); font-size: var(--fs-14); }
+  .lib-review-album { color: var(--ink-3); font-size: var(--fs-14); }
+  .lib-review-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+}

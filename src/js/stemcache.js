@@ -1,5 +1,6 @@
 import { fetchMedia } from './media-fetch.js';
 import { decodedStemCache } from './decoded-stem-cache.js';
+import { SENTENCES } from '../app/error-copy.copy.js';
 // Device-local cache for stem audio, plus the codec capability probe.
 //
 // Stems are immutable once written (a reprocess writes new R2 keys), so they
@@ -132,7 +133,5 @@ export function isDecodeError(err) {
   );
 }
 
-export const codecErrorMessage =
-  "This browser couldn't decode the stem audio (Opus in WebM). " +
-  'Chrome, Edge and Firefox all support it, as does Safari on macOS 12 / iOS 15 and later. ' +
-  'If you need to support an older browser, re-process the song with the FLAC format in Settings.';
+/** The codec banner and load-error sentence (spec §2.7, §3.6); one source, in error-copy.copy.js. */
+export const codecErrorMessage = SENTENCES.codec;

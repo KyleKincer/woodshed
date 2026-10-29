@@ -1,0 +1,151 @@
+@layer views {
+  /* The Spots list (src/stage/sheets/spots.js, spec §4.7): one row per spot in song order.
+   *   .spots > .spots-shared · ul.spots-list > li.spots-row[data-active][data-revealed][data-renaming][data-swiping]
+   *     .spots-main (.spots-open · .spots-more · .spots-rename) · .spots-tray (Rename · Update · Delete)
+   *   .spots-empty · .spots-foot (Save spot)
+   * A touch swipe moves .spots-main by --spots-swipe (set inline while dragging). */
+  .spots {
+    display: grid;
+    gap: var(--s3);
+    padding-block: var(--s2) var(--s3);
+  }
+  .spots-shared {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+  }
+  .spots-list {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .spots-row {
+    display: grid;
+    gap: var(--s1);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+  }
+  .spots-row[data-active] {
+    background: var(--now-soft);
+    box-shadow: inset 3px 0 0 var(--now);
+  }
+  .spots-main {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: 56px;
+    padding-inline-end: var(--s1);
+    transform: translateX(var(--spots-swipe, 0px));
+    touch-action: pan-y;
+    transition: transform var(--motion-fast) var(--ease);
+  }
+  .spots-row[data-swiping] .spots-main { transition: none; }
+  .spots-open {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: 56px;
+    padding: var(--s2) var(--s2) var(--s2) var(--s3);
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink);
+    text-align: start;
+    cursor: pointer;
+  }
+  .spots-open:hover { background: var(--surface); }
+  .spots-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .spots-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .spots-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-stage-sub);
+    font-weight: var(--fw-bold);
+  }
+  .spots-active {
+    flex: none;
+    color: var(--now);
+    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
+  }
+  .spots-detail {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    font-variant-numeric: tabular-nums;
+  }
+  .spots-practised { white-space: nowrap; }
+  .spots-note {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    overflow-wrap: anywhere;
+  }
+  .spots-play {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .spots-more { flex: none; }
+  .spots-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: var(--s2);
+  }
+  .spots-rename-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: var(--h-md);
+    padding-inline: var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--fs-stage-sub);
+    font-weight: var(--fw-semibold);
+  }
+  .spots-tray {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--s2);
+    padding: 0 var(--s2) var(--s2);
+  }
+  .spots-empty {
+    display: grid;
+    gap: var(--s1);
+    padding: var(--s4) var(--s2);
+    text-align: center;
+  }
+  .spots-empty-title {
+    font-size: var(--fs-stage-sub);
+    font-weight: var(--fw-bold);
+  }
+  .spots-empty-body {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+  }
+  .spots-foot {
+    display: flex;
+    justify-content: flex-start;
+  }
+}

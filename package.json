@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
@@ -15,14 +15,21 @@
     "deploy": "convex deploy --cmd 'npm run build'",
     "companion": "node companion/server.mjs",
     "companion:setup": "python3.11 companion/setup.py --beats",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=${VITEST_MAX_WORKERS:-2}",
     "test:motion": "node --test tests/motion.test.mjs",
     "test:artwork": "node --test tests/artwork.test.mjs",
     "typecheck": "tsc --noEmit -p convex/tsconfig.json",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",
     "desktop:package": "npm run build && npm run desktop:prepare && electron-builder --publish never",
-    "test:desktop": "node --test desktop/*.test.cjs"
+    "test:desktop": "node --test desktop/*.test.cjs",
+    "test:companion": "node --test companion/*.test.mjs",
+    "fixture": "vite --config tests/fixture/vite.config.mjs",
+    "fixture:capture": "NODE_PATH=${NODE_PATH:-/opt/node-tools/node_modules} node tests/fixture/lib/runner.cjs",
+    "fixture:compare": "python3 -I scripts/compare-shots.py",
+    "check:ownership": "node scripts/check-ownership.mjs",
+    "vendor:fonts": "node scripts/vendor-fonts.mjs",
+    "build:icons": "node scripts/build-icons.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
@@ -40,7 +47,10 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
+    "@fontsource-variable/atkinson-hyperlegible-mono": "5.3.0",
+    "@fontsource-variable/atkinson-hyperlegible-next": "5.3.0",
     "@types/node": "^26.1.2",
+    "axe-core": "4.10.3",
     "concurrently": "^10.0.4",
     "convex-test": "^0.0.56",
     "dotenv": "^17.2.3",
@@ -50,6 +60,7 @@
     "ffprobe-static": "^3.1.0",
     "happy-dom": "^20.14.0",
     "js-yaml": "^4.1.1",
+    "lucide-static": "1.62.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^5.0.0"

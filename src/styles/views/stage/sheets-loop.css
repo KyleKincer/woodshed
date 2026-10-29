@@ -1,0 +1,141 @@
+@layer views {
+  /* The Loop card (src/stage/sheets/loop.js, spec §4.7): inside the Stage's Sheet (band) or its
+   * 360 px rail popover (sheets/host.js). Text stays at or above the Stage's 15 px floor.
+   *   section.loop-card[data-mapped][data-range][data-on]
+   *     .loop-card-head (range + Loop switch) · .loop-card-set (in / out) · .loop-card-edit
+   *     (edges, move) · .loop-card-options · .loop-card-actions · form.loop-card-form */
+  .loop-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s4);
+    min-width: 0;
+    padding: var(--s2) 0 var(--s4);
+    color: var(--ink);
+    font-size: var(--fs-16);
+  }
+
+  .loop-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s3);
+  }
+  .loop-card-range-wrap {
+    display: grid;
+    gap: var(--s1);
+    min-width: 0;
+  }
+  .loop-card-range {
+    font-size: var(--fs-20);
+    font-weight: var(--fw-bold);
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+  .loop-card[data-on] .loop-card-range { color: var(--loop); }
+  .loop-card-hint,
+  .loop-card-note,
+  .loop-card-fine {
+    color: var(--ink-2);
+    font-size: var(--fs-16);
+    line-height: 1.35;
+  }
+  .loop-card-switch { flex: none; }
+
+  /* Rows of buttons: two columns (in / out), or one full-width column (move, actions) whose
+   * labels and key-caps keep to one line. */
+  .loop-card-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+  .loop-card-move,
+  .loop-card-actions { grid-template-columns: minmax(0, 1fr); }
+  .loop-card .ui-button {
+    flex-wrap: nowrap;
+    padding-inline: var(--s3);
+    min-width: 0;
+  }
+  .loop-card-row > .ui-button { width: 100%; }
+
+  .loop-card-edit {
+    display: grid;
+    gap: var(--s3);
+    padding: var(--s3);
+    border-radius: var(--r-surface);
+    background: var(--loop-fill);
+    border: 1px solid var(--line);
+  }
+  .loop-card-edges {
+    display: grid;
+    gap: var(--s2);
+  }
+  .loop-card-edge {
+    display: grid;
+    grid-template-columns: 56px auto 1fr auto;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .loop-card-edge-label {
+    font-weight: var(--fw-semibold);
+  }
+  .loop-card-edge-value {
+    justify-self: center;
+    font-size: var(--fs-20);
+    font-weight: var(--fw-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The Alt nudges need a keyboard and a mouse: the hint shows only where one is likely. */
+  .loop-card-fine { display: none; }
+  @media (hover: hover) and (pointer: fine) {
+    .loop-card-fine { display: block; }
+  }
+
+  .loop-card-options {
+    display: grid;
+    gap: var(--s4);
+  }
+  .loop-card-option {
+    display: grid;
+    gap: var(--s2);
+    justify-items: start;
+  }
+  .loop-card-option > .ui-segmented { width: 100%; }
+  .loop-card-label {
+    font-weight: var(--fw-semibold);
+  }
+
+  /* The primitives' small text (segmented options and reasons, disabled reasons, field labels, key-caps)
+   * meets the Stage's 15 px floor here. */
+  .loop-card .ui-segmented-option,
+  .loop-card .ui-segmented-reason,
+  .loop-card .ui-button-reason,
+  .loop-card .ui-field-label,
+  .loop-card .ui-field-hint,
+  .loop-card .ui-kbd {
+    font-size: var(--fs-16);
+  }
+  .loop-card .ui-segmented-option {
+    min-height: var(--h-lg);
+    padding-inline: var(--s2);
+    white-space: normal;
+    text-align: center;
+  }
+  .loop-card .ui-segmented-options { display: flex; }
+
+  .loop-card-form {
+    display: grid;
+    gap: var(--s3);
+    padding: var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-surface);
+    background: var(--surface-2);
+  }
+  .loop-card-form-actions {
+    display: flex;
+    gap: var(--s2);
+  }
+  .loop-card-form-actions > .ui-button { flex: 1 1 0; }
+
+  .loop-card-empty { color: var(--ink-2); }
+}
