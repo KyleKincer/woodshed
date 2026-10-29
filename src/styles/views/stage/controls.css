@@ -133,7 +133,11 @@
     padding: var(--s3) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px));
   }
   .ctl-set[data-variant=rail] [data-ctl=speed] { grid-area: speed; }
-  .ctl-set[data-variant=rail] [data-ctl=countIn] { grid-area: countIn; }
+  .ctl-set[data-variant=rail] [data-ctl=countIn] { grid-area: countIn; container: ctl-count / inline-size; }
+  /* A narrow rail (Distance Near, 232 px) drops the count-in glyph so 'Count-in · 1 bar' never clips (I2b-30). */
+  @container ctl-count (max-width: 100px) {
+    .ctl-set[data-variant=rail] [data-ctl=countIn] .ui-button > .ui-icon:not(.ui-button-icon-end) { display: none; }
+  }
   .ctl-set[data-variant=rail] [data-ctl=click] { grid-area: click; }
   .ctl-set[data-variant=rail] [data-ctl=loop] { grid-area: loop; }
   .ctl-set[data-variant=rail] [data-ctl=mix] { grid-area: mix; }

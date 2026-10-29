@@ -146,6 +146,9 @@ export function anchorTo(el, anchor, {placement = 'bottom', gap = GAP, margin = 
     let cssDestroyed = false;
     const fit = () => {
       if (cssDestroyed || !el.isConnected) return;
+      // Measure at the natural size: a shrunk overlay would always "fit" and then un-shrink, flipping every frame
+      // (I2b-31). Removing and restoring the attribute within this task paints nothing in between.
+      delete el.dataset.fit;
       const size = {width: Math.max(el.offsetWidth, el.scrollWidth), height: Math.max(el.offsetHeight, el.scrollHeight)};
       const r = place(anchor.getBoundingClientRect(), size, viewportRect(win), placement, {gap, margin, align});
       const shrink = vertical(r.side) ? r.maxHeight != null : r.maxWidth != null;

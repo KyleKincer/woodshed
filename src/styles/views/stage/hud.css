@@ -145,6 +145,12 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* 'Pickup · 3': the word at half the numeral size in the UI face, so it never overflows the rail (ORCH-2). */
+  .hud-position[data-word=true] .hud-pos-bar {
+    font-family: var(--font-ui);
+    font-size: calc(var(--fs-stage-position) * .5);
+    font-weight: var(--fw-bold);
+  }
   /* The separator in Next: Atkinson Mono spreads " · " to full cells (forward note to ST5). */
   .hud-pos-sep {
     padding: 0 .12em;

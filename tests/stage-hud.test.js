@@ -249,6 +249,15 @@ describe('§4.4 text rules (table)', () => {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the mounted HUD', () => {
+  test("a pickup reads 'Pickup · 3' with the word set smaller than a numeral (ORCH-2)", async () => {
+    const b = await bed({tempo: pickup.tempo, duration: pickup.duration,
+      practice: {v: 2, cue: 0.6, rate: 1, loop: {on: false, a: 0, b: 0}, tracks: [], minusMe: false, trainer: null, spots: [], markers: []}});
+    expect(b.q('.hud-pos-bar').textContent).toBe('Pickup');
+    expect(b.q('.hud-pos-beat').textContent).toBe('3');
+    expect(b.q('.hud-position').dataset.word).toBe('true');
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/styles/views/stage/hud.css'), 'utf8');
+    expect(css).toMatch(/\.hud-position\[data-word=true\] \.hud-pos-bar \{[^}]*font-size: calc\(var\(--fs-stage-position\) \* \.5\)/);
+  });
   test('Stage semantics and the readouts of a fresh mapped session (§4.4)', async () => {
     const b = await bed({practice: {v: 2, cue: 32, rate: 1, loop: {on: false, a: 0, b: 0}, tracks: [], minusMe: false, trainer: null, spots: [], markers: []}});
     expect(b.q('h1').textContent).toBe('Glasshouse');

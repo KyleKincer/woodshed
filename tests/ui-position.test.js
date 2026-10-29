@@ -182,4 +182,21 @@ describe('anchorTo(): the JS fallback', () => {
     positioner.destroy();
     expect(el.dataset.fit).toBeUndefined();
   });
+
+  test('css mode measures the natural size, so a shrunk overlay stays shrunk instead of flipping every frame (I2b-31)', () => {
+    const {anchor, el} = mount();
+    setRect(anchor, {x: 300, y: 200, width: 700, height: 40});
+    // The overlay is 360 px wide naturally and 248 px while data-fit=shrink caps it.
+    Object.defineProperty(el, 'offsetWidth', {configurable: true, get: () => (el.dataset.fit === 'shrink' ? 248 : 360)});
+    Object.defineProperty(el, 'scrollWidth', {configurable: true, get: () => (el.dataset.fit === 'shrink' ? 248 : 360)});
+    Object.defineProperty(el, 'offsetHeight', {configurable: true, get: () => 200});
+    Object.defineProperty(el, 'scrollHeight', {configurable: true, get: () => 200});
+    const positioner = anchorTo(el, anchor, {placement: 'left', mode: 'css'});
+    expect(el.dataset.fit).toBe('shrink');
+    for (let i = 0; i < 4; i++) {
+      positioner.update();
+      expect(el.dataset.fit).toBe('shrink');
+    }
+    positioner.destroy();
+  });
 });

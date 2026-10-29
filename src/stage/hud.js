@@ -393,7 +393,12 @@ export function mountHud(el, {
     if (nx) next.set({value: nx.text, tone: nx.imminent ? 'now' : 'ink'});
 
     const pos = positionText(position, t);
-    if (pos.bar !== textCache.bar) { posBar.textContent = pos.bar; textCache.bar = pos.bar; }
+    if (pos.bar !== textCache.bar) {
+      posBar.textContent = pos.bar;
+      textCache.bar = pos.bar;
+      // A word in the bar slot (the pickup, spec §4.3 'Pickup · 3') is set smaller than a numeral so it fits the rail.
+      posEl.dataset.word = String(pos.beat != null && !/^\d/.test(pos.bar));
+    }
     if (pos.beat !== textCache.beat) { posBeat.textContent = pos.beat ?? ''; textCache.beat = pos.beat; }
     const mappedPos = pos.beat != null;
     if (mappedPos !== textCache.mappedPos) {
