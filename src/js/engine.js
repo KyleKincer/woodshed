@@ -566,8 +566,10 @@ export class MultitrackEngine {
     const stop = this.stopAtWhen, count = this.countIn;
     const valueAt = (t) => ((stop != null && t >= stop - 1e-12) || (count && t < count.audioWhen - 1e-12)
       || spans.some(([w, e]) => t >= w - 1e-12 && t < e - 1e-12) ? 0 : 1);
+    // The last pass's span is open ([until, Infinity]): valueAt holds it at 0,
+    // but an AudioParam takes only finite times, so only finite ends are points.
     const points = new Set();
-    for (const [w, e] of spans) { if (w > from) points.add(w); if (e > from) points.add(e); }
+    for (const [w, e] of spans) for (const t of [w, e]) if (t > from && Number.isFinite(t)) points.add(t);
     if (stop != null && stop > from) points.add(stop);
     gain.cancelScheduledValues(from);
     gain.setValueAtTime(valueAt(from), from);
