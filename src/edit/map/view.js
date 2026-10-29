@@ -30,7 +30,7 @@
 //
 // While mounted the view provides the 'mapView' command context: {zoom(dir), fit(), zoomSelection(),
 // toggleGrid(), gridOn(), setGrid(division), grid(), toggleSnap(), snapOn(), focusMeter(),
-// applyFocused(), playing(), window()}.
+// applyFocused(), escape(), playing(), window()}.
 import '../../styles/views/edit/map.css';
 import {registry as appRegistry} from '../../app/commands.js';
 import {prefs as appPrefs} from '../../app/prefs.js';
@@ -559,6 +559,11 @@ export function mountMapView(el, opts = {}) {
     window: () => ({t0: view.t0, t1: t1Of()}),
     focusMeter: () => side?.focusMeter?.() ?? false,
     applyFocused: () => side?.applyFocused?.() ?? false,
+    /** The map view's own Esc layer (§3.4 edit.done): close the Grid menu, else cancel a rename or close the review. */
+    escape: () => {
+      if (gridMenu) { gridMenu.close?.(); return true; }
+      return sections.escape();
+    },
   };
   offs.push(registry.provide('mapView', () => (destroyed ? undefined : api)));
 

@@ -502,6 +502,16 @@ describe.skipIf(!viewModule)('the mounted view', () => {
     expect(findPanel.mounts[0].destroyed).toBe(true);
   });
 
+  test('escape(): the view\'s own Esc layer cancels a rename first, and reports nothing to close otherwise', async () => {
+    const b = await bed();
+    expect(b.view.escape()).toBe(false);
+    b.view.sections.rename(8);
+    expect(b.view.sections.renaming).toBe(true);
+    expect(b.view.escape()).toBe(true);
+    expect(b.view.sections.renaming).toBe(false);
+    expect(b.map.measure(8).label).toBe('Verse');
+  });
+
   test('?review=sections opens the suggestion review in the sections lane (D47)', async () => {
     const sectionSuggestion = {jobId: 'job-s', createdAt: 1, sections: [{t0: 0, label: 'Intro', confidence: 0.8}, {t0: 16, label: 'Verse', confidence: 0.7},
       {t0: 48, label: 'Chorus', confidence: 0.7}]};
