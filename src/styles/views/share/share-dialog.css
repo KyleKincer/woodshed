@@ -1,0 +1,92 @@
+/* The Share dialog's body (src/share/share-dialog.js; spec §6.1): the lead line, the two choices,
+ * Create link or the link field with Copy link, the note, Stop sharing and the status line. The
+ * dialog frame, title and Done come from the Dialog primitive. */
+@layer views {
+  .share-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    min-inline-size: 0;
+  }
+  .share-lead {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui);
+  }
+
+  /* ---------- the choices */
+  .share-choices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-inline-size: 0;
+  }
+  /* The label row is the hit target (40 px, 48 on touch); the native box keeps its platform look. */
+  .share-check {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-block-size: var(--h-md);
+    cursor: pointer;
+    color: var(--ink);
+    font: var(--fw-regular) var(--fs-16)/1.3 var(--font-ui);
+  }
+  .share-check[data-disabled] { cursor: default; color: var(--ink-3); }
+  .share-check-input {
+    flex: none;
+    inline-size: 20px;
+    block-size: 20px;
+    margin: 0;
+    accent-color: var(--accent-fill);
+    cursor: inherit;
+  }
+  .share-check-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .share-check-note { margin-inline-start: calc(20px + var(--s3)); }
+
+  /* ---------- the link */
+  .share-create-row { display: flex; }
+  .share-link {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .share-link[hidden], .share-create-row[hidden] { display: none; }
+  .share-link-label {
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+  }
+  .share-link-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-inline-size: 0;
+  }
+  .share-link-input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    box-sizing: border-box;
+    block-size: var(--h-md);
+    padding-inline: var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: var(--fw-regular) var(--fs-14)/1 var(--font-mono);
+    text-overflow: ellipsis;
+  }
+  .share-link-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .share-copy { flex: none; min-inline-size: 9.5em; }
+  .share-note {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.4 var(--font-ui);
+  }
+  .share-stop-row { display: flex; margin-block-start: var(--s1); }
+  .share-stop[data-tone=danger]:not([aria-disabled=true]) { color: var(--danger); }
+
+  .share-status[data-empty] { margin: 0; }
+}
