@@ -49,6 +49,13 @@
     font-size: var(--fs-14);
   }
   html:not([data-startup=loading]) #startup { display: none; }
+  /* On the Stage and Edit (set before paint for /s/… and /share/…) the bottom edge holds the dock and the song strip:
+     the boot status sits at the top instead, so "Still connecting… [Retry]" never covers a control (ORCH-3). */
+  html[data-place=stage] #startup,
+  html[data-place=stage] .shell-startup {
+    inset-block-end: auto;
+    inset-block-start: max(var(--s5), var(--safe-top, 0px));
+  }
   .shell-startup-pulse {
     width: var(--s2);
     height: var(--s2);
