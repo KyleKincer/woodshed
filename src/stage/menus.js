@@ -3,7 +3,7 @@
 // items it returns act when chosen.
 //
 //   stageMenu(session, stage, opts?)          the identity-row ⋯ menu (stage.menu): View ▸ · Display ▸ (a part exists)
-//                                             · Follow ▸ (Chart) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
+//                                             · Follow ▸ (Chart, mapped Road map) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
 //                                             · Get bars… (unmapped) / Detect beats (mapped) · Suggest sections (mapped, no
 //                                             sections) · ── · Share… · Edit map · Edit drum chart · Edit details · Re-split…
 //                                             · ── · Keyboard shortcuts
@@ -470,6 +470,11 @@ function displayLayout(session, stage) {
   return peek(stage?.display) ?? session?.notation?.part?.score?.layout ?? 'combined';
 }
 
+/** Whether the surface kind shown follows the playhead by rows (and so takes stage.followStyle). */
+function followsByRows(surface, mapped) {
+  return surface === 'chart' || (surface === 'roadmap' && mapped);
+}
+
 export function stageMenu(session, stage, opts = {}) {
   const reg = registryOf(opts);
   const mapped = isMapped(session);
@@ -493,7 +498,9 @@ export function stageMenu(session, stage, opts = {}) {
         get checked() { return displayLayout(session, stage) === 'split'; }},
     ]});
   }
-  if (surface === 'chart') {
+  // Follow ▸ is for the surfaces that follow by rows: the Chart and the mapped Road map (spec §4.4B). The Wave page
+  // (an unmapped song's Road map) and Stems scroll by time, so they have no follow style to choose.
+  if (followsByRows(surface, mapped)) {
     items.push({type: 'submenu', label: COPY.follow, icon: 'arrow-down-to-line', items: [
       {command: 'view.followStyle', type: 'radio', label: COPY.scroll, args: {style: 'scroll'},
         get checked() { return peek(stage?.followStyle) === 'scroll'; }},
@@ -731,8 +738,8 @@ export async function makeMine(instrument, opts = {}) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The controls table (§9.0): every menu's rows, with the role and accessible name the Menu renders.
-// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'chart' (the
-// Chart surface) | 'sections-missing' (mapped without sections) | 'owner' (not a shared song: Edit is hidden there,
+// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'follows' (the
+// Chart, or the mapped Road map: a surface that follows by rows) | 'sections-missing' (mapped without sections) | 'owner' (not a shared song: Edit is hidden there,
 // spec §4.13), space-separated when a row needs several; rows without it are always present. `via` names the command
 // a plain row runs itself (it is not command-bound).
 
@@ -746,9 +753,9 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitem', COPY.display, {when: 'part'}),
   row('stage', 'menuitemradio', COPY.together, {command: 'view.display', parent: COPY.display, when: 'part'}),
   row('stage', 'menuitemradio', COPY.handsFeet, {command: 'view.display', parent: COPY.display, when: 'part'}),
-  row('stage', 'menuitem', COPY.follow, {when: 'chart'}),
-  row('stage', 'menuitemradio', COPY.scroll, {command: 'view.followStyle', parent: COPY.follow, when: 'chart'}),
-  row('stage', 'menuitemradio', COPY.page, {command: 'view.followStyle', parent: COPY.follow, when: 'chart'}),
+  row('stage', 'menuitem', COPY.follow, {when: 'follows'}),
+  row('stage', 'menuitemradio', COPY.scroll, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
+  row('stage', 'menuitemradio', COPY.page, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
   row('stage', 'menuitemcheckbox', STAGE_COPY.commands.focus, {command: 'view.focus', kbd: 'KeyF'}),
   row('stage', 'menuitem', COPY.distance),
   row('stage', 'menuitemradio', STAGE_COPY.distances.near, {command: 'view.distance.near', parent: COPY.distance}),
