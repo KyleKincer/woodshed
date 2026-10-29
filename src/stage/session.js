@@ -138,6 +138,8 @@ function defaults() {
     clock: {now: clockNow},
     createEngine: () => new MultitrackEngine(),
     createTransport,
+    /** LB3's Re-split dialog, loaded when first asked for (§2.16). */
+    openResplit: (opts) => import('../library/resplit-dialog.js').then((m) => m.openResplitDialog(opts)),
     openPart: undefined,
     notationPersistence: null,
     detect: {},
@@ -231,24 +233,52 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     onRealChange: () => { if (!inMapChange && !replaying) noteReal(); },
   });
   const baseUndo = createPracticeUndo({clock});
-  let topEntry = null;   // the entry on top of the stack when known (amend and status Undo target only that)
+  // The stack's entries, oldest first, mirrored so `top` is exact (I2b-20): after an undo the entry
+  // beneath is on top again, a coalescing push that lands back on its start removes its step, and the
+  // 50-step limit drops the oldest. `baseUndo` is private to this facade, so every change to it
+  // passes through here; its own size settles each one.
+  const entries = [];
+  const topOf = () => entries[entries.length - 1] ?? null;
+  const settlePush = (entry, before) => {
+    const size = baseUndo.size.undo;
+    if (entry && entry !== topOf()) {
+      entries.push(entry);
+      while (entries.length > size) entries.shift();
+    } else if (!entry && size < before) {
+      entries.pop();
+    }
+    return entry;
+  };
   let replaying = 0;     // an undo or redo is being applied: it restores state, it is not a new change
   const replay = (fn) => {
     replaying++;
     try { return fn(); } finally { replaying--; lastReal = map.isReal; }
   };
   const undo = Object.freeze({
-    push(fields) { const e = baseUndo.push(fields); if (e) topEntry = e; return e; },
-    pushAction(fields) { const e = baseUndo.pushAction(fields); if (e) topEntry = e; return e; },
+    push(fields) { const before = baseUndo.size.undo; return settlePush(baseUndo.push(fields), before); },
+    pushAction(fields) { const before = baseUndo.size.undo; return settlePush(baseUndo.pushAction(fields), before); },
     amend: (entry, fields) => baseUndo.amend(entry, fields),
     // A gesture-bounded step (I2a-1, I2a-16): the token's pushes still come through `push` above,
     // so the top-entry tracking holds for them too.
     beginGesture: (key) => baseUndo.beginGesture(key),
-    undo() { const e = replay(() => baseUndo.undo()); topEntry = null; return e; },
-    redo() { const e = replay(() => baseUndo.redo()); if (e) topEntry = e; return e; },
-    clear() { baseUndo.clear(); topEntry = null; },
+    undo() {
+      try { return replay(() => baseUndo.undo()); } finally {
+        // A failing undo still takes its entry off the stack.
+        while (entries.length > baseUndo.size.undo) entries.pop();
+      }
+    },
+    redo() {
+      const e = replay(() => baseUndo.redo());
+      if (e) settlePush(e, Infinity);
+      return e;
+    },
+    clear() { baseUndo.clear(); entries.length = 0; },
     canUndo: baseUndo.canUndo, canRedo: baseUndo.canRedo,
     get size() { return baseUndo.size; },
+    /** The entry the next Undo would undo, or null (read-only): an Undo bound to one step checks it is still on top. */
+    get top() { return topOf(); },
+    /** True while `entry` is the step the next Undo would undo. */
+    isTop: (entry) => !!entry && topOf() === entry,
   });
   // The live account settings: plain reads (`account.practice.stop`) and a signal-like face.
   const accountView = Object.freeze({
@@ -257,8 +287,14 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     peek: () => accountValue(),
     subscribe: (fn) => account?.value?.subscribe?.(fn) ?? (() => {}),
   });
+  // "Re-split with 6 stems" in the no-part status (transport rule 18; I2b-19): desktop only, never on a shared song.
+  const resplit = !readOnly && deps.desktop?.available
+    ? () => Promise.resolve()
+      .then(() => deps.openResplit({songId: id, stemMode: 'six', desktop: deps.desktop}))
+      .catch((err) => console.error('[session] the Re-split dialog could not open', err))
+    : null;
   const transport = deps.createTransport({engine, metronome, map, position, practice, undo, account: accountView, profile: deps.profile,
-    status, stems: stemNames, notation});
+    status, stems: stemNames, notation, resplit});
 
   const load = signal({phase: 'song', loadedBytes: 0, totalBytes: 0, decoded: 0, tracks: stemNames.length, error: null});
   const mapEditor = signal(null);
@@ -405,7 +441,7 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
   const liveMarkers = () => practice.value.peek().markers.filter((m) => !m.deleted);
 
   function undoEntry(entry) {
-    if (!entry || topEntry !== entry) return false;
+    if (!undo.isTop(entry)) return false;
     const done = undo.undo();
     if (done) status(undidMessage(done), {key: 'undo'});
     return !!done;
@@ -444,7 +480,7 @@ export async function openSession(songId, {shared = null, ...overrides} = {}) {
     const markers = liveMarkers();
     const {change, converted, skipped} = sectionsFromMarkers(map.data, markers, map.duration);
     if (!converted.length) { status(COPY.markersAlready, {key: 'markers-offer'}); return null; }
-    const amendable = !!entry && topEntry === entry && !!after && json(map.snapshot()) === json(after);
+    const amendable = undo.isTop(entry) && !!after && json(map.snapshot()) === json(after);
     const mapBefore = map.snapshot();
     const markersBefore = copy(practice.value.peek().markers);
     map.withoutUndo(() => map.edit(change, 'sections'));

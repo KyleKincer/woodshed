@@ -732,6 +732,184 @@ describe('the undo facade: gesture-bounded steps (I2a-1, I2a-16)', () => {
   });
 });
 
+describe('session.undo.top: the step the next Undo would undo (I2b-20)', () => {
+  const action = (session, key = 'map') => session.undo.pushAction({key, label: key, undo: () => {}, redo: () => {}});
+
+  test('top follows push, undo, redo and clear exactly; isTop agrees; both are read-only', async () => {
+    const {session} = await open();
+    const {undo} = session;
+    expect(undo.top).toBeNull();
+    expect(undo.isTop(null)).toBe(false);
+    const a = action(session), b = action(session);
+    expect(undo.top).toBe(b);
+    expect(undo.isTop(b)).toBe(true);
+    expect(undo.isTop(a)).toBe(false);
+    expect(undo.undo()).toBe(b);
+    // The entry beneath is on top again (before I2b-20 the facade forgot it after an undo).
+    expect(undo.top).toBe(a);
+    expect(undo.isTop(a)).toBe(true);
+    expect(undo.redo()).toBe(b);
+    expect(undo.top).toBe(b);
+    undo.undo(); undo.undo();
+    expect(undo.top).toBeNull();
+    expect(undo.undo()).toBeNull();
+    expect(undo.top).toBeNull();
+    undo.redo();
+    expect(undo.top).toBe(a);
+    undo.clear();
+    expect(undo.top).toBeNull();
+    expect(() => { undo.top = a; }).toThrow(TypeError);
+  });
+
+  test('a coalescing push that comes back to its start removes its step: the entry beneath is on top', async () => {
+    const {session} = await open();
+    const {undo} = session;
+    const a = action(session);
+    const apply = vi.fn();
+    const speed = undo.push({key: 'speed', label: 'speed', from: 1, to: 0.9, apply});
+    expect(undo.top).toBe(speed);
+    expect(undo.push({key: 'speed', label: 'speed', from: 0.9, to: 0.95, apply})).toBe(speed);   // merged
+    expect(undo.top).toBe(speed);
+    expect(undo.push({key: 'speed', label: 'speed', from: 0.95, to: 1, apply})).toBeNull();     // back at 1: gone
+    expect(undo.size.undo).toBe(1);
+    expect(undo.top).toBe(a);
+    expect(undo.isTop(speed)).toBe(false);
+    // A push that changes nothing leaves the top alone.
+    vi.advanceTimersByTime(COALESCE_MS * 2);
+    expect(undo.push({key: 'speed', label: 'speed', from: 1, to: 1, apply})).toBeNull();
+    expect(undo.top).toBe(a);
+  });
+
+  test('past the 50-step limit the oldest drop out and top stays exact all the way down', async () => {
+    const {session} = await open();
+    const {undo} = session;
+    const pushed = Array.from({length: 53}, () => action(session));
+    expect(undo.size.undo).toBe(50);
+    expect(undo.top).toBe(pushed[52]);
+    for (let i = 52; i >= 3; i--) {
+      expect(undo.top).toBe(pushed[i]);
+      expect(undo.undo()).toBe(pushed[i]);
+    }
+    expect(undo.size.undo).toBe(0);
+    expect(undo.top).toBeNull();
+    for (let i = 3; i <= 52; i++) expect(undo.redo()).toBe(pushed[i]);
+    expect(undo.top).toBe(pushed[52]);
+    const next = action(session);   // after redoing all 50, one more push drops the oldest again
+    expect(undo.size.undo).toBe(50);
+    expect(undo.top).toBe(next);
+    for (let i = 0; i < 49; i++) undo.undo();
+    expect(undo.top).toBe(pushed[4]);
+  });
+
+  test('an undo that throws still takes its entry off the stack: the entry beneath is on top', async () => {
+    const {session} = await open();
+    const {undo} = session;
+    const a = action(session);
+    undo.pushAction({key: 'map', label: 'boom', undo: () => { throw new Error('boom'); }, redo: () => {}});
+    expect(() => undo.undo()).toThrow('boom');
+    expect(undo.size.undo).toBe(1);
+    expect(undo.top).toBe(a);
+  });
+
+  test('pushes made while an undo is applied are not steps and do not move the top', async () => {
+    const {session} = await open();
+    const {undo} = session;
+    const a = action(session);
+    const b = undo.pushAction({key: 'map', label: 'b', undo: () => action(session), redo: () => {}});
+    expect(undo.top).toBe(b);
+    undo.undo();
+    expect(undo.top).toBe(a);
+    expect(undo.size.undo).toBe(1);
+  });
+
+  test('the "Bars found · Undo" status action still undoes its step after a later step was undone', async () => {
+    const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
+    const {session, songs, status} = await open({song, duration: 72});
+    await ready(session);
+    songs.pushSong({...song, tempo: detectedTempo(72), tempoRev: 4});
+    const found = status.mock.calls.find(([t]) => t === COPY.barsFound);
+    action(session, 'loop');
+    expect(found[1].action.run()).toBe(false);   // not on top: refused
+    expect(session.map.isReal).toBe(true);
+    session.undo.undo();                         // the later step is gone: the adoption is on top again
+    expect(found[1].action.run()).toBe(true);
+    expect(session.map.isReal).toBe(false);
+  });
+
+  test('Turn into sections still amends the adoption entry after a later step was pushed and undone', async () => {
+    const markers = [{id: 'm1', t: 4.1, label: 'Groove', updatedAt: T0 - 1000}];
+    const song = makeSong({tempo: tempoOf(unmapped), duration: 72});
+    const {session, songs, status} = await open({song, duration: 72, practice: {...emptyPractice(), v: 2, markers}});
+    await ready(session);
+    songs.pushSong({...song, tempo: detectedTempo(72), tempoRev: 4});
+    const offer = status.mock.calls.find(([t]) => t === COPY.turnMarkers(1));
+    action(session, 'loop');
+    session.undo.undo();
+    offer[1].action.run();
+    expect(session.undo.size.undo).toBe(1);   // amended, not a step of its own
+    session.undo.undo();
+    expect(session.map.isReal).toBe(false);
+    expect(session.practice.value.peek().markers.filter((m) => !m.deleted).map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
+describe('"Re-split with 6 stems" (transport rule 18; I2b-19)', () => {
+  const desktopOn = () => ({available: true, processor: signal({phase: 'ready'}), onFlushRequest: vi.fn(() => vi.fn())});
+
+  test('on desktop the transport gets a resplit action that opens the Re-split dialog with 6 stems preselected', async () => {
+    const openResplit = vi.fn(async () => {});
+    const desktop = desktopOn();
+    const {session} = await open({desktop, openResplit});
+    const {resplit} = peers.transports.at(-1).options;
+    expect(typeof resplit).toBe('function');
+    resplit();
+    await tick();
+    expect(openResplit).toHaveBeenCalledOnce();
+    expect(openResplit).toHaveBeenCalledWith({songId: session.id, stemMode: 'six', desktop});
+  });
+
+  test('a dialog that fails to open is reported, not thrown into the status action', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const openResplit = vi.fn(async () => { throw new Error('chunk failed'); });
+    await open({desktop: desktopOn(), openResplit});
+    await expect(peers.transports.at(-1).options.resplit()).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Re-split'), expect.any(Error));
+    error.mockRestore();
+  });
+
+  test('on the web, and on a shared song, there is no resplit action (the status carries the web copy)', async () => {
+    await open();
+    expect(peers.transports.at(-1).options.resplit).toBeNull();
+    const song = makeSong();
+    const snapshot = {...song, practice: null};
+    await open({song, desktop: desktopOn(), openResplit: vi.fn(),
+      shared: {token: 'tok', snapshot, resolveUrls: vi.fn(async () => Object.fromEntries(song.stems.map((s) => [s.key, `https://stems.invalid/${s.key}`])))}});
+    expect(peers.transports.at(-1).options.resplit).toBeNull();
+  });
+
+  test('with the real transport, Minus me on a song with no guitar stem offers "Re-split with 6 stems" on desktop', async () => {
+    const createTransport = (await vi.importActual('../src/stage/transport.js')).createTransport;
+    const stems = [{name: 'drums', key: 'g/drums.webm'}, {name: 'bass', key: 'g/bass.webm'}, {name: 'other', key: 'g/other.webm'}];
+    const guitarist = {profile: {instruments: ['guitar'], primary: 'guitar', openWithMyPart: 'in'}};
+    const openResplit = vi.fn(async () => {});
+    const desk = await open({song: makeSong({stems}), account: guitarist, desktop: desktopOn(), openResplit, createTransport});
+    await ready(desk.session);
+    desk.session.transport.minusMe(true);
+    const offered = desk.status.mock.calls.find(([t]) => /wasn't split with a guitar part/.test(t));
+    expect(offered[1].action.label).toBe('Re-split with 6 stems');
+    offered[1].action.run();
+    await tick();
+    expect(openResplit).toHaveBeenCalledWith(expect.objectContaining({songId: desk.session.id, stemMode: 'six'}));
+
+    const web = await open({song: makeSong({stems}), account: guitarist, createTransport});
+    await ready(web.session);
+    web.session.transport.minusMe(true);
+    const copy = web.status.mock.calls.find(([t]) => /wasn't split with a guitar part/.test(t));
+    expect(copy[0]).toMatch(/Re-split it from Woodshed for desktop\.$/);
+    expect(copy[1]?.action).toBeUndefined();
+  });
+});
+
 describe('mapChange (D23)', () => {
   test('outside Edit · Map: one compound practice-undo entry that restores snapshots; null when nothing changed', async () => {
     const {session, status} = await open();
