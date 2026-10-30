@@ -35,7 +35,8 @@ import {Tabs} from '../../ui/tabs.js';
 import {stageLayout} from '../../stage/layout.js';
 import {createNotationWorkspace, formDialog, INSPECTOR_TABS} from '../../js/notation/editor.js';
 import {musicalStarts, toTime, number} from '../../../shared/notation.ts';
-import {importDrumPartFromFile} from '../drum-import.js';
+import {confirm as appConfirm} from '../../app/feedback.js';
+import {importDrumPartFromFile, replaceDialog} from '../drum-import.js';
 import {reservedScoreKeys, setDrumKeys as setAppDrumKeys} from './commands.js';
 import {createToolbar} from './toolbar.js';
 import {createKitBank} from './kit-bank.js';
@@ -74,7 +75,7 @@ function pickFile(accept) {
 
 export function mount(el, {session, query = {}, inspectorEl = null, edit = null, registry = appRegistry, prefs = appPrefs,
   commands = registry === appRegistry ? {setDrumKeys: setAppDrumKeys} : null, dialog = formDialog,
-  importDrums = importDrumPartFromFile, chooseFile = pickFile} = {}) {
+  importDrums = importDrumPartFromFile, chooseFile = pickFile, confirm = appConfirm} = {}) {
   if (!session) throw new TypeError('Edit · Chart needs a song session.');
   const notation = session.notation;
   const transport = session.transport;
@@ -170,9 +171,9 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
     if (!file || destroyed) return;
     say(COPY.importing);
     try {
-      const result = await importDrums(file, {session});
+      const result = await importDrums(file, {session, confirmReplace: replaceDialog(confirm)});
       if (destroyed) return;
-      say(COPY.imported(result?.count ?? 0, result?.skipped ?? 0));
+      say(result?.canceled ? '' : COPY.imported(result?.count ?? 0, result?.skipped ?? 0, !!result?.replaced));
     } catch (err) {
       if (!destroyed) say(err?.message || COPY.importFailed);
     }
@@ -298,7 +299,7 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
       slots: {inspector: panels, status: null},
       part, song, engine: session.engine, songMap: session.map,
       transport: tr, mix, drumAudio: () => notation.drumAudio, listen, drumKeys, prefs,
-      openMap, openDrumImport, dialog,
+      openMap, openDrumImport, dialog, confirm,
     });
     if (destroyed) { ws.destroy(); return; }
     workspace = ws;

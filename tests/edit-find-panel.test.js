@@ -644,12 +644,12 @@ describe('Import a file… (every format and limit of importTempoFile)', () => {
     expect(document.querySelectorAll('input[type=radio]')).toHaveLength(3);
   });
 
-  test('drum notation: preview, then a refusal keeps the audition open; a later success commits both', async () => {
+  test('drum notation: preview, then a failure keeps the audition open; a later success commits both', async () => {
     const drums = {hits: [{q: 0, midi: 36, durationQ: 0.25, velocity: 0.8}, {q: 1, midi: 38, durationQ: 0.25, velocity: 0.8}], source: 'midi', warnings: ['Check the MIDI recording version.']};
     const importFile = vi.fn(async () => resultAt(2, {format: 'midi', warnings: [], drums}));
     const b = await bed({importFile});
     const importScore = vi.spyOn(b.session.notation, 'importScore')
-      .mockRejectedValueOnce(new Error('This song already has drum notation. Keep the tempo map alone; import drums into a song with an empty part.'));
+      .mockRejectedValueOnce(new Error('Resolve the saved drum-part conflict before importing.'));
     await pick(new File(['midi'], 'song.mid'));
     const drumsButton = $('.find-use-drums');
     expect(drumsButton.hidden).toBe(false);
@@ -658,10 +658,9 @@ describe('Import a file… (every format and limit of importTempoFile)', () => {
     expect(radio('file-1').closest('.find-row').querySelector('.find-badge').hidden).toBe(false);
     $('[data-shift="100"]').click();
     drumsButton.click();
-    await settle();
+    await vi.waitFor(() => expect(statusText()).toMatch(/Resolve the saved drum-part conflict/));
     expect(importScore).toHaveBeenCalledTimes(1);
     expect(b.mapSession.auditioning.peek()).toBe(true);
-    expect(statusText()).toMatch(/already has drum notation/);
     expect(b.onClose).not.toHaveBeenCalled();
     drumsButton.click();
     await vi.waitFor(() => expect(b.onClose).toHaveBeenCalled(), {timeout: 5000});
@@ -696,16 +695,31 @@ describe('Import a file… (every format and limit of importTempoFile)', () => {
     expect($('.find-warnings').textContent).toMatch(/outside the recording/);
   });
 
-  test('a song that already has a drum chart offers only the map', async () => {
+  test('a song that already has a drum chart asks to replace it: Cancel keeps the audition open, Replace imports and commits', async () => {
     const drums = {hits: [{q: 0, midi: 36, durationQ: 0.25, velocity: 0.8}], source: 'midi', warnings: []};
-    const b = await bed({tempo: undefined, duration: undefined, score: demoScore(128, 120), importFile: vi.fn(async () => ({map: b.map.snapshot(), format: 'midi', warnings: [], drums}))});
+    const answers = [false, true];
+    const b = await bed({session: {tempo: undefined, duration: undefined}, score: demoScore(128, 120), confirm: async () => answers.shift(),
+      importFile: vi.fn(async () => ({map: b.map.snapshot(), format: 'midi', warnings: [], drums}))});
     await b.session.notation.ready;
     await settle();
+    const part = b.session.notation.part;
+    const before = part.stats.notes;
     await pick(new File(['x'], 'song.mid'));
     const drumsButton = $('.find-use-drums');
-    expect(drumsButton.getAttribute('aria-disabled')).toBe('true');
-    expect(drumsButton.textContent).toContain(COPY.hasNotation);
-    expect(button(COPY.useTheirs).getAttribute('aria-disabled')).toBeNull();
+    expect(drumsButton.getAttribute('aria-disabled')).toBeNull();
+    drumsButton.click();
+    await vi.waitFor(() => expect(b.feedback.confirm).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(b.feedback.confirm.mock.calls[0][0]).toMatchObject({title: 'Replace the drum chart?', confirmLabel: 'Replace chart', danger: true});
+    expect(b.feedback.confirm.mock.calls[0][0].body).toContain(`The current chart (${before.toLocaleString('en-US')} notes`);
+    expect(part.stats.notes).toBe(before);
+    expect(b.mapSession.auditioning.peek()).toBe(true);
+    expect(b.onClose).not.toHaveBeenCalled();
+    expect(statusText()).toBe('');
+    drumsButton.click();
+    await vi.waitFor(() => expect(b.onClose).toHaveBeenCalledWith({result: 'drums'}), {timeout: 5000});
+    expect(part.stats.notes).toBe(1);
+    expect(b.toasts.at(-1).text).toBe(COPY.drumsImported(1, 0, true));
   });
 });
 

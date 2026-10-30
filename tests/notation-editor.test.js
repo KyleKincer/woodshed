@@ -168,6 +168,20 @@ test('an imported draft is one undoable edit, upgraded to positions only, and ne
   part.importScore(draft);
   expect(saved().version).toBe(2);expect(hits()).toHaveLength(1);expect(hits()[0]).toMatchObject({id:'imported-kick',instrument:'kick'});expect(hits()[0]).not.toHaveProperty('duration');
   expect(view().calls.setScore.at(-1)[0]).toBe(part.score);
-  expect(()=>part.importScore(draft)).toThrow('already has drum notation');
+  expect(()=>part.importScore(draft)).toThrow(expect.objectContaining({code:'HAS_NOTATION'}));
   key('z',{ctrlKey:true});expect(saved().bars).toHaveLength(0);
+});
+
+test('importScore with replace swaps a written part in one undo step',async()=>{
+  await open();
+  const hit=(id,instrument)=>({id,instrument,offset:fraction(0),duration:fraction(1,4),voice:1,value:4,dotted:false,tuplet:1,velocity:.8,accent:false,ghost:false,flam:false,sticking:''});
+  const draft=emptyScore(8);draft.version=1;
+  draft.bars=[{measureId:draft.timeline.measures[0].id,coverage:'progress',hits:[hit('first','kick')]}];
+  part.importScore(draft);
+  const next=emptyScore(8);next.version=1;
+  next.bars=[{measureId:next.timeline.measures[1].id,coverage:'reviewed',hits:[hit('second','snare')]}];
+  expect(part.stats).toEqual({notes:1,reviewed:0});
+  part.importScore(next,{replace:true});
+  expect(hits().map(h=>h.id)).toEqual(['second']);expect(part.stats).toEqual({notes:1,reviewed:1});
+  key('z',{ctrlKey:true});expect(hits().map(h=>h.id)).toEqual(['first']);
 });

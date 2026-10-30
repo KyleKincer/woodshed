@@ -112,6 +112,11 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     get status() { return status; },
     /** True when the part has any written or reviewed bar. */
     get hasNotation() { return !!editor?.score.bars.some(b => b.hits.length || b.coverage === 'reviewed'); },
+    /** {notes, reviewed}: the written hits and the bars marked reviewed (what replacing or clearing the part loses). */
+    get stats() {
+      const bars = editor?.score.bars ?? [];
+      return {notes: bars.reduce((n, b) => n + b.hits.length, 0), reviewed: bars.filter(b => b.coverage === 'reviewed').length};
+    },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     onStatus(fn) { statusListeners.add(fn); fn(status); return () => statusListeners.delete(fn); },
     /** Persist and broadcast the editor's current score. */
@@ -132,12 +137,15 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     get mapSyncPaused() { return syncPaused; },
     mapScore: input => songMap ? mapScore(input) : upgradeScore(input),
     fitScore,
-    /** Adopt an imported draft into an empty part as one undoable edit. */
-    importScore(input) {
+    /**
+     * Adopt an imported draft as one undoable edit. A part with notation (hasNotation) is replaced only with
+     * {replace: true}; without it the import throws an error with code 'HAS_NOTATION'.
+     */
+    importScore(input, {replace = false} = {}) {
       if (readOnly || disposed || !editor) throw new Error('This drum part cannot be edited.');
       if (store?.blocked) throw new Error('Resolve the saved drum-part conflict before importing.');
-      if (editor.score.bars.some(bar => bar.hits.length || bar.coverage !== 'unstarted'))
-        throw new Error('This song already has drum notation. Keep the tempo map alone; import drums into a song with an empty part.');
+      if (!replace && part.hasNotation)
+        throw Object.assign(new Error('This song already has a drum chart. Replace it to import.'), {code: 'HAS_NOTATION'});
       const next = songMap ? mapScore(structuredClone(input)) : upgradeScore(structuredClone(input));
       validateScore(next);
       editor.transact(draft => Object.assign(draft, next));
