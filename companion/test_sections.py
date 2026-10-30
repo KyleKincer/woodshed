@@ -28,6 +28,10 @@ import time
 import unittest
 from unittest.mock import patch
 
+if importlib.util.find_spec('numpy') is None:
+    # The release workflow runs these before the processor's requirements are installed.
+    raise unittest.SkipTest('numpy is not installed (the processor runtime: pip install -r companion/requirements.txt)')
+
 import numpy as np
 
 import sections

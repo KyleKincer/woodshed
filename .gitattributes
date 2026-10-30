@@ -1,0 +1,2 @@
+# LF in every checkout (the Windows release runner included): Vite cannot parse a `#!` line ending in CR.
+* text=auto eol=lf

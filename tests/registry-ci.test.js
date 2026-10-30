@@ -4,7 +4,7 @@
 // I1b: Stage-transport and Library, I2a/I2b: Stage, Stems, CONTROL_SET, I3a: Edit, Map, Chart and the Electron menu sources). The self-tests at
 // the bottom prove each check catches what it should.
 import {readdirSync, readFileSync, statSync} from 'node:fs';
-import {dirname, join, relative} from 'node:path';
+import {dirname, join, relative, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {afterEach, describe, expect, it} from 'vitest';
 import {createRegistry, GROUPS, ID_RE, registry} from '../src/app/commands.js';
@@ -198,7 +198,7 @@ function walk(dir) {
 
 function sourceReferences() {
   return SCAN_DIRS.flatMap(d => walk(join(ROOT, d))).flatMap(file =>
-    commandReferences(readFileSync(file, 'utf8')).map(ref => ({...ref, where: relative(ROOT, file)})));
+    commandReferences(readFileSync(file, 'utf8')).map(ref => ({...ref, where: relative(ROOT, file).split(sep).join('/')})));
 }
 
 function runAll(reg, refs = []) {
@@ -242,7 +242,7 @@ describe('registry CI: primitive command props', () => {
   it('every src/ui module that reads a command prop is a listed command primitive, inside the scanned directories', () => {
     const readers = walk(join(ROOT, 'src/ui'))
       .filter(file => /\b(?:p|props|item|r)\.command\b/.test(stripComments(readFileSync(file, 'utf8'))))
-      .map(file => relative(ROOT, file)).sort();
+      .map(file => relative(ROOT, file).split(sep).join('/')).sort();
     expect(readers).toEqual(Object.keys(COMMAND_PRIMITIVES).sort());
     for (const file of readers) expect(SCAN_DIRS.some(d => file.startsWith(`${d}/`)), file).toBe(true);
   });

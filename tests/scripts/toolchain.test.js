@@ -81,7 +81,7 @@ describe('npm scripts (§9.1 P0)', () => {
     expect(existsSync(path.join(repo, 'scripts/check-ownership.mjs'))).toBe(true);
   });
   it('ignores the fixture output and the per-port Vite caches', () => {
-    const ignore = readFileSync(path.join(repo, '.gitignore'), 'utf8').split('\n');
+    const ignore = readFileSync(path.join(repo, '.gitignore'), 'utf8').split(/\r?\n/);
     expect(ignore).toContain('tests/fixture/out/');
     expect(ignore).toContain('tests/fixture/.vite-cache/');
     for (const f of ['tests/fixture/.vite-cache/5191/deps/x.js', 'tests/fixture/out/a.png', '.env.worktree']) {
