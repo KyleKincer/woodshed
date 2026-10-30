@@ -36,6 +36,7 @@ import type * as migrations from "../migrations.js";
 import type * as notation from "../notation.js";
 import type * as lib_notationValidators from "../lib/notationValidators.js";
 import type * as r2 from "../r2.js";
+import type * as remote from "../remote.js";
 import type * as renditions from "../renditions.js";
 import type * as sharing from "../sharing.js";
 import type * as shareAudio from "../shareAudio.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   notation: typeof notation;
   "lib/notationValidators": typeof lib_notationValidators;
   r2: typeof r2;
+  remote: typeof remote;
   renditions: typeof renditions;
   sharing: typeof sharing;
   shareAudio: typeof shareAudio;

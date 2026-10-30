@@ -12,6 +12,8 @@
 //                         web it joins the one "These need Woodshed for desktop" note.
 //   MIDI pedals           where Web MIDI exists (Chromium, the desktop app): on/off, the connected devices, the bound
 //                         triggers with Remove, and Add a MIDI pedal (midi.learnMidi, then the command to run).
+//   Phone remote          on/off (prefs.remote.allow): whether your other signed-in devices can control a song open
+//                         here (src/remote), and Open the remote (/remote) to control another device from this one.
 
 import '../../styles/views/settings/sections.css';
 import '../../styles/views/settings/pedals.css';
@@ -90,6 +92,11 @@ export const COPY = Object.freeze({
       MediaStop: 'Stop key',
     }),
     note: 'Background shortcuts',
+  }),
+  remote: Object.freeze({
+    label: 'Phone remote',
+    hint: 'Your phone, or any device signed in to this account, can control a song open here: play, sections, loop, speed, click. No pairing.',
+    open: 'Open the remote',
   }),
   midi: Object.freeze({
     label: 'MIDI pedals',
@@ -478,6 +485,21 @@ function render(el, ctx) {
     groups.push([settingRow({row: 'midi', hint: COPY.midi.hint, scope: 'device',
       controls: [midiToggle, devices, bindingsList, add], saver: midiSaver, labelId: midiId})]);
   }
+
+  // ---------------------------------------------------------------- Phone remote (2.1)
+  let remoteToggle;
+  const remoteId = uid('settings-row');
+  const remoteSaver = keep(createSaver({focus: () => remoteToggle.el}));
+  remoteToggle = keep(Toggle({
+    label: COPY.remote.label, pressed: prefs.get('remote.allow') !== false, className: 'settings-toggle',
+    attrs: {'aria-describedby': `${remoteId}-hint`},
+    onChange: pressed => remoteSaver.run(() => prefs.set('remote.allow', pressed)),
+  }));
+  const openRemote = keep(Button({label: COPY.remote.open, icon: 'monitor-smartphone', variant: 'quiet',
+    onClick: () => (ctx.router?.navigate ? ctx.router.navigate('/remote') : globalThis.location?.assign?.('/remote'))}));
+  groups.push([settingRow({row: 'remote', hint: COPY.remote.hint, scope: 'device', controls: [remoteToggle, openRemote],
+    saver: remoteSaver, labelId: remoteId})]);
+  offs.push(prefs.value.subscribe(() => { if (!destroyed) remoteToggle.set({pressed: prefs.get('remote.allow') !== false}); }));
 
   const page = h('div', {class: 'settings-section settings-pedals', dataset: {section: 'pedals'}},
     groups.map(rows => h('div', {class: 'settings-group'}, rows.map(r => r.el))),

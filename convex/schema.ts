@@ -4,7 +4,7 @@ import { metadataFields, fingerprintValidator } from './lib/songMetadata';
 import {headerValidator,barValidator} from './lib/notationValidators';
 import {
   practiceSummaryValidator, mapSummaryValidator, metadataCandidateValidator, sectionSuggestionValidator,
-  jobKindValidator, jobStatusValidator, revokedByValidator, presenceStateValidator,
+  jobKindValidator, jobStatusValidator, revokedByValidator, presenceStateValidator, remoteStateValidator,
 } from './lib/validators';
 
 // A source is how a song got here. `upload` carries an R2 key the browser
@@ -257,4 +257,24 @@ export default defineSchema({
     userId: v.string(),
     settings: v.any(),
   }).index('by_user', ['userId']),
+
+  // ---- 2.1: the phone remote (convex/remote.ts) ----
+  // A device with a song open on the Stage announces itself to its account; any other signed-in device of
+  // the account can control it, with no pairing. Light presence (what the remote's picker and the Library
+  // bar read), written on a song change and every heartbeat. Queries never read the clock: clients compare
+  // `seenAt` with their own (shared/remote.ts STALE_MS).
+  remoteHosts: defineTable({
+    userId: v.string(), hostId: v.string(), name: v.string(), platform: v.optional(v.string()),
+    songId: v.optional(v.id('songs')), title: v.string(), artist: v.optional(v.string()), seenAt: v.number(),
+    // When a remote last had this host open (`remote.watch`): the host publishes its state only while watched.
+    watchedAt: v.optional(v.number()),
+  }).index('by_userId', ['userId']).index('by_userId_and_hostId', ['userId', 'hostId']),
+  // High-churn playback state, kept off `remoteHosts` (written as bars pass); only an open remote reads it.
+  remoteStates: defineTable({
+    hostRef: v.id('remoteHosts'), userId: v.string(), state: remoteStateValidator, updatedAt: v.number(),
+  }).index('by_hostRef', ['hostRef']),
+  // Commands a remote sent that the host has not run yet (shared/remote.ts REMOTE_COMMANDS).
+  remoteCommands: defineTable({
+    hostRef: v.id('remoteHosts'), userId: v.string(), command: v.string(), sentAt: v.number(),
+  }).index('by_hostRef', ['hostRef']),
 });

@@ -148,6 +148,8 @@ export const COPY = Object.freeze({
     tapBeat: 'Tap the beat…',
     getBars: 'Get bars…',
     share: 'Share…',
+    export: 'Export song…',
+    remote: 'Phone remote…',
     startOver: 'Start over',
     leave: 'Back to Library',
     close: 'Close Song',

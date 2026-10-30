@@ -71,7 +71,7 @@ describe('cardMenuItems', () => {
     const {ctx} = setup();
     const items = cardMenuItems(HARBOR, ctx);
     expect(labels(items)).toEqual(['Select', '—', 'Practice', 'Edit details…', 'Edit chart', 'Edit map', '—',
-      'Pin', 'Share…', 'Add to setlist', '—', 'Re-split…', 'Open original source', '—', 'Delete…']);
+      'Pin', 'Share…', 'Export…', 'Add to setlist', '—', 'Re-split…', 'Open original source', '—', 'Delete…']);
     expect(find(items, 'card.practice').kbd).toBe('Enter');
     expect(find(items, 'card.editDetails').kbd).toBe('KeyE');
     expect(find(items, 'card.delete').danger).toBe(true);
@@ -83,7 +83,7 @@ describe('cardMenuItems', () => {
     const {ctx} = setup({desktop: false});
     const items = cardMenuItems(JAM, ctx);
     expect(labels(items)).toEqual(['Select', '—', 'Practice', 'Edit details…', 'Edit map', '—',
-      'Pin', 'Share…', 'Add to setlist', '—', 'Re-split…', '—', 'Delete…']);
+      'Pin', 'Share…', 'Export…', 'Add to setlist', '—', 'Re-split…', '—', 'Delete…']);
     const resplit = resolveItem(find(items, 'card.resplit'), createRegistry());
     expect(resplit.disabled).toBe(true);
     expect(resplit.reason).toBe('Needs Woodshed for desktop');

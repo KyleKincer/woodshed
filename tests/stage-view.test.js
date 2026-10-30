@@ -110,6 +110,8 @@ const TABLE = [
   ['stage.tapBeat', 'Practice', [], [S], false],
   ['stage.getBars', 'Practice', [], [S], false],
   ['stage.share', 'App', [], [S], false],
+  ['stage.export', 'App', [], [S], false],
+  ['stage.remote', 'App', [], [S], false],
   ['stage.startOver', 'Practice', [], [S], false],
   ['stage.leave', 'App', [], [S], false],
   ['stage.close', 'App', [], [], false],

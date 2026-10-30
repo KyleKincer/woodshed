@@ -33,7 +33,7 @@ export const ICONS = [
   'keyboard', 'settings', 'user', 'log-out', 'download', 'upload', 'refresh-cw', 'alert-triangle', 'alert-circle',
   'info', 'loader', 'sun', 'moon', 'monitor', 'cpu', 'hard-drive', 'cloud', 'wifi-off', 'external-link', 'file-music',
   'file-audio', 'folder-open', 'wand-2', 'sparkles', 'sliders-horizontal', 'footprints', 'hand', 'keyboard-music',
-  'guitar', 'piano', 'drum', 'undo-2', 'redo-2', 'gamepad-2',
+  'guitar', 'piano', 'drum', 'undo-2', 'redo-2', 'gamepad-2', 'smartphone', 'monitor-smartphone', 'qr-code',
 ];
 
 /** The custom glyphs the contract requires in src/styles/icons-custom/. */

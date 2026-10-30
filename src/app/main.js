@@ -49,10 +49,12 @@ const COMMAND_MODULES = import.meta.glob(['../library/commands.js', '../stage/tr
   '../edit/commands.js', '../edit/map/commands.js', '../edit/chart/commands.js'], {eager: true});
 
 // Step 7: starters owned by later packages, by contract path and export name.
-const STARTER_MODULES = import.meta.glob(['./pedals.js', './midi.js', './desktop-menu.js', './notify-ready.js', '../library/dropzone.js']);
+const STARTER_MODULES = import.meta.glob(['./pedals.js', './midi.js', './desktop-menu.js', './notify-ready.js', '../library/dropzone.js',
+  '../remote/remote-host.js']);
 export const STARTERS = Object.freeze([
   ['./pedals.js', 'startPedals'], ['./midi.js', 'startMidi'], ['./desktop-menu.js', 'startDesktopMenu'],
   ['./notify-ready.js', 'startNotifyReady'], ['../library/dropzone.js', 'startLibraryDrop'],
+  ['../remote/remote-host.js', 'startRemoteHost'],
 ]);
 
 // Step 3: ON1's sign-in card (a later wave); until it lands the placeholder's card signs in.

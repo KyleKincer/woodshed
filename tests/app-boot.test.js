@@ -355,7 +355,8 @@ describe.skipIf(missingPeers.length)('boot (§2.3.1)', () => {
     expect(c.topbar).toBe(result.topbar);
     expect(typeof c.platform.detect).toBe('function');
     expect(main.STARTERS.map(([path, name]) => `${path}#${name}`)).toEqual(['./pedals.js#startPedals', './midi.js#startMidi',
-      './desktop-menu.js#startDesktopMenu', './notify-ready.js#startNotifyReady', '../library/dropzone.js#startLibraryDrop']);
+      './desktop-menu.js#startDesktopMenu', './notify-ready.js#startNotifyReady', '../library/dropzone.js#startLibraryDrop',
+      '../remote/remote-host.js#startRemoteHost']);
     expect(main.commandModules.every(p => /\/commands\.js$|transport-commands\.js$/.test(p))).toBe(true);
   });
 

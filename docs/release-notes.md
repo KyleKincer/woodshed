@@ -1,3 +1,8 @@
+Woodshed 2.1.0 exports songs to other apps and turns your phone into a remote.
+
+- **Export song.** On the Stage, choose ⋯ → Export song… (or Export… on a Library card) to save one ZIP with every stem as a WAV, a backing track without your part, the tempo map as MIDI, and the drum chart as MIDI and as a Guitar Pro file. Pick which stems to include, or choose Original files for smaller downloads. In a DAW, put the WAVs at the start of the session and import the tempo map: bars, the click and the grid follow the recording. When a song's bar 1 doesn't start at 0:00, the files begin with whole count-in bars and the WAVs with matching silence, so everything still lines up. A README in the ZIP explains the timing.
+- **Phone remote.** Open Woodshed on your phone, signed in to the same account, and a bar appears in the Library whenever a song is open on your computer or iPad. Tap Remote to play, pause, start again, change sections and bars, loop the section, change speed, and turn count-in, the click and your part on and off, while you see the section, bar and speed. There's no pairing: any device signed in to your account can be the remote. Stage ⋯ → Phone remote… shows a QR code to open it the first time, and Settings → Pedals & keys can turn remote control off on a device.
+
 Woodshed 2.0.1 makes it easy to replace or clear a drum chart.
 
 - Importing drums into a song that already has a chart now asks "Replace the drum chart?" and shows both note counts, instead of refusing. Replace chart swaps it in, and Undo brings the old chart back. This works from Edit · Chart → Part ▾ → Drum part from file… and from Find a chart's Use map + drum chart.

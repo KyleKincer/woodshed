@@ -798,11 +798,30 @@ async function mountStage(el, match, ctx, guard) {
   cleanup(() => setOff?.());
   if (store.library?.songs?.subscribe) cleanup(store.library.songs.subscribe(() => { if (setRow) setlist.value = setlistFrom(setRow); }));
 
-  // ---------------- query (?spot, ?bar, ?t, ?set) ----------------
+  // ---------------- query (?spot, ?bar, ?t, ?set, ?export) ----------------
   let lastQuery = {};
+  /** The Library card's Export…: the dialog opens once the audio is decoded (it exports the engine's buffers). */
+  function openExportWhenLoaded() {
+    const open = () => {
+      if (unmounted) return;
+      void import('../export/export-dialog.js').then((m) => { if (!unmounted) m.openExportDialog({session}); })
+        .catch((err) => console.error('[stage] the export dialog could not open', err));
+    };
+    if (peek(session.load)?.phase === 'ready') { open(); return; }
+    const off = session.load?.subscribe?.((load) => {
+      if (load?.phase !== 'ready') return;
+      queueMicrotask(() => off?.());
+      open();
+    });
+    if (off) cleanup(off);
+  }
   function applyQuery(query = {}) {
     const q = query ?? {};
     const changed = (k) => q[k] !== undefined && q[k] !== lastQuery[k];
+    if (changed('export')) {
+      router?.setQuery?.({export: null});
+      if (!session.readOnly) openExportWhenLoaded();
+    }
     if (changed('spot')) {
       openSpot({session, feedback, stage: api}, String(q.spot));
       router?.setQuery?.({spot: null});
