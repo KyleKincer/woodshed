@@ -207,8 +207,6 @@ def download_cover(url: str, dest: pathlib.Path) -> bool:
 
 def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, dict]:
     """Fetch the source audio as WAV and return (path, metadata)."""
-    import requests
-
     source = job["source"]
     stype = source["type"]
     meta = {"title": source.get("value", "Untitled"), "uploader": "", "artist": "", "album": "", "duration": 0, "cover": None}
@@ -254,6 +252,7 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
         # Spotify audio is DRM'd; resolve the title via oEmbed then match on a
         # site we can actually download from.
         rep.progress("download", 2, "Resolving Spotify track…")
+        import requests  # only Spotify needs it; uploads work without it
         try:
             res = requests.get(
                 "https://open.spotify.com/oembed",

@@ -2,7 +2,7 @@
 // scripts/wt.mjs on a scratch repository (architecture §9.0, §11.1).
 import {describe, it, expect, beforeAll, afterAll} from 'vitest';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -70,7 +70,7 @@ describe('wt.mjs helpers', () => {
 describe.skipIf(process.platform === 'win32')('wt.mjs on a scratch repository', () => {
   let tmp, repo, root, fakeNpmLog, fakeNpm;
   beforeAll(() => {
-    tmp = mkdtempSync(path.join(tmpdir(), 'ws-wt-'));
+    tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'ws-wt-')));
     repo = path.join(tmp, 'woodshed');
     root = path.join(tmp, 'woodshed-wt');
     git(tmp, 'init', '-q', '-b', 'main', repo);

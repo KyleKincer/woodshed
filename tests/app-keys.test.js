@@ -290,7 +290,7 @@ describe('platform detection', () => {
     expect(detectMacLike({platform: '', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'})).toBe(true);
     expect(detectMacLike({userAgentData: {platform: 'macOS'}, platform: 'Win32'})).toBe(true);
     expect(detectMacLike({userAgentData: {platform: 'Windows'}, platform: 'MacIntel'})).toBe(false);
-    expect(detectMacLike(undefined)).toBe(false);
+    expect(detectMacLike(null)).toBe(false);
   });
 
   it('accepts strings and platform objects', () => {

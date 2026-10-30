@@ -147,7 +147,7 @@ function loadStates({states: ids, stateFiles = []} = {}, dir = STATES_DIR) {
   if (!files.length) files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.cjs')).sort().map(f => path.join(dir, f)) : [];
   const all = [], seen = new Map();
   for (const file of files) {
-    if (!fs.existsSync(file)) throw new SetupError(`No states file ${path.relative(REPO, file)}`);
+    if (!fs.existsSync(file)) throw new SetupError(`No states file ${path.relative(REPO, file).split(path.sep).join('/')}`);
     const mod = require(file);
     const states = validateStates(Array.isArray(mod) ? mod : mod.states, path.relative(REPO, file) || file);
     for (const s of states) {
