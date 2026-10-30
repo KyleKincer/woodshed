@@ -341,6 +341,7 @@ function fakeNotation({readOnly, hasNotation}) {
     get listenMode() { return listenMode; },
     setMapSyncPaused(on) { calls.push(['setMapSyncPaused', on]); paused = !!on; },
     get mapSyncPaused() { return paused; },
+    contents: fn('contents', () => Promise.resolve({has: notationSig.peek(), notes: 0, reviewed: 0})),
     importScore: fn('importScore', () => Promise.resolve({count: 0, skipped: 0, notice: ''})),
     start: fn('start', () => Promise.resolve()),
     open: fn('open', () => Promise.resolve()),

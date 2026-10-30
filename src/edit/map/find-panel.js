@@ -18,8 +18,9 @@
 //   drum notes, and the map stays as it was. "Your map" is `map.restore(snapshot)`: the pre-audition data
 //   exactly, never a replace (which would stamp origin 'imported').
 // - Use their map → endAudition({commit: true}): one map-stack undo step, saved at once.
-//   Use map + drum chart (N hits) → the drum part is imported first (src/edit/drum-import.js; refused on a
-//   song that already has drum notation, which leaves the audition open), then the same commit.
+//   Use map + drum chart (N hits) → the drum part is imported first (src/edit/drum-import.js; a song that
+//   already has a drum chart asks "Replace the drum chart?" first, and Cancel leaves the audition open),
+//   then the same commit.
 //   Keep my map (and Esc anywhere in the panel) → endAudition({commit: false}) → abortBatch: the map, both
 //   undo stacks and the saved tempo are exactly as before. There is no separate Cancel.
 // - Leaving mid-audition (router.onLeave, which never blocks navigation): to this song's Edit · Map
@@ -53,7 +54,7 @@ import {InlineStatus} from '../../ui/status.js';
 import {importTempoFile, offsetTempoMap, parseBeatText, parseTempoFile} from '../../js/tempo-import.js';
 import {compile, hasPickup, timeAt} from '../../../shared/song-map.ts';
 import {number} from '../../../shared/notation.ts';
-import {importDrumResult, previewDrumImport} from '../drum-import.js';
+import {importDrumResult, previewDrumImport, replaceDialog} from '../drum-import.js';
 
 /** The file types Import a file… accepts (every format importTempoFile reads). */
 export const ACCEPT = Object.freeze(['.gp3', '.gp4', '.gp5', '.gpx', '.gp', '.sng', '.zip', '.mid', '.midi', '.chart', '.txt', '.tsv', '.lab', '.csv']);
@@ -121,7 +122,6 @@ export const COPY = Object.freeze({
   useWithDrums: (n) => `Use map + drum chart (${plural(n, 'hit')})`,
   keepMine: 'Keep my map',
   chooseFirst: 'Choose a map above first.',
-  hasNotation: 'This song already has a drum chart, so only the map can be used.',
   noDrumsInside: 'None of its drum hits fall inside the recording.',
   drumsReady: (n, skipped) => `${plural(n, 'drum hit')} ready to import${skipped ? ` · ${skipped} skipped` : ''}`,
   drumsError: (text) => `Its drum chart can’t be imported: ${text}`,
@@ -143,7 +143,7 @@ export const COPY = Object.freeze({
   offsetRange: `Choose an offset between −${MAX_OFFSET_MS.toLocaleString('en-US')} and +${MAX_OFFSET_MS.toLocaleString('en-US')} ms.`,
   noTiming: 'That source has no tempo map.',
   importing: 'Importing the drum chart…',
-  drumsImported: (n, skipped) => `Imported ${plural(n, 'drum hit')}${skipped ? ` · ${skipped} skipped` : ''}. The bars are drafts; check them in Edit · Chart.`,
+  drumsImported: (n, skipped, replaced = false) => `${replaced ? 'Replaced the drum chart with' : 'Imported'} ${plural(n, 'drum hit')}${skipped ? ` · ${skipped} skipped` : ''}. The bars are drafts; check them in Edit · Chart.`,
   failed: 'That didn’t work. Try again or choose another map.',
   notStarted: 'Find a chart can’t start while another audition is open.',
   closed: 'Find a chart has closed. Open it again to try another map.',
@@ -409,8 +409,7 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     drumsButton.el.hidden = !hits;
     if (hits) {
       const count = drumPreview?.count ?? hits;
-      const hasNotation = !!peek(session.notation?.hasNotation);
-      const reason = hasNotation ? COPY.hasNotation : drumPreview?.error ? COPY.drumsError(drumPreview.error)
+      const reason = drumPreview?.error ? COPY.drumsError(drumPreview.error)
         : drumPreview && !drumPreview.count ? COPY.noDrumsInside : null;
       drumsButton.set({label: COPY.useWithDrums(count), disabled: ended || busy || !!reason, disabledReason: ended || busy ? null : reason,
         busy: busy ? COPY.importing : false});
@@ -580,9 +579,14 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     renderState();
     setStatus(COPY.importing);
     try {
-      const done = await importDrumResult(selected.result, {session, map: map.serialize()});
+      const done = await importDrumResult(selected.result, {session, map: map.serialize(),
+        confirmReplace: replaceDialog(feedback.confirm), source: selected.title});
       importing = false;
-      feedback.toast?.(COPY.drumsImported(done.count, done.skipped), {tone: 'ok'});
+      if (done.canceled) {
+        if (!exitCommitted && !destroyed) { renderState(); setStatus(''); }
+        return false;
+      }
+      feedback.toast?.(COPY.drumsImported(done.count, done.skipped, done.replaced), {tone: 'ok'});
       if (!exitCommitted) close('drums', {commit: true});
       return true;
     } catch (err) {
@@ -654,8 +658,6 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
       if (!on && !ended && !importing) { ended = true; renderState(); setStatus(COPY.closed); }
     }));
   }
-  // The drum button's reason follows the part (a chart written meanwhile, a part that finished opening).
-  if (session.notation?.hasNotation?.subscribe) offs.push(effect(() => { session.notation.hasNotation.value; if (!destroyed) renderCommit(); }));
 
   // ---------- start ----------
   renderState();

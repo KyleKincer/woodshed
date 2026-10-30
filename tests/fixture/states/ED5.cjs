@@ -191,7 +191,8 @@ module.exports = [
       await page.waitForSelector('.ui-menu [role^=menuitem]');
       await page.waitForTimeout(250);
       const items = await menuItems(page);
-      const expected = [['Copy', 'Control+C'], ['Paste', 'Control+V'], ['Repeat bars…', 'Control+D'], ['Move notes…', 'Alt+ArrowLeft'],
+      const expected = [['Copy', 'Control+C'], ['Paste', 'Control+V'], ['Repeat bars…', 'Control+D'], ['Select all bars', 'Control+A'],
+        ['Delete selected notes', 'Backspace'], ['Move notes…', 'Alt+ArrowLeft'],
         ['Tuplet on this beat…', null], ['Mark bars reviewed', null], ['Loop selection', 'L'], ['Bar meter & label…', null], ['Align in tempo map…', null]];
       const norm = (list) => JSON.stringify(list.map(([n, k]) => [n, k ? k.replace(/^Meta\+/, 'Control+') : null]));
       t.expect(norm(items) === norm(expected), `Edit ▾ items and shortcuts (${JSON.stringify(items)})`);
@@ -206,7 +207,7 @@ module.exports = [
       await page.waitForTimeout(250);
       const names = (await menuItems(page)).map(([n]) => n);
       t.expect(names.join(' | ') === ['Export .woodshed.json', 'Print', 'Open .woodshed.json part…', 'Drum part from file (Guitar Pro, MIDI, Clone Hero)…',
-        'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts'].join(' | '), `Part ▾ items (${names.join(' | ')})`);
+        'Clear drum chart…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts'].join(' | '), `Part ▾ items (${names.join(' | ')})`);
     },
   },
   {

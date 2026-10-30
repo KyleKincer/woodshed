@@ -39,6 +39,7 @@ import {wheelNavigation} from '../timeline-navigation.js';
 import {snapPosition,moveLaneNotes} from './entry.js';
 import {now} from '../../app/clock.js';
 import {prefs as appPrefs} from '../../app/prefs.js';
+import {confirm as appConfirm} from '../../app/feedback.js';
 import {Dialog} from '../../ui/dialog.js';
 import {drumKeyFor,drumKeyLabel,keyStringLetter,reservedScoreKeys,validateDrumKeys,STEP_VALUE} from '../../edit/chart/commands.js';
 import {editMenu,partMenu,sectionsMenu} from '../../edit/chart/menus.js';
@@ -82,10 +83,10 @@ export function formDialog({title,body,submitLabel='Apply',onSubmit}){
 }
 const fragment=html=>{const box=document.createElement('div');box.className='notation-dialog-body';box.innerHTML=html;return box;};
 
-export async function createNotationWorkspace({host,slots={},part,song,engine,songMap=null,transport=null,mix=null,drumAudio=null,listen=null,viewport=null,openMap=null,openDrumImport=null,dialog=formDialog,drumKeys=null,prefs=appPrefs}) {
+export async function createNotationWorkspace({host,slots={},part,song,engine,songMap=null,transport=null,mix=null,drumAudio=null,listen=null,viewport=null,openMap=null,openDrumImport=null,dialog=formDialog,confirm:ask=appConfirm,drumKeys=null,prefs=appPrefs}) {
   const seq=++workspaceSeq,ids={help:`notation-help-${seq}`,cell:`notation-active-cell-${seq}`};
   let layout=prefs.get('edit.chart.view')==='lanes'?'lanes':'score',cursor=fraction(0),selected=new Set(),barRange=[0,0],piece='snare',stepValue=8,stepDotted=false,stepTuplet=1,voice='auto',clipboard=[],showList=false;
-  let selectionKind='bars',noteClipboard=null,inspectorTab='kit',auditionPads=false,gridValue=16,gridTuplet=1,allLanes=false,page=0,followPlayback=true,paging='pages';
+  let selectionKind='bars',wholeBarArmed=false,noteClipboard=null,inspectorTab='kit',auditionPads=false,gridValue=16,gridTuplet=1,allLanes=false,page=0,followPlayback=true,paging='pages';
   let cancelGesture=()=>{},gesture=false,lastPointerClick=null,disposed=false,status=part.status,messageText='',wasPlaying=false,visible=true;
   let expression={accent:false,heavy:false,ghost:false,flam:false,drag:false,roll:0,sticking:'',velocity:.75};
   const interpretWheel=wheelNavigation();
@@ -138,11 +139,27 @@ export async function createNotationWorkspace({host,slots={},part,song,engine,so
   const pageOf=index=>Math.floor(index/PAGE)*PAGE;
   const negate=f=>subtract(fraction(0),f);
   function rangeLabel(){return barRange[0]===barRange[1]?`Bar ${barRange[0]+1}`:`Bars ${barRange[0]+1}–${barRange[1]+1}`;}
+  const count=(n,word)=>`${n.toLocaleString('en-US')} ${word}${n===1?'':'s'}`;
+  /** The hit ids in bars a..b. */
+  function hitsInBars(a,b){const s=score();return new Set(s.bars.filter(bar=>{const i=s.timeline.measures.findIndex(m=>m.id===bar.measureId);return i>=a&&i<=b;}).flatMap(bar=>bar.hits.map(h=>h.id)));}
+  /** ⌘A and Select all bars: the bars with their notes selected (the expression keys and Delete act on them). */
+  function selectBars(a,b){selectionKind='bars';barRange=[Math.min(a,b),Math.max(a,b)];selected=hitsInBars(...barRange);}
+  /** What Delete removes: the selected notes, else every note in a bar range made with Shift (+→ or click). */
+  const deleteTargets=()=>selected.size||selectionKind!=='bars'||barRange[0]===barRange[1]?selected:hitsInBars(...barRange);
+  /** Clear drum chart…: every note and reviewed mark goes (one undo step) after a confirm; the map stays. */
+  async function clearPart(){
+    const s=score(),notes=s.bars.reduce((n,b)=>n+b.hits.length,0),reviewed=s.bars.filter(b=>b.coverage==='reviewed').length;
+    if(!notes&&s.bars.every(b=>b.coverage==='unstarted')){message('The drum chart is already empty.');return false;}
+    const ok=await ask({title:'Clear the drum chart?',body:`This removes ${notes?`all ${count(notes,'note')}`:'the empty bars’ progress'}${reviewed?` and the reviewed marks on ${count(reviewed,'bar')}`:''}. The tempo map, meters and sections stay. Undo brings the chart back.`,confirmLabel:'Clear chart',danger:true});
+    if(!ok||disposed||!editor())return false;
+    editor().transact(d=>{for(const bar of d.bars){bar.hits=[];bar.coverage='unstarted';delete bar.tuplets;}});
+    selected.clear();selectionKind='notes';wholeBarArmed=false;changed();message('Cleared the drum chart. Undo brings it back.');return true;
+  }
 
   function navigate(q,{seek=false,extend=false}={}){
     const total=extent(score().timeline);
     cursor=number(q)>=0&&number(q)<total?q:fraction(Math.round(clamp(number(q),0,total-.0001)*1e6),1e6);
-    selected.clear();selectionKind=extend?'bars':'notes';const a=active();barRange=extend?[Math.min(barRange[0],a.index),Math.max(barRange[1],a.index)]:[a.index,a.index];
+    selected.clear();selectionKind=extend?'bars':'notes';wholeBarArmed=false;const a=active();barRange=extend?[Math.min(barRange[0],a.index),Math.max(barRange[1],a.index)]:[a.index,a.index];
     page=pageOf(a.index);
     if(seek)tr.seek(toTime(score().timeline,number(cursor)));
     followPlayback=false;
@@ -285,6 +302,8 @@ export async function createNotationWorkspace({host,slots={},part,song,engine,so
           if(doubleClick)inspectorTab='properties';
           if(!tr.isPlaying())tr.seek(toTime(score().timeline,number(cursor)));render();return;}
         const q=snapPosition(score(),at.q,step());
+        // Shift-click extends the bar range to this bar, like Shift+→ (Delete then clears the range).
+        if(e.shiftKey&&!doubleClick){navigate(q,{extend:true});return;}
         if(doubleClick){const line=Math.round((at.y-at.lineTop)/(at.lineHeight/8)),chosen=pieceForLine(line,piece);if(chosen)piece=chosen;cursor=q;insert();return;}
         navigate(q,{seek:!tr.isPlaying()});
       });focus();};
@@ -378,14 +397,17 @@ export async function createNotationWorkspace({host,slots={},part,song,engine,so
       case 'setPiece':if(kitPiece(args[0])){piece=args[0];render();}break;
       case 'setVoice':voice=String(args[0]);if(selected.size&&voice!=='auto'){editor().change(selected,{voice:Number(voice)});changed();}else render();break;
       case 'setAudition':auditionPads=!!args[0];render();break;
-      case 'undo':if(editor().undo()){selected.clear();changed();}break;
-      case 'redo':if(editor().redo()){selected.clear();changed();}break;
-      case 'delete':if(editor().remove(selected)){selected.clear();changed();}break;
+      case 'undo':if(editor().undo()){selected.clear();changed();if(messageText)message('');}break;
+      case 'redo':if(editor().redo()){selected.clear();changed();if(messageText)message('');}break;
+      case 'delete':{const targets=deleteTargets(),n=targets.size,bars=selectionKind==='bars'&&n>1?rangeLabel():'';if(editor().remove(targets)){selected.clear();changed();if(bars)message(`Deleted ${count(n,'note')} from ${bars}. Undo brings them back.`);}break;}
       case 'copy':copy();break;
       case 'paste':return repeat(true);
       case 'repeat':return repeat();
-      case 'select-bar':selectionKind='bars';barRange=[a.index,a.index];selected=new Set((s.bars.find(b=>b.measureId===a.measure.id)?.hits||[]).map(h=>h.id));render();break;
-      case 'clear':cancelGesture();selected.clear();render();break;
+      // ⌘A selects the bar; pressed again on that bar, the whole part.
+      case 'select-bar':if(wholeBarArmed&&selectionKind==='bars'&&barRange[0]===a.index&&barRange[1]===a.index)return action('select-all');selectBars(a.index,a.index);wholeBarArmed=true;render();break;
+      case 'select-all':{const total=s.timeline.measures.length;selectBars(0,total-1);wholeBarArmed=false;message(`All ${count(total,'bar')} selected · ${count(selected.size,'note')}.`);render();break;}
+      case 'clear-part':return clearPart();
+      case 'clear':cancelGesture();selected.clear();selectionKind='notes';wholeBarArmed=false;render();break;
       case 'move-dialog':return moveDialog();
       case 'tuplet-dialog':return tupletDialog();
       case 'review':editor().transact(d=>{for(let i=barRange[0];i<=barRange[1];i++)editor().bar(i,d).coverage='reviewed';});changed();break;
@@ -440,7 +462,7 @@ export async function createNotationWorkspace({host,slots={},part,song,engine,so
       ready:has,layout,paging,pagingModes:[...PAGING_MODES],inspectorTab,
       step:{value:stepValue,dotted:stepDotted,tuplet:stepTuplet},grid:{value:gridValue,triplet:gridTuplet===3},
       piece:{id:piece,name:kit?.name??'Drums',short:kit?.short??'',key:kit?keyFor(kit):''},
-      selectedCount:hits.length,canClear:gesture||selected.size>0,
+      selectedCount:hits.length,deletable:has?deleteTargets().size:0,canClear:gesture||selected.size>0,empty:!has||s.bars.every(b=>!b.hits.length&&b.coverage==='unstarted'),
       range:{first:page,last:Math.max(page,last),page:Math.floor(page/PAGE),pages:Math.max(1,Math.ceil(total/PAGE)),total},
       barLabel:has?rangeLabel():'',barRange:[...barRange],
       position:a?`Bar ${a.index+1} · Beat ${(1+a.offset*a.measure.denominator/4).toFixed(2)}`:'',

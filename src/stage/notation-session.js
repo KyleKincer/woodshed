@@ -172,11 +172,19 @@ export function createNotationSession({session, openPart = loadPart, persistence
       part?.setMapSyncPaused?.(syncPaused);
     },
     get mapSyncPaused() { return syncPaused; },
-    /** Adopt an imported draft into the (empty) part as one undoable chart edit. */
-    async importScore(score, {notice, skipped = 0} = {}) {
+    /** What the part holds once open: {has, notes, reviewed} (has: hasNotation), or null without a part. */
+    async contents() {
+      await open();
+      return part ? {has: !!part.hasNotation, ...part.stats} : null;
+    },
+    /**
+     * Adopt an imported draft as one undoable chart edit. A part with notation is replaced only with
+     * {replace: true} (the caller asked first); otherwise part.importScore throws code 'HAS_NOTATION'.
+     */
+    async importScore(score, {notice, skipped = 0, replace = false} = {}) {
       await open();
       if (!part) throw new Error('This drum part cannot be edited.');
-      part.importScore(score);
+      part.importScore(score, {replace});
       sync();
       return {count: hitCount(part.score), skipped: Number.isFinite(skipped) ? skipped : 0, notice: notice || COPY.imported};
     },

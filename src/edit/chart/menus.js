@@ -1,8 +1,10 @@
 // Edit · Chart menus and the frame's copy (spec §5.2, maps/notation.md §12.3, architecture §3.4).
 //
-//   editMenu(state)          Edit ▾: Copy ⌘C, Paste ⌘V, Repeat bars… ⌘D, Move notes… ⌥←/→, Tuplet on this beat…,
+//   editMenu(state)          Edit ▾: Copy ⌘C, Paste ⌘V, Repeat bars… ⌘D, Select all bars (⌘A twice), Delete,
+//                            Move notes… ⌥←/→, Tuplet on this beat…,
 //                            Mark bars reviewed, Loop selection L, Bar meter & label…, Align in tempo map…
 //   partMenu(state)          Part ▾: Export .woodshed.json, Print, Open .woodshed.json part…, Drum part from file…,
+//                            Clear drum chart…,
 //                            Drum keys…, Note list ✓, Show every kit piece ✓ (Lanes only), Keyboard shortcuts ?
 //   viewMenu(state)          View ▾: Score · Lanes, Pages · Continuous (the modes the editor offers, D48), Follow playback
 //   tupletMenu(state, run)   Tuplet ▾: Straight, Triplet, Quintuplet, Sextuplet, Septuplet
@@ -58,7 +60,7 @@ export const COPY = Object.freeze({
   saveStatus: 'Save status',
   editor: 'Drum chart editor',
   importing: 'Importing the drum part…',
-  imported: (count, skipped) => `Imported ${count} note${count === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''}. Undo restores the empty part.`,
+  imported: (count, skipped, replaced = false) => `${replaced ? 'Replaced the drum chart with' : 'Imported'} ${count} note${count === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''}. Undo restores the ${replaced ? 'previous chart' : 'empty part'}.`,
   importFailed: 'That file could not be imported.',
   importAccept: '.gp,.gp3,.gp4,.gp5,.gpx,.gp7,.mid,.midi,.chart,.json,.woodshed.json,.txt',
 });
@@ -95,6 +97,10 @@ export function editMenu() {
     {command: 'chart.copy'},
     {command: 'chart.paste'},
     {command: 'chart.repeat'},
+    sep,
+    {command: 'chart.selectAll', kbd: 'Mod+KeyA'},
+    {command: 'chart.delete'},
+    sep,
     // ⌥← / ⌥→ move the selection by the step without the dialog; the menu shows the first of the pair.
     {command: 'chart.moveDialog', kbd: 'Alt+ArrowLeft'},
     {command: 'chart.tupletDialog'},
@@ -113,6 +119,7 @@ export function partMenu(state) {
     {command: 'chart.print'},
     {command: 'chart.openPart'},
     {command: 'chart.importDrums'},
+    {command: 'chart.clearPart'},
     sep,
     {command: 'chart.drumKeys'},
     {command: 'chart.noteList', type: 'checkbox', checked: !!state?.showList},

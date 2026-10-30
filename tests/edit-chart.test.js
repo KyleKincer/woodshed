@@ -445,6 +445,7 @@ describe('menus (spec §5.2)', () => {
   test('Edit ▾: Copy ⌘C, Paste ⌘V, Repeat bars… ⌘D, Move notes… ⌥←, Tuplet on this beat…, Mark bars reviewed, then Loop selection L and the map links', () => {
     expect(resolved(editMenu())).toEqual([
       {label: 'Copy', kbd: 'Mod+KeyC'}, {label: 'Paste', kbd: 'Mod+KeyV'}, {label: 'Repeat bars…', kbd: 'Mod+KeyD'},
+      {label: 'Select all bars', kbd: 'Mod+KeyA'}, {label: 'Delete selected notes', kbd: 'Backspace'},
       {label: 'Move notes…', kbd: 'Alt+ArrowLeft'}, {label: 'Tuplet on this beat…', kbd: null}, {label: 'Mark bars reviewed', kbd: null},
       {label: 'Loop selection', kbd: 'KeyL'}, {label: 'Bar meter & label…', kbd: null}, {label: 'Align in tempo map…', kbd: null},
     ]);
@@ -453,7 +454,7 @@ describe('menus (spec §5.2)', () => {
   test('Part ▾: export, print, open part, drum part from file, Drum keys…, Note list ✓, Show every kit piece ✓, Keyboard shortcuts ?', () => {
     const items = partMenu({...STATE, showList: true});
     expect(resolved(items).map((i) => i.label)).toEqual(['Export .woodshed.json', 'Print', 'Open .woodshed.json part…',
-      'Drum part from file (Guitar Pro, MIDI, Clone Hero)…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts']);
+      'Drum part from file (Guitar Pro, MIDI, Clone Hero)…', 'Clear drum chart…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts']);
     expect(items.find((i) => i.command === 'chart.noteList')).toMatchObject({type: 'checkbox', checked: true});
     expect(items.find((i) => i.command === 'chart.shortcuts').kbd).toBe('?');
     expect(registry.state('chart.allLanes').reason).toBe(COMMAND_COPY.allLanesReason);
@@ -538,7 +539,8 @@ describe('kit pad bank (iPad portrait)', () => {
 
 const DRUM_IMPORT = join(process.cwd(), 'src/edit/drum-import.js');
 const drumImport = vi.hoisted(() => ({calls: [], result: {count: 12, skipped: 2, warnings: []}, fail: null}));
-vi.mock('../src/edit/drum-import.js', () => ({
+vi.mock('../src/edit/drum-import.js', async (importOriginal) => ({
+  replaceDialog: (await importOriginal()).replaceDialog,
   importDrumPartFromFile: async (file, options) => {
     drumImport.calls.push([file, options]);
     if (drumImport.fail) throw drumImport.fail;
@@ -588,12 +590,15 @@ describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song sess
     const edit = withEdit ? {saveStatus: signal(null), layout: signal(layout), setTab: vi.fn()} : null;
     const prefs = memoryPrefs({edit: {chart: {view: 'score', paging: 'pages', keys: {}}}});
     const files = [];
+    const confirms = [];
+    const answers = [];
+    const confirm = async (o) => { confirms.push(o); return answers.length ? answers.shift() : true; };
     const view = mod.mount(panel, {session: ts.session, query, inspectorEl, edit, registry, prefs, commands: {setDrumKeys},
-      chooseFile: async () => files.shift() ?? null});
+      chooseFile: async () => files.shift() ?? null, confirm});
     await view.ready;
     await settle();
     current.push(async () => { view.destroy(); stopDispatch(); commands.off(); await ts.dispose(); });
-    return {ts, registry, router, panel, inspectorEl, edit, prefs, view, files, setDrumKeys, settle, ws: () => view.workspace};
+    return {ts, registry, router, panel, inspectorEl, edit, prefs, view, files, confirms, answers, setDrumKeys, settle, ws: () => view.workspace};
   }
 
   test('mounts the workspace, provides it as the chart context, and shows the save status in the posture bar', async () => {
@@ -719,13 +724,101 @@ describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song sess
     b.files.push(file);
     b.registry.run('chart.importDrums');
     await b.settle();
-    expect(drumImport.calls).toEqual([[file, {session: b.ts.session}]]);
+    expect(drumImport.calls).toEqual([[file, {session: b.ts.session, confirmReplace: expect.any(Function)}]]);
     expect(b.panel.querySelector('.chart-edit-message').textContent).toBe(COPY.imported(12, 2));
+    // The confirm it passes is "Replace the drum chart?" on the view's confirm.
+    await drumImport.calls[0][1].confirmReplace({notes: 3, reviewed: 0, incoming: 5, source: 'groove.mid'});
+    expect(b.confirms.at(-1)).toMatchObject({title: 'Replace the drum chart?', confirmLabel: 'Replace chart', danger: true});
+    drumImport.result = {count: 5, skipped: 0, warnings: [], replaced: true};
+    b.files.push(file);
+    b.registry.run('chart.importDrums');
+    await b.settle();
+    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe(COPY.imported(5, 0, true));
+    expect(COPY.imported(5, 0, true)).toBe('Replaced the drum chart with 5 notes. Undo restores the previous chart.');
+    drumImport.result = {count: 0, skipped: 0, warnings: [], canceled: true};
+    b.files.push(file);
+    b.registry.run('chart.importDrums');
+    await b.settle();
+    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe('');
+    drumImport.result = {count: 12, skipped: 2, warnings: []};
     drumImport.fail = new Error('This file has no drum part.');
     b.files.push(file);
     b.registry.run('chart.importDrums');
     await b.settle();
     expect(b.panel.querySelector('.chart-edit-message').textContent).toBe('This file has no drum part.');
+  });
+
+  test('Clear drum chart… asks with the counts, clears every note and reviewed mark in one undo step, then is disabled', async () => {
+    const b = await bed();
+    const part = b.ts.session.notation.part;
+    const notes = part.stats.notes;
+    expect(notes).toBeGreaterThan(0);
+    b.answers.push(false);
+    b.registry.run('chart.clearPart');
+    await b.settle();
+    expect(b.confirms.at(-1)).toMatchObject({title: 'Clear the drum chart?', confirmLabel: 'Clear chart', danger: true});
+    expect(b.confirms.at(-1).body).toContain(`all ${notes.toLocaleString('en-US')} notes`);
+    expect(part.stats.notes).toBe(notes);
+    b.registry.run('chart.clearPart');
+    await b.settle();
+    expect(part.stats).toEqual({notes: 0, reviewed: 0});
+    expect(part.score.bars.every((bar) => bar.coverage === 'unstarted')).toBe(true);
+    expect(b.ts.session.notation.hasNotation.peek()).toBe(false);
+    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe('Cleared the drum chart. Undo brings it back.');
+    expect(b.registry.state('chart.clearPart')).toMatchObject({enabled: false, reason: COMMAND_COPY.clearPartReason});
+    b.registry.run('chart.undo');
+    await b.settle();
+    expect(part.stats.notes).toBe(notes);
+    expect(b.registry.state('chart.clearPart').enabled).toBe(true);
+  });
+
+  test('⌘A selects the bar, ⌘A again the whole part; Delete removes every note in one undo step', async () => {
+    const b = await bed();
+    const part = b.ts.session.notation.part;
+    const notes = part.stats.notes;
+    expect(b.registry.state('chart.delete')).toMatchObject({enabled: false, reason: COMMAND_COPY.deleteReason});
+    b.registry.run('chart.selectBar');
+    const one = b.ws().state().selectedCount;
+    expect(one).toBeGreaterThan(0);
+    expect(one).toBeLessThan(notes);
+    b.registry.run('chart.selectBar');
+    expect(b.ws().state().selectedCount).toBe(notes);
+    expect(b.ws().state().barRange).toEqual([0, part.score.timeline.measures.length - 1]);
+    expect(b.panel.querySelector('.chart-edit-message').textContent).toMatch(/^All \d+ bars selected · [\d,]+ notes\.$/);
+    b.registry.run('chart.delete');
+    await b.settle();
+    expect(part.stats.notes).toBe(0);
+    expect(b.panel.querySelector('.chart-edit-message').textContent).toMatch(/^Deleted [\d,]+ notes from Bars 1–\d+\. Undo brings them back\.$/);
+    b.registry.run('chart.undo');
+    expect(part.stats.notes).toBe(notes);
+    // Select all bars is the menu's way to the same selection.
+    b.registry.run('chart.selectAll');
+    expect(b.ws().state().selectedCount).toBe(notes);
+  });
+
+  test('Shift+→ across a bar line makes a bar range; Delete clears its notes, a plain → still moves the cursor', async () => {
+    const b = await bed();
+    const part = b.ts.session.notation.part;
+    const firstBar = part.score.bars.find((bar) => bar.measureId === part.score.timeline.measures[0].id)?.hits.length ?? 0;
+    const secondBar = part.score.bars.find((bar) => bar.measureId === part.score.timeline.measures[1].id)?.hits.length ?? 0;
+    for (let i = 0; i < 40 && b.ws().state().barRange[1] < 1; i++) b.registry.run('chart.extendFwd');
+    expect(b.ws().state().barRange).toEqual([0, 1]);
+    expect(b.ws().state().selectedCount).toBe(0);
+    expect(b.ws().state().deletable).toBe(firstBar + secondBar);
+    const before = part.stats.notes;
+    expect(b.registry.run('chart.delete')).toBe(true);
+    expect(part.stats.notes).toBe(before - firstBar - secondBar);
+    expect(part.score.bars.filter((bar) => [0, 1].includes(part.score.timeline.measures.findIndex((m) => m.id === bar.measureId)))
+      .every((bar) => !bar.hits.length)).toBe(true);
+    b.registry.run('chart.undo');
+    // In Lanes an arrow moves selected notes; a Shift range selects none, so → after it only moves the cursor.
+    b.registry.run('chart.view', {args: {view: 'lanes'}});
+    expect(b.ws().state().layout).toBe('lanes');
+    b.registry.run('chart.clear');
+    for (let i = 0; i < 80 && b.ws().state().barRange[1] < 1; i++) b.registry.run('chart.extendFwd');
+    const bars = JSON.stringify(part.score.bars);
+    b.registry.run('chart.cursorFwd');
+    expect(JSON.stringify(part.score.bars)).toBe(bars);
   });
 
   test('Drum keys… saves to prefs and re-registers the drum letters; a reserved key is refused inline', async () => {

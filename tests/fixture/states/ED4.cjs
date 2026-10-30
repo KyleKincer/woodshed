@@ -20,8 +20,8 @@
 //   ed4-find-import        ?import=1 focuses Import a file…; a Clone Hero .chart with drums joins the
 //                          rows and offers "Use map + drum chart (64 hits)", which writes the drum part
 //                          and commits the map
-//   ed4-find-has-chart     a song that already has a drum chart: the drum commit is disabled with its
-//                          reason, Use their map stays available
+//   ed4-find-has-chart     a song that already has a drum chart: the drum commit asks "Replace the drum
+//                          chart?" (capture: replace); Cancel keeps the audition, Replace chart imports and commits
 //   ed4-find-none          a search with no matches says so and keeps Import a file…
 'use strict';
 
@@ -260,10 +260,25 @@ module.exports = [
       await page.setInputFiles('input[type=file]', CHART_FILE);
       const drums = page.getByRole('button', {name: 'Use map + drum chart (64 hits)'});
       await drums.waitFor({state: 'visible', timeout: 10000});
-      t.expect(await drums.getAttribute('aria-disabled') === 'true', 'the drum commit is disabled');
-      const reason = await drums.evaluate((el) => el.textContent);
-      t.expect(reason.includes('This song already has a drum chart, so only the map can be used.'), `with its reason (${reason})`);
-      t.expect(await page.getByRole('button', {name: 'Use their map'}).getAttribute('aria-disabled') !== 'true', 'Use their map stays available');
+      t.expect(await drums.getAttribute('aria-disabled') !== 'true', 'the drum commit is available');
+      const before = await page.evaluate(() => window.__find.partHits());
+      await drums.click();
+      const dialog = page.getByRole('alertdialog').or(page.getByRole('dialog'));
+      await dialog.getByRole('button', {name: 'Replace chart'}).waitFor({timeout: 10000});
+      const body = await dialog.textContent();
+      t.expect(/Replace the drum chart\?/.test(body) && body.includes(`The current chart (${before.toLocaleString('en-US')} notes`)
+        && body.includes('replaced by 64 notes from glasshouse-drums.chart'), `the confirm names both charts (${body.replace(/\s+/g, ' ')})`);
+      await t.capture('replace');
+      await dialog.getByRole('button', {name: 'Cancel'}).click();
+      await page.waitForTimeout(300);
+      t.expect(await page.evaluate(() => window.__find.partHits()) === before, 'Cancel leaves the chart alone');
+      t.expect(await page.evaluate(() => window.__find.closes.length) === 0 && await page.evaluate(() => window.__find.mapSession.auditioning.peek()),
+        'and the audition stays open');
+      await drums.click();
+      await dialog.getByRole('button', {name: 'Replace chart'}).click();
+      await page.waitForFunction(() => window.__find.closes.length === 1, null, {timeout: 10000});
+      t.expect(await page.evaluate(() => window.__find.partHits()) === 64, 'Replace chart imports the file\'s 64 hits');
+      t.expect(await page.evaluate(() => window.__find.closes[0]?.result) === 'drums', 'and commits the map with them');
     },
   },
   {

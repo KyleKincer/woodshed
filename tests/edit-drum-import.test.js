@@ -7,7 +7,7 @@ vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/f
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: () => false}));
 
 import {clock as appClock} from '../src/app/clock.js';
-import {COPY, firstDifferentBar, importDrumPartFromFile, importDrumResult, previewDrumImport} from '../src/edit/drum-import.js';
+import {COPY, firstDifferentBar, importDrumPartFromFile, importDrumResult, previewDrumImport, replaceDialog} from '../src/edit/drum-import.js';
 import {fraction} from '../shared/notation.ts';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession} from './helpers/test-session.js';
@@ -72,12 +72,47 @@ describe('importDrumResult', () => {
     expect(ts.session.notation.hasNotation.peek()).toBe(true);
   });
 
-  test('a song that already has drum notation refuses, and the part is unchanged', async () => {
+  test('a song that already has a drum chart refuses without a confirm, and the part is unchanged', async () => {
     const ts = await session({tempo: undefined, duration: undefined, score: demoScore(128, 120)});
     await ts.session.notation.ready;
     const before = hitCount(ts.session.notation.part.score);
-    await expect(importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: ts.session})).rejects.toThrow(/already has drum notation/);
+    await expect(importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: ts.session})).rejects.toMatchObject({code: 'HAS_NOTATION'});
     expect(hitCount(ts.session.notation.part.score)).toBe(before);
+  });
+
+  test('with confirmReplace it asks with the chart\'s counts: Cancel keeps the chart, Replace swaps it in one undo step', async () => {
+    const ts = await session({tempo: undefined, duration: undefined, score: demoScore(128, 120)});
+    await ts.session.notation.ready;
+    const part = ts.session.notation.part;
+    const before = hitCount(part.score);
+    const no = vi.fn(async () => false);
+    const canceled = await importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: ts.session, confirmReplace: no, source: 'take2.mid'});
+    expect(canceled).toMatchObject({canceled: true, replaced: false});
+    expect(no).toHaveBeenCalledWith({notes: before, reviewed: expect.any(Number), incoming: 1, source: 'take2.mid'});
+    expect(hitCount(part.score)).toBe(before);
+
+    const done = await importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: ts.session, confirmReplace: async () => true});
+    expect(done).toMatchObject({count: 1, replaced: true});
+    expect(hitCount(part.score)).toBe(1);
+    part.editor.undo();
+    expect(hitCount(part.score)).toBe(before);
+  });
+
+  test('replaceDialog asks "Replace the drum chart?" as a danger confirm with the counts and the source', async () => {
+    const ask = vi.fn(async () => true);
+    await expect(replaceDialog(ask)({notes: 1284, reviewed: 24, incoming: 1402, source: 'song.gp5'})).resolves.toBe(true);
+    expect(ask).toHaveBeenCalledWith({title: COPY.replaceTitle, confirmLabel: COPY.replaceConfirm, danger: true,
+      body: 'The current chart (1,284 notes, 24 bars reviewed) will be replaced by 1,402 notes from song.gp5. The tempo map and sections stay as they are. Undo brings the current chart back.'});
+    expect(COPY.replaceBody({notes: 1, reviewed: 0, incoming: 2, source: ''})).toBe(
+      'The current chart (1 note) will be replaced by 2 notes. The tempo map and sections stay as they are. Undo brings the current chart back.');
+  });
+
+  test('an empty part imports with no question', async () => {
+    const ts = await session();
+    const ask = vi.fn(async () => true);
+    const done = await importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: ts.session, confirmReplace: ask});
+    expect(ask).not.toHaveBeenCalled();
+    expect(done).toMatchObject({count: 1, replaced: false});
   });
 
   test('nothing inside the recording imports nothing; a shared song refuses', async () => {

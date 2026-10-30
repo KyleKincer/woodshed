@@ -1,3 +1,9 @@
+Woodshed 2.0.1 makes it easy to replace or clear a drum chart.
+
+- Importing drums into a song that already has a chart now asks "Replace the drum chart?" and shows both note counts, instead of refusing. Replace chart swaps it in, and Undo brings the old chart back. This works from Edit · Chart → Part ▾ → Drum part from file… and from Find a chart's Use map + drum chart.
+- Part ▾ → Clear drum chart… removes every note and reviewed mark in one undoable step. The tempo map, meters and sections stay.
+- Press ⌘A (Ctrl+A) to select the bar, and again to select the whole part. Shift+→/← and Shift-click select a range of bars with their notes. Delete or Backspace removes them. Edit ▾ has Select all bars and Delete selected notes.
+
 Woodshed 2.0.0 is a redesign built around practising: one Stage you can read from the drum throne, a Library built to pick up where you left off, and editing kept out of the way until you ask for it.
 
 - **The Stage.** Opening a song shows the music full size with large readouts for the section, the next section, bar and beat, beat lamps, speed, loop and mix. On a laptop they sit in a right-hand rail; on an iPad in portrait they sit in a band above the music, with a dock of controls at the bottom. The Stage is always dark and uses the Atkinson Hyperlegible typeface. Distance (Near, Stand, Kit) scales the readouts and the chart for how far away you are.
