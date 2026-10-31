@@ -209,7 +209,7 @@ module.exports = [
       await page.waitForSelector('[role=menu]', {state: 'visible'});
       const rows = await menuLabels(page);
       const want = ['View', 'Display', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
-        'Share…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts'];
+        'Share…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts'];
       t.expect(JSON.stringify(rows) === JSON.stringify(want), `the ⋯ menu's rows (got ${JSON.stringify(rows)})`);
       const caps = await page.$$eval('[role=menu] .ui-menu-item', (els) => Object.fromEntries(els.map((el) => [el.querySelector('.ui-menu-label').textContent, el.getAttribute('aria-keyshortcuts')]).filter(([, k]) => k)));
       t.expect(caps.Focus === 'F' && caps['Spots…'] === 'J' && caps['Edit map'] === 'E' && caps['Keyboard shortcuts'] === '?', `key-caps (got ${JSON.stringify(caps)})`);

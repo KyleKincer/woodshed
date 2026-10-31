@@ -172,7 +172,7 @@
     flex-basis: 100%;
     max-width: 480px;
   }
-  .settings-export-progress { font-size: var(--fs-14); }
+  .settings-value.settings-export-progress { font-size: var(--fs-14); }
 
   /* Playback cache: "412 MB · Clear". */
   .settings-cache {

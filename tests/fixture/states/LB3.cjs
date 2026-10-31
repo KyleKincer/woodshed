@@ -89,7 +89,7 @@ const clickToastAction = async (page, label) => page.locator('.ui-toast').getByR
 // Select (D49) is offered while the view renders the selection (its bar is mounted): home.js's wiring is an I2b
 // handoff, so the app's menu starts with Practice until it lands, then with Select.
 const hostsSelection = page => page.evaluate(() => !!document.querySelector('[data-testid=selection-bar]'));
-const CARD_MENU = ['Select', 'Practice', 'Edit details…', 'Edit chart', 'Edit map', 'Unpin', 'Share…', 'Add to setlist', 'Re-split…', 'Open original source', 'Delete…'];
+const CARD_MENU = ['Select', 'Practice', 'Edit details…', 'Edit chart', 'Edit map', 'Unpin', 'Share…', 'Export…', 'Add to setlist', 'Re-split…', 'Open original source', 'Delete…'];
 
 module.exports = [
   // ------------------------------------------------------------------ the card menu (the app)

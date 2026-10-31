@@ -50,7 +50,7 @@
     .ui-button-sublabel,
     .ui-button-reason { font-size: var(--fs-14); }
   }
-  .ui-button-kbd {
+  kbd.ui-button-kbd {
     font: var(--fw-semibold) var(--fs-12)/1 var(--font-mono);
     padding: 3px var(--s1);
     border: 1px solid var(--line);

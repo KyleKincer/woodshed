@@ -1,6 +1,6 @@
 {
   "name": "woodshed",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "description": "Practice along to songs — pull a track, split it into stems with Demucs, and play back with per-stem mute/solo, waveforms, looping and speed control.",
@@ -10,7 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:convex": "convex dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/check-layer-order.mjs dist/index.html",
     "preview": "vite preview",
     "deploy": "convex deploy --cmd 'npm run build'",
     "companion": "node companion/server.mjs",
