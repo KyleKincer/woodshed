@@ -4,14 +4,15 @@
 // open), the Library bar, and the Phone remote dialog's QR code.
 import {afterEach, describe, expect, test, vi} from 'vitest';
 import qrcode from 'qrcode-generator';
-import {HEARTBEAT_MS, STALE_MS} from '../shared/remote.ts';
+import {COMMAND_TTL_MS, HEARTBEAT_MS, STALE_MS} from '../shared/remote.ts';
 import {signal} from '../src/app/store.js';
-import {COPY as HOST_COPY, deviceName, hostIdOf, remoteState, startRemoteHost} from '../src/remote/remote-host.js';
+import {COPY as HOST_COPY, LINGER_MS, WATCH_MS, deviceName, hostIdOf, hostStatus, learnServerTime, remoteState, resetServerTime,
+  startRemoteHost} from '../src/remote/remote-host.js';
 import {COPY as PAGE_COPY, liveHosts, mount, pickHost} from '../src/remote/remote-page.js';
 import {COPY as BAR_COPY, mountRemoteBar} from '../src/remote/remote-bar.js';
-import {qrSvg, remoteUrl} from '../src/remote/remote-sheet.js';
+import {COPY as SHEET_COPY, RECHECK_MS, openRemoteSheet, qrSvg, remoteUrl} from '../src/remote/remote-sheet.js';
 
-afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); });
+afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); resetServerTime(); });
 
 /** prefs whose get() reads a signal, as the app's does (effects follow it). */
 function reactivePrefs(data = {}) {
@@ -42,13 +43,43 @@ function timers() {
   };
 }
 
-function fakeApi() {
+/** A Web Locks stand-in shared by the tabs of one browser: one holder per name, the others wait in turn. */
+function fakeLocks() {
+  const held = new Set(), waiting = [];
+  function grant() {
+    for (const w of [...waiting]) {
+      if (held.has(w.name)) continue;
+      waiting.splice(waiting.indexOf(w), 1);
+      held.add(w.name);
+      Promise.resolve(w.fn({name: w.name})).then(w.resolve, w.reject).finally(() => { held.delete(w.name); grant(); });
+    }
+  }
+  return {
+    request: (name, {signal: abort, ifAvailable = false} = {}, fn) => new Promise((resolve, reject) => {
+      const w = {name, fn, resolve, reject};
+      // ifAvailable: granted only when nothing holds or waits for the name; otherwise fn(null) at once.
+      if (ifAvailable && (held.has(name) || waiting.some(o => o.name === name))) {
+        Promise.resolve().then(() => fn(null)).then(resolve, reject);
+        return;
+      }
+      abort?.addEventListener('abort', () => {
+        if (!waiting.includes(w)) return;
+        waiting.splice(waiting.indexOf(w), 1);
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+      waiting.push(w);
+      void Promise.resolve().then(grant);
+    }),
+  };
+}
+
+function fakeApi(serverNow = () => 0) {
   const calls = [];
   let onCommands = null;
   return {
     calls,
     push(value) { onCommands?.(value); },
-    announce: vi.fn(async a => { calls.push(['announce', a]); return null; }),
+    announce: vi.fn(async a => { calls.push(['announce', a]); return {now: serverNow()}; }),
     close: vi.fn(async a => { calls.push(['close', a]); return null; }),
     publish: vi.fn(async a => { calls.push(['publish', a]); return null; }),
     ack: vi.fn(async a => { calls.push(['ack', a]); return null; }),
@@ -69,17 +100,18 @@ function fakeSession({readOnly = false} = {}) {
   };
 }
 
-function hostBed({allow = true, readOnly = false} = {}) {
+/** One tab hosting. `skew`: the server's clock minus this device's. `locks`: the browser's Web Locks (none: as without). */
+function hostBed({allow = true, readOnly = false, skew = 0, locks = null} = {}) {
   const store = {stage: signal(null)};
   const registry = {run: vi.fn(() => true), state: () => ({enabled: false})};
-  const api = fakeApi();
+  let clock = 1_000_000;
+  const api = fakeApi(() => clock + skew);
   const prefs = reactivePrefs({remote: {allow, hostId: 'this-device-1', last: null}});
   const t = timers();
-  let clock = 1_000_000;
   const feedback = {status: vi.fn()};
   const session = fakeSession({readOnly});
   const stop = startRemoteHost({store, registry, api, prefs, feedback, platform: {isMac: true},
-    getSession: async () => session, setTimer: t.setTimer, clearTimer: t.clearTimer, now: () => clock});
+    getSession: async () => session, setTimer: t.setTimer, clearTimer: t.clearTimer, now: () => clock, locks});
   return {store, registry, api, prefs, t, feedback, session, stop, advance: ms => { clock += ms; }, now: () => clock};
 }
 const flush = () => new Promise(r => setTimeout(r, 0));
@@ -99,8 +131,97 @@ describe('the host', () => {
     await flush();
     expect(b.api.announce.mock.calls.filter(([a]) => a.fresh)).toHaveLength(1);
     b.store.stage.value = null;
+    expect(b.api.close).not.toHaveBeenCalled();   // a next song may follow
+    b.t.tick(LINGER_MS);
     expect(b.api.close).toHaveBeenCalledWith({hostId: 'this-device-1'});
     expect(b.t.count).toBe(0);
+    b.stop();
+  });
+
+  test('the next song updates the host in place: no close between songs, so a remote keeps following it', async () => {
+    const b = hostBed();
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    b.store.stage.value = null;                    // the Stage unmounts for the setlist's next song
+    b.session.id = 'song2';
+    b.session.song.value = {title: 'Low Tide'};
+    b.store.stage.value = {songId: 'song2'};
+    await flush();
+    b.t.tick(LINGER_MS);
+    expect(b.api.close).not.toHaveBeenCalled();
+    expect(b.api.announce).toHaveBeenLastCalledWith(expect.objectContaining({songId: 'song2', title: 'Low Tide', fresh: true}));
+    b.api.push({watchedAt: b.now(), commands: []});   // the row kept watchedAt: publishing goes on at once
+    expect(b.api.publish).toHaveBeenCalledTimes(1);
+    b.stop();
+  });
+
+  test('two tabs of one browser share the host id, so one hosts (a Web Lock) and the other takes over after it', async () => {
+    const locks = fakeLocks();
+    const a = hostBed({locks}), b = hostBed({locks});
+    a.store.stage.value = {songId: 'song1'};
+    await flush();
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    expect(a.api.announce).toHaveBeenCalledTimes(1);
+    expect(b.api.announce).not.toHaveBeenCalled();
+    expect(b.api.subscribeCommands).not.toHaveBeenCalled();   // so a phone's Play runs in one tab only
+    a.store.stage.value = null;
+    a.t.tick(LINGER_MS);
+    await flush();
+    expect(a.api.close).toHaveBeenCalledWith({hostId: 'this-device-1'});
+    expect(b.api.announce).toHaveBeenCalledWith(expect.objectContaining({fresh: true}));
+    expect(b.api.subscribeCommands).toHaveBeenCalledTimes(1);
+    a.store.stage.value = {songId: 'song1'};     // tab A opens a song again: it waits for B
+    await flush();
+    expect(a.api.announce).toHaveBeenCalledTimes(1);
+    a.stop();
+    b.stop();
+    const refused = hostBed({locks: {request: async () => { throw new DOMException('No locks here', 'SecurityError'); }}});
+    refused.store.stage.value = {songId: 'song1'};   // Web Locks that fail: it hosts, as without them
+    await flush();
+    expect(refused.api.announce).toHaveBeenCalledTimes(1);
+    refused.stop();
+  });
+
+  test('a tab that waits while another one hosts says so, and hosts once that tab lets go', async () => {
+    const locks = fakeLocks();
+    let release;
+    void locks.request('woodshed-remote-host:this-device-1', {}, () => new Promise(r => { release = r; }));   // the other tab
+    await flush();
+    const b = hostBed({locks});
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    expect(hostStatus.peek()).toEqual({hosting: false, hostId: 'this-device-1', watchedAt: null, elsewhere: true});
+    expect(b.api.announce).not.toHaveBeenCalled();
+    release();
+    await flush();
+    await flush();
+    expect(b.api.announce).toHaveBeenCalledTimes(1);
+    expect(hostStatus.peek()).toEqual({hosting: true, hostId: 'this-device-1', watchedAt: null});
+    b.stop();
+    const c = hostBed({locks});                           // waiting, then the song closes: the line goes too
+    void locks.request('woodshed-remote-host:this-device-1', {}, () => new Promise(r => { release = r; }));
+    await flush();
+    c.store.stage.value = {songId: 'song1'};
+    await flush();
+    expect(hostStatus.peek().elsewhere).toBe(true);
+    c.store.stage.value = null;
+    await flush();
+    expect(hostStatus.peek()).toEqual({hosting: false, hostId: 'this-device-1', watchedAt: null});
+    c.stop();
+    release();
+  });
+
+  test('a page restored from the back/forward cache hosts again', async () => {
+    const b = hostBed();
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    globalThis.dispatchEvent(Object.assign(new Event('pagehide'), {persisted: true}));
+    expect(b.api.close).toHaveBeenCalledTimes(1);
+    globalThis.dispatchEvent(Object.assign(new Event('pageshow'), {persisted: true}));
+    await flush();
+    expect(b.api.announce.mock.calls.filter(([a]) => a.fresh)).toHaveLength(2);
+    expect(b.api.subscribeCommands).toHaveBeenCalledTimes(2);
     b.stop();
   });
 
@@ -122,13 +243,34 @@ describe('the host', () => {
     const b = hostBed();
     b.store.stage.value = {songId: 'song1'};
     await flush();
-    const commands = [{id: 'c1', command: 'transport.playStop', sentAt: 1}, {id: 'c2', command: 'library.deleteSongs', sentAt: 2}];
+    const commands = [{id: 'c1', command: 'transport.playStop', sentAt: b.now() - 200}, {id: 'c2', command: 'library.deleteSongs', sentAt: b.now() - 100}];
     b.api.push({watchedAt: null, commands});
     b.api.push({watchedAt: null, commands});   // the same rows again before the ack lands: not run twice
     expect(b.registry.run).toHaveBeenCalledTimes(1);
     expect(b.registry.run).toHaveBeenCalledWith('transport.playStop', {source: 'remote'});
     expect(b.api.ack).toHaveBeenCalledWith({hostId: 'this-device-1', ids: ['c1', 'c2']});
     expect(b.feedback.status).toHaveBeenCalledWith(HOST_COPY.controlled, {key: 'remote'});
+    b.stop();
+  });
+
+  test(`a command sent more than ${COMMAND_TTL_MS / 1000} s ago by the server's clock (this device slept) is acked, not run`, async () => {
+    const b = hostBed({skew: 120_000});            // this device's clock is two minutes slow
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    const server = b.now() + 120_000;
+    b.api.push({watchedAt: null, commands: [{id: 'old', command: 'transport.playStop', sentAt: server - COMMAND_TTL_MS - 1000},
+      {id: 'new', command: 'speed.up', sentAt: server - 1000}]});
+    expect(b.registry.run.mock.calls).toEqual([['speed.up', {source: 'remote'}]]);
+    expect(b.api.ack).toHaveBeenCalledWith({hostId: 'this-device-1', ids: ['old', 'new']});
+    b.stop();
+  });
+
+  test('a remote watching counts by the server\'s clock, so a host whose own clock is fast still publishes', async () => {
+    const b = hostBed({skew: -120_000});           // this device's clock is two minutes fast
+    b.store.stage.value = {songId: 'song1'};
+    await flush();
+    b.api.push({watchedAt: b.now() - 120_000, commands: []});
+    expect(b.api.publish).toHaveBeenCalledTimes(1);
     b.stop();
   });
 
@@ -187,6 +329,12 @@ describe('choosing a host', () => {
     expect(pickHost(hosts, {asked: 'gone', last: 'a'}).hostId).toBe('a');
     expect(pickHost(hosts, {}).hostId).toBe('b');
     expect(pickHost([], {})).toBeNull();
+  });
+  test('with nothing asked or remembered, the one followed now stays (not whichever heartbeat came last)', () => {
+    const hosts = liveHosts(rows, {now: 5000, self: 'me'});
+    expect(pickHost(hosts, {current: 'a'}).hostId).toBe('a');
+    expect(pickHost(hosts, {last: 'b', current: 'a'}).hostId).toBe('b');
+    expect(pickHost(hosts, {current: 'gone'}).hostId).toBe('b');
   });
 });
 
@@ -249,6 +397,56 @@ describe('the /remote page', () => {
     view.unmount();
   });
 
+  const two = (mac, ipad) => [{hostId: 'mac-1', name: 'MacBook', title: 'Glasshouse', seenAt: mac},
+    {hostId: 'ipad-1', name: 'iPad', title: 'Low Tide', seenAt: ipad}];
+  const pageCtx = (api, prefs, more = {}) => ({api, prefs, now: () => 10_000, setTimer: () => 1, clearTimer: () => {}, haptic: () => {},
+    wakeLock: {request: async () => null}, ...more});
+
+  test('a pick in the Device menu wins over ?host= and stays picked as the hosts heartbeat', async () => {
+    const api = pageApi();
+    const prefs = reactivePrefs({remote: {hostId: 'phone-self-1', last: null}});
+    const router = {setQuery: vi.fn()};
+    const el = document.body.appendChild(document.createElement('div'));
+    const view = await mount(el, {query: {host: 'mac-1'}}, pageCtx(api, prefs, {router}));
+    api.emitHosts(two(9_000, 9_500));
+    expect(el.querySelector('.remote-song').textContent).toBe('Glasshouse');
+    const picker = el.querySelector('.remote-picker');
+    picker.value = 'ipad-1';
+    picker.dispatchEvent(new Event('change'));
+    expect(el.querySelector('.remote-song').textContent).toBe('Low Tide');
+    api.emitHosts(two(9_900, 9_600));              // a heartbeat
+    expect(el.querySelector('.remote-song').textContent).toBe('Low Tide');
+    expect(prefs.get('remote.last')).toBe('ipad-1');
+    expect(router.setQuery).toHaveBeenCalledWith({host: 'ipad-1'});
+    view.unmount();
+  });
+
+  test('with two hosts and nothing remembered it stays on the one it follows while both heartbeat', async () => {
+    const api = pageApi();
+    const el = document.body.appendChild(document.createElement('div'));
+    const view = await mount(el, {query: {}}, pageCtx(api, reactivePrefs({remote: {hostId: 'phone-self-1', last: null}})));
+    api.emitHosts(two(9_000, 9_500));
+    expect(el.querySelector('.remote-song').textContent).toBe('Low Tide');
+    api.emitHosts(two(9_900, 9_500));              // the Mac heartbeats
+    api.emitHosts(two(9_900, 9_950));
+    expect(el.querySelector('.remote-song').textContent).toBe('Low Tide');
+    expect(api.subscribeView).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  test('a phone whose clock is fast still sees the hosts: liveness is by the server\'s clock, which watch returns', async () => {
+    const api = pageApi();
+    api.watch = vi.fn(async () => ({now: 10_000 - 120_000}));   // this phone is two minutes fast
+    const el = document.body.appendChild(document.createElement('div'));
+    const view = await mount(el, {query: {}}, pageCtx(api, reactivePrefs({remote: {hostId: 'phone-self-1'}})));
+    expect(api.watch).toHaveBeenCalledWith({});      // no host followed yet: just the server's time
+    api.emitHosts([{hostId: 'mac-1', name: 'MacBook', title: 'Glasshouse', seenAt: 10_000 - 121_000}]);
+    await flush();
+    expect(el.querySelector('.remote').dataset.state).toBe('host');
+    expect(api.watch).toHaveBeenLastCalledWith({hostId: 'mac-1'});
+    view.unmount();
+  });
+
   test('a host that closed its song says so', async () => {
     const api = pageApi();
     api.send = vi.fn(async () => { throw Object.assign(new Error('gone'), {code: 'not_found'}); });
@@ -281,9 +479,64 @@ describe('the Library bar', () => {
     expect(router.navigate).toHaveBeenCalledWith('/remote?host=mac-1');
     bar.destroy();
   });
+
+  test('a device whose clock is fast still shows it: it asks the server\'s time once', async () => {
+    let emit;
+    const api = {subscribeHosts: vi.fn(fn => { emit = fn; return () => {}; }), watch: vi.fn(async () => ({now: 10_000 - 120_000}))};
+    const host = document.body.appendChild(document.createElement('div'));
+    const bar = mountRemoteBar(host, {api, prefs: reactivePrefs({remote: {hostId: 'this-device-1'}}), now: () => 10_000,
+      setTimer: () => 1, clearTimer: () => {}});
+    emit([{hostId: 'mac-1', name: 'MacBook', title: 'Glasshouse', seenAt: 10_000 - 121_000}]);
+    await flush();
+    expect(api.watch).toHaveBeenCalledWith({});
+    expect(bar.el.hidden).toBe(false);
+    bar.destroy();
+    mountRemoteBar(host, {api, prefs: reactivePrefs({remote: {hostId: 'this-device-1'}}), now: () => 10_000,
+      setTimer: () => 1, clearTimer: () => {}}).destroy();
+    expect(api.watch).toHaveBeenCalledTimes(1);      // known now
+  });
 });
 
 describe('the Phone remote dialog', () => {
+  test('"Your phone is connected." clears once the phone stops watching, by the server\'s clock', async () => {
+    let clock = 1_000_000;
+    learnServerTime({now: clock - 120_000}, clock);   // this device's clock is two minutes fast
+    const watchedAt = clock - 120_000 - 1000;
+    const t = timers();
+    const closed = openRemoteSheet({prefs: reactivePrefs({remote: {allow: true, hostId: 'mac-host-1'}}), origin: 'https://woodshed.example',
+      status: signal({hosting: true, hostId: 'mac-host-1', watchedAt}), platform: {isMac: true}, now: () => clock,
+      setTimer: t.setTimer, clearTimer: t.clearTimer});
+    const line = document.querySelector('.remote-sheet-status');
+    expect(line.textContent).toBe(SHEET_COPY.connected);
+    clock += WATCH_MS;                               // no watch since: the phone left
+    t.tick(RECHECK_MS);
+    expect(line.textContent).toBe(SHEET_COPY.waiting);
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === SHEET_COPY.done).click();
+    await closed;
+    expect(t.count).toBe(0);
+  });
+
+  test('the status line (a live region) is rewritten only when it changes, and names another tab that hosts', async () => {
+    const t = timers();
+    const status = signal({hosting: false, hostId: 'mac-host-1', watchedAt: null});
+    const closed = openRemoteSheet({prefs: reactivePrefs({remote: {allow: true, hostId: 'mac-host-1'}}), origin: 'https://woodshed.example',
+      status, platform: {isMac: true}, now: () => 1_000_000, setTimer: t.setTimer, clearTimer: t.clearTimer});
+    const line = document.querySelector('.remote-sheet-status');
+    expect(line.textContent).toBe(SHEET_COPY.waiting);
+    const writes = [];
+    const observer = new MutationObserver(list => writes.push(...list));
+    observer.observe(line, {childList: true, characterData: true, subtree: true});
+    t.tick(RECHECK_MS);
+    t.tick(RECHECK_MS);
+    await Promise.resolve();
+    expect(writes).toHaveLength(0);
+    status.value = {hosting: false, hostId: 'mac-host-1', watchedAt: null, elsewhere: true};
+    expect(line.textContent).toBe(SHEET_COPY.elsewhere);
+    observer.disconnect();
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === SHEET_COPY.done).click();
+    await closed;
+  });
+
   test('the QR code encodes the remote link for this device', () => {
     const url = remoteUrl('mac-host-1', 'https://woodshed.kylekincer.com/');
     expect(url).toBe('https://woodshed.kylekincer.com/remote?host=mac-host-1');

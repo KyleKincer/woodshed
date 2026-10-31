@@ -262,13 +262,14 @@ export default defineSchema({
   // A device with a song open on the Stage announces itself to its account; any other signed-in device of
   // the account can control it, with no pairing. Light presence (what the remote's picker and the Library
   // bar read), written on a song change and every heartbeat. Queries never read the clock: clients compare
-  // `seenAt` with their own (shared/remote.ts STALE_MS).
+  // `seenAt` with the server's clock as they estimate it (shared/remote.ts STALE_MS). `by_seenAt` is how the
+  // hourly cleanup finds the expired ones.
   remoteHosts: defineTable({
     userId: v.string(), hostId: v.string(), name: v.string(), platform: v.optional(v.string()),
     songId: v.optional(v.id('songs')), title: v.string(), artist: v.optional(v.string()), seenAt: v.number(),
     // When a remote last had this host open (`remote.watch`): the host publishes its state only while watched.
     watchedAt: v.optional(v.number()),
-  }).index('by_userId', ['userId']).index('by_userId_and_hostId', ['userId', 'hostId']),
+  }).index('by_userId', ['userId']).index('by_userId_and_hostId', ['userId', 'hostId']).index('by_seenAt', ['seenAt']),
   // High-churn playback state, kept off `remoteHosts` (written as bars pass); only an open remote reads it.
   remoteStates: defineTable({
     hostRef: v.id('remoteHosts'), userId: v.string(), state: remoteStateValidator, updatedAt: v.number(),

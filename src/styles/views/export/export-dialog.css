@@ -1,6 +1,6 @@
-/* The Export song dialog's body (src/export/export-dialog.js): the lead, the stem boxes and format, the
- * extra files, the size, Export / Cancel and the status line. The frame, title and Close come from the Dialog
- * primitive. */
+/* The Export song dialog's body (src/export/export-dialog.js): the lead, the audio's loading line, the stem
+ * boxes and format, the extra files, the size, Export / Cancel and the status line. The frame, title and
+ * Close come from the Dialog primitive. */
 @layer views {
   .export-dialog-body {
     display: flex;
@@ -71,5 +71,6 @@
   }
   .export-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
   .export-actions [hidden] { display: none; }
+  .export-audio[hidden],
   .export-status[hidden] { display: none; }
 }

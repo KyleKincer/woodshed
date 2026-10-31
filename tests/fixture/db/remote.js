@@ -2,7 +2,8 @@
 // `remoteHosts` ({hostId, userId, name, platform?, songId?, title, artist?, seenAt, watchedAt?}),
 // `remoteStates` ({hostId: state}) and `remoteCommands` ({id, hostId, command, sentAt}). Same rules and coded
 // errors as the server: allowlisted commands (`invalid`), a host that is gone (`not_found`), MAX_PENDING
-// waiting commands, MAX_HOSTS hosts. The fixture has one user, so "the account" is db.user.
+// waiting commands, MAX_HOSTS hosts; `announce` and `watch` return the server's time ({now}). The fixture has
+// one user, so "the account" is db.user.
 //
 // fx-remote=host seeds one host (another device: "MacBook" with Glasshouse playing at the Chorus), so the
 // Library's remote bar and the /remote page have something to show in one tab.
@@ -42,18 +43,19 @@ export const handlers = {
   'remote:announce': ({hostId, name, platform, songId, title, artist, fresh}) => {
     if (!isHostId(hostId)) fail('invalid', 'Invalid remote host.');
     const d = lists();
+    const now = Date.now();
     const fields = {hostId, userId: userId(), name: String(name || 'Woodshed').slice(0, 60), platform, songId,
-      title: String(title || 'Untitled').slice(0, 200), artist, seenAt: Date.now()};
+      title: String(title || 'Untitled').slice(0, 200), artist, seenAt: now};
     const existing = hostOf(hostId);
     if (existing) {
       Object.assign(existing, fields);
       if (fresh) d.remoteCommands = d.remoteCommands.filter(c => c.hostId !== hostId);
-      return null;
+      return {now};
     }
     const mine = d.remoteHosts.filter(h => h.userId === userId()).sort((a, b) => a.seenAt - b.seenAt);
     while (mine.length >= MAX_HOSTS) remove(mine.shift().hostId);
     d.remoteHosts.push(fields);
-    return null;
+    return {now};
   },
   'remote:close': ({hostId}) => { if (hostOf(hostId)) remove(hostId); return null; },
   'remote:publish': ({hostId, state}) => { if (hostOf(hostId)) lists().remoteStates[hostId] = clone(state); return null; },
@@ -62,7 +64,7 @@ export const handlers = {
     const h = hostOf(hostId);
     return h ? {host: view(h), state: clone(lists().remoteStates[hostId] ?? null), updatedAt: h.seenAt} : null;
   },
-  'remote:watch': ({hostId}) => { const h = hostOf(hostId); if (h) h.watchedAt = Date.now(); return null; },
+  'remote:watch': ({hostId}) => { const h = hostOf(hostId), now = Date.now(); if (h) h.watchedAt = now; return {now}; },
   'remote:send': ({hostId, command}) => {
     if (!isRemoteCommand(command)) fail('invalid', 'That command can’t be sent to another device.');
     if (!hostOf(hostId)) fail('not_found', 'That device has closed the song.');

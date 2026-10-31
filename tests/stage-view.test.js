@@ -67,6 +67,7 @@ import {
 import {batch} from '../src/app/store.js';
 import {POPOVER_WIDTH, SHEETS, closeSheets, openSheet, openSheetName, setSheetModules} from '../src/stage/sheets/host.js';
 import {COPY, CONTROLS, loadingLabel, mixWord, resumeText} from '../src/stage/stage.copy.js';
+import {COPY as EXPORT_COPY} from '../src/export/export-dialog.js';
 import {SongMapStore} from '../src/js/song-map.js';
 import {fakeStemcache, FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
@@ -367,6 +368,30 @@ describe('the Stage commands (§3.2)', () => {
     const b = commandsBed(ts);
     expect(b.state('practice.undo')).toMatchObject({visible: true, enabled: false, reason: COPY.nothingToUndo});
     expect(b.state('practice.redo')).toMatchObject({enabled: false, reason: COPY.nothingToRedo});
+  });
+
+  test('Export song… while the audio loads opens the dialog at once; Export waits and the stems appear once it is ready', async () => {
+    let sign;
+    const signed = new Promise((resolve) => { sign = resolve; });
+    const media = {signKeys: vi.fn(async (keys) => { await signed; return Object.fromEntries(keys.map((k) => [k, `https://stems.invalid/${k}`])); })};
+    const ts = await session({load: false, media});
+    const b = commandsBed(ts);
+    expect(ts.session.load.peek().phase).not.toBe('ready');
+    expect(b.state('stage.export').enabled).toBe(true);
+    b.run('stage.export');
+    await settle();
+    const go = document.querySelector('.export-go');
+    expect(document.querySelector('.export-audio').textContent).toBe(EXPORT_COPY.loading);
+    expect(document.querySelector('.export-stems')).toBeNull();
+    expect(go.getAttribute('aria-disabled') === 'true' || go.disabled).toBe(true);
+    sign();
+    await ts.ready();
+    await settle();
+    expect(document.querySelector('.export-audio').hidden).toBe(true);
+    expect([...document.querySelectorAll('.export-stems input')].map((i) => i.value)).toEqual(ts.session.engine.tracks.map((t) => t.name));
+    expect(go.getAttribute('aria-disabled') === 'true' || go.disabled).toBe(false);
+    document.querySelector('dialog .ui-dialog-action')?.click();
+    await settle();
   });
 
   test('Re-split: web shows the desktop reason; desktop runs LB3’s dialog for the session’s song or args.songId', async () => {

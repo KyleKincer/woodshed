@@ -3,9 +3,10 @@
 //
 //   mount(el, match, ctx) → {update(match), unmount()}
 //     ?host=<hostId> picks a device (the Stage's QR code links here with it); else the last one controlled
-//     here (prefs.remote.last) if it is still there, else the one seen most recently. A host counts while
-//     its heartbeat is fresh (shared/remote.ts STALE_MS by this device's clock); this device itself is never
-//     listed. With more than one, a Device menu switches between them.
+//     here (prefs.remote.last) if it is still there, else the one it already follows, else the one seen most
+//     recently. A pick in the Device menu (shown with more than one) replaces ?host= and is remembered. A host
+//     counts while its heartbeat is fresh (shared/remote.ts STALE_MS by the server's clock, which `watch`
+//     returns: with no host followed yet it is asked once for just that); this device itself is never listed.
 //   ctx: {router, api, prefs, feedback, now, setTimer, clearTimer, haptic, wakeLock} (tests replace them)
 //
 // What it shows comes from the host's own HUD (`remote.view`): the song, the section, next, the bar and
@@ -25,7 +26,7 @@ import {Button} from '../ui/button.js';
 import {h} from '../ui/h.js';
 import {icon} from '../ui/icon.js';
 import {InlineStatus} from '../ui/status.js';
-import {hostIdOf} from './remote-host.js';
+import {hostIdOf, knowsServerTime, learnServerTime, serverTime} from './remote-host.js';
 
 export const COPY = Object.freeze({
   title: 'Remote',
@@ -74,15 +75,19 @@ export const CONTROLS = Object.freeze([
 
 const PLAYING = new Set(['playing', 'counting']);
 
-/** The hosts a remote can control: fresh by this device's clock, never this device, most recent first. */
+/** The hosts a remote can control: fresh by `now` (the server's clock), never this device, most recent first. */
 export function liveHosts(rows, {now, self}) {
   return (Array.isArray(rows) ? rows : []).filter(r => r && r.hostId !== self && now - r.seenAt <= STALE_MS)
     .sort((a, b) => b.seenAt - a.seenAt);
 }
 
-/** The host to follow: the asked one, else the last one controlled here, else the most recent. */
-export function pickHost(hosts, {asked = null, last = null} = {}) {
-  return hosts.find(x => x.hostId === asked) ?? hosts.find(x => x.hostId === last) ?? hosts[0] ?? null;
+/**
+ * The host to follow: the asked one, else the last one controlled here, else the one followed now (so two
+ * hosts heartbeating in turn never swap it), else the most recent.
+ */
+export function pickHost(hosts, {asked = null, last = null, current = null} = {}) {
+  return hosts.find(x => x.hostId === asked) ?? hosts.find(x => x.hostId === last) ?? hosts.find(x => x.hostId === current)
+    ?? hosts[0] ?? null;
 }
 
 export async function mount(el, match, ctx = {}) {
@@ -108,7 +113,12 @@ export async function mount(el, match, ctx = {}) {
   const back = h('a', {class: 'remote-back', href: '/', 'data-link': ''}, icon('chevron-left'), h('span', {}, COPY.back));
   back.addEventListener('click', (e) => { if (ctx.router?.navigate) { e.preventDefault(); ctx.router.navigate('/'); } });
   const picker = h('select', {class: 'remote-picker', attrs: {'aria-label': COPY.device}});
-  picker.addEventListener('change', () => follow(picker.value, {remember: true}));
+  // A pick is the asked host from now on (and in the URL), so the next hosts update keeps it.
+  picker.addEventListener('change', () => {
+    asked = picker.value;
+    ctx.router?.setQuery?.({host: asked});
+    follow(asked, {remember: true});
+  });
   const top = h('header', {class: 'remote-top'}, back, picker);
 
   const empty = h('div', {class: 'remote-empty'},
@@ -172,7 +182,7 @@ export async function mount(el, match, ctx = {}) {
   // ---------- painting ----------
   function paint() {
     if (destroyed) return;
-    const hosts = liveHosts(rows, {now: now(), self});
+    const hosts = liveHosts(rows, {now: serverTime(now()), self});
     const host = hosts.find(x => x.hostId === hostId) ?? null;
     root.dataset.state = rows === null ? 'loading' : host ? 'host' : 'none';
     empty.hidden = !!host;
@@ -203,7 +213,10 @@ export async function mount(el, match, ctx = {}) {
 
   // ---------- following a host ----------
   function watchNow() {
-    if (hostId && doc.visibilityState !== 'hidden') void Promise.resolve(api.watch({hostId})).catch(() => {});
+    if (doc.visibilityState === 'hidden' || (!hostId && knowsServerTime())) return;
+    // Liveness is judged by the server's clock, which `watch` returns; with no host yet it only reads that.
+    void Promise.resolve(api.watch(hostId ? {hostId} : {}))
+      .then((result) => { if (learnServerTime(result, now()) && !destroyed) choose(); }).catch(() => {});
   }
   function follow(next, {remember = false} = {}) {
     if (next === hostId) { paint(); return; }
@@ -219,14 +232,15 @@ export async function mount(el, match, ctx = {}) {
     paint();
   }
   function choose() {
-    const hosts = liveHosts(rows, {now: now(), self});
-    const want = pickHost(hosts, {asked, last: prefs.get('remote.last')});
+    const hosts = liveHosts(rows, {now: serverTime(now()), self});
+    const want = pickHost(hosts, {asked, last: prefs.get('remote.last'), current: hostId});
     if (want && want.hostId === asked) prefs.set('remote.last', asked);
     follow(want?.hostId ?? null);
   }
   const offHosts = api.subscribeHosts((value) => { rows = Array.isArray(value) ? value : []; choose(); }, () => { rows = rows ?? []; paint(); });
-  // Staleness is by this device's clock: re-check while nothing else changes; the watch heartbeat rides along.
+  // Staleness comes with time alone: re-check while nothing else changes; the watch heartbeat rides along.
   watchTimer = setTimer(() => { choose(); watchNow(); }, HEARTBEAT_MS);
+  watchNow();
 
   async function lockScreen() {
     try { wake = await (ctx.wakeLock ?? globalThis.navigator?.wakeLock)?.request?.('screen'); } catch { wake = null; }

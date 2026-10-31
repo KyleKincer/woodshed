@@ -466,7 +466,8 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
       run: (c) => stageOf(c).share(),
     },
     {
-      // Export song… (src/export): stems, a backing track, the tempo map and the drum chart as one ZIP.
+      // Export song… (src/export): stems, a backing track, the tempo map and the drum chart as one ZIP. It opens
+      // at once while the audio loads: the dialog says so and adds the stems when they have decoded.
       id: 'stage.export', title: C.export, group: 'App', scopes: [S], icon: 'download',
       menu: {label: C.export, electron: 'File'},
       palette: {keywords: ['export', 'download', 'stems', 'wav', 'midi', 'daw', 'guitar pro', 'backing track']},

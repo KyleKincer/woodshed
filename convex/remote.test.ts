@@ -6,7 +6,7 @@ import { ConvexError } from 'convex/values';
 import { describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { api, internal } from './_generated/api';
-import { EXPIRE_MS } from './remote';
+import { CLEANUP_BATCH, EXPIRE_MS } from './remote';
 import { MAX_HOSTS, MAX_PENDING } from '../shared/remote';
 
 const modules = import.meta.glob('./**/*.ts');
@@ -64,6 +64,33 @@ describe('hosts', () => {
     // Publishing for a host that never announced does nothing.
     await alex.mutation(api.remote.publish, { hostId: 'alex-host-1', state: STATE });
     expect(await alex.query(api.remote.view, { hostId: 'alex-host-1' })).toBeNull();
+  });
+
+  test('announce and watch return the server\'s clock (clients judge freshness by it); watch with no host only reads it', async () => {
+    const { kyle } = await setup();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(5_000_000);
+    expect(await kyle.mutation(api.remote.announce, { hostId: 'mac-host-1', name: 'MacBook', title: 'Glasshouse', fresh: true })).toEqual({ now: 5_000_000 });
+    vi.setSystemTime(5_020_000);
+    expect(await kyle.mutation(api.remote.watch, {})).toEqual({ now: 5_020_000 });
+    expect((await kyle.query(api.remote.commands, { hostId: 'mac-host-1' })).watchedAt).toBeNull();
+    expect(await kyle.mutation(api.remote.watch, { hostId: 'mac-host-1' })).toEqual({ now: 5_020_000 });
+    expect((await kyle.query(api.remote.commands, { hostId: 'mac-host-1' })).watchedAt).toBe(5_020_000);
+    // The next song is a fresh announce of the same row: still watched.
+    await kyle.mutation(api.remote.announce, { hostId: 'mac-host-1', name: 'MacBook', title: 'Low Tide', fresh: true });
+    expect((await kyle.query(api.remote.commands, { hostId: 'mac-host-1' })).watchedAt).toBe(5_020_000);
+    vi.useRealTimers();
+  });
+
+  test('long names are cut on whole characters, never through an emoji', async () => {
+    const { kyle } = await setup();
+    const long = 'a'.repeat(199) + '\u{1F3B8}b';   // the guitar straddles the 200th code unit
+    await kyle.mutation(api.remote.announce, { hostId: 'mac-host-1', name: 'MacBook', title: long, artist: long });
+    const [host] = await kyle.query(api.remote.hosts, {});
+    expect(host.title).toBe('a'.repeat(199) + '\u{1F3B8}');
+    expect(host.artist).toBe('a'.repeat(199) + '\u{1F3B8}');
+    await kyle.mutation(api.remote.publish, { hostId: 'mac-host-1', state: { ...STATE, section: 'a'.repeat(79) + '\u{1D11E}b' } });
+    expect((await kyle.query(api.remote.view, { hostId: 'mac-host-1' }))?.state?.section).toBe('a'.repeat(79) + '\u{1D11E}');
   });
 
   test(`at most ${MAX_HOSTS} hosts per account: a new one drops the one seen longest ago`, async () => {
@@ -149,5 +176,31 @@ describe('cleanup', () => {
     const leftovers = await t.run(async ctx => [
       ...(await ctx.db.query('remoteStates').collect()), ...(await ctx.db.query('remoteCommands').collect())]);
     expect(leftovers).toEqual([]);
+  });
+
+  test(`removes ${CLEANUP_BATCH} hosts per run by the seenAt index and runs again while more remain`, async () => {
+    const { t, kyle } = await setup();
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000_000);
+    const userId = 'many-hosts-user';
+    const expired = CLEANUP_BATCH + 50;
+    await t.run(async ctx => {
+      for (let i = 0; i < expired; i++) {
+        const hostRef = await ctx.db.insert('remoteHosts', { userId, hostId: `old-host-${i}`, name: 'Old', title: 'x', seenAt: 1_000_000 + i });
+        await ctx.db.insert('remoteStates', { hostRef, userId, state: STATE, updatedAt: 1 });
+        await ctx.db.insert('remoteCommands', { hostRef, userId, command: 'transport.again', sentAt: 1 });
+      }
+    });
+    await kyle.mutation(api.remote.announce, { hostId: 'live-host-1', name: 'New', title: 'y' });
+    vi.setSystemTime(1_000_000 + EXPIRE_MS + expired + 1);
+    expect(await t.mutation(internal.remote.cleanup, {})).toEqual({ removed: CLEANUP_BATCH });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    const left = await t.run(async ctx => ({
+      hosts: (await ctx.db.query('remoteHosts').collect()).map(h => h.hostId),
+      states: (await ctx.db.query('remoteStates').collect()).length,
+      commands: (await ctx.db.query('remoteCommands').collect()).length,
+    }));
+    expect(left).toEqual({ hosts: ['live-host-1'], states: 0, commands: 0 });
   });
 });

@@ -15,6 +15,9 @@
 //                                                                   (ramps in 16th-note steps), meters, sections
 //   drumChartMidi(score, mapData, duration, {title}) → Uint8Array  the conductor track plus General MIDI drums
 //                                                                   on channel 10, on the same timeline
+//   tooSlowBar(mapData, duration) → index|null                     the first bar (measure index) slower than a
+//                                                                   MIDI tempo can be; the MIDI drifts from there
+//   mapSeconds(mapData) → number                                   where the map's last bar ends, in seconds
 //   guitarProFile(at, score, {title, artist}) → Uint8Array         Guitar Pro 7 (.gp) through alphaTab (`at`);
 //                                                                   it starts at the song's bar 1 (no lead-in)
 //   readme(facts) → string                                         README.txt
@@ -28,6 +31,8 @@ export const PPQ = 960;
 export const RAMP_STEP_Q = 0.25;
 /** A bar 1 this close to 0 s needs no lead-in. */
 const ALIGN_EPS = 0.0005;
+/** The slowest tempo a MIDI file can state: 0xFFFFFF µs (16.8 s) per quarter note. */
+const MAX_US = 0xffffff;
 
 const KIT_BY_ID = new Map(KIT.map(k => [k.id, k]));
 const encoder = new TextEncoder();
@@ -148,7 +153,7 @@ function meterOf(measure) {
 const timeSignature = (tick, {numerator, denominator}, pulse = 1) =>
   ({tick, order: 0, data: meta(0x58, [numerator, Math.round(Math.log2(denominator)), Math.max(1, Math.round(24 * pulse)), 8])});
 const tempoEvent = (tick, usPerQuarter) => {
-  const us = Math.max(1, Math.min(0xffffff, Math.round(usPerQuarter)));
+  const us = Math.max(1, Math.min(MAX_US, Math.round(usPerQuarter)));
   return {tick, order: 1, data: meta(0x51, [(us >> 16) & 255, (us >> 8) & 255, us & 255])};
 };
 
@@ -158,9 +163,13 @@ function conductor(mapData, duration, {title = ''} = {}) {
   const startTick = align.leadBars * align.leadQuarters * PPQ;
   const tickAt = q => startTick + q * PPQ;
   const events = [];
+  // A tempo slower than MAX_US is clamped, so every later bar comes early: the README names the first such bar.
+  let slowAt = null;
+  const slow = (q, us) => { if (slowAt === null && Math.round(us) > MAX_US) slowAt = q; };
   if (title) events.push({tick: 0, order: -1, data: textMeta(0x03, title)});
   if (align.leadBars) {
     events.push(timeSignature(0, align, pulseOf({numerator: align.numerator, denominator: align.denominator, length: fullLength(align)})));
+    slow(0, 60e6 / align.qpm);
     events.push(tempoEvent(0, 60e6 / align.qpm));
     events.push({tick: 0, order: 2, data: textMeta(0x06, 'Count-in')});
   }
@@ -182,6 +191,7 @@ function conductor(mapData, duration, {title = ''} = {}) {
   if (lastPin < end) segments.push({q0: Math.max(0, lastPin), q1: end, ramp: false, qps: c.tail});
   let lastUs = align.leadBars ? Math.round(60e6 / align.qpm) : null;
   const push = (q, us) => {
+    slow(q, us);
     const rounded = Math.round(us);
     if (rounded === lastUs) return;
     events.push(tempoEvent(tickAt(q), rounded));
@@ -200,7 +210,19 @@ function conductor(mapData, duration, {title = ''} = {}) {
   for (const section of sectionsOf(mapData, Number.isFinite(duration) ? duration : Infinity)) {
     if (section.label) events.push({tick: tickAt(starts[section.startBar]), order: 2, data: textMeta(0x06, section.name || section.label)});
   }
-  return {events, startTick, tickAt, starts, endTick: tickAt(end), align};
+  let slowBar = null;
+  if (slowAt !== null) { slowBar = 0; while (slowBar + 1 < starts.length && starts[slowBar + 1] <= slowAt + 1e-9) slowBar++; }
+  return {events, startTick, tickAt, starts, endTick: tickAt(end), align, slowBar};
+}
+
+export function tooSlowBar(mapData, duration) {
+  return conductor(mapData, duration).slowBar;
+}
+
+export function mapSeconds(mapData) {
+  const last = mapData.measures.length - 1;
+  if (last < 0) return 0;
+  return timeAt(compile(mapData), number(measureStarts(mapData.measures)[last]) + number(mapData.measures[last].length));
 }
 
 export function tempoMapMidi(mapData, duration, {title = ''} = {}) {
@@ -233,7 +255,11 @@ export function drumStrokes(score, mapData, tickAt, starts) {
     hits.forEach(({hit, kit, q}, n) => {
       const tick = tickAt(q), velocity = velocityOf(hit);
       const graces = hit.drag ? 2 : hit.flam ? 1 : 0;
-      for (let g = graces; g >= 1; g--) strokes.push({tick: tick - g * PPQ / 16, note: kit.midi, velocity: Math.max(1, Math.round(velocity * 0.55))});
+      // A grace before tick 0 (a flam on the first beat with no count-in) would stack on the main stroke: drop it.
+      for (let g = graces; g >= 1; g--) {
+        const at = tick - g * PPQ / 16;
+        if (at >= 0) strokes.push({tick: at, note: kit.midi, velocity: Math.max(1, Math.round(velocity * 0.55))});
+      }
       strokes.push({tick, note: kit.midi, velocity});
       const step = ROLL_TICKS[hit.roll];
       if (step) {
@@ -285,7 +311,7 @@ const seconds = s => `${(Math.round(s * 1000) / 1000).toFixed(3)} s`;
 
 /**
  * facts: {title, artist, date, sampleRate, stems: [names], backing: name|null, tempoMap: bool, drumMidi: bool,
- *         guitarPro: bool, original: bool, align}
+ *         guitarPro: bool, original: bool, align, pickup: bool, slowBar: tooSlowBar's index|null}
  */
 export function readme(f) {
   const lines = [];
@@ -303,12 +329,20 @@ export function readme(f) {
   const a = f.align;
   if (a && (f.tempoMap || f.drumMidi)) {
     lines.push('', 'Timing');
+    // A DAW counts a pickup as a bar of its own, between the count-in and the song's bar 1.
+    const bar1 = a.leadBars + (f.pickup ? 2 : 1), pickup = f.pickup ? ', then the pickup' : '';
     if (a.leadBars && !f.original) {
-      lines.push(`Everything shares one timeline. It starts with ${a.leadBars} count-in bar${a.leadBars === 1 ? '' : 's'} of ${a.numerator}/${a.denominator} at ${Math.round(a.qpm * 10) / 10} BPM, so the song's bar 1 is bar ${a.leadBars + 1} in your DAW. The WAV files start with ${seconds(a.padSeconds)} of silence to match.`);
+      lines.push(`Everything shares one timeline. It starts with ${a.leadBars} count-in bar${a.leadBars === 1 ? '' : 's'} of ${a.numerator}/${a.denominator} at ${Math.round(a.qpm * 10) / 10} BPM${pickup}, so the song's bar 1 is bar ${bar1} in your DAW. The WAV files start with ${seconds(a.padSeconds)} of silence to match.`);
     } else if (a.leadBars) {
-      lines.push(`The MIDI files start with ${a.leadBars} count-in bar${a.leadBars === 1 ? '' : 's'}, so the song's bar 1 is bar ${a.leadBars + 1}. The original stems are not padded: place them ${seconds(a.padSeconds)} after the start of the session.`);
+      lines.push(`The MIDI files start with ${a.leadBars} count-in bar${a.leadBars === 1 ? '' : 's'}${pickup}, so the song's bar 1 is bar ${bar1}. The original stems${f.backing ? ' and the backing track' : ''} are not padded: place them ${seconds(a.padSeconds)} after the start of the session.`);
+    } else if (f.pickup) {
+      lines.push('Everything shares one timeline: the pickup starts at 0:00, so the song\'s bar 1 is bar 2 in your DAW.');
     } else {
       lines.push('Everything shares one timeline: the song\'s bar 1 starts at 0:00.');
+    }
+    if (Number.isInteger(f.slowBar)) {
+      const bar = f.pickup && f.slowBar === 0 ? 'The pickup' : `The song's bar ${f.slowBar + (f.pickup ? 0 : 1)}`;
+      lines.push(`${bar} is too slow for a MIDI file (a quarter note there lasts more than 16.8 s). From there on, the MIDI files drift ahead of the audio.`);
     }
   }
   lines.push('');

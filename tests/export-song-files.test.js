@@ -7,7 +7,7 @@ import {KIT, fraction, number} from '../shared/notation.ts';
 import {compile, defaultSongMap, fromTimeline, measureStarts, normalize, timeAt} from '../shared/song-map.ts';
 import {parseMidiTempo} from '../src/js/tempo-import.js';
 import {
-  PPQ, alignment, drumChartMidi, guitarProFile, mixdown, readme, tempoMapMidi, wavChunks, wavHeader,
+  PPQ, alignment, drumChartMidi, drumStrokes, guitarProFile, mapSeconds, mixdown, readme, tempoMapMidi, tooSlowBar, wavChunks, wavHeader,
 } from '../src/export/song-files.js';
 import {demoScore} from './fixtures/drum-score.js';
 
@@ -118,6 +118,21 @@ describe('tempo map MIDI', () => {
     const {parsed, align} = expectAligned(map, tempoMapMidi(map, 14), 14);
     expect(parsed.measures[align.leadBars]).toMatchObject({numerator: 1, denominator: 4});
   });
+
+  test('a quarter note longer than MIDI can state (16.8 s): tooSlowBar names the bar the drift starts in', () => {
+    // Bar 9 (measure 8) is pinned across an 80 s break, so one quarter note lasts 20 s.
+    const measures = Array.from({length: 14}, (_, i) => measure(`m${i}`));
+    const map = normalize({version: 1, measures, pins: [
+      {position: fraction(0), time: 0}, {position: fraction(32), time: 16}, {position: fraction(36), time: 96}, {position: fraction(52), time: 104},
+    ]}, 104);
+    expect(tooSlowBar(map, 104)).toBe(8);
+    expect(tooSlowBar(defaultSongMap(30, 96, 4, 4, 0.85), 30)).toBeNull();
+  });
+
+  test('mapSeconds is where the last bar ends', () => {
+    expect(mapSeconds(defaultSongMap(16, 120))).toBeCloseTo(16, 9);
+    expect(mapSeconds(defaultSongMap(15, 120, 4, 4, 0.7))).toBeCloseTo(16.7, 9);
+  });
 });
 
 describe('drum chart MIDI', () => {
@@ -154,6 +169,19 @@ describe('drum chart MIDI', () => {
     expect(at(2 - 1 / 16)).toHaveLength(1);                       // the flam's grace
     expect(hits.filter(x => x.q >= 3 && x.q < 4)).toHaveLength(4); // a 16th roll across the beat
   });
+
+  test('a drag on the first beat with no count-in drops the graces that would fall before 0', () => {
+    const map = defaultSongMap(8, 120);
+    const id = map.measures[0].id;
+    const h = (offset, instrument, extra = {}) => ({id: `${instrument}${offset}`, offset: fraction(offset), instrument, voice: 1, accent: false, ghost: false, flam: false, sticking: '', velocity: 0.7, ...extra});
+    const score = {version: 2, title: '', timeline: {version: 1, measures: map.measures, anchors: []}, bars: [{measureId: id, coverage: 'progress', hits: [
+      h(0, 'snare', {drag: true}), h(2, 'snare', {drag: true}),
+    ]}]};
+    const strokes = drumStrokes(score, map, q => q * PPQ, measureStarts(map.measures).map(number));
+    expect(strokes.map(x => x.tick)).toEqual([0, 2 * PPQ - PPQ / 8, 2 * PPQ - PPQ / 16, 2 * PPQ]);
+    const hits = parseMidiTempo(drumChartMidi(score, map, 8), {duration: 20}).drums.hits.filter(x => x.midi === 38);
+    expect(hits.filter(x => Math.abs(x.q) < 1e-6)).toHaveLength(1);
+  });
 });
 
 describe('Guitar Pro', () => {
@@ -181,5 +209,26 @@ describe('README', () => {
     expect(text).toContain('1 count-in bar of 4/4 at 120 BPM, so the song\'s bar 1 is bar 2 in your DAW. The WAV files start with 1.300 s of silence');
     expect(text).toContain('Drum chart.gp');
     expect(readme({title: 'X', stems: ['drums'], tempoMap: true, align: alignment(defaultSongMap(8, 120), 8)})).toContain('bar 1 starts at 0:00');
+  });
+
+  test('counts a pickup as a DAW bar of its own', () => {
+    const facts = {title: 'X', stems: ['drums'], tempoMap: true, pickup: true, align: alignment(defaultSongMap(20, 120, 4, 4, 0.7), 20)};
+    expect(readme(facts)).toContain('1 count-in bar of 4/4 at 120 BPM, then the pickup, so the song\'s bar 1 is bar 3 in your DAW.');
+    expect(readme({...facts, original: true})).toContain('1 count-in bar, then the pickup, so the song\'s bar 1 is bar 3.');
+    expect(readme({...facts, align: alignment(defaultSongMap(8, 120), 8)})).toContain('the pickup starts at 0:00, so the song\'s bar 1 is bar 2 in your DAW.');
+  });
+
+  test('Original files: the backing track is named among the files that are not padded', () => {
+    const text = readme({title: 'X', stems: ['bass'], backing: 'Backing track (no drums).wav', original: true, tempoMap: true,
+      align: alignment(defaultSongMap(20, 120, 4, 4, 0.7), 20)});
+    expect(text).toContain('The original stems and the backing track are not padded: place them 1.300 s after the start of the session.');
+  });
+
+  test('names the bar where a tempo too slow for MIDI makes the MIDI files drift', () => {
+    const facts = {title: 'X', tempoMap: true, align: alignment(defaultSongMap(20, 120, 4, 4, 0.7), 20)};
+    expect(readme({...facts, slowBar: 8})).toContain('The song\'s bar 9 is too slow for a MIDI file (a quarter note there lasts more than 16.8 s). From there on, the MIDI files drift ahead of the audio.');
+    expect(readme({...facts, slowBar: 8, pickup: true})).toContain('The song\'s bar 8 is too slow');
+    expect(readme({...facts, slowBar: 0, pickup: true})).toContain('The pickup is too slow');
+    expect(readme({...facts, slowBar: null})).not.toContain('too slow');
   });
 });

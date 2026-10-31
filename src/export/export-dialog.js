@@ -12,6 +12,9 @@
 //   the size     "About 184 MB"
 //   [Export]     → "Writing drums.wav (1 of 5)…" with [Cancel]; done: "Saved <name>.zip." Errors stay inline.
 // Closing the dialog cancels an export in progress.
+// The Stage opens it while the audio may still be loading: until `session.load` is ready it says so, leaves the
+// stems, format and backing track out and keeps Export off, then adds them when the audio is ready. If the audio
+// fails to load it offers the MIDI and Guitar Pro files only.
 import '../styles/views/export/export-dialog.css';
 import * as appFeedback from '../app/feedback.js';
 import {Button} from '../ui/button.js';
@@ -47,18 +50,23 @@ export const COPY = Object.freeze({
   canceled: 'Export canceled.',
   failed: 'The export didn’t finish.',
   nothing: 'Choose at least one thing to export.',
+  loading: 'Loading the audio… Export is ready when it finishes.',
+  loadFailed: 'The audio couldn’t load, so the stems and backing track can’t be exported.',
 });
 
 let seq = 0;
+const peek = v => (v && typeof v.peek === 'function' ? v.peek() : v);
 
 export async function openExportDialog({session} = {}, deps = {}) {
   if (!session) return;
   const exportSong = deps.exportSong ?? runExport;
   const feedback = deps.feedback ?? appFeedback;
   const win = deps.window ?? globalThis.window;
-  const options = exportOptions(session);
+  let options = exportOptions(session);
   const id = `export-${++seq}`;
-  let controller = null, closed = false;
+  let controller = null, closed = false, phase = null;
+  // Export waits for the audio, or for it to fail (then only the MIDI and Guitar Pro files can be written).
+  const settled = () => phase === 'ready' || phase === 'error';
 
   const check = (name, label, {checked = true, disabled = false, note = '', type = 'checkbox', value = '', group = ''} = {}) => {
     const inputId = `${id}-${group || 'x'}-${name}`;
@@ -72,18 +80,17 @@ export async function openExportDialog({session} = {}, deps = {}) {
   };
   const fieldset = (legend, ...rows) => h('fieldset', {class: 'export-group'}, h('legend', {class: 'export-legend'}, legend), ...rows);
 
-  const stemBoxes = options.stems.map(s => check(`stem-${s.name}`, s.name, {group: 'stems', value: s.name}));
-  const wav = check('wav', COPY.wav, {type: 'radio', group: 'format', value: 'wav', note: COPY.wavNote});
-  const original = check('original', COPY.original, {type: 'radio', group: 'format', value: 'original', checked: false,
-    note: COPY.originalNote, disabled: !options.original});
-  const backing = options.canBacking ? check('backing', COPY.backing(options.backingName), {note: COPY.backingNote}) : null;
+  // The stems, the format and the backing track need the decoded audio (audioChoices builds them once it is
+  // ready); the map and the chart are known from the start.
+  let stemBoxes = [], wav = null, original = null, backing = null, stemsGroup = null, formatGroup = null;
   const tempoMap = check('tempo', COPY.tempoMap, {checked: options.mapped, disabled: !options.mapped,
     note: options.mapped ? COPY.tempoMapNote : COPY.needsGrid});
   const drumMidi = check('drum-midi', COPY.drumMidi, {checked: options.mapped && options.hasChart, disabled: !options.mapped || !options.hasChart,
     note: !options.hasChart ? COPY.needsChart : !options.mapped ? COPY.needsGrid : ''});
   const guitarPro = check('gp', COPY.guitarPro, {checked: options.hasChart, disabled: !options.hasChart, note: options.hasChart ? '' : COPY.needsChart});
-  const inputs = [...stemBoxes, wav, original, backing, tempoMap, drumMidi, guitarPro].filter(Boolean).map(c => c.input);
+  const inputs = () => [...stemBoxes, wav, original, backing, tempoMap, drumMidi, guitarPro].filter(Boolean).map(c => c.input);
 
+  const audio = InlineStatus({tone: 'info', text: '', className: 'export-audio'});
   const size = h('p', {class: 'export-size', attrs: {'aria-live': 'polite'}});
   const status = InlineStatus({tone: 'info', text: '', className: 'export-status'});
   const setStatus = (tone, text) => { status.el.hidden = !text; status.set({tone, text: text ?? ''}); };
@@ -91,7 +98,7 @@ export async function openExportDialog({session} = {}, deps = {}) {
 
   const choices = () => ({
     stems: stemBoxes.filter(c => c.input.checked).map(c => c.input.value),
-    format: original.input.checked ? 'original' : 'wav',
+    format: original?.input.checked ? 'original' : 'wav',
     backing: !!backing?.input.checked,
     tempoMap: tempoMap.input.checked && !tempoMap.input.disabled,
     drumMidi: drumMidi.input.checked && !drumMidi.input.disabled,
@@ -105,31 +112,60 @@ export async function openExportDialog({session} = {}, deps = {}) {
 
   function paint() {
     const busy = !!controller, c = choices();
-    for (const input of inputs) input.disabled = busy || input.dataset.locked === 'true';
+    for (const input of inputs()) input.disabled = busy || input.dataset.locked === 'true';
+    size.hidden = !settled();
     size.textContent = COPY.size(estimateBytes(options, c));
-    exportButton.set({disabled: busy || !anything(c), busy: busy ? COPY.exporting : false});
+    exportButton.set({disabled: busy || !settled() || !anything(c), busy: busy ? COPY.exporting : false});
     cancelButton.el.hidden = !busy;
   }
-  for (const input of inputs) {
-    if (input.disabled) input.dataset.locked = 'true';
-    input.addEventListener('change', () => { setStatus('info', ''); paint(); });
-  }
+  const watch = (box) => {
+    if (box.input.disabled) box.input.dataset.locked = 'true';
+    box.input.addEventListener('change', () => { setStatus('info', ''); paint(); });
+    return box;
+  };
+  [tempoMap, drumMidi, guitarPro].forEach(watch);
 
+  const also = fieldset(COPY.also, tempoMap.row, drumMidi.row, guitarPro.row);
   const body = h('div', {class: 'export-dialog-body'},
     h('p', {class: 'export-lead'}, COPY.lead),
-    options.stems.length ? fieldset(COPY.stems, h('div', {class: 'export-stems'}, ...stemBoxes.map(c => c.row))) : null,
-    options.stems.length ? fieldset(COPY.format, wav.row, original.row) : null,
-    fieldset(COPY.also, ...[backing, tempoMap, drumMidi, guitarPro].filter(Boolean).map(c => c.row)),
+    audio.el,
+    also,
     size,
     h('div', {class: 'export-actions'}, exportButton.el, cancelButton.el),
     status.el);
+
+  /** The stems, their format and the backing track, from the decoded audio. */
+  function audioChoices() {
+    for (const el of [stemsGroup, formatGroup, backing?.row]) el?.remove();
+    options = exportOptions(session);
+    stemBoxes = options.stems.map(s => watch(check(`stem-${s.name}`, s.name, {group: 'stems', value: s.name})));
+    wav = watch(check('wav', COPY.wav, {type: 'radio', group: 'format', value: 'wav', note: COPY.wavNote}));
+    original = watch(check('original', COPY.original, {type: 'radio', group: 'format', value: 'original', checked: false,
+      note: COPY.originalNote, disabled: !options.original}));
+    backing = options.canBacking ? watch(check('backing', COPY.backing(options.backingName), {note: COPY.backingNote})) : null;
+    stemsGroup = options.stems.length ? fieldset(COPY.stems, h('div', {class: 'export-stems'}, ...stemBoxes.map(c => c.row))) : null;
+    formatGroup = options.stems.length ? fieldset(COPY.format, wav.row, original.row) : null;
+    audio.el.after(...[stemsGroup, formatGroup].filter(Boolean));
+    if (backing) tempoMap.row.before(backing.row);
+  }
+  function showLoad(load) {
+    const next = load?.phase ?? null;
+    if (next === phase) return;   // progress within a phase
+    phase = next;
+    if (phase === 'ready') audioChoices();
+    audio.el.hidden = phase === 'ready';
+    audio.set(phase === 'error' ? {tone: 'warn', text: COPY.loadFailed} : {tone: 'info', text: phase === 'ready' ? '' : COPY.loading});
+    paint();
+  }
+  showLoad(peek(session.load));
+  const offLoad = session.load?.subscribe?.(showLoad);
 
   const dialog = Dialog({title: COPY.title(options.title), body, className: 'export-dialog', width: 520,
     actions: [{label: COPY.close, value: true, variant: 'secondary'}]});
   paint();
 
   function start() {
-    if (controller || closed) return;
+    if (controller || closed || !settled()) return;
     const c = choices();
     if (!anything(c)) { setStatus('warn', COPY.nothing); return; }
     controller = new AbortController();
@@ -161,9 +197,11 @@ export async function openExportDialog({session} = {}, deps = {}) {
     await dialog.closed;
   } finally {
     closed = true;
+    offLoad?.();
     controller?.abort();
     exportButton.destroy();
     cancelButton.destroy();
     status.destroy();
+    audio.destroy();
   }
 }

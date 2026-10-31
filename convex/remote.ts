@@ -6,10 +6,12 @@
 // HEARTBEAT_MS) and sends it commands (`send`). There is no pairing and no token: every function requires
 // the account, and a host only ever exists for its own account.
 //
-// Queries never read the clock: clients compare `seenAt` with their own clock (shared/remote.ts STALE_MS).
-// `cleanup` (hourly cron) drops hosts that stopped heartbeating more than a day ago with their state and
-// any commands they never ran.
+// Queries never read the clock: clients compare `seenAt`, `watchedAt` and `sentAt` with the server's clock as
+// they estimate it (`announce` and `watch` return the server's time; shared/remote.ts STALE_MS). `cleanup`
+// (hourly cron) drops hosts that stopped heartbeating more than a day ago with their state and any commands
+// they never ran.
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { getUserId, requireUserId } from './lib/auth';
@@ -19,8 +21,11 @@ import { MAX_HOSTS, MAX_PENDING, isHostId, isRemoteCommand } from '../shared/rem
 
 /** A host not seen for this long is removed by `cleanup`. */
 export const EXPIRE_MS = 24 * 60 * 60 * 1000;
+/** Hosts `cleanup` removes in one transaction; it runs again at once while more remain. */
+export const CLEANUP_BATCH = 100;
 
-const clip = (value: unknown, n: number) => String(value ?? '').trim().slice(0, n);
+/** At most `n` characters, cut on code points: a cut through a surrogate pair is not a valid Convex string. */
+const clip = (value: unknown, n: number) => Array.from(String(value ?? '').trim()).slice(0, n).join('');
 /** An object without its undefined fields (not Convex values). */
 const defined = <T extends Record<string, unknown>>(o: T) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined)) as T;
 
@@ -51,13 +56,16 @@ const hostValidator = v.object({
   title: v.string(), artist: v.optional(v.string()), seenAt: v.number(),
 });
 
-/** Host: I have this song open (also the heartbeat). `fresh` (a new Stage) drops commands left from before. */
+/**
+ * Host: I have this song open (also the heartbeat). `fresh` (a new Stage, or the next song) drops commands left
+ * from before. Returns the server's time.
+ */
 export const announce = mutation({
   args: {
     hostId: v.string(), name: v.string(), platform: v.optional(v.string()), songId: v.optional(v.id('songs')),
     title: v.string(), artist: v.optional(v.string()), fresh: v.optional(v.boolean()),
   },
-  returns: v.null(),
+  returns: v.object({ now: v.number() }),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     if (!isHostId(args.hostId)) fail('invalid', 'Invalid remote host.');
@@ -65,22 +73,23 @@ export const announce = mutation({
       const song = await ctx.db.get('songs', args.songId);
       if (!song || song.userId !== userId) fail('not_found', 'Song unavailable.');
     }
+    const now = Date.now();
     const fields = defined({
       userId, hostId: args.hostId, name: clip(args.name, 60) || 'Woodshed', platform: clip(args.platform, 40) || undefined,
-      songId: args.songId, title: clip(args.title, 200) || 'Untitled', artist: clip(args.artist, 200) || undefined, seenAt: Date.now(),
+      songId: args.songId, title: clip(args.title, 200) || 'Untitled', artist: clip(args.artist, 200) || undefined, seenAt: now,
     });
     const existing = await hostOf(ctx, userId, args.hostId);
     if (existing) {
       // Optional fields the new song lacks are cleared (patch removes undefined); `watchedAt` is kept.
       await ctx.db.patch('remoteHosts', existing._id, {...fields, platform: fields.platform, songId: fields.songId, artist: fields.artist});
       if (args.fresh) await dropCommands(ctx, existing);
-      return null;
+      return { now };
     }
     const all = await ctx.db.query('remoteHosts').withIndex('by_userId', q => q.eq('userId', userId)).take(MAX_HOSTS * 2);
     const oldest = [...all].sort((a, b) => a.seenAt - b.seenAt);
     while (oldest.length >= MAX_HOSTS) await removeHost(ctx, oldest.shift()!);
     await ctx.db.insert('remoteHosts', fields);
-    return null;
+    return { now };
   },
 });
 
@@ -147,15 +156,19 @@ export const view = query({
   },
 });
 
-/** Remote: this host is open on a remote (every HEARTBEAT_MS while it is): the host publishes its state. */
+/**
+ * Remote: this host is open on a remote (every HEARTBEAT_MS while it is): the host publishes its state. Returns
+ * the server's time; with no host (a remote that follows none yet) that is all it does.
+ */
 export const watch = mutation({
-  args: { hostId: v.string() },
-  returns: v.null(),
+  args: { hostId: v.optional(v.string()) },
+  returns: v.object({ now: v.number() }),
   handler: async (ctx, { hostId }) => {
     const userId = await requireUserId(ctx);
-    const host = await hostOf(ctx, userId, hostId);
-    if (host) await ctx.db.patch('remoteHosts', host._id, { watchedAt: Date.now() });
-    return null;
+    const now = Date.now();
+    const host = hostId === undefined ? null : await hostOf(ctx, userId, hostId);
+    if (host) await ctx.db.patch('remoteHosts', host._id, { watchedAt: now });
+    return { now };
   },
 });
 
@@ -207,18 +220,18 @@ export const ack = mutation({
   },
 });
 
-/** Hourly: hosts that stopped heartbeating more than EXPIRE_MS ago, with their state and commands. */
+/**
+ * Hourly: hosts that stopped heartbeating more than EXPIRE_MS ago, with their state and commands, CLEANUP_BATCH
+ * at a time. It reads only expired rows (`by_seenAt`), so heartbeats on live hosts never conflict with it.
+ */
 export const cleanup = internalMutation({
   args: {},
   returns: v.object({ removed: v.number() }),
   handler: async ctx => {
     const cutoff = Date.now() - EXPIRE_MS;
-    let removed = 0;
-    for await (const host of ctx.db.query('remoteHosts')) {
-      if (host.seenAt >= cutoff) continue;
-      await removeHost(ctx, host);
-      if (++removed >= 100) break;
-    }
-    return { removed };
+    const batch = await ctx.db.query('remoteHosts').withIndex('by_seenAt', q => q.lt('seenAt', cutoff)).take(CLEANUP_BATCH);
+    for (const host of batch) await removeHost(ctx, host);
+    if (batch.length === CLEANUP_BATCH) await ctx.scheduler.runAfter(0, internal.remote.cleanup, {});
+    return { removed: batch.length };
   },
 });

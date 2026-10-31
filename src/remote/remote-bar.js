@@ -4,9 +4,9 @@
 //
 //   mountRemoteBar(host, {router, api, prefs, now, setTimer, clearTimer}) → {destroy()}
 //
-// Reads remote:hosts live; a host counts while fresh by this device's clock (remote-page.js liveHosts), so
-// the bar also re-checks every HEARTBEAT_MS. This device's own host is never shown. Hidden (and taking no
-// space) with nothing to show.
+// Reads remote:hosts live; a host counts while fresh by the server's clock (remote-page.js liveHosts; a device
+// that has not learned it yet asks `watch` once), so the bar also re-checks every HEARTBEAT_MS. This device's
+// own host is never shown. Hidden (and taking no space) with nothing to show.
 import '../styles/views/remote/remote-bar.css';
 import {HEARTBEAT_MS} from '../../shared/remote.ts';
 import * as appApi from '../api/remote.js';
@@ -15,7 +15,7 @@ import {prefs as appPrefs} from '../app/prefs.js';
 import {Button} from '../ui/button.js';
 import {h} from '../ui/h.js';
 import {icon} from '../ui/icon.js';
-import {hostIdOf} from './remote-host.js';
+import {hostIdOf, knowsServerTime, learnServerTime, serverTime} from './remote-host.js';
 import {liveHosts} from './remote-page.js';
 
 export const COPY = Object.freeze({
@@ -31,7 +31,7 @@ export function mountRemoteBar(host, {router = null, api = appApi, prefs = appPr
   let rows = [];
   const text = h('span', {class: 'remote-bar-text'});
   const go = () => {
-    const first = liveHosts(rows, {now: now(), self})[0];
+    const first = liveHosts(rows, {now: serverTime(now()), self})[0];
     const path = first ? `/remote?host=${encodeURIComponent(first.hostId)}` : '/remote';
     if (router?.navigate) router.navigate(path); else globalThis.location?.assign?.(path);
   };
@@ -41,13 +41,16 @@ export function mountRemoteBar(host, {router = null, api = appApi, prefs = appPr
   host.append(el);
 
   function paint() {
-    const hosts = liveHosts(rows, {now: now(), self});
+    const hosts = liveHosts(rows, {now: serverTime(now()), self});
     el.hidden = !hosts.length;
     if (!hosts.length) return;
     text.textContent = COPY.open(hosts[0].title, hosts[0].name) + (hosts.length > 1 ? COPY.more(hosts.length - 1) : '');
   }
   const off = api.subscribeHosts((value) => { rows = Array.isArray(value) ? value : []; paint(); }, () => {});
   const timer = setTimer(paint, HEARTBEAT_MS);
+  if (!knowsServerTime()) {
+    void Promise.resolve(api.watch?.({})).then((result) => { if (learnServerTime(result, now())) paint(); }).catch(() => {});
+  }
   return {
     el,
     destroy() {

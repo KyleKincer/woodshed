@@ -16,11 +16,14 @@
 // 'original' streams the stems as stored (Opus in WebM) through the same signed fetch as the library export.
 // The save picker opens synchronously, inside the click, before any wait (browsers need the gesture);
 // without one the archive is built in memory, up to FALLBACK_LIMIT bytes. A failure or a cancel leaves no
-// archive reported as saved.
+// archive reported as saved, and removes the file the picker created.
+// Before the audio decodes (the Stage opens the dialog while it loads) only the MIDI and Guitar Pro files can
+// be written; their bar grid then ends where the song row or the map says the song ends.
 import {Zip, ZipPassThrough} from 'fflate';
+import {hasPickup} from '../../shared/song-map.ts';
 import {DEFAULT_API as LIBRARY_API, safeName} from '../js/export.js';
 import {now} from '../app/clock.js';
-import {alignment, drumChartMidi, guitarProFile, mixdown, readme, tempoMapMidi, wavChunks} from './song-files.js';
+import {alignment, drumChartMidi, guitarProFile, mapSeconds, mixdown, readme, tempoMapMidi, tooSlowBar, wavChunks} from './song-files.js';
 
 /** Without a save picker the archive is built in memory, up to this size. */
 export const FALLBACK_LIMIT = 1_000_000_000;
@@ -40,6 +43,8 @@ export const COPY = Object.freeze({
 const encoder = new TextEncoder();
 const peek = v => (v && typeof v.peek === 'function' ? v.peek() : v);
 const channelsOf = buffer => Array.from({length: Math.min(2, buffer.numberOfChannels)}, (_, c) => buffer.getChannelData(c));
+/** The archive's folder: '..' or a trailing dot would climb out of it or be dropped by Windows. */
+const folderName = name => name.replace(/^[. ]+|[. ]+$/g, '') || 'song';
 
 export function exportOptions(session) {
   const song = peek(session.song) ?? {};
@@ -50,7 +55,7 @@ export function exportOptions(session) {
   const frames = Math.max(0, ...tracks.map(t => t.buffer?.length ?? 0));
   const title = song.title || 'Untitled', artist = song.artist || '';
   return {
-    title, artist, base: safeName([artist, title].filter(Boolean).join(' - ')),
+    title, artist, base: folderName(safeName([artist, title].filter(Boolean).join(' - '))),
     sampleRate, frames, seconds: frames / sampleRate, stems, mine,
     backingName: mine.length ? COPY.backingName(mine) : null,
     canBacking: mine.length > 0 && stems.length > mine.length,
@@ -91,6 +96,16 @@ function until(signal, promise) {
 }
 /** Lets the page breathe between chunks (the dialog's progress and Cancel stay live). */
 const breathe = () => new Promise(resolve => setTimeout(resolve, 0));
+/** Cleanup after a failure: its own error never replaces the export's. */
+const quietly = async fn => { try { await fn(); } catch { /* the export's error is the one to report */ } };
+
+/** The song's length for the MIDI files: the decoded audio's, else the song row's, else where the map ends. */
+function songSeconds(session, options, mapData) {
+  if (options.loaded && options.seconds > 0) return options.seconds;
+  const known = Number(peek(session.song)?.duration);
+  if (Number.isFinite(known) && known > 0) return known;
+  return mapData ? mapSeconds(mapData) : 0;
+}
 
 export async function exportSong(session, choices, {onProgress = () => {}, signal = null, window: win = globalThis.window,
   api = LIBRARY_API, alphaTab = () => import('@coderline/alphatab')} = {}) {
@@ -104,10 +119,11 @@ export async function exportSong(session, choices, {onProgress = () => {}, signa
   const guitarPro = !!choices.guitarPro && options.hasChart;
   const original = choices.format === 'original' && options.original;
   // Everything up to the picker is synchronous: the picker must open inside the click's gesture.
+  if (!options.loaded && (choices.stems?.length || choices.backing)) throw new Error(COPY.notLoaded);
   if (!stems.length && !backing && !tempoMap && !drumMidi && !guitarPro) throw new Error(COPY.nothing);
-  if (!options.loaded && (stems.length || backing)) throw new Error(COPY.notLoaded);
   const mapData = options.mapped ? session.map.serialize() : null;
-  const align = mapData ? alignment(mapData, options.seconds) : null;
+  const seconds = songSeconds(session, options, mapData);
+  const align = mapData ? alignment(mapData, seconds) : null;
   const padSeconds = align && !original ? align.padSeconds : 0;
   const padFrames = Math.round(padSeconds * options.sampleRate);
   const picking = typeof win?.showSaveFilePicker === 'function'
@@ -115,15 +131,8 @@ export async function exportSong(session, choices, {onProgress = () => {}, signa
     : null;
   if (!picking && estimateBytes(options, {...choices, stems: stems.map(s => s.name), backing, padSeconds}) > FALLBACK_LIMIT) throw new Error(COPY.tooLarge);
   const handle = picking ? await picking : null;
-  check(signal);
 
-  let score = null;
-  if (drumMidi || guitarPro) {
-    await until(signal, session.notation?.contents?.() ?? null);
-    score = session.notation?.part?.score ?? null;
-  }
-
-  const writer = handle ? await until(signal, handle.createWritable()) : null;
+  let score = null, writer = null;
   const chunks = [];
   let outputBytes = 0, chain = Promise.resolve(), finishedResolve, finishedReject;
   const finished = new Promise((resolve, reject) => { finishedResolve = resolve; finishedReject = reject; });
@@ -180,14 +189,22 @@ export async function exportSong(session, choices, {onProgress = () => {}, signa
     await until(signal, chain);
   }
 
-  const total = stems.length + (backing ? 1 : 0) + 1;
+  const total = stems.length + (backing ? 1 : 0) + (tempoMap || drumMidi || guitarPro ? 1 : 0);
   let done = 0;
   try {
+    check(signal);
+    if (drumMidi || guitarPro) {
+      await until(signal, session.notation?.contents?.() ?? null);
+      score = session.notation?.part?.score ?? null;
+    }
+    writer = handle ? await until(signal, handle.createWritable()) : null;
+
     const date = new Date(now()).toISOString().slice(0, 10);
     await add('README.txt', encoder.encode(readme({
       title: options.title, artist: options.artist, date, sampleRate: options.sampleRate, original,
       stems: stems.map(s => s.name), backing: backing ? options.backingName : null,
       tempoMap, drumMidi, guitarPro: guitarPro && !!score, align,
+      pickup: !!mapData && hasPickup(mapData), slowBar: mapData && (tempoMap || drumMidi) ? tooSlowBar(mapData, seconds) : null,
     })));
 
     if (original && stems.length) {
@@ -218,8 +235,8 @@ export async function exportSong(session, choices, {onProgress = () => {}, signa
     if (tempoMap || drumMidi || guitarPro) {
       say(COPY.midi, {done: done++, total});
       const title = [options.artist, options.title].filter(Boolean).join(' – ');
-      if (tempoMap) await add('Tempo map.mid', tempoMapMidi(mapData, options.seconds, {title}));
-      if (drumMidi && score) await add('Drum chart.mid', drumChartMidi(score, mapData, options.seconds, {title}));
+      if (tempoMap) await add('Tempo map.mid', tempoMapMidi(mapData, seconds, {title}));
+      if (drumMidi && score) await add('Drum chart.mid', drumChartMidi(score, mapData, seconds, {title}));
       if (guitarPro && score) {
         const at = await until(signal, alphaTab());
         await add('Drum chart.gp', guitarProFile(at, score, {title: options.title, artist: options.artist}));
@@ -241,7 +258,9 @@ export async function exportSong(session, choices, {onProgress = () => {}, signa
     return {name, bytes: outputBytes};
   } catch (error) {
     zip.terminate();
-    await writer?.abort().catch(() => {});
+    await quietly(() => writer?.abort());
+    // Chrome creates (or empties) the picked file as soon as it is picked: remove it, so no empty archive stays.
+    await quietly(() => handle?.remove?.());
     throw error;
   }
 }
