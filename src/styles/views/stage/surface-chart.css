@@ -14,7 +14,7 @@
     color: var(--ink);
   }
   .chart-surface-chart {
-    flex: 1 1 auto;
+    flex: 1;
     min-height: 0;
   }
   .chart-surface-chart[hidden] { display: none; }

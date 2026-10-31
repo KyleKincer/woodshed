@@ -34,6 +34,7 @@ export const PREFS_DEFAULTS = deepFreeze({
   edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
   pedals: {enabled: false, profile: 'practice', pedals: [], custom: {}},
   midi: {enabled: false, bindings: []},
+  remote: {allow: true, hostId: null, last: null},   // the phone remote (src/remote): allow control here, this device's host id, the device last controlled
   palette: {frecency: {}},
   deviceId: null,
   jobStats: {},
@@ -80,6 +81,8 @@ const NULLABLE = {
   'roadmap.waveRowSec': 'number',
   'roadmap.follow': ['scroll', 'page'],
   deviceId: 'string',
+  'remote.hostId': 'string',
+  'remote.last': 'string',
   pendingAccount: 'object',
 };
 

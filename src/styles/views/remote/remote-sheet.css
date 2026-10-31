@@ -1,0 +1,20 @@
+/* The Phone remote dialog's body (src/remote/remote-sheet.js): the lead, the QR code with its link, the allow
+ * toggle and the connection line. The frame, title and Done come from the Dialog primitive. */
+@layer views {
+  .remote-sheet { display: flex; flex-direction: column; gap: var(--s4); min-inline-size: 0; }
+  .remote-sheet-lead { margin: 0; color: var(--ink-2); font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui); }
+  .remote-sheet-code {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.4 var(--font-ui);
+  }
+  .remote-qr { flex: none; inline-size: 144px; block-size: 144px; border-radius: var(--r-control); }
+  .remote-sheet-link { color: var(--accent); overflow-wrap: anywhere; font-family: var(--font-mono); }
+  .remote-sheet-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .remote-sheet-allow { align-self: flex-start; }
+  .remote-sheet-status { margin: 0; color: var(--ink-2); font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui); }
+  .remote-sheet-status[data-connected=true] { color: var(--ok, var(--ink)); }
+}

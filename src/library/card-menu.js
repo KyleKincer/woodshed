@@ -242,6 +242,8 @@ export function cardMenuItems(song, ctx = {}) {
     {type: 'separator'},
     pinItem([song.id], {pin: COPY.pin, unpin: COPY.unpin}, d),
     shareItem(song, d),
+    // Export needs the decoded audio: the song's Stage loads it, then opens the dialog (?export=1).
+    {id: 'card.export', label: COPY.exportSong, icon: 'download', run: () => { sel.clear(); go(`/s/${id}?export=1`); }},
     addToSetlistItems([song.id], ctx),
     {type: 'separator'},
     resplitItem([song.id], COPY.resplit, d),

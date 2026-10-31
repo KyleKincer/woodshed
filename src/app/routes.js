@@ -11,7 +11,7 @@
 
 const VIEWS = import.meta.glob(['../library/home.js', '../library/add-sheet.js', '../onboarding/welcome.js', '../stage/stage.js',
   '../edit/edit.js', '../edit/details/details.js', '../settings/settings.js', '../settings/admin/admin.js', '../settings/admin/account.js',
-  '../library/setlist-page.js', '../download/download.js', '../share/shared-stage.js']);
+  '../library/setlist-page.js', '../download/download.js', '../share/shared-stage.js', '../remote/remote-page.js']);
 
 const placeholder = () => import('./placeholder.js');
 
@@ -35,6 +35,8 @@ export const routes = Object.freeze([
   {name: 'admin',        path: '/admin',                     place: 'admin',    chrome: 'topbar', guard: isAdmin, view: view('../settings/admin/admin.js')},
   {name: 'adminAccount', path: '/admin/accounts/:id',        place: 'admin',    chrome: 'topbar', guard: isAdmin, view: view('../settings/admin/account.js')},
   {name: 'setlist',      path: '/set/:id',                   place: 'library',  chrome: 'topbar', view: view('../library/setlist-page.js')},
+  // The phone remote (2.1): the Stage's dark tokens and touch sizes, no posture (nothing plays on this device).
+  {name: 'remote',       path: '/remote',                    place: 'stage',    chrome: 'none',   view: view('../remote/remote-page.js')},
 ].map(Object.freeze));
 
 export const bootRoutes = Object.freeze([

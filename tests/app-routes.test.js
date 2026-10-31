@@ -25,6 +25,7 @@ describe('the route table (§2.3)', () => {
     ['admin', '/admin', 'admin', 'topbar', {guard: true}],
     ['adminAccount', '/admin/accounts/:id', 'admin', 'topbar', {guard: true}],
     ['setlist', '/set/:id', 'library', 'topbar', {}],
+    ['remote', '/remote', 'stage', 'none', {}],
   ];
 
   test.each(TABLE)('%s → %s', (name, path, place, chrome, extras) => {

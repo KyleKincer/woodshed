@@ -53,5 +53,7 @@ export const backfillB1Tick = internalMutation({
 const crons = cronJobs();
 
 crons.interval('B1 backfill (self-running after deploy)', { hours: 1 }, internal.crons.backfillB1Tick, {});
+// The phone remote's hosts that stopped heartbeating a day ago (convex/remote.ts).
+crons.interval('Remote hosts cleanup', { hours: 1 }, internal.remote.cleanup, {});
 
 export default crons;

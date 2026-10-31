@@ -201,7 +201,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     // The order of the top level (spec §2.14.11).
     expect(labels(stageMenu(b.ts.session, b.stage, b.opts), b.reg)).toEqual([
       'View', 'Display', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
-      'Share…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
+      'Share…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
   });
 
   test('unmapped, no part, on the Wave page: Get bars… instead of Detect beats; no Display or Follow; "Wave page" in View', async () => {
@@ -231,7 +231,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(rows.length).toBe(wanted.length);
     expect(labels(items, b.reg)).toEqual([
       'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
-      'Share…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
+      'Share…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
     expect(row(rows, 'Road map', 'View').checked).toBe(true);
     // The radios read stage.followStyle (the Road map's default is Scroll, spec §4.4B) …
     expect(row(rows, 'Scroll', 'Follow')).toMatchObject({role: 'menuitemradio', command: 'view.followStyle', checked: true});

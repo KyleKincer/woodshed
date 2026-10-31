@@ -1,0 +1,76 @@
+/* The Export song dialog's body (src/export/export-dialog.js): the lead, the audio's loading line, the stem
+ * boxes and format, the extra files, the size, Export / Cancel and the status line. The frame, title and
+ * Close come from the Dialog primitive. */
+@layer views {
+  .export-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    min-inline-size: 0;
+  }
+  .export-lead {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-16)/1.45 var(--font-ui);
+  }
+  .export-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-inline-size: 0;
+  }
+  .export-legend {
+    padding: 0;
+    margin-block-end: var(--s1);
+    color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-14)/1.2 var(--font-ui);
+  }
+  /* Stems sit two to a row: there can be six of them. */
+  .export-stems {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10em, 1fr));
+    column-gap: var(--s3);
+  }
+  /* The label row is the hit target (40 px, 48 on touch); the native box keeps its platform look. */
+  .export-check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    min-block-size: var(--h-md);
+    padding-block: var(--s2);
+    box-sizing: border-box;
+    cursor: pointer;
+    color: var(--ink);
+    font: var(--fw-regular) var(--fs-16)/1.3 var(--font-ui);
+  }
+  .export-check[data-disabled] { cursor: default; color: var(--ink-3); }
+  .export-check-input {
+    flex: none;
+    inline-size: 20px;
+    block-size: 20px;
+    margin: 0;
+    accent-color: var(--accent-fill);
+    cursor: inherit;
+  }
+  .export-check-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .export-check-text { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0; }
+  .export-check-label { overflow-wrap: anywhere; }
+  .export-check-note {
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.35 var(--font-ui);
+  }
+  .export-check[data-disabled] .export-check-note { color: var(--ink-3); }
+  .export-size {
+    margin: 0;
+    color: var(--ink-2);
+    font: var(--fw-regular) var(--fs-14)/1.3 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  .export-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .export-actions [hidden] { display: none; }
+  .export-audio[hidden],
+  .export-status[hidden] { display: none; }
+}

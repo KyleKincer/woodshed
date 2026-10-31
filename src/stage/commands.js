@@ -42,7 +42,7 @@ export const STAGE_COMMAND_IDS = Object.freeze([
   'view.cycle', 'view.chart', 'view.roadmap', 'view.stems', 'view.focus',
   'view.distance.near', 'view.distance.stand', 'view.distance.kit', 'view.bigger', 'view.smaller', 'view.followResume',
   'view.display', 'view.followStyle', 'stage.scrollUp', 'stage.scrollDown', 'stage.scrollTop',
-  'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.startOver', 'stage.leave', 'stage.close',
+  'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
   'edit.open', 'edit.map', 'edit.chart', 'edit.details', 'practice.undo', 'practice.redo', 'setlist.next', 'setlist.prev',
 ]);
 
@@ -464,6 +464,29 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
       id: 'stage.share', title: C.share, group: 'App', scopes: [S], icon: 'share-2', palette: {keywords: ['share', 'link', 'send']},
       when: (c) => ownerSong(c) && canStage('share')(c) && peek(stageOf(c).shareAvailable) !== false,
       run: (c) => stageOf(c).share(),
+    },
+    {
+      // Export song… (src/export): stems, a backing track, the tempo map and the drum chart as one ZIP. It opens
+      // at once while the audio loads: the dialog says so and adds the stems when they have decoded.
+      id: 'stage.export', title: C.export, group: 'App', scopes: [S], icon: 'download',
+      menu: {label: C.export, electron: 'File'},
+      palette: {keywords: ['export', 'download', 'stems', 'wav', 'midi', 'daw', 'guitar pro', 'backing track']},
+      when: (c) => ownerSong(c) && hasSession(c),
+      run: (c) => {
+        const session = sessionOf(c);
+        void import('../export/export-dialog.js').then((m) => m.openExportDialog({session}))
+          .catch((err) => console.error('[stage] the export dialog could not open', err));
+      },
+    },
+    {
+      // Phone remote… (src/remote): how to control this Stage from a phone signed in to the same account.
+      id: 'stage.remote', title: C.remote, group: 'App', scopes: [S], icon: 'smartphone',
+      palette: {keywords: ['remote', 'phone', 'control', 'wireless', 'pedal']},
+      when: (c) => ownerSong(c),
+      run: () => {
+        void import('../remote/remote-sheet.js').then((m) => m.openRemoteSheet())
+          .catch((err) => console.error('[stage] the phone remote sheet could not open', err));
+      },
     },
     {
       id: 'stage.startOver', title: C.startOver, group: 'Practice', scopes: [S], icon: 'rotate-ccw',

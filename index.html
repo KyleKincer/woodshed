@@ -16,6 +16,10 @@
   <link rel="icon" type="image/svg+xml" href="/woodshed-icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="apple-touch-icon" href="/icon-180.png" />
+  <!-- The cascade-layer order (src/styles/main.css), stated before any CSS loads: the production build links shared
+       chunk CSS (all @layer primitives) ahead of the main CSS, which would otherwise make primitives the lowest
+       layer. scripts/check-layer-order.mjs checks this, in the source and in dist/. -->
+  <style>@layer reset, tokens, base, primitives, layout, views, utilities;</style>
   <script src="/theme-init.js"></script>
 </head>
 <body>

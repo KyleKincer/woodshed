@@ -182,7 +182,7 @@
     -webkit-touch-callout: none;
   }
   @media (hover: hover) { .set-open:hover .set-song-title { text-decoration: underline; } }
-  .set-thumb { inline-size: 48px; }
+  .lib-cover.set-thumb { inline-size: 48px; }
   .set-song-text {
     display: flex;
     flex-direction: column;

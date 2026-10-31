@@ -27,12 +27,13 @@ const drain = (t: T) => t.finishAllScheduledFunctions(vi.runAllTimers);
 const addUser = (t: T) => t.run(ctx => ctx.db.insert('users', { emailVerified: true, createdAt: 1 }));
 
 describe('crons', () => {
-  test('registers one hourly tick that runs internal.crons.backfillB1Tick with no arguments', () => {
+  test('registers the hourly B1 tick and the hourly remote cleanup, both with no arguments', () => {
     const jobs = Object.values((crons as unknown as { crons: Record<string, { name: string; args: unknown[]; schedule: unknown }> }).crons);
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].name).toBe(getFunctionName(internal.crons.backfillB1Tick));
-    expect(jobs[0].args).toEqual([{}]);
-    expect(jobs[0].schedule).toEqual({ type: 'interval', hours: 1 });
+    expect(jobs.map(j => j.name)).toEqual([getFunctionName(internal.crons.backfillB1Tick), getFunctionName(internal.remote.cleanup)]);
+    for (const job of jobs) {
+      expect(job.args).toEqual([{}]);
+      expect(job.schedule).toEqual({ type: 'interval', hours: 1 });
+    }
   });
 });
 

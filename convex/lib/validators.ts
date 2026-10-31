@@ -117,3 +117,26 @@ export const revokedByValidator = v.union(v.literal('user'), v.literal('admin'))
 /** A device's reported state in `devicePresence` (D11). "Online" is computed on the client from `lastSeenAt`. */
 export const presenceStateValidator = v.union(v.literal('idle'), v.literal('busy'), v.literal('offline'));
 export type PresenceState = Infer<typeof presenceStateValidator>;
+
+/**
+ * What a phone remote shows of a host's Stage (`remoteStates.state`, written by `remote.publish`): the readout
+ * text exactly as the Stage's HUD has it, so the remote never recomputes musical positions. Strings are short
+ * (remote.ts caps them).
+ */
+export const remoteStateValidator = v.object({
+  phase: v.string(),                 // 'loading' | 'stopped' | 'counting' | 'playing' | 'paused'
+  position: v.optional(v.string()),  // '13 · 2', 'Pickup · 3', or '1:12' on an unmapped song
+  section: v.optional(v.string()),   // the section (or marker region) at the playhead
+  next: v.optional(v.string()),      // 'next: Chorus · 4 bars', 'Chorus in 2'
+  rate: v.number(),                  // 0.25–1.5
+  bpm: v.optional(v.number()),       // the felt BPM × rate, mapped songs only
+  loop: v.boolean(),
+  loopLabel: v.optional(v.string()), // 'Chorus', 'Bars 13–20'
+  countIn: v.boolean(),
+  click: v.boolean(),
+  minusMe: v.boolean(),
+  mine: v.optional(v.string()),      // the stems Minus me mutes ('drums')
+  trainer: v.optional(v.boolean()),
+  setlist: v.optional(v.boolean()),  // a setlist is playing (Previous / Next song work)
+});
+export type RemoteState = Infer<typeof remoteStateValidator>;

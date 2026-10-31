@@ -44,7 +44,7 @@
     scrollbar-width: thin;
   }
   .lib-shelf-item { min-inline-size: 0; scroll-snap-align: start; }
-  .lib-pin { grid-template-columns: 48px minmax(0, 1fr); }
+  .lib-compact.lib-pin { grid-template-columns: 48px minmax(0, 1fr); }
   .lib-pin .lib-compact-cover { inline-size: 48px; }
 
   .lib-set-card {
@@ -188,7 +188,7 @@
     font: var(--fw-bold) var(--fs-12)/1 var(--font-ui);
     letter-spacing: .04em;
   }
-  .lib-group-cover { inline-size: 32px; }
+  .lib-cover.lib-group-cover { inline-size: 32px; }
   .lib-divider-label {
     display: flex;
     align-items: center;
@@ -214,13 +214,13 @@
     z-index: var(--z-sticky);
     background: var(--bg);
   }
-  .lib-row-head {
+  .lib-row.lib-row-head {
     min-block-size: 40px;
     padding-block: 0;
     border-block-end-color: var(--line-strong);
     content-visibility: visible;
   }
-  .lib-colhead { overflow: visible; }
+  .lib-cell.lib-colhead { overflow: visible; }
   .lib-colsort {
     display: inline-flex;
     align-items: center;
@@ -258,7 +258,7 @@
     border: 0;
     content-visibility: visible;
   }
-  .lib-group-cell { overflow: visible; white-space: normal; }
+  .lib-cell.lib-group-cell { overflow: visible; white-space: normal; }
 
   /* ---------- edge states ---------- */
   .lib-body[data-mode=loading] { display: flex; flex-direction: column; gap: var(--s4); }

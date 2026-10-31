@@ -84,7 +84,8 @@
     overflow-wrap: anywhere;
   }
 
-  .settings-actions {
+  .settings-actions,
+  .settings-row.settings-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s3);

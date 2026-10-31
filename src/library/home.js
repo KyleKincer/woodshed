@@ -193,7 +193,14 @@ export function mount(el, match, ctx = {}) {
   const body = h('div', {class: 'lib-body'});
   const librarySection = h('section', {class: 'lib-library', attrs: {'aria-labelledby': libTitle.id}}, header, body);
 
-  content.append(pageTitle, continueSection.el, setlistsHost, pinnedSection, librarySection);
+  // The remote bar (2.1): a song open on another of the account's devices is one tap from a remote here.
+  const remoteHost = h('div', {class: 'lib-remote-host'});
+  content.append(pageTitle, remoteHost, continueSection.el, setlistsHost, pinnedSection, librarySection);
+  let remoteBar = null;
+  if (ctx.remoteBar !== false) {
+    void import('../remote/remote-bar.js').then((m) => { if (!ac.signal.aborted) remoteBar = m.mountRemoteBar(remoteHost, {router}); })
+      .catch((err) => console.warn('[library] the remote bar could not load', err));
+  }
 
   // ---------- menus ----------
 
@@ -870,6 +877,7 @@ export function mount(el, match, ctx = {}) {
       ac.abort();
       menu?.destroy?.();
       selBar.destroy();
+      remoteBar?.destroy();
       for (const d of disposers.splice(0).reverse()) { try { d(); } catch (err) { console.error(err); } }
       for (const p of primitives) p.destroy?.();
       for (const entry of [...entries.values()]) entry.card?.destroy?.();
