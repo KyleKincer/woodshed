@@ -4,8 +4,6 @@
 // dispatcher, the Drum keys validation, and chart-edit.js mounted on a real song session.
 // The editor's internals are covered by notation-editor.test.js and notation-songmap.test.js;
 // engraving and geometry are Playwright states (tests/fixture/states/ED5.cjs).
-import {existsSync} from 'node:fs';
-import {join} from 'node:path';
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/fake-audio.js')).fakeSignalsmith}));
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: () => false}));
@@ -451,10 +449,10 @@ describe('menus (spec §5.2)', () => {
     ]);
   });
 
-  test('Part ▾: export, print, open part, drum part from file, Drum keys…, Note list ✓, Show every kit piece ✓, Keyboard shortcuts ?', () => {
+  test('Part ▾: export, print, open part, import a chart, Drum keys…, Note list ✓, Show every kit piece ✓, Keyboard shortcuts ?', () => {
     const items = partMenu({...STATE, showList: true});
     expect(resolved(items).map((i) => i.label)).toEqual(['Export .woodshed.json', 'Print', 'Open .woodshed.json part…',
-      'Drum part from file (Guitar Pro, MIDI, Clone Hero)…', 'Clear drum chart…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts']);
+      'Import a chart from a file…', 'Clear drum chart…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts']);
     expect(items.find((i) => i.command === 'chart.noteList')).toMatchObject({type: 'checkbox', checked: true});
     expect(items.find((i) => i.command === 'chart.shortcuts').kbd).toBe('?');
     expect(registry.state('chart.allLanes').reason).toBe(COMMAND_COPY.allLanesReason);
@@ -533,22 +531,9 @@ describe('kit pad bank (iPad portrait)', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// chart-edit.js on a real song session. Its Part ▾ → Drum part from file… imports ED4's
-// src/edit/drum-import.js (same wave); vitest cannot mock a module that does not exist yet
-// (Appendix C item 60), so this suite runs once that file is present (always at integration).
+// chart-edit.js on a real song session.
 
-const DRUM_IMPORT = join(process.cwd(), 'src/edit/drum-import.js');
-const drumImport = vi.hoisted(() => ({calls: [], result: {count: 12, skipped: 2, warnings: []}, fail: null}));
-vi.mock('../src/edit/drum-import.js', async (importOriginal) => ({
-  replaceDialog: (await importOriginal()).replaceDialog,
-  importDrumPartFromFile: async (file, options) => {
-    drumImport.calls.push([file, options]);
-    if (drumImport.fail) throw drumImport.fail;
-    return drumImport.result;
-  },
-}));
-
-describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song session)', () => {
+describe('chart-edit.js (mounted on a song session)', () => {
   let mod, clock, restoreAudio, current;
   beforeEach(async () => {
     const audio = await import('./helpers/fake-audio.js');
@@ -560,8 +545,6 @@ describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song sess
     clock = audio.createClock();
     mod = await import('../src/edit/chart/chart-edit.js');
     views.length = 0;
-    drumImport.calls.length = 0;
-    drumImport.fail = null;
     current = [];
   });
   afterEach(async () => {
@@ -589,16 +572,14 @@ describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song sess
     document.body.append(panel, inspectorEl);
     const edit = withEdit ? {saveStatus: signal(null), layout: signal(layout), setTab: vi.fn()} : null;
     const prefs = memoryPrefs({edit: {chart: {view: 'score', paging: 'pages', keys: {}}}});
-    const files = [];
     const confirms = [];
     const answers = [];
     const confirm = async (o) => { confirms.push(o); return answers.length ? answers.shift() : true; };
-    const view = mod.mount(panel, {session: ts.session, query, inspectorEl, edit, registry, prefs, commands: {setDrumKeys},
-      chooseFile: async () => files.shift() ?? null, confirm});
+    const view = mod.mount(panel, {session: ts.session, query, inspectorEl, edit, registry, prefs, commands: {setDrumKeys}, confirm});
     await view.ready;
     await settle();
     current.push(async () => { view.destroy(); stopDispatch(); commands.off(); await ts.dispose(); });
-    return {ts, registry, router, panel, inspectorEl, edit, prefs, view, files, confirms, answers, setDrumKeys, settle, ws: () => view.workspace};
+    return {ts, registry, router, panel, inspectorEl, edit, prefs, view, confirms, answers, setDrumKeys, settle, ws: () => view.workspace};
   }
 
   test('mounts the workspace, provides it as the chart context, and shows the save status in the posture bar', async () => {
@@ -718,34 +699,11 @@ describe.skipIf(!existsSync(DRUM_IMPORT))('chart-edit.js (mounted on a song sess
     expect(b.router.calls.at(-1)).toEqual([`/s/${b.ts.id}/edit/map?bar=5`, {replace: true}]);
   });
 
-  test('Part ▾ → Drum part from file… imports through drum-import.js and reports the count', async () => {
+  test('Part ▾ → Import a chart from a file… opens the one import, in Edit · Map, where the chart is lined up', async () => {
     const b = await bed();
-    const file = new File(['x'], 'groove.mid');
-    b.files.push(file);
     b.registry.run('chart.importDrums');
     await b.settle();
-    expect(drumImport.calls).toEqual([[file, {session: b.ts.session, confirmReplace: expect.any(Function)}]]);
-    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe(COPY.imported(12, 2));
-    // The confirm it passes is "Replace the drum chart?" on the view's confirm.
-    await drumImport.calls[0][1].confirmReplace({notes: 3, reviewed: 0, incoming: 5, source: 'groove.mid'});
-    expect(b.confirms.at(-1)).toMatchObject({title: 'Replace the drum chart?', confirmLabel: 'Replace chart', danger: true});
-    drumImport.result = {count: 5, skipped: 0, warnings: [], replaced: true};
-    b.files.push(file);
-    b.registry.run('chart.importDrums');
-    await b.settle();
-    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe(COPY.imported(5, 0, true));
-    expect(COPY.imported(5, 0, true)).toBe('Replaced the drum chart with 5 notes. Undo restores the previous chart.');
-    drumImport.result = {count: 0, skipped: 0, warnings: [], canceled: true};
-    b.files.push(file);
-    b.registry.run('chart.importDrums');
-    await b.settle();
-    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe('');
-    drumImport.result = {count: 12, skipped: 2, warnings: []};
-    drumImport.fail = new Error('This file has no drum part.');
-    b.files.push(file);
-    b.registry.run('chart.importDrums');
-    await b.settle();
-    expect(b.panel.querySelector('.chart-edit-message').textContent).toBe('This file has no drum part.');
+    expect(b.router.calls.at(-1)).toEqual([`/s/${b.ts.id}/edit/map/find?import=1`, undefined]);
   });
 
   test('Clear drum chart… asks with the counts, clears every note and reviewed mark in one undo step, then is disabled', async () => {

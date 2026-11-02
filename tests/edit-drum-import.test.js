@@ -7,7 +7,7 @@ vi.mock('signalsmith-stretch', async () => ({default: (await import('./helpers/f
 vi.mock('../src/js/stemcache.js', async () => ({...(await import('./helpers/fake-audio.js')).fakeStemcache, isDecodeError: () => false}));
 
 import {clock as appClock} from '../src/app/clock.js';
-import {COPY, firstDifferentBar, importDrumPartFromFile, importDrumResult, previewDrumImport, replaceDialog} from '../src/edit/drum-import.js';
+import {COPY, importDrumResult, previewDrumImport, replaceDialog} from '../src/edit/drum-import.js';
 import {fraction} from '../shared/notation.ts';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession} from './helpers/test-session.js';
@@ -102,9 +102,9 @@ describe('importDrumResult', () => {
     const ask = vi.fn(async () => true);
     await expect(replaceDialog(ask)({notes: 1284, reviewed: 24, incoming: 1402, source: 'song.gp5'})).resolves.toBe(true);
     expect(ask).toHaveBeenCalledWith({title: COPY.replaceTitle, confirmLabel: COPY.replaceConfirm, danger: true,
-      body: 'The current chart (1,284 notes, 24 bars reviewed) will be replaced by 1,402 notes from song.gp5. The tempo map and sections stay as they are. Undo brings the current chart back.'});
+      body: 'The current chart (1,284 notes, 24 bars reviewed) will be replaced by 1,402 notes from song.gp5, on its own bars. Your section names stay. Undo brings the current chart back.'});
     expect(COPY.replaceBody({notes: 1, reviewed: 0, incoming: 2, source: ''})).toBe(
-      'The current chart (1 note) will be replaced by 2 notes. The tempo map and sections stay as they are. Undo brings the current chart back.');
+      'The current chart (1 note) will be replaced by 2 notes, on its own bars. Your section names stay. Undo brings the current chart back.');
   });
 
   test('an empty part imports with no question', async () => {
@@ -120,41 +120,5 @@ describe('importDrumResult', () => {
     await expect(importDrumResult({drums: {hits: hits(1000, 1001), source: 'midi'}}, {session: ts.session})).rejects.toThrow(COPY.noneInside);
     const shared = await session({shared: {token: 'share-1'}});
     await expect(importDrumResult({drums: {hits: hits(0), source: 'midi'}}, {session: shared.session})).rejects.toThrow(COPY.readOnly);
-  });
-});
-
-describe('importDrumPartFromFile (Edit · Chart Part ▾)', () => {
-  test('parses the file (with the recording duration) and places its hits on the song\'s own map', async () => {
-    const ts = await session();
-    const songMap = ts.map.snapshot();
-    const parse = vi.fn(async () => ({map: bars(10), format: 'midi', warnings: ['Check the MIDI recording version.'],
-      drums: {hits: hits(0, 4), source: 'midi', warnings: []}}));
-    const file = new File(['x'], 'drums.mid');
-    const out = await importDrumPartFromFile(file, {session: ts.session, parse});
-    expect(parse).toHaveBeenCalledWith(file, {duration: 20});
-    expect(out.count).toBe(2);
-    expect(out.warnings).toContain('Check the MIDI recording version.');
-    expect(out.warnings.join(' ')).not.toMatch(/bars differ/);
-    expect(JSON.stringify(ts.map.snapshot())).toBe(JSON.stringify(songMap));   // the file's map is not used
-  });
-
-  test('bars that differ from the song\'s map are named in a warning', async () => {
-    const ts = await session();
-    const fileMap = bars(10);
-    fileMap.measures[3] = {...fileMap.measures[3], numerator: 3, length: fraction(3)};
-    const parse = vi.fn(async () => ({map: fileMap, format: 'midi', warnings: [], drums: {hits: hits(0), source: 'midi', warnings: []}}));
-    const out = await importDrumPartFromFile(new File(['x'], 'drums.mid'), {session: ts.session, parse});
-    expect(out.warnings).toContain(COPY.barsDiffer('bar 4'));
-    expect(firstDifferentBar(fileMap, bars(10))).toBe(3);
-    expect(firstDifferentBar(bars(10), bars(5))).toBe(-1);
-  });
-
-  test('a file with no drums, or one the importer refuses (format and size limits), changes nothing', async () => {
-    const ts = await session();
-    await expect(importDrumPartFromFile(new File(['x'], 'beats.txt'), {session: ts.session, parse: async () => ({map: bars(10), format: 'beats', warnings: []})}))
-      .rejects.toThrow(COPY.noDrums);
-    await expect(importDrumPartFromFile(new File(['x'], 'score.musicxml'), {session: ts.session}))
-      .rejects.toThrow(/Export the tempo map as MIDI/);
-    expect(ts.session.notation.part?.score ? hitCount(ts.session.notation.part.score) : 0).toBe(0);
   });
 });

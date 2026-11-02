@@ -7,7 +7,8 @@
 //     mapSession   Edit · Map's MapSession: beginAudition() on mount, endAudition({commit}) to finish (D20)
 //     onClose({result: 'theirs'|'drums'|'mine'})   after a commit; default: back to /s/:id/edit/map (replace)
 //   Test and harness seams (optional): api {search, load} (src/api/tempo-sources.js), router, feedback,
-//   registry, importFile (src/js/tempo-import.js importTempoFile).
+//   registry, importFile (src/js/tempo-import.js importTempoFile), align (src/js/chart-align.js alignChart),
+//   drumOnsets(session) → {strength, onsets} | null (the decoded drum stem's, measureDrums below).
 //
 // The audition (D20):
 // - Mounting opens one map batch (mapSession.beginAudition): tempo saves, notation map-sync saves and bar
@@ -52,12 +53,15 @@ import {h, reconcileList} from '../../ui/h.js';
 import {icon} from '../../ui/icon.js';
 import {InlineStatus} from '../../ui/status.js';
 import {importTempoFile, offsetTempoMap, parseBeatText, parseTempoFile} from '../../js/tempo-import.js';
+import {alignChart, fitMap, followShift} from '../../js/chart-align.js';
+import {detectOnsets, onsetStrength} from '../../js/onsets.js';
+import {ACCEPT, onHandedFile, takeHandedFile} from '../chart-file.js';
 import {compile, hasPickup, timeAt} from '../../../shared/song-map.ts';
 import {number} from '../../../shared/notation.ts';
 import {importDrumResult, previewDrumImport, replaceDialog} from '../drum-import.js';
 
-/** The file types Import a file… accepts (every format importTempoFile reads). */
-export const ACCEPT = Object.freeze(['.gp3', '.gp4', '.gp5', '.gpx', '.gp', '.sng', '.zip', '.mid', '.midi', '.chart', '.txt', '.tsv', '.lab', '.csv']);
+/** The file types Import a file… accepts (every format importTempoFile reads; src/edit/chart-file.js). */
+export {ACCEPT};
 /** The offset buttons, in milliseconds. */
 export const SHIFTS = Object.freeze([-100, -10, 10, 100]);
 /** Offsets beyond this are refused (milliseconds). */
@@ -70,7 +74,7 @@ export const ENCHOR_URL = 'https://www.enchor.us/';
 export const SONGSTERR_URL = 'https://www.songsterr.com/';
 
 const SOURCE_NAMES = Object.freeze({harmonix: 'Harmonix Set', chorus: 'Chorus Encore'});
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 const msText = (ms) => {
   const r = Math.round(ms * 10) / 10;
   return Number.isInteger(r) ? String(Math.abs(r)) : Math.abs(r).toFixed(1);
@@ -85,7 +89,7 @@ export function clock(seconds) {
 /** Every string the panel shows (spec §5.1.2). */
 export const COPY = Object.freeze({
   title: 'Find a chart',
-  intro: 'Try a chart’s tempo map with your recording, line it up, then choose which map to keep.',
+  intro: 'Import a chart file or search for one. It’s lined up with your recording; listen, then choose what to keep.',
   queryLabel: 'Song or artist',
   search: 'Search',
   scope: 'Searches Chorus Encore and the Harmonix Set.',
@@ -118,8 +122,24 @@ export const COPY = Object.freeze({
   lineUp: 'Line up first downbeat with the cue',
   reset: 'Reset',
   alignReason: 'Choose a map above to line it up.',
+  // lining up automatically (src/js/chart-align.js)
+  aligning: 'Lining the chart up with the recording…',
+  autoGood: ({bar1, bpm, chartBpm, matched, total}) => `Lined up with the recording’s drums: bar 1 at ${bar1}, ${bpm} BPM`
+    + `${bpm === chartBpm ? '' : ` (the chart says ${chartBpm})`}. ${matched.toLocaleString('en-US')} of ${plural(total, 'hit')} land on the recording.`,
+  autoFollows: ' Its tempo moves, so the bars follow it.',
+  autoCheck: (matched, total) => `Lined up as well as it could be, but only ${matched.toLocaleString('en-US')} of ${plural(total, 'hit')} land on the recording. Listen near the start and the end.`,
+  autoPoor: 'Couldn’t line it up automatically: its hits don’t match this recording’s drums. Line it up by ear below.',
+  autoNoAudio: 'It lines up automatically once the recording has loaded. Choose Line up automatically then.',
+  lineUpAuto: 'Line up automatically',
+  hearStart: 'Hear the start',
+  hearEnd: 'Hear the end',
+  follow: 'Follow the recording’s tempo changes',
+  followHint: 'Off: one steady tempo for the whole song.',
+  offsetFromAuto: (ms) => (Math.abs(ms) < 0.05 ? 'Back at the automatic alignment.' : `${msText(ms)} ms ${ms < 0 ? 'earlier' : 'later'} than the automatic alignment.`),
+  strands: 'Your drum chart doesn’t fit this map. Use the chart to replace both, or keep your map.',
   useTheirs: 'Use their map',
-  useWithDrums: (n) => `Use map + drum chart (${plural(n, 'hit')})`,
+  mapOnly: 'Map only',
+  useWithDrums: (n) => `Use this chart (map + ${plural(n, 'drum hit')})`,
   keepMine: 'Keep my map',
   chooseFirst: 'Choose a map above first.',
   noDrumsInside: 'None of its drum hits fall inside the recording.',
@@ -172,6 +192,8 @@ export const CONTROLS = Object.freeze([
   {role: 'link', name: `${COPY.songsterr} ${COPY.newTab}`},
   {role: 'group', name: COPY.alignLegend},
   {role: 'button', name: COPY.play, command: 'transport.playStop'},
+  {role: 'button', name: COPY.hearStart},
+  {role: 'button', name: COPY.hearEnd},
   ...SHIFTS.map((ms) => ({role: 'button', name: COPY.shiftLabel(ms)})),
   {role: 'spinbutton', name: COPY.offsetLabel},
   {role: 'button', name: COPY.lineUp},
@@ -193,6 +215,37 @@ export async function decodeSource(raw, {duration, meter} = {}) {
 /** The quarter-note position of a map's first downbeat: bar 1, after a pickup. */
 export function firstDownbeatQ(data) {
   return hasPickup(data) ? number(data.measures[0].length) : 0;
+}
+
+/** The decoded drum stem's onset strength and onsets (the first decoded stem without one); null before it decodes. */
+export function measureDrums(session) {
+  const tracks = session?.engine?.tracks ?? [];
+  const track = tracks.find((t) => t?.name === 'drums' && t.buffer) ?? tracks.find((t) => t?.buffer);
+  if (!track?.buffer) return null;
+  const strength = onsetStrength(track.buffer);
+  return strength ? {strength, onsets: detectOnsets(track.buffer)} : null;
+}
+
+/**
+ * The section names of `from` onto the bars of `to` by recording time: each named bar of `from` names the bar
+ * of `to` that starts nearest it (a bar `to` already names keeps its own). Measure 0's automatic 'Pickup' is
+ * not a name.
+ */
+export function carryLabels(from, to) {
+  const startsOf = (data) => {
+    const c = compile(data);
+    let q = 0;
+    return data.measures.map((m) => { const t = timeAt(c, q); q += number(m.length); return t; });
+  };
+  const fromStarts = startsOf(from), toStarts = startsOf(to);
+  from.measures.forEach((m, i) => {
+    const label = String(m.label ?? '').trim();
+    if (!label || (i === 0 && label === 'Pickup')) return;
+    let best = -1;
+    for (let j = 0; j < toStarts.length; j++) if (best < 0 || Math.abs(toStarts[j] - fromStarts[i]) < Math.abs(toStarts[best] - fromStarts[i])) best = j;
+    if (best >= 0 && !to.measures[best].label) to.measures[best].label = m.label;
+  });
+  return to;
 }
 
 /** Links to browse elsewhere, searched for this song. */
@@ -228,7 +281,7 @@ let panelSeq = 0;
 
 /** Mount the Find a chart panel into `el` (the inspector's place). See the header. */
 export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSources, router: routerOption, feedback = appFeedback,
-  registry = appRegistry, importFile = importTempoFile} = {}) {
+  registry = appRegistry, importFile = importTempoFile, align = alignChart, drumOnsets = measureDrums} = {}) {
   if (!session?.map) throw new TypeError('mountFindPanel needs a session.');
   if (!mapSession) throw new TypeError('mountFindPanel needs the Edit · Map session.');
   const map = session.map;
@@ -249,6 +302,9 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   let selected = original;
   let pending = null;          // the item whose download or parse is in flight
   let drumPreview = null;      // {count, skipped, warnings} | {error} | null
+  let aligning = null;         // the item being lined up automatically
+  let heard = null;            // the drum stem's {strength, onsets}, measured once
+  let resumeGuard = null;      // while a chart with its own drums is tried over a drum part it doesn't fit
   if (!begun) ended = true;
 
   // ---------- DOM ----------
@@ -290,6 +346,17 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
       external(links.songsterr, COPY.songsterr), COPY.otherAfter));
 
   // Align
+  const auto = InlineStatus({tone: 'info', text: '', className: 'find-auto'});
+  const autoButton = Button({label: COPY.lineUpAuto, icon: 'wand-2', variant: 'secondary', size: 'sm', className: 'find-auto-button',
+    onClick: () => { void lineUpAutomatically(selected); }});
+  const hearStart = Button({label: COPY.hearStart, icon: 'play', variant: 'quiet', size: 'sm', className: 'find-hear', onClick: () => hear('start')});
+  const hearEnd = Button({label: COPY.hearEnd, icon: 'play', variant: 'quiet', size: 'sm', className: 'find-hear', onClick: () => hear('end')});
+  const followId = `find-${seq}-follow`;
+  const followBox = h('input', {type: 'checkbox', id: followId, class: 'find-follow-box', 'aria-describedby': `${followId}-hint`,
+    on: {change: () => setFollow(followBox.checked)}});
+  const followRow = h('div', {class: 'find-follow', hidden: true},
+    followBox, h('label', {for: followId}, COPY.follow), h('p', {class: 'find-hint', id: `${followId}-hint`}, COPY.followHint));
+  const autoRow = h('div', {class: 'find-auto-row'}, autoButton.el, hearStart.el, hearEnd.el);
   const currentName = h('strong', {class: 'find-current-name'});
   const currentDetail = h('span', {class: 'find-current-detail'});
   const play = Button({label: COPY.play, command: 'transport.playStop', registry, icon: 'play', variant: 'secondary', className: 'find-play'});
@@ -309,15 +376,15 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   offsetField.input.max = String(MAX_OFFSET_MS);
   const offsetRow = h('div', {class: 'find-offset-row'}, shiftButtons[0].el, shiftButtons[1].el, offsetField.el, shiftButtons[2].el, shiftButtons[3].el);
   const lineUp = Button({label: COPY.lineUp, icon: 'arrow-down-to-line', variant: 'secondary', size: 'sm', className: 'find-line-up', onClick: () => lineUpWithCue()});
-  const reset = Button({label: COPY.reset, icon: 'rotate-ccw', variant: 'quiet', size: 'sm', className: 'find-reset', onClick: () => changeOffset(0)});
+  const reset = Button({label: COPY.reset, icon: 'rotate-ccw', variant: 'quiet', size: 'sm', className: 'find-reset', onClick: () => resetOffset()});
   const alignReasonId = `find-${seq}-align-reason`;
   const alignReason = h('p', {class: 'find-reason', id: alignReasonId}, COPY.alignReason);
   const alignControls = h('fieldset', {class: 'find-align-controls', 'aria-describedby': alignReasonId},
     h('legend', {class: 'sr-only'}, COPY.offsetLabel),
     offsetRow, h('div', {class: 'find-align-actions'}, lineUp.el, reset.el));
-  const align = h('fieldset', {class: 'find-align'},
+  const alignGroup = h('fieldset', {class: 'find-align'},
     h('legend', {class: 'find-legend'}, COPY.alignLegend),
-    listening, alignHint, warnings, alignReason, alignControls);
+    listening, auto.el, autoRow, followRow, alignHint, warnings, alignReason, alignControls);
 
   // Commit
   const useTheirsButton = Button({label: COPY.useTheirs, variant: 'primary', icon: 'check', className: 'find-use', onClick: () => useTheirs()});
@@ -325,7 +392,7 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   const keepButton = Button({label: COPY.keepMine, variant: 'secondary', className: 'find-keep', onClick: () => keepMine()});
   const commit = h('div', {class: 'find-commit'}, useTheirsButton.el, drumsButton.el, keepButton.el);
 
-  const controls = h('fieldset', {class: 'find-controls'}, searchForm, results, importBlock, others, align);
+  const controls = h('fieldset', {class: 'find-controls'}, importBlock, searchForm, results, others, alignGroup);
   const root = h('section', {class: 'find-panel', 'aria-labelledby': titleId, dataset: {findPanel: '', state: 'open'},
     attrs: {'data-consume-keys': 'Escape'}},
   h('header', {class: 'find-header'},
@@ -397,23 +464,46 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     offsetField.set({value: String(Math.round((selected.offset || 0) * 1000))});
     alignReason.hidden = tried;
     alignControls.disabled = !tried || importing || ended;
+    renderAuto();
     renderCommit();
     renderRows();
+  }
+
+  /** The automatic alignment's line, its buttons and the follow switch, for the map being tried. */
+  function renderAuto() {
+    const tried = selected !== original, hits = tried && !!selected.result?.drums?.hits?.length;
+    const busy = importing || ended;
+    autoRow.hidden = !tried;
+    autoButton.el.hidden = !hits;
+    autoButton.set({disabled: busy || aligning === selected, busy: aligning === selected ? COPY.aligning : false});
+    hearStart.set({disabled: busy || !tried});
+    hearEnd.set({disabled: busy || !tried});
+    const fit = tried ? selected.fit : null;
+    followRow.hidden = !fit?.follow;
+    followBox.checked = !!(fit?.follow && selected.follow);
+    followBox.disabled = busy;
+    const text = !tried ? '' : aligning === selected ? COPY.aligning : selected.autoNote ?? '';
+    auto.set({text, tone: selected.autoTone ?? 'info'});
+    auto.el.hidden = !text;
   }
 
   function renderCommit() {
     const busy = importing;
     const tried = selected !== original;
-    useTheirsButton.set({disabled: ended || busy || !tried, disabledReason: !ended && !busy && !tried ? COPY.chooseFirst : null});
     const hits = tried ? selected.result?.drums?.hits?.length ?? 0 : 0;
+    // A chart with drums: using it all is the first choice; its map alone is the second.
+    const mapReason = tried && selected.strands ? COPY.strands : null;
+    useTheirsButton.set({label: hits ? COPY.mapOnly : COPY.useTheirs, variant: hits ? 'secondary' : 'primary', icon: hits ? null : 'check',
+      disabled: ended || busy || !tried || !!mapReason, disabledReason: ended || busy ? null : !tried ? COPY.chooseFirst : mapReason});
     drumsButton.el.hidden = !hits;
     if (hits) {
       const count = drumPreview?.count ?? hits;
       const reason = drumPreview?.error ? COPY.drumsError(drumPreview.error)
         : drumPreview && !drumPreview.count ? COPY.noDrumsInside : null;
-      drumsButton.set({label: COPY.useWithDrums(count), disabled: ended || busy || !!reason, disabledReason: ended || busy ? null : reason,
+      drumsButton.set({label: COPY.useWithDrums(count), variant: 'primary', disabled: ended || busy || !!reason, disabledReason: ended || busy ? null : reason,
         busy: busy ? COPY.importing : false});
     }
+    commit.replaceChildren(...(hits ? [drumsButton.el, useTheirsButton.el] : [useTheirsButton.el, drumsButton.el]), keepButton.el);
     keepButton.set({disabled: ended || busy});
   }
 
@@ -430,22 +520,52 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   // ---------- trying maps ----------
   const live = () => !ended && !destroyed;
 
-  /** Put `item` (with `offset` seconds) on the live map. Throws the model's or a guard's refusal; the map is then unchanged. */
+  /** The map `item` puts on the song at `offset` seconds: its own, stretched to the recording's speed, or following its bars. */
+  function candidateMap(item, offset) {
+    if (item.fit?.follow && item.follow) return followShift(item.fit.follow.map, offset - item.fit.offset);
+    if (item.stretch && item.stretch !== 1) return fitMap(item.result.map, {offset, stretch: item.stretch});
+    return offsetTempoMap(item.result.map, offset);
+  }
+
+  /** Put the drum-notation guard back (after a chart with its own drums was tried over a part it didn't fit). */
+  function restoreGuard() {
+    const resume = resumeGuard;
+    resumeGuard = null;
+    resume?.();
+  }
+
+  /**
+   * Put `item` (with `offset` seconds) on the live map. Throws the model's or a guard's refusal; the map is then
+   * unchanged. A chart that brings its own drums may be tried even where the song's drum part wouldn't fit it
+   * (it would replace that part): the notation guard is lifted while it is tried, and `item.strands` says so.
+   */
   function apply(item, offset = item.offset || 0) {
+    restoreGuard();
     if (item === original) {
       map.restore(snapshot);
     } else {
       if (!item.result?.map) throw new Error(COPY.noTiming);
-      const next = offsetTempoMap(item.result.map, offset);
-      // Bar N stays bar N of the song (drum notes stay attached); the song's section names survive
-      // unless the source names that bar.
+      const next = candidateMap(item, offset);
+      // Bar N stays bar N of the song (drum notes stay attached), and the song's section names survive
+      // unless the source names that bar. A chart that brings its own drums replaces the song's bars, so
+      // its names go where they were heard: on the chart's bar that starts nearest the same moment.
+      const withDrums = !!item.result.drums?.hits?.length;
       next.measures.forEach((m, i) => {
         const base = snapshot.measures[i];
         if (!base) return;
         m.id = base.id;
-        if (!m.label && base.label) m.label = base.label;
+        if (!withDrums && !m.label && base.label) m.label = base.label;
       });
-      map.replace(next, 'tempo-source');
+      if (withDrums) carryLabels(snapshot, next);
+      item.strands = false;
+      try {
+        map.replace(next, 'tempo-source');
+      } catch (err) {
+        if (err?.code !== 'STRANDS_NOTATION' || !item.result.drums?.hits?.length || typeof map.suspendGuard !== 'function') throw err;
+        resumeGuard = map.suspendGuard('notation');
+        try { map.replace(next, 'tempo-source'); } catch (again) { restoreGuard(); throw again; }
+        item.strands = true;
+      }
     }
     item.offset = item === original ? 0 : offset;
     selected = item;
@@ -504,8 +624,8 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     }
   }
 
-  async function readFile() {
-    const file = fileInput.files?.[0];
+  async function readFile(dropped = null) {
+    const file = dropped ?? fileInput.files?.[0];
     fileInput.value = '';
     if (!file || !live() || importing) return;
     const token = ++loadRev;
@@ -521,9 +641,114 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
       items.push(item);
       setStatus(COPY.fileLoaded, 'ok');
       renderSelection();
+      showAlign();
+      // A file never says where its bar 1 falls in the recording: its drums are lined up with the recording's.
+      if (item.hasDrums) await lineUpAutomatically(item);
     } catch (err) {
       if (token === loadRev && live()) setStatus(errorText(err), 'error');
     }
+  }
+
+  /** The drum stem's onset strength and onsets (measured once; null until the recording has decoded). */
+  function heardDrums() {
+    heard ??= drumOnsets(session);
+    return heard;
+  }
+
+  const clockMs = (seconds) => {
+    const whole = Math.max(0, seconds), m = Math.floor(whole / 60), sec = whole - m * 60;
+    return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
+  };
+
+  /** Line `item` up with the recording's drums (src/js/chart-align.js) and put the fitted map on the song. */
+  async function lineUpAutomatically(item) {
+    if (!live() || importing || item === original || !item.result?.drums?.hits?.length || aligning) return;
+    const drums = heardDrums();
+    if (!drums?.strength) {
+      Object.assign(item, {autoNote: COPY.autoNoAudio, autoTone: 'info'});
+      renderSelection();
+      return;
+    }
+    aligning = item;
+    const token = loadRev;
+    renderSelection();
+    let fit = null;
+    try {
+      fit = await align({map: item.result.map, hits: item.result.drums.hits, strength: drums.strength, onsets: drums.onsets, duration: duration()});
+    } catch (err) {
+      console.error('[find-panel] lining up failed', err);
+    } finally {
+      if (aligning === item) aligning = null;
+    }
+    // A later choice (another map, an offset typed meanwhile) wins over a late fit.
+    if (!live() || token !== loadRev || selected !== item) { if (!destroyed) renderSelection(); return; }
+    if (!fit || fit.quality === 'poor') {
+      Object.assign(item, {autoNote: COPY.autoPoor, autoTone: 'warn'});
+      renderSelection();
+      return;
+    }
+    Object.assign(item, {fit, stretch: fit.stretch, follow: !!fit.follow});
+    try {
+      apply(item, fit.offset);
+    } catch (err) {
+      Object.assign(item, {fit: null, stretch: 1, follow: false, autoNote: errorText(err), autoTone: 'error'});
+      renderSelection();
+      return;
+    }
+    describeFit(item);
+    setStatus('');
+    renderSelection();
+    showAlign();
+  }
+
+  /**
+   * What happens after a file is read (lining up, listening, choosing) is in Align, below the search: scroll the
+   * panel's own list to it (scrollIntoView would scroll the page too; a smooth scroll is cut short by the render).
+   */
+  function showAlign() {
+    if (destroyed || typeof controls.scrollTo !== 'function') return;
+    controls.scrollTo({top: Math.max(0, alignGroup.offsetTop - controls.offsetTop)});
+  }
+
+  /** The automatic alignment's line for `item` (where bar 1 lands, the tempo, how much of it was heard). */
+  function describeFit(item) {
+    const fit = item.fit;
+    if (!fit) return;
+    const data = map.serialize();
+    const bar1 = timeAt(compile(data), firstDownbeatQ(data));
+    if (fit.quality === 'check') {
+      Object.assign(item, {autoNote: COPY.autoCheck(Math.max(fit.matched, fit.follow?.matched ?? 0), fit.total), autoTone: 'warn'});
+      return;
+    }
+    const matched = item.follow && fit.follow ? fit.follow.matched : fit.matched;
+    const text = COPY.autoGood({bar1: clockMs(bar1), bpm: Math.round(fit.bpm * 10) / 10, chartBpm: Math.round(fit.chartBpm * 10) / 10, matched, total: fit.total})
+      + (item.follow && fit.follow ? COPY.autoFollows : '');
+    Object.assign(item, {autoNote: text, autoTone: 'ok'});
+  }
+
+  /** Follow the recording's tempo changes, or one steady tempo (the automatic fit's two maps). */
+  function setFollow(on) {
+    if (!live() || importing || !selected.fit?.follow) return;
+    const before = selected.follow;
+    selected.follow = !!on;
+    try {
+      apply(selected, selected.offset);
+      describeFit(selected);
+    } catch (err) {
+      selected.follow = before;
+      setStatus(errorText(err), 'error');
+    }
+    renderSelection();
+  }
+
+  /** Play a few seconds before bar 1, or before the last bars: the two places a misaligned map shows first. */
+  function hear(where) {
+    if (!live() || selected === original) return;
+    const data = map.serialize(), c = compile(data);
+    const starts = data.measures.reduce((list, m) => { list.push(list.at(-1) + number(m.length)); return list; }, [0]);
+    const t = where === 'start' ? timeAt(c, firstDownbeatQ(data)) - 2 : timeAt(c, starts.at(-2) ?? 0) - 8;
+    const at = Math.max(0, Math.min(duration() - 1, t));
+    if (typeof session.transport?.playFrom === 'function') void session.transport.playFrom(at);
   }
 
   const offsetMs = () => (selected.offset || 0) * 1000;
@@ -535,7 +760,7 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     try {
       if (!Number.isFinite(ms) || Math.abs(ms) > MAX_OFFSET_MS) throw new Error(COPY.offsetRange);
       apply(selected, ms / 1000);
-      setStatus(COPY.offsetMoved(ms), 'ok');
+      setStatus(selected.fit ? COPY.offsetFromAuto(ms - selected.fit.offset * 1000) : COPY.offsetMoved(ms), 'ok');
     } catch (err) {
       setStatus(errorText(err), 'error');
     }
@@ -546,10 +771,15 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     if (!live() || selected === original || !selected.result?.map) return;
     const snap = peek(session.transport?.snapshot);
     const cue = Number.isFinite(snap?.cue) ? snap.cue : Number(session.engine?.editPosition ?? session.engine?.getPosition?.());
-    const source = selected.result.map;
-    const at = timeAt(compile(source), firstDownbeatQ(source));
+    const data = map.serialize();
+    const at = timeAt(compile(data), firstDownbeatQ(data));
     if (!Number.isFinite(cue) || !Number.isFinite(at)) return;
-    changeOffset((cue - at) * 1000);
+    changeOffset(offsetMs() + (cue - at) * 1000);
+  }
+
+  /** Reset: back to the automatic alignment when there is one, else to the source map's own timing. */
+  function resetOffset() {
+    changeOffset(selected.fit ? selected.fit.offset * 1000 : 0);
   }
 
   // ---------- commits ----------
@@ -558,6 +788,7 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
     if (ended) return false;
     ended = true;   // first, so the auditioning subscription below knows this end is ours
     if (mapSession.auditioning?.peek?.()) mapSession.endAudition({commit});
+    restoreGuard();
     if (destroyed) return true;
     renderState();
     if (!navigate) return true;
@@ -651,11 +882,13 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   }
 
   if (router?.onLeave) offs.push(router.onLeave(onLeave));
+  // A file dropped on the song while the panel is open is read here.
+  offs.push(onHandedFile(session.id, () => { const file = takeHandedFile(session.id); if (file) void readFile(file); }));
 
   // An audition someone else ended (the map session destroyed) closes the panel's choices.
   if (mapSession.auditioning?.subscribe) {
     offs.push(mapSession.auditioning.subscribe((on) => {
-      if (!on && !ended && !importing) { ended = true; renderState(); setStatus(COPY.closed); }
+      if (!on && !ended && !importing) { ended = true; restoreGuard(); renderState(); setStatus(COPY.closed); }
     }));
   }
 
@@ -668,7 +901,9 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
   } else if (wantsImport) {
     importButton.el.focus({preventScroll: true});
     setStatus(COPY.start);
-    if (globalThis.navigator?.userActivation?.isActive) fileInput.click();
+    const handed = takeHandedFile(session.id);
+    if (handed) void readFile(handed);
+    else if (globalThis.navigator?.userActivation?.isActive) fileInput.click();
   } else {
     query.input.focus({preventScroll: true});
   }
@@ -695,7 +930,9 @@ export function mountFindPanel(el, {session, mapSession, onClose, api = tempoSou
       ++loadRev;
       for (const off of offs.splice(0)) { try { off?.(); } catch { /* already gone */ } }
       root.removeEventListener('keydown', onKey);
-      for (const part of [say, query, searchButton, importButton, play, ...shiftButtons, offsetField, lineUp, reset, useTheirsButton, drumsButton, keepButton]) {
+      restoreGuard();
+      for (const part of [say, query, searchButton, importButton, play, ...shiftButtons, offsetField, lineUp, reset, useTheirsButton, drumsButton, keepButton,
+        auto, autoButton, hearStart, hearEnd]) {
         try { part.destroy(); } catch { /* removed with the root */ }
       }
       root.remove();

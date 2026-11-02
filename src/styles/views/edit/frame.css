@@ -11,6 +11,11 @@
  * Edit follows the app theme (paper / night, html[data-place=edit]); nothing here reads the Stage's
  * tokens. Key-cap hints (Kbd hint caps) show only inside [data-kbd-hints] (kbd.css). */
 @layer views {
+  /* A chart file dragged over Edit (src/edit/chart-file.js): dropping it opens Import a chart. */
+  .edit[data-chart-drop] {
+    outline: 3px dashed var(--accent);
+    outline-offset: -6px;
+  }
   .edit {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

@@ -81,7 +81,9 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     const timeline = songMap.timeline();
     if (sameContent(timeline, editor.score.timeline)) return;
     const next = {...editor.score, timeline: structuredClone(timeline)};
-    try { validateScore(next); } catch (error) { notify({type: 'error', message: error.message}); return; }
+    // While paused (an audition) a map that doesn't fit the part is being tried with its own drum chart:
+    // the part keeps its timing until that chart replaces it or the audition ends.
+    try { validateScore(next); } catch (error) { if (!syncPaused) notify({type: 'error', message: error.message}); return; }
     editor.score = next;
     editor.undoStack = retime(editor.undoStack, next.timeline);
     editor.redoStack = retime(editor.redoStack, next.timeline);
@@ -89,14 +91,16 @@ export async function openPart({song, engine, metronome, songMap = null, readOnl
     else part.commit('map');
   };
   const unsubscribeMap = songMap ? songMap.subscribe(syncMap) : () => {};
-  // Refuse tempo-map edits that would strand written notes.
+  // Refuse tempo-map edits that would strand written notes (code STRANDS_NOTATION: Find a chart may lift
+  // this guard while it tries a chart that brings its own drums, SongMapStore.suspendGuard).
+  const strands = message => Object.assign(new Error(message), {code: 'STRANDS_NOTATION'});
   const noteGuard = timeline => {
     if (!editor) return;
     for (const bar of editor.score.bars) {
       if (!bar.hits.length && bar.coverage === 'unstarted') continue;
       const index = timeline.measures.findIndex(m => m.id === bar.measureId);
-      if (index < 0) throw new Error('That change would remove a bar that has drum notation.');
-      try { validateBar(bar, timeline); } catch { throw new Error(`Bar ${index + 1} has drum notes that would no longer fit. Edit them in Transcribe first.`); }
+      if (index < 0) throw strands('That change would remove a bar that has drum notation.');
+      try { validateBar(bar, timeline); } catch { throw strands(`Bar ${index + 1} has drum notes that would no longer fit. Edit them in Transcribe first.`); }
     }
   };
   noteGuard.keep = id => !!editor?.score.bars.some(b => b.measureId === id && (b.hits.length || b.coverage !== 'unstarted'));

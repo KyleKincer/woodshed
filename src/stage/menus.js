@@ -526,7 +526,7 @@ export function stageMenu(session, stage, opts = {}) {
   items.push(
     SEPARATOR,
     {command: 'stage.share', ...(shareReason ? {reason: shareReason} : {})},
-    ...(readOnly ? [] : [{command: 'stage.export'}, {command: 'stage.remote'}]),
+    ...(readOnly ? [] : [{command: 'map.importFile'}, {command: 'stage.export'}, {command: 'stage.remote'}]),
     // A shared song has no Edit (spec §4.13): the three Edit rows are left out, not disabled.
     ...(readOnly ? [] : [editItem('map'), editItem('chart'), editItem('details')]),
     {command: 'song.resplit', ...(readOnly ? {reason: readOnly} : {})},
@@ -769,6 +769,7 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitem', STAGE_COPY.commands.detect, {command: 'map.detect', when: 'mapped'}),
   row('stage', 'menuitem', STAGE_COPY.commands.suggest, {command: 'sections.suggest', when: 'sections-missing'}),
   row('stage', 'menuitem', STAGE_COPY.commands.share, {command: 'stage.share'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.importChart, {command: 'map.importFile', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.export, {command: 'stage.export', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.remote, {command: 'stage.remote', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.editMap, {command: 'edit.map', when: 'owner'}),

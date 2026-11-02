@@ -95,7 +95,7 @@ export const COPY = Object.freeze({
   export: 'Export .woodshed.json',
   print: 'Print',
   openPart: 'Open .woodshed.json part…',
-  importDrums: 'Drum part from file (Guitar Pro, MIDI, Clone Hero)…',
+  importDrums: 'Import a chart from a file…',
   drumKeys: 'Drum keys…',
   noteList: 'Note list',
   allLanes: 'Show every kit piece',

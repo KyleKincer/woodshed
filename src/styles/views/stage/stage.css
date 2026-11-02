@@ -13,6 +13,11 @@
  * (--rail-w by Distance, tokens.css) holds the HUD and the controls. The status line floats over
  * the bottom of the music on both (status.css). */
 @layer views {
+  /* A chart file dragged over the Stage (src/edit/chart-file.js): dropping it opens Import a chart. */
+  .stage[data-chart-drop] {
+    outline: 3px dashed var(--accent);
+    outline-offset: -6px;
+  }
   .stage {
     --stage-strip-h: 56px;
     --stage-dock-h: 88px;

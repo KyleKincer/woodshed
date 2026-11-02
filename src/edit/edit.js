@@ -72,6 +72,7 @@ import {mountSlimTransport} from './slim-transport.js';
 import * as mapView from './map/view.js';
 import * as chartView from './chart/chart-edit.js';
 import * as detailsView from './details/details.js';
+import {bindChartDrop} from './chart-file.js';
 import {armEditOrigin, cameFromStage, COMMAND_COPY, EDIT_COMMANDS, EDIT_TABS, UNDO_COMMANDS} from './commands.js';
 
 export const COPY = Object.freeze({
@@ -471,6 +472,8 @@ async function mountEdit(el, match, ctx, guard) {
   const body = h('div', {class: 'edit-body'}, panel, inspector);
   const transportHost = h('div', {class: 'edit-transport'});
   const root = h('div', {class: 'edit', attrs: {tabindex: '-1'}, dataset: {songId}}, body, transportHost);
+  // A chart file dropped anywhere in Edit opens Import a chart with it (src/edit/chart-file.js).
+  cleanup(bindChartDrop(root, {songId, navigate: (path) => router?.navigate?.(path), canDrop: () => !session.readOnly}));
 
   // ---------------- the 'edit' API ----------------
   const api = {

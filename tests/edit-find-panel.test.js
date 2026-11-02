@@ -16,8 +16,10 @@ import {signal} from '../src/app/store.js';
 import {ApiError} from '../src/api/client.js';
 import {defineTransportCommands} from '../src/stage/transport-commands.js';
 import {createMapSession, MAP_SESSION_COPY} from '../src/edit/map/session.js';
-import {ACCEPT, COPY, CONTROLS, decodeSource, firstDownbeatQ, mountFindPanel, otherSourceLinks, rowMeta} from '../src/edit/map/find-panel.js';
+import {ACCEPT, COPY, CONTROLS, carryLabels, decodeSource, firstDownbeatQ, measureDrums, mountFindPanel, otherSourceLinks, rowMeta} from '../src/edit/map/find-panel.js';
+import {handOffFile} from '../src/edit/chart-file.js';
 import {fraction} from '../shared/notation.ts';
+import {toTimeline} from '../shared/song-map.ts';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
 import {demoScore} from './fixtures/drum-score.js';
@@ -71,7 +73,7 @@ function fakeRouter(songId, query = {}) {
  * query (the route query), confirm (the leave dialog's answer), mount (false: do not mount yet).
  */
 async function bed({tempo = {songMap: data()}, duration = 20, score = null, title = 'Song', artist = 'Band', search, load, importFile,
-  query = {}, confirm = async () => false, onClose, mount = true, session: sessionOptions = {}} = {}) {
+  query = {}, confirm = async () => false, onClose, mount = true, session: sessionOptions = {}, align, drumOnsets = () => null} = {}) {
   const ts = await createTestSession({clock, tempo, duration, title, artist, ...(score ? {score} : {}), ...sessionOptions});
   const registry = createRegistry();
   const offs = [defineTransportCommands({registry})];
@@ -94,7 +96,8 @@ async function bed({tempo = {songMap: data()}, duration = 20, score = null, titl
   const b = {ts, session: ts.session, map: ts.map, mapSession, registry, router, feedback, toasts, statuses, api, host, panel: null, onClose: onClose ?? vi.fn(),
     importFile: importFile ?? vi.fn()};
   b.mount = () => {
-    b.panel = mountFindPanel(host, {session: ts.session, mapSession, onClose: b.onClose, api, router, feedback, registry, importFile: b.importFile});
+    b.panel = mountFindPanel(host, {session: ts.session, mapSession, onClose: b.onClose, api, router, feedback, registry, importFile: b.importFile,
+      ...(align ? {align} : {}), drumOnsets});
     return b.panel;
   };
   current.push(async () => {
@@ -183,9 +186,10 @@ describe('opening (spec §5.1.2: pre-filled and auto-run)', () => {
       const el = byRole(b.host, row.role, row.name);
       expect(el, `${row.role} "${row.name}"`).not.toBeNull();
     }
-    // The drum commit appears only with a drum chart (below); its name carries the hit count.
-    expect(COPY.useWithDrums(312)).toBe('Use map + drum chart (312 hits)');
-    expect(COPY.useWithDrums(1)).toBe('Use map + drum chart (1 hit)');
+    // The drum commit (and Line up automatically) appear only with a drum chart (below); its name carries the hit count.
+    expect(COPY.useWithDrums(312)).toBe('Use this chart (map + 312 drum hits)');
+    expect(COPY.useWithDrums(1)).toBe('Use this chart (map + 1 drum hit)');
+    expect(button(COPY.lineUpAuto)).toBeNull();
     expect([...document.querySelectorAll('.find-commit button')].map(nameOf).filter(Boolean)).toEqual([COPY.useTheirs, COPY.keepMine]);
     // No separate Cancel (D20: Esc and Keep my map are the same).
     expect(button('Cancel')).toBeNull();
@@ -720,6 +724,163 @@ describe('Import a file… (every format and limit of importTempoFile)', () => {
     await vi.waitFor(() => expect(b.onClose).toHaveBeenCalledWith({result: 'drums'}), {timeout: 5000});
     expect(part.stats.notes).toBe(1);
     expect(b.toasts.at(-1).text).toBe(COPY.drumsImported(1, 0, true));
+  });
+});
+
+describe('lining a file up automatically (src/js/chart-align.js)', () => {
+  const drums = {hits: [{q: 0, midi: 36, durationQ: 0.25, velocity: 0.8}, {q: 4, midi: 38, durationQ: 0.25, velocity: 0.8}], source: 'guitar-pro', warnings: []};
+  // The file's own map: 120 bpm from 0 s (a tab never knows where the recording starts).
+  const file = () => resultAt(0, {format: 'guitar-pro', drums});
+  const heard = () => ({strength: {rate: 100, start: 0, values: new Float32Array(10)}, onsets: []});
+  const steady = {offset: 3, stretch: 1.01, matched: 90, total: 100, quality: 'good', chartBpm: 120, bpm: 120 / 1.01, follow: null};
+  const autoText = () => $('.find-auto').textContent.replace(/\s+/g, ' ').trim();
+  const commitNames = () => [...document.querySelectorAll('.find-commit button')].filter((el) => !el.hidden).map(nameOf);
+  async function pick(file) {
+    const input = $('input[type=file]');
+    Object.defineProperty(input, 'files', {configurable: true, value: [file]});
+    input.dispatchEvent(new Event('change'));
+    await settle();
+  }
+
+  test('a file with drums is lined up with the recording: the fitted map is tried and the line says where bar 1 lands', async () => {
+    const align = vi.fn(async () => steady);
+    const b = await bed({importFile: vi.fn(async () => file()), align, drumOnsets: heard});
+    await pick(new File(['gp'], 'tab.gp'));
+    await vi.waitFor(() => expect(align).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(align.mock.calls[0][0]).toMatchObject({hits: drums.hits, duration: 20});
+    expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
+    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2 * 1.01, 6);   // the recording's tempo, not the file's
+    expect(autoText()).toBe(COPY.autoGood({bar1: '0:03.0', bpm: 118.8, chartBpm: 120, matched: 90, total: 100}));
+    expect($('.find-auto').dataset.tone ?? $('.find-auto').getAttribute('data-tone')).toBe('ok');
+    // Using it all comes first; the map alone second.
+    expect(commitNames()).toEqual([COPY.useWithDrums(2), COPY.mapOnly, COPY.keepMine]);
+    expect($('.find-use-drums').dataset.variant).toBe('primary');
+    // Nudges keep the speed and say how far they are from the automatic alignment; Reset goes back to it.
+    $('[data-shift="100"]').click();
+    expect(b.map.timeAt(0)).toBeCloseTo(3.1, 6);
+    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2 * 1.01, 6);
+    expect(statusText()).toBe(COPY.offsetFromAuto(100));
+    button(COPY.reset).click();
+    expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
+    expect(statusText()).toBe(COPY.offsetFromAuto(0));
+    // Using it imports the drums against the fitted map, then commits that map.
+    $('.find-use-drums').click();
+    await vi.waitFor(() => expect(b.onClose).toHaveBeenCalledWith({result: 'drums'}), {timeout: 5000});
+    expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
+  });
+
+  test('a take whose tempo moves: the bar-by-bar map is used, and the switch puts one steady tempo back', async () => {
+    const follow = {...data(3), pins: [{position: fraction(0), time: 3}, {position: fraction(4), time: 5.1}], tailQpm: 115};
+    const align = vi.fn(async () => ({...steady, follow: {map: follow, matched: 97, drift: 0.05}}));
+    const b = await bed({importFile: vi.fn(async () => file()), align, drumOnsets: heard});
+    await pick(new File(['gp'], 'tab.gp'));
+    await vi.waitFor(() => expect($('.find-follow').hidden).toBe(false));
+    const box = $('.find-follow input');
+    expect(box.checked).toBe(true);
+    expect(b.map.timeAt(4)).toBeCloseTo(5.1, 6);
+    expect(autoText()).toContain(COPY.autoFollows.trim());
+    expect(autoText()).toContain('97 of 100 hits');
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    expect(b.map.timeAt(4)).toBeCloseTo(3 + 2 * 1.01, 6);
+    expect(autoText()).not.toContain(COPY.autoFollows.trim());
+    // A nudge moves the following map too.
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    $('[data-shift="-10"]').click();
+    expect(b.map.timeAt(4)).toBeCloseTo(5.09, 6);
+  });
+
+  test('hits that don\'t match the recording leave the file\'s own timing; before the audio decodes it says when it can', async () => {
+    const align = vi.fn(async () => ({...steady, quality: 'poor'}));
+    const b = await bed({importFile: vi.fn(async () => file()), align, drumOnsets: heard});
+    await pick(new File(['gp'], 'tab.gp'));
+    await vi.waitFor(() => expect(autoText()).toBe(COPY.autoPoor));
+    expect(b.map.timeAt(0)).toBeCloseTo(0, 6);
+    expect($('.find-auto').getAttribute('data-tone')).toBe('warn');
+
+    document.body.replaceChildren();
+    let drumsNow = null;
+    const later = vi.fn(async () => steady);
+    const c = await bed({importFile: vi.fn(async () => file()), align: later, drumOnsets: () => drumsNow});
+    await pick(new File(['gp'], 'tab.gp'));
+    expect(autoText()).toBe(COPY.autoNoAudio);
+    expect(later).not.toHaveBeenCalled();
+    drumsNow = heard();
+    button(COPY.lineUpAuto).click();
+    await vi.waitFor(() => expect(c.map.timeAt(0)).toBeCloseTo(3, 6));
+  });
+
+  test('a chart with its own drums can be tried over a drum part it doesn\'t fit; its map alone is refused, Keep my map restores the guard', async () => {
+    const b = await bed({importFile: vi.fn(async () => file()), align: vi.fn(async () => steady), drumOnsets: heard});
+    const original = JSON.stringify(toTimeline(b.map.snapshot()));
+    const guard = (timeline) => {
+      if (JSON.stringify(timeline) !== original) throw Object.assign(new Error('That change would remove a bar that has drum notation.'), {code: 'STRANDS_NOTATION'});
+    };
+    b.map.setGuard('notation', guard);
+    current.push(() => b.map.setGuard('notation', null));
+    await pick(new File(['gp'], 'tab.gp'));
+    await vi.waitFor(() => expect(b.map.timeAt(0)).toBeCloseTo(3, 6));
+    expect(b.map.guards.has('notation')).toBe(false);
+    const mapOnly = $('.find-use');
+    expect(mapOnly.getAttribute('aria-disabled')).toBe('true');
+    expect(mapOnly.textContent).toContain(COPY.strands);
+    expect($('.find-use-drums').getAttribute('aria-disabled')).toBeNull();
+    // A map without drums that strands notes is still refused while the guard is lifted for the chart.
+    button(COPY.keepMine).click();
+    await settle();
+    expect(JSON.stringify(toTimeline(b.map.snapshot()))).toBe(original);
+    expect(b.map.guards.get('notation')).toBe(guard);
+  });
+
+  test('Hear the start plays from two seconds before bar 1; Hear the end from eight seconds before the last bar', async () => {
+    const b = await bed({importFile: vi.fn(async () => file()), align: vi.fn(async () => steady), drumOnsets: heard});
+    const playFrom = vi.spyOn(b.session.transport, 'playFrom').mockImplementation(() => Promise.resolve());
+    await pick(new File(['gp'], 'tab.gp'));
+    await vi.waitFor(() => expect(b.map.timeAt(0)).toBeCloseTo(3, 6));
+    button(COPY.hearStart).click();
+    expect(playFrom).toHaveBeenLastCalledWith(1);
+    button(COPY.hearEnd).click();
+    const lastBar = b.map.timeAt(b.map.serialize().measures.slice(0, -1).reduce((q, m) => q + m.length.n / m.length.d, 0));
+    expect(playFrom.mock.calls.at(-1)[0]).toBeCloseTo(Math.min(19, lastBar - 8), 6);
+  });
+
+  test('a file dropped on the song is read as soon as the import opens', async () => {
+    const importFile = vi.fn(async () => file());
+    const b = await bed({importFile, query: {import: '1'}, mount: false, drumOnsets: () => null});
+    const dropped = new File(['gp'], 'dropped.gp');
+    handOffFile(b.ts.id, dropped);
+    b.mount();
+    await vi.waitFor(() => expect(importFile).toHaveBeenCalledWith(dropped, {duration: 20}));
+    await settle();
+    expect($('.find-current-name').textContent).toBe('dropped.gp');
+  });
+
+  test('a chart with drums takes the song\'s section names where they were heard, not by bar number', async () => {
+    // The song's map: 120 bpm from 1 s, with a Verse at its bar 3 (5 s) and a Chorus at bar 5 (9 s).
+    const named = data(1);
+    named.measures[0].label = 'Pickup';
+    named.measures[2].label = 'Verse';
+    named.measures[4].label = 'Chorus';
+    // The chart: 100 bpm (a bar is 2.4 s) from 0 s, which names its own bar 2.
+    const chart = {...data(0), pins: [{position: fraction(0), time: 0}, {position: fraction(4), time: 2.4}], tailQpm: 100};
+    chart.measures[1].label = 'Intro riff';
+    const out = carryLabels(named, structuredClone(chart));
+    expect(out.measures.map((m) => m.label)).toEqual(['', 'Intro riff', 'Verse', '', 'Chorus', '', '', '', '', '']);   // 5 s → 4.8 s, 9 s → 9.6 s
+    expect(chart.measures[2].label).toBe('');   // its argument is the one changed
+    const b = await bed({tempo: {songMap: named}, importFile: vi.fn(async () => ({map: chart, format: 'guitar-pro', warnings: [], drums})), drumOnsets: () => null});
+    await pick(new File(['gp'], 'tab.gp'));
+    expect(b.map.serialize().measures.slice(0, 5).map((m) => m.label)).toEqual(['', 'Intro riff', 'Verse', '', 'Chorus']);
+  });
+
+  test('measureDrums reads the decoded drum stem (else the first decoded one), and nothing before decoding', () => {
+    const buffer = (n) => ({sampleRate: 8000, length: n, numberOfChannels: 1, getChannelData: () => new Float32Array(n)});
+    expect(measureDrums({engine: {tracks: [{name: 'drums'}]}})).toBeNull();
+    const heardDrums = measureDrums({engine: {tracks: [{name: 'bass', buffer: buffer(4000)}, {name: 'drums', buffer: buffer(8000)}]}});
+    expect(heardDrums.strength.rate).toBe(8000 / 128);
+    expect(heardDrums.strength.values.length).toBe(Math.floor((8000 - 512) / 128));
+    expect(heardDrums.onsets).toEqual([]);
   });
 });
 

@@ -26,7 +26,7 @@
 //   listen     {mode(), setMode(m), level(), setLevel(x)}: Listen persists across postures (notation session)
 //   viewport   {get() → {start, end}, set(start, end)}: the lanes' seconds window
 //   openMap(q, {edit, bar})  Bar meter & label… / Align in tempo map… switch to Edit · Map at that bar
-//   openDrumImport()         Part ▾ Drum part from file…
+//   openDrumImport()         Part ▾ Import a chart from a file…
 //   dialog({title, body: Element, submitLabel, onSubmit(form: FormData)}) → Promise; a thrown error shows inline
 //   drumKeys   {get() → {kitId: KeyString|''}, save(keys), reserved() → {KeyString: title}}
 import {KIT,kitPiece,id,fraction,number,add,subtract,compare,durationOf,starts,extent,locate,toTime,toQuarter,validateScore,upgradeScore,musicalStarts} from '../../../shared/notation.ts';

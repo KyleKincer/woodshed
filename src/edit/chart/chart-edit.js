@@ -36,7 +36,7 @@ import {stageLayout} from '../../stage/layout.js';
 import {createNotationWorkspace, formDialog, INSPECTOR_TABS} from '../../js/notation/editor.js';
 import {musicalStarts, toTime, number} from '../../../shared/notation.ts';
 import {confirm as appConfirm} from '../../app/feedback.js';
-import {importDrumPartFromFile, replaceDialog} from '../drum-import.js';
+import {chartImportPath} from '../chart-file.js';
 import {reservedScoreKeys, setDrumKeys as setAppDrumKeys} from './commands.js';
 import {createToolbar} from './toolbar.js';
 import {createKitBank} from './kit-bank.js';
@@ -63,19 +63,9 @@ export function windowLayout(win = globalThis.window) {
   return stageLayout({vw: win.innerWidth, vh: win.innerHeight}) === 'rail' ? 'wide' : 'portrait';
 }
 
-/** A file picker for Part ▾ → Drum part from file…; resolves with the chosen File or null. */
-function pickFile(accept) {
-  return new Promise((resolve) => {
-    const input = h('input', {type: 'file', accept});
-    input.addEventListener('change', () => resolve(input.files?.[0] ?? null), {once: true});
-    input.addEventListener('cancel', () => resolve(null), {once: true});
-    input.click();
-  });
-}
-
 export function mount(el, {session, query = {}, inspectorEl = null, edit = null, registry = appRegistry, prefs = appPrefs,
   commands = registry === appRegistry ? {setDrumKeys: setAppDrumKeys} : null, dialog = formDialog,
-  importDrums = importDrumPartFromFile, chooseFile = pickFile, confirm = appConfirm} = {}) {
+  confirm = appConfirm} = {}) {
   if (!session) throw new TypeError('Edit · Chart needs a song session.');
   const notation = session.notation;
   const transport = session.transport;
@@ -166,17 +156,11 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
     if (r?.navigate) r.navigate(path, {replace: true});
     else if (edit?.setTab) edit.setTab('map');
   }
-  async function openDrumImport() {
-    const file = await chooseFile(COPY.importAccept);
-    if (!file || destroyed) return;
-    say(COPY.importing);
-    try {
-      const result = await importDrums(file, {session, confirmReplace: replaceDialog(confirm)});
-      if (destroyed) return;
-      say(result?.canceled ? '' : COPY.imported(result?.count ?? 0, result?.skipped ?? 0, !!result?.replaced));
-    } catch (err) {
-      if (!destroyed) say(err?.message || COPY.importFailed);
-    }
+  // Part ▾ → Import a chart from a file…: the one import (src/edit/chart-file.js), in Edit · Map, where the
+  // chart's bars are lined up with the recording before anything is kept.
+  function openDrumImport() {
+    const r = router();
+    if (r?.navigate) r.navigate(chartImportPath(songId()));
   }
 
   // ---- layout: wide (inspector tabs on the right) or portrait (sheets and the kit bank) ---------------------
