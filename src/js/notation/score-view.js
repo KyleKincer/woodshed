@@ -55,7 +55,9 @@ function pickFonts(fonts) {
 /**
  * @param host element to render into
  * @param options.scale engraving scale (1 = alphaTab default)
- * @param options.barsPerRow -1 for automatic by width
+ * @param options.barsPerRow -1 for automatic by width (a line takes bars until their natural widths fill it)
+ * @param options.stretch note spacing (alphaTab's stretchForce: 1 its default, lower is tighter); with
+ *   barsPerRow -1 it decides how many bars share a line
  * @param options.fonts {barNumber, marker} label sizes in engraving px (default DEFAULT_FONTS)
  * @param options.resizeSettleMs 0: a width change re-engraves at once (alphaTab's own 10 ms
  *   throttle). Above 0 it waits this long after the last width change and re-engraves only if no
@@ -64,7 +66,7 @@ function pickFonts(fonts) {
  * @param options.onRender (view) after every finished engraving
  * @param options.onPointer ({kind:'down'|'move'|'up'|'cancel', event, at}) pointer callback
  */
-export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false, fonts = null, resizeSettleMs = 0, onRender = () => {}, onPointer = null} = {}) {
+export function createScoreView(host, {scale = 1, barsPerRow = -1, stretch = 1, print = false, fonts = null, resizeSettleMs = 0, onRender = () => {}, onPointer = null} = {}) {
   host.classList.add('score-view');
   const stage = document.createElement('div');
   stage.className = 'score-stage';
@@ -97,6 +99,7 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
   settings.display.staveProfile = alphaTab.StaveProfile.Score;
   settings.display.scale = scale;
   settings.display.barsPerRow = barsPerRow;
+  settings.display.stretchForce = stretch;
   settings.display.justifyLastSystem = false;
   settings.display.padding = [12, 18, 12, 18];
   settings.display.firstSystemPaddingTop = 6;
@@ -330,9 +333,10 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
     ready = false;
     api.render();
   }
-  /** Scale, bars per row and label sizes without rendering; true when anything changed. */
-  function configure({scale: nextScale, barsPerRow: nextBars, fonts: nextFonts} = {}) {
+  /** Scale, bars per row, note spacing and label sizes without rendering; true when anything changed. */
+  function configure({scale: nextScale, barsPerRow: nextBars, stretch: nextStretch, fonts: nextFonts} = {}) {
     let changed = false;
+    if (nextStretch != null && settings.display.stretchForce !== nextStretch) { settings.display.stretchForce = nextStretch; changed = true; }
     if (nextScale != null && settings.display.scale !== nextScale) { settings.display.scale = nextScale; changed = true; }
     if (nextBars != null && settings.display.barsPerRow !== nextBars) { settings.display.barsPerRow = nextBars; changed = true; }
     if (nextFonts) {
@@ -386,6 +390,7 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, print = false
     get score() { return score; },
     get scale() { return settings.display.scale; },
     get barsPerRow() { return settings.display.barsPerRow; },
+    get stretch() { return settings.display.stretchForce; },
     get fonts() { return {...labelSizes}; },
     setScore(next, options = {}) { score = next; renderOptions = options; render(); },
     setOptions(options) { renderOptions = {...renderOptions, ...options}; render(); },

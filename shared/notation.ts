@@ -17,7 +17,12 @@ export type TupletSpan = {start:Fraction; length:Fraction; count:number; voice?:
 export type Bar = {measureId:string; coverage:'unstarted'|'progress'|'reviewed'; hits:Hit[]; tuplets?:TupletSpan[]};
 /** 'combined' (default) writes one rhythm like Guitar Pro and Songsterr; 'split' writes hands stems-up and feet stems-down. */
 export type Layout = 'split'|'combined';
-export type Score = {version:2; title:string; layout?:Layout; timeline:Timeline; bars:Bar[]};
+/** `lineBreaks`: the ids of the bars that start a new line of the chart (Chart layout's "New line here"). */
+export type Score = {version:2; title:string; layout?:Layout; lineBreaks?:string[]; timeline:Timeline; bars:Bar[]};
+/** A line-break list is at most one id per bar; ids that left the timeline are ignored when drawing. */
+export function validLineBreaks(value:unknown):value is string[] {
+  return Array.isArray(value) && value.length <= MAX_MEASURES && new Set(value).size === value.length && value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 80);
+}
 /** Version 1 stored authored durations on each hit. Kept only for upgrade-on-read. */
 export type HitV1 = {id:string; offset:Fraction; duration:Fraction; instrument:string; voice:1|2;
   value:number; dotted:boolean; tuplet:number; accent:boolean; ghost:boolean; flam:boolean; sticking:''|'L'|'R'; velocity:number};
@@ -128,7 +133,7 @@ export function validateBar(input:Bar|unknown,timeline:Timeline) {
   // Every bar must be writable in both stem layouts a reader can choose.
   engraveBar(bar,m,'split');engraveBar(bar,m,'combined');
 }
-export function validateScore(score:Score){if(score.version!==2||!score.title.trim()||score.title.length>100||(score.layout!==undefined&&!['split','combined'].includes(score.layout)))throw new Error('Invalid drum part.');validateTimeline(score.timeline);if(score.bars.length>MAX_MEASURES||new Set(score.bars.map(b=>b.measureId)).size!==score.bars.length||score.bars.reduce((n,b)=>n+b.hits.length,0)>MAX_HITS)throw new Error('This score exceeds its supported size.');for(const b of score.bars)validateBar(b,score.timeline);}
+export function validateScore(score:Score){if(score.version!==2||!score.title.trim()||score.title.length>100||(score.layout!==undefined&&!['split','combined'].includes(score.layout))||(score.lineBreaks!==undefined&&!validLineBreaks(score.lineBreaks)))throw new Error('Invalid drum part.');validateTimeline(score.timeline);if(score.bars.length>MAX_MEASURES||new Set(score.bars.map(b=>b.measureId)).size!==score.bars.length||score.bars.reduce((n,b)=>n+b.hits.length,0)>MAX_HITS)throw new Error('This score exceeds its supported size.');for(const b of score.bars)validateBar(b,score.timeline);}
 
 /** Version 1 hits carried authored durations; v2 derives them. Explicit rests are dropped. */
 export function upgradeBar(input:any):Bar {
@@ -183,6 +188,10 @@ export class ScoreEditor {
     const tuplets=(bar.tuplets??[]).filter(t=>compare(t.start,end)>=0||compare(add(t.start,t.length),start)<=0);
     if(span)tuplets.push(span);tuplets.sort((a,b)=>compare(a.start,b.start));if(tuplets.length)bar.tuplets=tuplets;else delete bar.tuplets;bar.coverage='progress';});}
   setLayout(layout:Layout){return this.transact(s=>{if(layout==='combined')delete s.layout;else s.layout=layout;});}
+  /** Start a new line of the chart at this bar, or stop doing so (`on` omitted: toggle). Ids no longer in the timeline are dropped. */
+  setLineBreak(measureId:string,on?:boolean){return this.transact(s=>{const ids=new Set(s.timeline.measures.map(m=>m.id)),list=(s.lineBreaks??[]).filter(id=>ids.has(id)&&id!==measureId);
+    if((on??!(s.lineBreaks??[]).includes(measureId))&&ids.has(measureId))list.push(measureId);if(list.length)s.lineBreaks=list;else delete s.lineBreaks;});}
+  clearLineBreaks(){return this.transact(s=>{delete s.lineBreaks;});}
   move(ids:Set<string>,delta:Fraction){return this.transact(s=>{const positions=musicalStarts(s.timeline),moving:{hit:Hit;position:Fraction}[]=[];
     for(const bar of s.bars){const index=s.timeline.measures.findIndex(m=>m.id===bar.measureId);for(const hit of bar.hits)if(ids.has(hit.id))moving.push({hit,position:add(add(positions[index],hit.offset),delta)});if(bar.hits.some(h=>ids.has(h.id))){bar.hits=bar.hits.filter(h=>!ids.has(h.id));bar.coverage='progress';}}
     for(const {hit,position} of moving){if(number(position)<0||number(position)>=extent(s.timeline))throw new Error('The selected notes would move outside the song.');const target=locate(s.timeline,number(position)),bar=this.bar(target.index,s);if(bar.hits.some(h=>h.instrument===hit.instrument&&compare(h.offset,subtract(position,target.startPosition))===0))throw new Error('That drum already has a note there.');bar.hits.push({...hit,offset:subtract(position,target.startPosition)});bar.coverage='progress';}

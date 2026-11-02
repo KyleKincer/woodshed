@@ -6,7 +6,7 @@ import {requireUserId} from './lib/auth';
 import {fail} from './lib/errors';
 import {ensureBackfill,chartPatch} from './migrations';
 import {barValidator,headerValidator} from './lib/notationValidators';
-import {validateTimeline,validateBar,upgradeBar,currentBar,MAX_MEASURES,MAX_HITS} from '../shared/notation';
+import {validateTimeline,validateBar,upgradeBar,currentBar,validLineBreaks,MAX_MEASURES,MAX_HITS} from '../shared/notation';
 import {sharedSource} from './sharing';
 import {sameContent} from '../shared/content';
 
@@ -50,6 +50,7 @@ export const save=mutation({args:{songId:v.id('songs'),baseRevision:v.number(),m
   const userId=await requireUserId(ctx),song=await ctx.db.get('songs',args.songId);if(!song||song.userId!==userId)fail('not_found','Song unavailable.');
   if(args.mutationId.length>100||!args.mutationId||args.bars.length>16||!Number.isSafeInteger(args.baseRevision)||args.baseRevision<0||!args.header.title.trim()||args.header.title.length>100)throw new ConvexError('Invalid score update.');
   validateTimeline(args.header.timeline);
+  if(args.header.version===2&&args.header.lineBreaks!==undefined&&!validLineBreaks(args.header.lineBreaks))throw new ConvexError('Invalid score update.');
   // Version 2 bars must already be current: validateBar checks the upgraded
   // bar, so a rest or duration field here would otherwise be stored as-is.
   for(const bar of args.bars){if(args.header.version===2&&upgradeBar(bar)!==bar)throw new ConvexError('A note does not fit this bar or has invalid data.');validateBar(bar,args.header.timeline);}

@@ -10,7 +10,7 @@
 //   error=1           the part fails to open until Try again
 //   distance=near|stand|kit, focus=1, follow=scroll|page, display=split|combined, pinch=1.45   device prefs
 //   cue=40            cue (seconds) · loop=17-24 bars (1-based, inclusive)
-// window.__chartSurface = {ts, view, router, registry, run(id, args), stage(), chart(), relayout(fn)}
+// window.__chartSurface = {ts, view, router, registry, prefs, run(id, args), stage(), chart(), relayout(fn)}
 // for tests/fixture/states/ST9.cjs. relayout(fn) runs fn (a Distance change, a zoom step) and
 // resolves with the relayouts it caused: the chart's timing of each (ms), as D54 samples them.
 import {registry} from '/src/app/commands.js';
@@ -132,7 +132,7 @@ export default async function mount(el, {query, h}) {
   }
 
   window.__chartSurface = {
-    ts, view, router, registry, relayout,
+    ts, view, router, registry, prefs, relayout,
     run: (id, args) => registry.run(id, {source: 'key', args}),
     stage: () => registry.context().stage,
     chart,

@@ -47,6 +47,18 @@ describe('alphaTab conversion', () => {
     expect(bars).toEqual([1, 2]);
   });
 
+  it('starts a line at each of the song\'s line breaks (Chart layout), only when asked, and within a range', () => {
+    const score = groove(6);
+    const ids = score.timeline.measures.map(m => m.id);
+    score.lineBreaks = [ids[0], ids[2], ids[4], 'gone'];
+    validateScore(score);
+    const lines = (out) => [...(out.tracks[0].lineBreaks ?? [])].sort();
+    expect(lines(buildAlphaTabScore(at, score).score)).toEqual([]);
+    expect(lines(buildAlphaTabScore(at, score, {lineBreaks: true}).score)).toEqual([2, 4]);   // bar 1 starts a line anyway
+    expect(lines(buildAlphaTabScore(at, score, {lineBreaks: true, range: [1, 4]}).score)).toEqual([1, 3]);   // indexes within the range
+    expect(lines(buildAlphaTabScore(at, score, {lineBreaks: true, range: [2, 4]}).score)).toEqual([2]);   // the range's first bar starts a line anyway
+  });
+
   it('marks repeated bars for simile notation', () => {
     const score = groove();
     expect([...repeatedBars(score)]).toEqual([1]);

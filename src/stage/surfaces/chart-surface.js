@@ -6,12 +6,15 @@
 //   band 1.0/1.2/1.5) unless this device pinched or stepped it at the current Distance
 //   (prefs.chart.pinchScale, written with prefs.chart.pinchDistance: a pinch made at another
 //   Distance is ignored, wherever that Distance was changed, and applies again on going back).
-//   The label floors are 14 × d and 20 × d px. Dense parts (more than DENSE_HITS hits per notated
-//   bar) are engraved 2 bars per system on the band and 4 on the rail.
+//   The label floors are 14 × d and 20 × d px.
+// - Lines (Chart layout, src/stage/sheets/layout.js; prefs chart.lines): bars per line 'auto' (each
+//   line holds as many bars as their notes fit, so a busy bar gets the room it needs) or 1–6, and the
+//   spacing (Tight · Normal · Roomy, SPACING). The song's own line breaks (Score.lineBreaks, "New line
+//   here" on a bar) always start a line.
 // - D54 (R1): while the last two size changes took ≤ 300 ms a Distance change or a =/− step relayouts
 //   at once; otherwise it applies once, on release (commitSize(), e.g. the Distance menu closing) or
 //   400 ms after the last step, with the status "Resizing…". A size change (scale, label floors and
-//   bars per system) is one chart.configure call, so one relayout; any further relayout reported
+//   lines) is one chart.configure call, so one relayout; any further relayout reported
 //   within BATCH_IDLE_MS of it is summed into the same sample and counted in data-relayouts.
 // - Pinch (src/stage/pinch.js, 80–200 %): a CSS preview while the fingers move, one relayout on
 //   release. ⌘/Ctrl-wheel is the same gesture for a trackpad or mouse, refused while playing
@@ -44,6 +47,7 @@
 import '../../styles/views/stage/surface-chart.css';
 import {registry as appRegistry} from '../../app/commands.js';
 import {prefs as appPrefs} from '../../app/prefs.js';
+import {effect, untracked} from '../../app/store.js';
 import {h} from '../../ui/h.js';
 import {Button} from '../../ui/button.js';
 import {DISTANCE, chartScale, distanceOf} from '../layout.js';
@@ -63,10 +67,8 @@ export const LIVE_RELAYOUT_MS = 300;
 export const SETTLE_MS = 400;
 /** A size change's sample stays open this long after its last relayout report (later ones are summed in). */
 const BATCH_IDLE_MS = 1000;
-/** A part is dense above this many hits per notated bar (maps/notation.md §11.1). */
-export const DENSE_HITS = 8;
-/** Bars per system for dense parts (spec §4.4A): 2 on the band (iPad portrait), 4 on the rail. */
-export const DENSE_BARS = Object.freeze({band: 2, rail: 4});
+/** Note spacing for prefs chart.lines.spacing (alphaTab's stretchForce; its natural widths bottom out near 0.6). */
+export const SPACING = Object.freeze({tight: 0.6, normal: 0.8, roomy: 1.05});
 /** The Scroll follow line (spec §4.4A). */
 export const FOLLOW_ANCHOR = Object.freeze({band: 0.28, rail: 0.33});
 /** The pinch range (spec §4.9). */
@@ -107,16 +109,10 @@ const noop = () => {};
 // ---------------------------------------------------------------------------------------------
 // Pure rules (dimensions and data as inputs, §0.1)
 
-/** True when the part averages more than DENSE_HITS hits per bar that has any. */
-export function isDense(score) {
-  const bars = Array.isArray(score?.bars) ? score.bars.filter((b) => b?.hits?.length) : [];
-  if (!bars.length) return false;
-  return bars.reduce((n, b) => n + b.hits.length, 0) / bars.length > DENSE_HITS;
-}
-
-/** Bars per system: 2 (band) or 4 (rail) for a dense part, else -1 (alphaTab fits them to the width). */
-export function barsPerSystem({dense, layout}) {
-  return dense ? DENSE_BARS[layout === 'rail' ? 'rail' : 'band'] : -1;
+/** The chart's lines from prefs chart.lines: {barsPerRow (-1 = fitted to the notes), stretch}. */
+export function linesFor({bars, spacing} = {}) {
+  const n = Number(bars);
+  return {barsPerRow: Number.isInteger(n) && n >= 1 && n <= 6 ? n : -1, stretch: SPACING[spacing] ?? SPACING.normal};
 }
 
 /** The Scroll follow line for a layout. */
@@ -246,7 +242,6 @@ export async function createChartSurface(host, opts = {}) {
     const partListeners = new Set();
     let partOff = null, partSeen = null;
     const notifyPart = () => {
-      updateDensity();
       for (const fn of [...partListeners]) { try { fn(); } catch (err) { console.error('[chart-surface] part listener failed', err); } }
     };
     function watchPart() {
@@ -270,7 +265,8 @@ export async function createChartSurface(host, opts = {}) {
     const targetScale = () => scaleFor({distance, layout, pinch: pinchPref(), pinchDistance: prefs.get('chart.pinchDistance')});
     /** A pinch or =/− step: this device's override, for the Distance it was made at. */
     const writePinch = (value) => prefs.update((d) => { d.chart.pinchScale = value; d.chart.pinchDistance = distance; });
-    let dense = isDense(partView.score);
+    const linesNow = () => linesFor({bars: prefs.get('chart.lines.bars'), spacing: prefs.get('chart.lines.spacing')});
+    let lines = linesNow();
     const gate = createRelayoutGate();
 
     const chartModule = await loadChartModule();
@@ -283,7 +279,7 @@ export async function createChartSurface(host, opts = {}) {
     chart = chartModule.createChart({
       host: chartHost, part: partView, engine: session.engine,
       scale: targetScale(),
-      display: {barsPerRow: barsPerSystem({dense, layout})},
+      display: lines,
       followStyle: followStyleNow(),
       followAnchor: followAnchorFor(layout),
       glass: isPlaying(),
@@ -307,13 +303,13 @@ export async function createChartSurface(host, opts = {}) {
       return style === 'scroll' || style === 'page' ? style : layout === 'rail' ? 'scroll' : 'page';
     }
 
-    function updateDensity() {
-      const next = isDense(partView.score);
-      if (next === dense) return;
-      dense = next;
-      closeChange();
-      chart?.setDisplay?.({barsPerRow: barsPerSystem({dense, layout})});
-    }
+    // Chart layout (this device's bars per line and spacing): one relayout when either changes.
+    cleanup(effect(() => {
+      const next = linesNow();
+      if (next.barsPerRow === lines.barsPerRow && next.stretch === lines.stretch) return;
+      lines = next;
+      untracked(() => { if (!destroyed) { closeChange(); chart?.setDisplay?.(lines); } });
+    }));
 
     // ---------------- D54 samples: one size change, and every relayout it takes ----------------
     // A change is open from its first relayout report until BATCH_IDLE_MS pass without another, or
@@ -343,13 +339,13 @@ export async function createChartSurface(host, opts = {}) {
     cleanup(closeChange);
 
     /**
-     * Applies the current target size (scale, label floors and bars per system) in one
+     * Applies the current target size (scale, label floors and lines) in one
      * chart.configure call: one relayout when any of them changed, sampled for D54 as one change.
      */
     function applySize() {
       if (destroyed) return;
       closeChange();
-      chart.configure({scale: targetScale(), fonts: fontsFor(distance), barsPerRow: barsPerSystem({dense, layout})}, {anchor: true});
+      chart.configure({scale: targetScale(), fonts: fontsFor(distance), ...lines}, {anchor: true});
       pinch?.setBase(chart.state.scale);
     }
     /** A stepped or menu size change (Distance, =/−): live or on release, per D54. */
@@ -652,7 +648,7 @@ export async function createChartSurface(host, opts = {}) {
         layout = next;
         chart.setFollowStyle(followStyleNow(), {anchor: followAnchorFor(layout)});
         gate.cancel();
-        applySize();   // bars per system, the floors of a deferred Distance and the scale, as one change
+        applySize();   // the lines, the floors of a deferred Distance and the scale, as one change
       },
       /** D54 release (the Distance menu closed): a deferred size change applies now. */
       commitSize() { if (!destroyed) gate.flush(); },

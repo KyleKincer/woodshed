@@ -3,11 +3,12 @@
 // items it returns act when chosen.
 //
 //   stageMenu(session, stage, opts?)          the identity-row ⋯ menu (stage.menu): View ▸ · Display ▸ (a part exists)
-//                                             · Follow ▸ (Chart, mapped Road map) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
+//                                             · Follow ▸ (Chart, mapped Road map) · Chart layout… (Chart, a part exists) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
 //                                             · Get bars… (unmapped) / Detect beats (mapped) · Suggest sections (mapped, no
 //                                             sections) · ── · Share… · Edit map · Edit drum chart · Edit details · Re-split…
 //                                             · ── · Keyboard shortcuts
-//   barMenu(session, {t, bar}, opts?)         the music surfaces' long-press / right-click menu (spec §4.9)
+//   barMenu(session, {t, bar}, opts?)         the music surfaces' long-press / right-click menu (spec §4.9); on the Chart
+//                                             (opts.surface 'chart') of an owner's mapped song with a part, New line here ✓
 //   sectionMenu(session, region, opts?)       the strip's (and the sections lane's) menu; opts {t, rename}
 //   spotMenu(session, spot, opts?)            Open · Rename… · Update from current · Delete; opts {rename, onOpen}
 //   markerMenu(session, marker, opts?)        Rename… · Delete · Turn into section (mapped); opts {rename}
@@ -67,6 +68,8 @@ export const COPY = Object.freeze({
   spots: 'Spots…',
   shortcuts: 'Keyboard shortcuts',
   // bar menu
+  newLine: 'New line here',
+  firstLine: 'The first bar always starts a line.',
   playFromHere: 'Play from here',
   cueHere: 'Cue here',
   loopBar: 'Loop this bar',
@@ -508,6 +511,7 @@ export function stageMenu(session, stage, opts = {}) {
         get checked() { return peek(stage?.followStyle) === 'page'; }},
     ]});
   }
+  if (surface === 'chart' && hasPart) items.push({command: 'stage.chartLayout'});
   items.push(
     {command: 'view.focus', type: 'checkbox'},
     {type: 'submenu', label: COPY.distance, icon: 'maximize-2', items: [
@@ -597,7 +601,27 @@ export function barMenu(session, {t} = {}, opts = {}) {
     {id: 'add-marker', label: mapped && writable(session) ? COPY.addSection : COPY.addMarker, icon: 'flag',
       ...(addReason ? {reason: addReason} : {}), run: () => { addMarkerAt(session, t, opts); }},
   );
+  const lineBreak = opts.surface === 'chart' && mapped && writable(session) ? lineBreakAt(session, t) : null;
+  if (lineBreak) items.push(lineBreak);
   return items;
+}
+
+/** "New line here" ✓ for the bar at t: the song's own line break (Score.lineBreaks), saved with its drum part. */
+function lineBreakAt(session, t) {
+  const part = session.notation?.part;
+  const measures = part?.editor?.score?.timeline?.measures;
+  if (!measures?.length || part.readOnly) return null;
+  const index = session.map.barIndexAt(t);
+  const id = measures[index]?.id;
+  if (!id) return null;
+  const on = (part.editor.score.lineBreaks ?? []).includes(id);
+  return {id: 'line-break', type: 'checkbox', label: COPY.newLine, icon: 'list', checked: on || index === 0,
+    ...(index === 0 ? {reason: COPY.firstLine} : {}),
+    run: () => {
+      if (index === 0 || !part.editor) return;
+      part.editor.setLineBreak(id, !on);
+      part.commit('layout');
+    }};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -739,7 +763,7 @@ export async function makeMine(instrument, opts = {}) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The controls table (§9.0): every menu's rows, with the role and accessible name the Menu renders.
-// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'follows' (the
+// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'chart' (the Chart is shown) | 'follows' (the
 // Chart, or the mapped Road map: a surface that follows by rows) | 'sections-missing' (mapped without sections) | 'owner' (not a shared song: Edit is hidden there,
 // spec §4.13), space-separated when a row needs several; rows without it are always present. `via` names the command
 // a plain row runs itself (it is not command-bound).
@@ -757,6 +781,7 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitem', COPY.follow, {when: 'follows'}),
   row('stage', 'menuitemradio', COPY.scroll, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
   row('stage', 'menuitemradio', COPY.page, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.chartLayout, {command: 'stage.chartLayout', when: 'chart part'}),
   row('stage', 'menuitemcheckbox', STAGE_COPY.commands.focus, {command: 'view.focus', kbd: 'KeyF'}),
   row('stage', 'menuitem', COPY.distance),
   row('stage', 'menuitemradio', STAGE_COPY.distances.near, {command: 'view.distance.near', parent: COPY.distance}),
@@ -788,6 +813,7 @@ export const CONTROLS = Object.freeze([
   row('bar', 'menuitem', COPY.saveSpotHere),
   row('bar', 'menuitem', COPY.addSection, {when: 'mapped'}),
   row('bar', 'menuitem', COPY.addMarker, {when: 'unmapped'}),
+  row('bar', 'menuitemcheckbox', COPY.newLine, {when: 'chart mapped part owner'}),
 
   row('section', 'menuitem', COPY.playFromHere),
   row('section', 'menuitem', COPY.loopSection, {when: 'mapped'}),

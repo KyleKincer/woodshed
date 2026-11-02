@@ -28,7 +28,7 @@ export const PREFS_DEFAULTS = deepFreeze({
   stage: 'dark',                   // 'dark'|'match'   (Appearance → Stage)
   library: {layout: 'grid', group: 'none', sort: null, filter: null, opened: []},
   practice: {distance: 'stand', focus: false, follow: {rail: 'scroll', band: 'page'}, edgeFlash: false, announceSections: false},
-  chart: {display: {layout: null}, pinchScale: null, pinchDistance: null},   // pinchDistance: the Distance pinchScale was set at
+  chart: {display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null},   // pinchDistance: the Distance pinchScale was set at
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
   roadmap: {waveRowSec: null, follow: null},                         // follow: 'scroll'|'page'; null → 'scroll' (spec §4.4B)
   edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
@@ -67,6 +67,9 @@ const ENUMS = {
   'edit.lastTab': ['map', 'chart', 'details'],
   'edit.chart.view': ['score', 'lanes'],
   'edit.chart.paging': ['pages', 'scroll'],
+  // The Stage chart's lines (Chart layout): bars per line ('auto' fits them to their notes) and note spacing.
+  'chart.lines.bars': ['auto', '1', '2', '3', '4', '5', '6'],
+  'chart.lines.spacing': ['tight', 'normal', 'roomy'],
 };
 
 // Paths whose default is null, and the type a stored value must have

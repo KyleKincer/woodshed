@@ -42,7 +42,7 @@ export const STAGE_COMMAND_IDS = Object.freeze([
   'view.cycle', 'view.chart', 'view.roadmap', 'view.stems', 'view.focus',
   'view.distance.near', 'view.distance.stand', 'view.distance.kit', 'view.bigger', 'view.smaller', 'view.followResume',
   'view.display', 'view.followStyle', 'stage.scrollUp', 'stage.scrollDown', 'stage.scrollTop',
-  'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
+  'stage.chartLayout', 'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
   'edit.open', 'edit.map', 'edit.chart', 'edit.details', 'practice.undo', 'practice.redo', 'setlist.next', 'setlist.prev',
 ]);
 
@@ -461,6 +461,9 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
       when: canStage('scrollTop'), run: (c) => stageOf(c).scrollTop()},
 
     // ---- sheets -------------------------------------------------------------------------------------------------
+    {id: 'stage.chartLayout', title: C.chartLayout, group: 'View', icon: 'sliders-horizontal',
+      palette: {keywords: ['layout', 'bars per line', 'spacing', 'cramped', 'tight', 'roomy', 'line break', 'notation']},
+      ...sheet('chartLayout', {when: (c) => surfaceOf(c) === 'chart' && !!sessionOf(c)?.notation?.part})},
     {id: 'stage.notes', title: C.notes, group: 'Practice', icon: 'sticky-note', palette: {keywords: ['notes', 'key', 'tuning', 'tags']},
       ...sheet('notes')},
     {id: 'stage.tapBeat', title: C.tapBeat, group: 'Practice', icon: 'hand', palette: {keywords: ['tap', 'tempo', 'bpm', 'beat']},

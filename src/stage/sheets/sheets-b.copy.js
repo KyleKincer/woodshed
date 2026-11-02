@@ -1,8 +1,8 @@
-// Copy and controls for the Stage's Spots list, Notes card, Tap the beat sheet and Get bars popover
+// Copy and controls for the Stage's Spots list, Notes card, Tap the beat sheet, Get bars popover and Chart layout sheet
 // (architecture §9.0 "Copy and controls tables", §2.14.11, §4.6; spec §4.4C, §4.7, §5.1.3). Pure: no
 // DOM and no imports beyond shared formatters, so the sheets, the tests and the harness read it freely.
 //
-//   COPY       every user-visible string of sheets/{spots,notes,tap-beat,get-bars}.js
+//   COPY       every user-visible string of sheets/{spots,notes,tap-beat,get-bars,layout}.js
 //   CONTROLS   [{sheet, role, name, command?, when?}]: the sheets' own controls (the table-driven test
 //              renders each sheet and finds every row by role and accessible name)
 //   formatDownbeat(seconds)   'm:ss.ss' (the Tap the beat result: "first downbeat 0:00.41")
@@ -21,6 +21,23 @@ export function formatDownbeat(seconds) {
 }
 
 export const COPY = Object.freeze({
+  // ---- Chart layout (sheets/layout.js): this device's lines and spacing, the size, the notation, the song's line breaks ----
+  layout: Object.freeze({
+    bars: 'Bars per line',
+    auto: 'Auto',
+    barsHint: 'Auto gives each bar the room its notes need, so busy bars get a line of their own.',
+    spacing: 'Spacing',
+    tight: 'Tight', normal: 'Normal', roomy: 'Roomy',
+    size: 'Size',
+    smaller: 'Smaller', bigger: 'Larger',
+    notation: 'Notation',
+    together: 'Together', handsFeet: 'Hands & feet',
+    breaks: 'Line breaks',
+    breaksNone: 'Press and hold a bar (or right-click it) and choose New line here to start a line there.',
+    breaksSome: (n) => `${n === 1 ? '1 bar starts' : `${n} bars start`} a new line in this song, on every device.`,
+    clear: 'Clear line breaks',
+    reset: 'Reset layout',
+  }),
   // ---- Spots list (spec §4.7: "name · bars 41–48 · 85% · practised 2 days ago · 14 times · ▶") ----
   spots: Object.freeze({
     list: 'Saved spots',
@@ -145,4 +162,11 @@ export const CONTROLS = Object.freeze([
   {sheet: 'getBars', role: 'button', name: COPY.getBars.find, command: 'map.find'},
   {sheet: 'getBars', role: 'link', name: COPY.getBars.getDesktop, when: 'web'},
   {sheet: 'getBars', role: 'button', name: COPY.getBars.retry, when: 'failed'},
+  {sheet: 'chartLayout', role: 'radiogroup', name: COPY.layout.bars},
+  {sheet: 'chartLayout', role: 'radiogroup', name: COPY.layout.spacing},
+  {sheet: 'chartLayout', role: 'button', name: COPY.layout.smaller, command: 'view.smaller'},
+  {sheet: 'chartLayout', role: 'button', name: COPY.layout.bigger, command: 'view.bigger'},
+  {sheet: 'chartLayout', role: 'radiogroup', name: COPY.layout.notation},
+  {sheet: 'chartLayout', role: 'button', name: COPY.layout.clear, when: 'breaks'},
+  {sheet: 'chartLayout', role: 'button', name: COPY.layout.reset},
 ]);

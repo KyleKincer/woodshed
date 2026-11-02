@@ -109,6 +109,7 @@ const TABLE = [
   ['stage.scrollDown', 'View', [], [S], true],
   ['stage.scrollTop', 'View', [], [S], true],
   ['stage.notes', 'Practice', [], [S], false],
+  ['stage.chartLayout', 'View', [], [S], false],
   ['stage.tapBeat', 'Practice', [], [S], false],
   ['stage.getBars', 'Practice', [], [S], false],
   ['stage.share', 'App', [], [S], false],
@@ -635,7 +636,7 @@ describe('the sheets host', () => {
   });
 
   test('every sheet name is known; an unknown one throws', () => {
-    expect(SHEETS).toEqual(['speed', 'click', 'mix', 'loop', 'spots', 'notes', 'tapBeat', 'getBars']);
+    expect(SHEETS).toEqual(['speed', 'click', 'mix', 'loop', 'spots', 'notes', 'tapBeat', 'getBars', 'chartLayout']);
     for (const name of SHEETS) expect(COPY.sheets[name], name).toBeTruthy();
     expect(() => openSheet('nope')).toThrow(RangeError);
   });

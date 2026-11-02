@@ -1,3 +1,9 @@
+Woodshed 2.3.0 makes busy drum charts easier to read, and lets you lay a chart out your way.
+
+- **Lines that fit the notes.** The Stage's chart used to squeeze a busy part into four bars a line on a laptop (two on an iPad), so the notes ran into each other. Now each line holds as many bars as their notes fit: a groove gets three or four bars a line, and a dense fill gets the room it needs. Notes are also spaced a little more evenly.
+- **Chart layout.** On the Stage, choose ⋯ → Chart layout… (or search for it in the command palette) to pick the bars per line (Auto, or 1 to 6), the spacing (Tight, Normal or Roomy), the size, and Together or Hands & feet notation. Reset layout goes back to Auto and Normal. These choices belong to the device, so your iPad and laptop can differ.
+- **New line here.** Right-click a bar on the chart (or press and hold it on an iPad) and choose New line here to start a new line at that bar, for example at the start of each verse. Line breaks are saved with the song's drum chart, so they show on all your devices. Choose the item again to remove a break, or remove all of them with Clear line breaks in Chart layout.
+
 Woodshed 2.2.1 keeps an imported chart's tempo as written.
 
 - Importing a chart now only finds where its bar 1 starts in your recording. The tempo stays exactly as the tab writes it: no more re-timed bars, no tempo pins in the map and no follow switch. The line under Align says where bar 1 landed (a negative time when the recording cuts into the intro) and how many hits line up. Hear the start, Hear the end and the offset buttons fine-tune it.

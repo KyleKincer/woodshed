@@ -163,6 +163,7 @@ function scenario({mapped = true, part = false, surface = 'roadmap', sectionsMis
     if (when === 'mapped') return mapped;
     if (when === 'unmapped') return !mapped;
     if (when === 'part') return part;
+    if (when === 'chart') return surface === 'chart';
     if (when === 'follows') return surface === 'chart' || (surface === 'roadmap' && mapped);
     if (when === 'sections-missing') return mapped && sectionsMissing;
     if (when === 'owner') return !shared;
@@ -200,7 +201,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(rows.length).toBe(wanted.length);
     // The order of the top level (spec §2.14.11).
     expect(labels(stageMenu(b.ts.session, b.stage, b.opts), b.reg)).toEqual([
-      'View', 'Display', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
+      'View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
       'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
   });
 
