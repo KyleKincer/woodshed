@@ -1,3 +1,7 @@
+Woodshed 2.2.1 keeps an imported chart's tempo as written.
+
+- Importing a chart now only finds where its bar 1 starts in your recording. The tempo stays exactly as the tab writes it: no more re-timed bars, no tempo pins in the map and no follow switch. The line under Align says where bar 1 landed (a negative time when the recording cuts into the intro) and how many hits line up. Hear the start, Hear the end and the offset buttons fine-tune it.
+
 Woodshed 2.2.0 lines an imported tab or chart up with your recording.
 
 - **Import a chart from a file…** is one command wherever you are: the Stage's ⋯ menu, the command palette, the empty chart, Edit · Chart's Part ▾ and the desktop File menu. You can also drop a Guitar Pro, MIDI or Clone Hero file onto the song.

@@ -327,30 +327,15 @@
     gap: var(--s2);
   }
 
-  /* Lining up automatically: the fit's line, Line up automatically / Hear the start / Hear the end, and the
-   * follow switch (src/js/chart-align.js). */
+  /* Lining up automatically: the fit's line and Line up automatically / Hear the start / Hear the end
+   * (src/js/chart-align.js). */
   .find-auto-row {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s2);
   }
   .find-auto-row[hidden],
-  .find-auto[hidden],
-  .find-follow[hidden] { display: none; }
-  .find-follow {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    column-gap: var(--s2);
-  }
-  .find-follow-box {
-    inline-size: 20px;
-    block-size: 20px;
-    margin: 0;
-    accent-color: var(--accent);
-  }
-  .find-follow label { font-size: var(--fs-14); color: var(--ink); }
-  .find-follow .find-hint { grid-column: 2; margin: 0; }
+  .find-auto[hidden] { display: none; }
 
   /* Commit: pinned under the scrolling body */
   .find-commit {

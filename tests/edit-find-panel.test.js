@@ -732,7 +732,7 @@ describe('lining a file up automatically (src/js/chart-align.js)', () => {
   // The file's own map: 120 bpm from 0 s (a tab never knows where the recording starts).
   const file = () => resultAt(0, {format: 'guitar-pro', drums});
   const heard = () => ({strength: {rate: 100, start: 0, values: new Float32Array(10)}, onsets: []});
-  const steady = {offset: 3, stretch: 1.01, matched: 90, total: 100, quality: 'good', chartBpm: 120, bpm: 120 / 1.01, follow: null};
+  const steady = {offset: 3, matched: 90, total: 100, quality: 'good'};
   const autoText = () => $('.find-auto').textContent.replace(/\s+/g, ' ').trim();
   const commitNames = () => [...document.querySelectorAll('.find-commit button')].filter((el) => !el.hidden).map(nameOf);
   async function pick(file) {
@@ -742,7 +742,7 @@ describe('lining a file up automatically (src/js/chart-align.js)', () => {
     await settle();
   }
 
-  test('a file with drums is lined up with the recording: the fitted map is tried and the line says where bar 1 lands', async () => {
+  test('a file with drums is lined up with the recording at its own tempo: the line says where bar 1 lands', async () => {
     const align = vi.fn(async () => steady);
     const b = await bed({importFile: vi.fn(async () => file()), align, drumOnsets: heard});
     await pick(new File(['gp'], 'tab.gp'));
@@ -750,8 +750,9 @@ describe('lining a file up automatically (src/js/chart-align.js)', () => {
     await settle();
     expect(align.mock.calls[0][0]).toMatchObject({hits: drums.hits, duration: 20});
     expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
-    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2 * 1.01, 6);   // the recording's tempo, not the file's
-    expect(autoText()).toBe(COPY.autoGood({bar1: '0:03.0', bpm: 118.8, chartBpm: 120, matched: 90, total: 100}));
+    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2, 6);   // the chart's own tempo (120), untouched
+    expect(autoText()).toBe(COPY.autoGood({bar1: '0:03.0', matched: 90, total: 100}));
+    expect(autoText()).toBe('Lined up with the recording’s drums: bar 1 at 0:03.0. 90 of 100 hits land on the recording.');
     expect($('.find-auto').dataset.tone ?? $('.find-auto').getAttribute('data-tone')).toBe('ok');
     // Using it all comes first; the map alone second.
     expect(commitNames()).toEqual([COPY.useWithDrums(2), COPY.mapOnly, COPY.keepMine]);
@@ -759,7 +760,7 @@ describe('lining a file up automatically (src/js/chart-align.js)', () => {
     // Nudges keep the speed and say how far they are from the automatic alignment; Reset goes back to it.
     $('[data-shift="100"]').click();
     expect(b.map.timeAt(0)).toBeCloseTo(3.1, 6);
-    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2 * 1.01, 6);
+    expect(b.map.timeAt(4) - b.map.timeAt(0)).toBeCloseTo(2, 6);
     expect(statusText()).toBe(COPY.offsetFromAuto(100));
     button(COPY.reset).click();
     expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
@@ -770,26 +771,13 @@ describe('lining a file up automatically (src/js/chart-align.js)', () => {
     expect(b.map.timeAt(0)).toBeCloseTo(3, 6);
   });
 
-  test('a take whose tempo moves: the bar-by-bar map is used, and the switch puts one steady tempo back', async () => {
-    const follow = {...data(3), pins: [{position: fraction(0), time: 3}, {position: fraction(4), time: 5.1}], tailQpm: 115};
-    const align = vi.fn(async () => ({...steady, follow: {map: follow, matched: 97, drift: 0.05}}));
-    const b = await bed({importFile: vi.fn(async () => file()), align, drumOnsets: heard});
+  test('a bar 1 before the recording starts (an intro it cuts) reads as a negative time', async () => {
+    const b = await bed({importFile: vi.fn(async () => file()), align: vi.fn(async () => ({...steady, offset: -0.433})), drumOnsets: heard});
     await pick(new File(['gp'], 'tab.gp'));
-    await vi.waitFor(() => expect($('.find-follow').hidden).toBe(false));
-    const box = $('.find-follow input');
-    expect(box.checked).toBe(true);
-    expect(b.map.timeAt(4)).toBeCloseTo(5.1, 6);
-    expect(autoText()).toContain(COPY.autoFollows.trim());
-    expect(autoText()).toContain('97 of 100 hits');
-    box.checked = false;
-    box.dispatchEvent(new Event('change'));
-    expect(b.map.timeAt(4)).toBeCloseTo(3 + 2 * 1.01, 6);
-    expect(autoText()).not.toContain(COPY.autoFollows.trim());
-    // A nudge moves the following map too.
-    box.checked = true;
-    box.dispatchEvent(new Event('change'));
-    $('[data-shift="-10"]').click();
-    expect(b.map.timeAt(4)).toBeCloseTo(5.09, 6);
+    await vi.waitFor(() => expect(autoText()).toBe(COPY.autoGood({bar1: '−0:00.4', matched: 90, total: 100})));
+    expect(offsetInput().value).toBe('-433');
+    expect($('.find-follow')).toBeNull();   // no tempo switches: the chart's tempo is used as written
+    expect(b.map.timeAt(8) - b.map.timeAt(4)).toBeCloseTo(2, 6);   // 120 bpm, as the chart says
   });
 
   test('hits that don\'t match the recording leave the file\'s own timing; before the audio decodes it says when it can', async () => {
