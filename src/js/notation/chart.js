@@ -81,7 +81,9 @@ const caf = id => (typeof cancelAnimationFrame === 'function' ? cancelAnimationF
  * @param options.part the session's drum part ({score, hasNotation, readOnly, subscribe})
  * @param options.engine read only for engine.getPosition() when tick() gets no time
  * @param options.scale engraving scale (the surface passes the Distance default or the pinch value)
- * @param options.display {layout, barsPerRow}; layout null = the part's own; omitted → prefs chart.display.layout
+ * @param options.display {layout, barsPerRow, stretch}; layout null = the part's own; omitted → prefs chart.display.layout.
+ *   barsPerRow -1 (the default) fits each line to its bars' notes; stretch is the note spacing (score-view.js).
+ *   The part's own line breaks (score.lineBreaks, "New line here") are always drawn.
  * @param options.fonts on-screen label floors in px ({barNumber: 14 × d, marker: 20 × d})
  */
 export function createChart({
@@ -94,6 +96,7 @@ export function createChart({
     scale: finite(Number(scale)) ? clampScale(scale) : DEFAULT_SCALE,
     layoutOverride: LAYOUTS.includes(initialLayout) ? initialLayout : null,
     barsPerRow: barsValue(display?.barsPerRow),
+    stretch: stretchValue(display?.stretch),
     floors: sanitizeFloors(fonts, FONT_FLOORS),
     followStyle: followStyle === 'page' ? 'page' : 'scroll',
     followAnchor: anchorValue(followAnchor, 0.33),
@@ -198,17 +201,17 @@ export function createChart({
     // The anchor is read from the current engraving, before the view takes the new sizes.
     const kept = anchor && view.ready && !pendingAnchor ? captureAnchor() : null;
     const newLayout = !!renderedScore && renderedLayout !== layout();
-    const resized = view.configure({scale: state.scale, fonts: floorsNow(), barsPerRow: state.barsPerRow});
+    const resized = view.configure({scale: state.scale, fonts: floorsNow(), barsPerRow: state.barsPerRow, stretch: state.stretch});
     if (!newLayout && !resized) return false;
     if (kept) pendingAnchor = kept;
     beginRelayout(false);
-    if (newLayout) { renderedLayout = layout(); view.setScore(part.score, {layout: layout()}); }
+    if (newLayout) { renderedLayout = layout(); view.setScore(part.score, {layout: layout(), lineBreaks: true}); }
     else view.relayout();
     return true;
   }
   function ensureView() {
     if (view) return;
-    view = createScoreView(scoreHost, {scale: state.scale, barsPerRow: state.barsPerRow, fonts: floorsNow(), resizeSettleMs: RESIZE_SETTLE_MS, onRender: rendered, onPointer: pointer});
+    view = createScoreView(scoreHost, {scale: state.scale, barsPerRow: state.barsPerRow, stretch: state.stretch, fonts: floorsNow(), resizeSettleMs: RESIZE_SETTLE_MS, onRender: rendered, onPointer: pointer});
     view.setLoopHandles(true);
     const stage = view.stage;
     stage.addEventListener('contextmenu', onContextMenu);
@@ -251,7 +254,7 @@ export function createChart({
       renderedLayout = layout();
       // The first engraving and part edits are not timed: the first waits for the UI font (D54 measures layout cost).
       beginRelayout(true, false);
-      view.setScore(part.score, {layout: layout()});
+      view.setScore(part.score, {layout: layout(), lineBreaks: true});
     }
   }
   function rendered() {
@@ -694,6 +697,7 @@ export function createChart({
       }
       if ('fonts' in next && next.fonts) state.floors = sanitizeFloors(next.fonts, state.floors);
       if ('barsPerRow' in next) state.barsPerRow = barsValue(next.barsPerRow);
+      if ('stretch' in next) state.stretch = stretchValue(next.stretch);
       return engrave({anchor});
     },
     /** One relayout; with `anchor` the bar at the follow line keeps its screen position. */
@@ -720,7 +724,7 @@ export function createChart({
       scoreHost.dataset.previewing = '';
       scoreHost.style.transform = `scale(${f})`;
     },
-    /** Display (this device): layout ('combined'|'split'|null = the part's own) and bars per row, in one relayout. */
+    /** Display (this device): layout ('combined'|'split'|null = the part's own), bars per row and spacing, in one relayout. */
     setDisplay(next = {}) {
       if ('layout' in next && (next.layout == null || LAYOUTS.includes(next.layout))) {
         const own = part?.score?.layout || 'combined';
@@ -729,6 +733,7 @@ export function createChart({
         state.layoutOverride = value;
       }
       if ('barsPerRow' in next) state.barsPerRow = barsValue(next.barsPerRow);
+      if ('stretch' in next) state.stretch = stretchValue(next.stretch);
       engrave({anchor: true});
     },
     /** On-screen label floors in px ({barNumber: 14 × d, marker: 20 × d}); relayouts when the engraving sizes change. */
@@ -785,6 +790,11 @@ function sanitizeFloors(fonts, fallback) {
 /** Bars per system: a positive integer, else -1 (automatic by width). */
 function barsValue(value) {
   return Number.isInteger(value) && value > 0 ? value : -1;
+}
+/** Note spacing (alphaTab's stretchForce), 0.3–2; alphaTab's own 1 when unset. */
+function stretchValue(value) {
+  const v = Number(value);
+  return Number.isFinite(v) && v >= 0.3 && v <= 2 ? v : 1;
 }
 function anchorValue(value, fallback) {
   const v = Number(value);

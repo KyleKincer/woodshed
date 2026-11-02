@@ -658,7 +658,7 @@ async function mountStage(el, match, ctx, guard) {
         const name = o.stemName ?? (typeof o.stem === 'string' ? o.stem : o.stem?.name);
         return name ? menus.stemMenu(session, name, opts) : [];
       }
-      default: return menus.barMenu(session, {t: o.t, bar: o.bar}, opts);
+      default: return menus.barMenu(session, {t: o.t, bar: o.bar}, {...opts, surface: peek(api.surface)});
     }
   }
 

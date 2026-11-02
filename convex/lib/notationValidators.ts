@@ -9,5 +9,5 @@ export const tupletValidator=v.object({start:fractionValidator,length:fractionVa
 export const barValidator=v.object({measureId:v.string(),coverage:v.union(v.literal('unstarted'),v.literal('progress'),v.literal('reviewed')),hits:v.array(v.union(hitValidator,hitV1Validator)),tuplets:v.optional(v.array(tupletValidator))});
 export const headerValidator=v.union(
   v.object({version:v.literal(1),title:v.string(),timeline:timelineValidator}),
-  v.object({version:v.literal(2),title:v.string(),layout:v.optional(v.union(v.literal('split'),v.literal('combined'))),timeline:timelineValidator}),
+  v.object({version:v.literal(2),title:v.string(),layout:v.optional(v.union(v.literal('split'),v.literal('combined'))),lineBreaks:v.optional(v.array(v.string())),timeline:timelineValidator}),
 );

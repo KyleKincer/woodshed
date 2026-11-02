@@ -10,7 +10,7 @@
 //   SHEETS        the names, in §2.14.11 order
 //
 // Each sheet's content comes from its module (wave 2b: speed, click, mix, loop, spots, notes,
-// tap-beat, get-bars), resolved by contract path (D2, Appendix C item 58):
+// tap-beat, get-bars; later chartLayout, layout.js), resolved by contract path (D2, Appendix C item 58):
 //   export function render(container, {session, close}) → {destroy}
 // A module that does not exist yet renders the "Not built yet" note in the sheet.
 
@@ -21,12 +21,13 @@ import {icon} from '../../ui/icon.js';
 import {Sheet} from '../../ui/sheet.js';
 import {COPY} from '../stage.copy.js';
 
-const MODULES = import.meta.glob(['./speed.js', './click.js', './mix.js', './loop.js', './spots.js', './notes.js', './tap-beat.js', './get-bars.js']);
+const MODULES = import.meta.glob(['./speed.js', './click.js', './mix.js', './loop.js', './spots.js', './notes.js', './tap-beat.js', './get-bars.js', './layout.js']);
 
-export const SHEETS = Object.freeze(['speed', 'click', 'mix', 'loop', 'spots', 'notes', 'tapBeat', 'getBars']);
+export const SHEETS = Object.freeze(['speed', 'click', 'mix', 'loop', 'spots', 'notes', 'tapBeat', 'getBars', 'chartLayout']);
 const PATHS = Object.freeze({
   speed: './speed.js', click: './click.js', mix: './mix.js', loop: './loop.js',
   spots: './spots.js', notes: './notes.js', tapBeat: './tap-beat.js', getBars: './get-bars.js',
+  chartLayout: './layout.js',
 });
 /** Rail popovers are 360 px wide (spec §4.7); the Notes card is 320 px. */
 export const POPOVER_WIDTH = 360;

@@ -214,7 +214,8 @@ describe('CONTROLS (spec §4.7, §5.1.3, §4.4C): every row renders with its rol
     return {b, root: m.container};
   }
 
-  test.each(CONTROLS.map((row) => [row.sheet, row.role, row.name, row]))('%s: %s “%s”', async (_s, role, name, row) => {
+  // Chart layout's rows: tests/stage-sheet-layout.test.js.
+  test.each(CONTROLS.filter((row) => row.sheet in MODULES).map((row) => [row.sheet, row.role, row.name, row]))('%s: %s “%s”', async (_s, role, name, row) => {
     const {b, root} = await sheetFor(row);
     const el = byRole(root, role, name);
     expect(el, `${row.sheet} ${role} ${name}`).not.toBeNull();

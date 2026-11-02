@@ -208,7 +208,7 @@ module.exports = [
       await page.getByRole('button', {name: 'More…'}).click();
       await page.waitForSelector('[role=menu]', {state: 'visible'});
       const rows = await menuLabels(page);
-      const want = ['View', 'Display', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
+      const want = ['View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
         'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts'];
       t.expect(JSON.stringify(rows) === JSON.stringify(want), `the ⋯ menu's rows (got ${JSON.stringify(rows)})`);
       const caps = await page.$$eval('[role=menu] .ui-menu-item', (els) => Object.fromEntries(els.map((el) => [el.querySelector('.ui-menu-label').textContent, el.getAttribute('aria-keyshortcuts')]).filter(([, k]) => k)));

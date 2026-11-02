@@ -29,7 +29,7 @@ vi.mock('../src/js/notation/score-view.js', () => ({
       return {x: 0, y: top, left: 0, top, width: 800, height: 0, right: 800, bottom: top};
     };
     let score = null;
-    const settings = {scale: options.scale, barsPerRow: options.barsPerRow, fonts: {...options.fonts}};
+    const settings = {scale: options.scale, barsPerRow: options.barsPerRow, stretch: options.stretch, fonts: {...options.fonts}};
     const calls = {setScore: [], setLoop: [], setRange: [], setPlayhead: [], configure: [], relayout: 0, setLoopHandles: []};
     const rowH = () => 100 * settings.scale;
     const bars = () => score?.timeline.measures.length ?? 0;
@@ -44,6 +44,7 @@ vi.mock('../src/js/notation/score-view.js', () => ({
         let changed = false;
         if (next.scale != null && next.scale !== settings.scale) { settings.scale = next.scale; changed = true; }
         if (next.barsPerRow != null && next.barsPerRow !== settings.barsPerRow) { settings.barsPerRow = next.barsPerRow; changed = true; }
+        if (next.stretch != null && next.stretch !== settings.stretch) { settings.stretch = next.stretch; changed = true; }
         if (next.fonts && (next.fonts.barNumber !== settings.fonts.barNumber || next.fonts.marker !== settings.fonts.marker)) { settings.fonts = {...next.fonts}; changed = true; }
         return changed;
       },
@@ -130,7 +131,7 @@ describe('creation and engraving', () => {
   it('renders the part with no toolbar, chips, notice, hint or mute button, and stamps data-rendered', () => {
     open();
     expect(view().calls.setScore).toHaveLength(1);
-    expect(view().calls.setScore[0][1]).toEqual({layout: 'combined'});
+    expect(view().calls.setScore[0][1]).toEqual({layout: 'combined', lineBreaks: true});
     expect(host.querySelector('[role=toolbar], .chart-bar, .chart-sections, .chart-notice, .chart-hint, [data-chart]')).toBeNull();
     expect(host.querySelectorAll('button')).toHaveLength(0);
     expect(host.dataset.rendered).toBe('1');
@@ -746,7 +747,7 @@ describe('scale, pinch and fonts', () => {
     open({scale: 1.2});
     expect(view().options.fonts).toEqual({barNumber: 12, marker: 17});
     chart.setScale(2);
-    expect(view().calls.configure.at(-1)).toEqual({scale: 2, fonts: {barNumber: 7, marker: 10}, barsPerRow: -1});
+    expect(view().calls.configure.at(-1)).toEqual({scale: 2, fonts: {barNumber: 7, marker: 10}, barsPerRow: -1, stretch: 1});
     const count = view().calls.relayout;
     chart.setFonts({barNumber: 14 * 1.3, marker: 20 * 1.3});   // Kit distance
     expect(view().settings.fonts).toEqual({barNumber: 10, marker: 13});
@@ -780,8 +781,8 @@ describe('scale, pinch and fonts', () => {
     const kit = {barNumber: 14 * 1.3, marker: 20 * 1.3};
     expect(chart.configure({scale: 1.6, fonts: kit, barsPerRow: 2})).toBe(true);
     expect(view().calls.relayout).toBe(count + 1);
-    expect(view().calls.configure.slice(configures)).toEqual([{scale: 1.6, fonts: fontFloors(kit, 1.6), barsPerRow: 2}]);
-    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 2, fonts: {barNumber: 12, marker: 17}});
+    expect(view().calls.configure.slice(configures)).toEqual([{scale: 1.6, fonts: fontFloors(kit, 1.6), barsPerRow: 2, stretch: 1}]);
+    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 2, stretch: 1, fonts: {barNumber: 12, marker: 17}});
     expect(relayouts).toEqual([{ms: 0, bars: 32}]);
     expect(chart.state).toMatchObject({scale: 1.6, barsPerRow: 2, floors: kit});
     expect(host.dataset.rendered).toBe('2');
@@ -789,7 +790,7 @@ describe('scale, pinch and fonts', () => {
     expect(chart.configure({scale: 1.6, fonts: kit, barsPerRow: 2})).toBe(false);
     expect(chart.configure({})).toBe(false);
     expect(chart.configure({barsPerRow: 4})).toBe(true);
-    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 4, fonts: {barNumber: 12, marker: 17}});
+    expect(view().settings).toEqual({scale: 1.6, barsPerRow: 4, stretch: 1, fonts: {barNumber: 12, marker: 17}});
     expect(view().calls.relayout).toBe(count + 2);
     expect(relayouts).toHaveLength(2);
     // Floors whose engraving sizes round the same do not relayout; bad values are ignored.
@@ -862,7 +863,7 @@ describe('display (this device) and prefs', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     prefs.set('chart.display.layout', 'split');
     open();
-    expect(view().calls.setScore[0][1]).toEqual({layout: 'split'});
+    expect(view().calls.setScore[0][1]).toEqual({layout: 'split', lineBreaks: true});
     chart.setDisplay({layout: 'combined'});   // the part's own layout is stored as null
     expect(prefs.get('chart.display.layout')).toBeNull();
     chart.setScale(1.45);
@@ -872,13 +873,13 @@ describe('display (this device) and prefs', () => {
     expect(source).not.toMatch(/localStorage|sessionStorage/);
   });
 
-  it('setDisplay changes layout and bars per row in one relayout and stores the layout', () => {
+  it('setDisplay changes layout, bars per row and spacing in one relayout and stores the layout', () => {
     open();
     const scores = view().calls.setScore.length, count = view().calls.relayout;
     chart.setDisplay({layout: 'split', barsPerRow: 2});
     expect(prefs.get('chart.display.layout')).toBe('split');
     expect(view().calls.setScore.length).toBe(scores + 1);
-    expect(view().calls.setScore.at(-1)[1]).toEqual({layout: 'split'});
+    expect(view().calls.setScore.at(-1)[1]).toEqual({layout: 'split', lineBreaks: true});
     expect(view().calls.relayout).toBe(count);
     expect(view().settings.barsPerRow).toBe(2);
     chart.setDisplay({barsPerRow: 4});
@@ -888,6 +889,12 @@ describe('display (this device) and prefs', () => {
     chart.setDisplay({layout: 'diagonal'});
     expect(view().calls.relayout).toBe(count + 1);
     expect(chart.state.layout).toBe('split');
+    // The spacing (Chart layout): one relayout; out-of-range values fall back to alphaTab's own 1.
+    chart.setDisplay({stretch: 0.6});
+    expect(view().settings.stretch).toBe(0.6);
+    expect(view().calls.relayout).toBe(count + 2);
+    chart.setDisplay({stretch: 9});
+    expect(chart.state.stretch).toBe(1);
   });
 
   it('a Display layout switch with new sizes is one engraving: the part re-engraves with them (configure + setDisplay)', () => {
@@ -911,7 +918,7 @@ describe('display (this device) and prefs', () => {
   it('an explicit display option wins over prefs', () => {
     prefs.set('chart.display.layout', 'split');
     open({display: {layout: null, barsPerRow: 2}});
-    expect(view().calls.setScore[0][1]).toEqual({layout: 'combined'});
+    expect(view().calls.setScore[0][1]).toEqual({layout: 'combined', lineBreaks: true});
     expect(view().options.barsPerRow).toBe(2);
   });
 });

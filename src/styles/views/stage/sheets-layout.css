@@ -1,0 +1,39 @@
+@layer views {
+  /* The Chart layout sheet (src/stage/sheets/layout.js): bars per line, spacing, size, notation, the song's
+   * line breaks and Reset layout, one section each. */
+  .sheet-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s4);
+  }
+  /* The choices fill the sheet's width (360 px on the rail): seven bar counts fit side by side, and wrap
+   * rather than overflow when the text is enlarged. */
+  .sheet-layout .ui-segmented { display: flex; min-width: 0; }
+  .sheet-layout .ui-segmented-options { display: flex; flex-wrap: wrap; }
+  .sheet-layout-bars .ui-segmented-option { padding: 0 var(--s2); }
+  .sheet-layout-section {
+    display: grid;
+    gap: var(--s2);
+  }
+  .sheet-layout-heading {
+    font-size: var(--fs-16);
+    font-weight: var(--fw-semibold);
+  }
+  .sheet-layout-hint {
+    color: var(--ink-3);
+    font-size: var(--fs-14);
+    line-height: 1.4;
+  }
+  .sheet-layout-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+  .sheet-layout-section > .ui-button {
+    justify-self: start;
+  }
+  .sheet-layout-foot {
+    display: flex;
+    justify-content: flex-end;
+  }
+}

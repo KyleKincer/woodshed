@@ -53,9 +53,10 @@ export function repeatedBars(score) {
  * @param options.layout 'split' | 'combined' (defaults to the score's own)
  * @param options.range [first, last] measure indices to include (inclusive)
  * @param options.simile draw repeated bars as one-bar repeat signs
+ * @param options.lineBreaks draw the score's line breaks (`score.lineBreaks`: a bar that starts a new line)
  * @returns {{score, beats: Map<alphaTabBeat, {index, beat}>, bars: number[], noteHits: Map<alphaTabNote, hit>}}
  */
-export function buildAlphaTabScore(at, score, {layout = score.layout || 'combined', range = null, simile = false, title = ''} = {}) {
+export function buildAlphaTabScore(at, score, {layout = score.layout || 'combined', range = null, simile = false, title = '', lineBreaks = false} = {}) {
   const M = at.model, measures = score.timeline.measures;
   const first = range ? range[0] : 0, last = range ? range[1] : measures.length - 1;
   const out = new M.Score();
@@ -157,6 +158,11 @@ export function buildAlphaTabScore(at, score, {layout = score.layout || 'combine
         beats.set(beat, {index, beat: written, voice: v.voice});
       }
     });
+  }
+  // A line break is the index (among the drawn bars) of the bar that starts the line.
+  if (lineBreaks && score.lineBreaks?.length) {
+    const ids = new Set(score.lineBreaks);
+    for (let index = first + 1; index <= last; index++) if (ids.has(measures[index].id)) track.addLineBreaks(index - first);
   }
   out.finish(new at.Settings());
   return {score: out, beats, bars, noteHits};

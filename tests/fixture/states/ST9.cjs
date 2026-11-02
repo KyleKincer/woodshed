@@ -2,8 +2,8 @@
 // harness (/__harness/chart-surface, a real song session with the demo drum part, 64 bars of 4/4 at
 // 120 bpm on the 8-section rehearsal map), and the app on the fixture database. Every harness state
 // runs with fx-audio=manual and the Stage tokens (?place=stage).
-//   st9-chart                 rail / band: the chart fills the music area; dense part → 4 / 2 bars per
-//                             system; bar numbers ≥ 14 px and section labels ≥ 20 px on screen; the
+//   st9-chart                 rail / band: the chart fills the music area; lines fitted to the bars' notes
+//                             (Auto: 1–6 bars a line); bar numbers ≥ 14 px and section labels ≥ 20 px on screen; the
 //                             chart's scroller is the surface's [data-scroller]; Stage dark tokens; axe; targets
 //   st9-chart-near, -kit      Distance Near / Kit: the scale and the label floors (14 × d, 20 × d px)
 //   st9-chart-follow          playing: a wheel scroll pauses Follow and shows ⤓ Back to playhead (56 px,
@@ -21,6 +21,8 @@
 //   st9-chart-menu            right-click, Shift+F10 on the bar list and (iPad) a long-press open the bar
 //                             menu (needs ST8a's src/stage/menus.js)
 //   st9-chart-display         Display → Hands & feet (this device): one relayout into the split layout
+//   st9-chart-layout          ⋯ › Chart layout…: Bars per line 3 → three bars a line, Roomy spacing, one relayout
+//                             each; the song's line break at bar 5 (New line here) starts a line there; axe
 //   st9-chart-empty           owner, no part: "No drum chart yet" [Find a chart] [Import a file] [Write one]
 //   st9-chart-shared          shared, no part: "No drum chart was shared." and no actions
 //   st9-chart-opening         the part never answers: "Opening the drum chart…" (aria-busy), no chart
@@ -28,7 +30,7 @@
 //   st9-chart-r1              R1 (D54): a Distance change to each Distance on the 64-bar part (median of 5;
 //                             the sum of the chart's own timings of every relayout the change took) against
 //                             FX0's relayout64Ms × 1.15; gated only in a quiet container
-//   st9-chart-relayouts       a Distance change and a rail → band switch (dense part) are one chart.configure
+//   st9-chart-relayouts       a Distance change and a rail → band switch are one chart.configure
 //                             call each: exactly one relayout asked for and one engraving (I2b-5)
 //   st9-app-chart             /s/glasshouse on the fixture: the Stage opens on the chart surface
 'use strict';
@@ -81,6 +83,7 @@ function engravingFacts(sections) {
     numbers: numbers.length, minNumber: Math.min(...numbers.map((b) => b.fs)),
     labels: labels.length, minLabel: Math.min(...labels.map((b) => b.fs)),
     perSystem: [...rows.values()].slice(0, 3).map((r) => r.length),
+    rowStarts: [...rows.values()].map((r) => Math.min(...r)).sort((a, b) => a - b),
     music: box('.stage-music'), surface: box('.chart-surface'), scroller: box('.chart-surface [data-scroller]'),
     layout: document.querySelector('.stage')?.dataset.stageLayout,
   };
@@ -156,9 +159,8 @@ module.exports = [
       t.expect(f.music && f.surface && f.music.w === f.surface.w && f.music.h === f.surface.h && f.music.y === f.surface.y,
         `the chart fills the music area (${JSON.stringify(f.music)} vs ${JSON.stringify(f.surface)})`);
       t.expect(f.scroller && f.scroller.w === f.surface.w, `the chart's scroller is the surface's [data-scroller] (${JSON.stringify(f.scroller)})`);
-      const perSystem = t.device === 'laptop' ? 4 : 2;
       t.expect(f.layout === (t.device === 'laptop' ? 'rail' : 'band'), `layout ${f.layout}`);
-      t.expect(f.perSystem.length >= 2 && f.perSystem.every((n) => n === perSystem), `a dense part: ${perSystem} bars per system (got ${f.perSystem})`);
+      t.expect(f.perSystem.length >= 2 && f.perSystem.every((n) => n >= 1 && n <= 6), `Auto: each line holds the bars its notes fit (got ${f.perSystem})`);
       t.expect(f.minNumber >= 14 - 0.05, `bar numbers ≥ 14 px (got ${f.minNumber})`);
       t.expect(f.labels >= 1 && f.minLabel >= 20 - 0.05, `section labels ≥ 20 px (got ${f.minLabel}, ${f.labels})`);
       const style = await page.evaluate(() => {
@@ -356,6 +358,44 @@ module.exports = [
       await page.locator('.chart-bars').focus();
       await page.keyboard.press('Shift+F10');
       await page.waitForSelector('[role=menu]', {timeout: 5_000});
+    },
+  },
+  {
+    name: 'st9-chart-layout', url: HARNESS(), requires: MENUS, opts: {devices: ['laptop'], themes: ['dark']},
+    async fn(page, t) {
+      await ready(page, t);
+      const settle = async (r) => {
+        await page.waitForFunction((x) => Number(document.querySelector('.chart-surface .chart').dataset.rendered) > x, r, {timeout: 10_000});
+        await page.waitForTimeout(300);
+      };
+      await page.evaluate(() => window.__chartSurface.run('stage.chartLayout'));
+      const sheet = page.locator('[data-sheet="chartLayout"]');
+      await sheet.locator('[role=radiogroup][aria-label="Bars per line"]').waitFor({timeout: 10_000});
+      let r = await revision(page);
+      await sheet.locator('[role=radiogroup][aria-label="Bars per line"] [role=radio]', {hasText: /^3$/}).click();
+      await settle(r);
+      let f = await page.evaluate(engravingFacts, SECTIONS);
+      t.expect(f.perSystem.every((n) => n === 3), `Bars per line 3: three bars a line (got ${f.perSystem})`);
+      t.expect(await revision(page) === r + 1, 'one relayout');
+      const prefs = await page.evaluate(() => JSON.parse(localStorage.getItem('ws.prefs')).chart.lines);
+      t.expect(prefs.bars === '3', `this device's (prefs chart.lines ${JSON.stringify(prefs)})`);
+      r = await revision(page);
+      await sheet.locator('[role=radiogroup][aria-label="Spacing"] [role=radio]', {hasText: 'Roomy'}).click();
+      await settle(r);
+      t.expect(await revision(page) === r + 1, 'Roomy: one relayout');
+      const problems = await checkAxe(page, {include: ['[data-sheet="chartLayout"]']});
+      t.expect(!problems.length, `axe on the sheet: ${problems.join('; ')}`);
+      // The song's own line break (New line here on bar 5): bar 5 starts a line, on top of three a line.
+      r = await revision(page);
+      await page.evaluate(() => {
+        const part = window.__chartSurface.ts.session.notation.part;
+        part.editor.setLineBreak(part.score.timeline.measures[4].id, true);
+        part.commit('layout');
+      });
+      await settle(r);
+      f = await page.evaluate(engravingFacts, SECTIONS);
+      t.expect(f.rowStarts.slice(0, 4).join(' ') === '1 4 5 8', `line starts 1 4 5 8 (got ${f.rowStarts.slice(0, 6)})`);
+      t.expect(await sheet.textContent().then((x) => x.includes('1 bar starts a new line')), 'the sheet counts the song\'s line breaks');
     },
   },
   {

@@ -33,6 +33,13 @@ test('score validation rejects corrupt positions, tuplets and unsafe updates ato
   await expect(alice.mutation(api.notation.save,{...args,header:{...args.header,timeline:{...args.header.timeline,anchors:[{position:fraction(0),time:0},{position:fraction(0),time:1}]}}})).rejects.toThrow('forward');
   await expect(alice.mutation(api.notation.save,{...args,header:{...args.header,version:3}})).rejects.toThrow();
 });
+test('a part keeps its line breaks (Chart layout), and a header-only change saves them',async()=>{
+  const {alice,args,score,songId}=await setup();const ids=score.timeline.measures.map(m=>m.id);
+  expect(await alice.mutation(api.notation.save,args)).toEqual({revision:1});
+  expect(await alice.mutation(api.notation.save,{...args,baseRevision:1,mutationId:'breaks',bars:[],header:{...args.header,lineBreaks:[ids[2],ids[5]]}})).toEqual({revision:2});
+  expect((await alice.query(api.notation.get,{songId}))!.score.lineBreaks).toEqual([ids[2],ids[5]]);
+  for(const lineBreaks of [[ids[2],ids[2]],[''],['x'.repeat(81)]])await expect(alice.mutation(api.notation.save,{...args,baseRevision:2,mutationId:'bad',bars:[],header:{...args.header,lineBreaks}})).rejects.toThrow('Invalid score update');
+});
 test('version 2 parts keep their layout and explicit tuplets',async()=>{
   const {alice,args,songId,score}=await setup();
   const triplets=[0,1,2].map(i=>hit('t'+i,'snare',fraction(i,3))),quintuplet=[0,1,2,3,4].map(i=>hit('q'+i,'closedHat',fraction(10+i,5),i?{}:{roll:2}));

@@ -173,10 +173,10 @@ describe('loadPrefs and normalizePrefs', () => {
   });
 
   test('chart.pinchDistance and roadmap.follow are nullable enums (I2b-3)', () => {
-    expect(PREFS_DEFAULTS.chart).toEqual({display: {layout: null}, pinchScale: null, pinchDistance: null});
+    expect(PREFS_DEFAULTS.chart).toEqual({display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null});
     expect(PREFS_DEFAULTS.roadmap).toEqual({waveRowSec: null, follow: null});
     for (const d of ['near', 'stand', 'kit']) {
-      expect(normalizePrefs({chart: {pinchScale: 1.2, pinchDistance: d}}).chart).toEqual({display: {layout: null}, pinchScale: 1.2, pinchDistance: d});
+      expect(normalizePrefs({chart: {pinchScale: 1.2, pinchDistance: d}}).chart).toEqual({display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: 1.2, pinchDistance: d});
     }
     for (const f of ['scroll', 'page']) expect(normalizePrefs({roadmap: {follow: f}}).roadmap).toEqual({waveRowSec: null, follow: f});
     for (const bad of ['far', 'Stand', '', 3, true, {}, ['near']]) {
@@ -194,9 +194,9 @@ describe('loadPrefs and normalizePrefs', () => {
     expect(normalizePrefs({practice: {distance: 'kit'}, chart: {pinchScale: 1.45}}).chart.pinchDistance).toBe('kit');
     expect(normalizePrefs({practice: {distance: 'kit'}, chart: {pinchScale: 1.45, pinchDistance: 'near'}}).chart.pinchDistance).toBe('near');
     expect(normalizePrefs({practice: {distance: 'near'}, chart: {pinchScale: 1.45, pinchDistance: 'far'}}).chart.pinchDistance).toBe('near');
-    expect(normalizePrefs({chart: {pinchScale: 'big'}}).chart).toEqual({display: {layout: null}, pinchScale: null, pinchDistance: null});
+    expect(normalizePrefs({chart: {pinchScale: 'big'}}).chart).toEqual({display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null});
     const storage = memoryStorage({[PREFS_KEY]: JSON.stringify({v: 1, practice: {distance: 'near'}, chart: {pinchScale: 1.1}})});
-    expect(loadPrefs(storage).chart).toEqual({display: {layout: null}, pinchScale: 1.1, pinchDistance: 'near'});
+    expect(loadPrefs(storage).chart).toEqual({display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: 1.1, pinchDistance: 'near'});
   });
 
   test('caps: opened ≤ 500 (oldest dropped), frecency ≤ 200 (least recent dropped)', () => {
@@ -299,7 +299,7 @@ describe('live prefs (store.prefs)', () => {
     prefs.set('practice.distance', 'huge');  // invalid enum → default
     expect(prefs.get('practice.distance')).toBe('stand');
     prefs.update(d => { d.chart.pinchScale = 1.6; d.chart.pinchDistance = 'kit'; });
-    expect(JSON.parse(localStorage.getItem(PREFS_KEY)).chart).toEqual({display: {layout: null}, pinchScale: 1.6, pinchDistance: 'kit'});
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)).chart).toEqual({display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: 1.6, pinchDistance: 'kit'});
     prefs.set('roadmap.follow', 'page');
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)).roadmap.follow).toBe('page');
     prefs.set('roadmap.follow', 'sideways');   // invalid → null, the 'scroll' default

@@ -100,8 +100,8 @@ import {signal, readonly} from '../src/app/store.js';
 import {defineTransportCommands} from '../src/stage/transport-commands.js';
 import {SCALE_STEPS} from '../src/js/notation/chart.js';
 import {
-  COPY, CONTROLS, DENSE_HITS, FOLLOW_ANCHOR, IDLE_RESUME_MS, LIVE_RELAYOUT_MS, SETTLE_MS,
-  barsPerSystem, createChartSurface, createRelayoutGate, followAnchorFor, fontsFor, isDense, scaleFor,
+  COPY, CONTROLS, SPACING, FOLLOW_ANCHOR, IDLE_RESUME_MS, LIVE_RELAYOUT_MS, SETTLE_MS,
+  createChartSurface, createRelayoutGate, followAnchorFor, fontsFor, linesFor, scaleFor,
 } from '../src/stage/surfaces/chart-surface.js';
 import {FAKE_TIMERS, createClock, installFakeAudio} from './helpers/fake-audio.js';
 import {createTestSession, settle} from './helpers/test-session.js';
@@ -117,7 +117,7 @@ beforeEach(() => {
   restoreAudio = installFakeAudio();
   clock = createClock();
   fake.charts.length = 0;
-  prefs.update((d) => { d.practice.distance = 'stand'; d.chart = {display: {layout: null}, pinchScale: null, pinchDistance: null}; });
+  prefs.update((d) => { d.practice.distance = 'stand'; d.chart = {display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null}; });
 });
 
 afterEach(async () => {
@@ -183,18 +183,13 @@ async function bed({score = demoScore(128, 120), layout = 'rail', distance = 'st
 }
 
 describe('pure rules', () => {
-  test('a part is dense above 8 hits per notated bar; dense parts get 2 bars per system on the band and 4 on the rail', () => {
-    const bar = (n) => ({hits: Array.from({length: n}, () => ({}))});
-    expect(DENSE_HITS).toBe(8);
-    expect(isDense({bars: [bar(8), bar(8)]})).toBe(false);
-    expect(isDense({bars: [bar(9), bar(8)]})).toBe(true);
-    expect(isDense({bars: [bar(12), bar(0), bar(0)]})).toBe(true);   // empty bars do not dilute the density
-    expect(isDense(null)).toBe(false);
-    expect(isDense(demoScore(128, 120))).toBe(true);
-    expect(isDense(sparseScore())).toBe(false);
-    expect(barsPerSystem({dense: true, layout: 'band'})).toBe(2);
-    expect(barsPerSystem({dense: true, layout: 'rail'})).toBe(4);
-    expect(barsPerSystem({dense: false, layout: 'rail'})).toBe(-1);
+  test('lines (Chart layout): Auto fits each line to its bars\' notes, 1–6 fixes it; the spacing is Tight · Normal · Roomy', () => {
+    expect(SPACING).toEqual({tight: 0.6, normal: 0.8, roomy: 1.05});
+    expect(linesFor({bars: 'auto', spacing: 'normal'})).toEqual({barsPerRow: -1, stretch: 0.8});
+    expect(linesFor({bars: '3', spacing: 'roomy'})).toEqual({barsPerRow: 3, stretch: 1.05});
+    expect(linesFor({bars: '6', spacing: 'tight'})).toEqual({barsPerRow: 6, stretch: 0.6});
+    expect(linesFor({bars: '9', spacing: 'huge'})).toEqual({barsPerRow: -1, stretch: 0.8});
+    expect(linesFor()).toEqual({barsPerRow: -1, stretch: 0.8});
   });
 
   test('follow anchors, label floors and scales per Distance and layout (spec §4.4A, §4.11)', () => {
@@ -253,14 +248,14 @@ describe('pure rules', () => {
 });
 
 describe('hosting the chart', () => {
-  test('creates the chart lazily with the Distance scale, the label floors, the follow anchor and dense bars per system', async () => {
+  test('creates the chart lazily with the Distance scale, the label floors, the follow anchor and lines fitted to the notes', async () => {
     const b = await bed({layout: 'rail', distance: 'stand'});
     const o = b.chart.options;
     expect(o.scale).toBeCloseTo(1.3, 9);
     expect(o.fonts).toEqual({barNumber: 14, marker: 20});
     expect(o.followAnchor).toBe(0.33);
     expect(o.followStyle).toBe('scroll');
-    expect(o.display).toEqual({barsPerRow: 4});   // no layout key: the chart reads prefs chart.display.layout
+    expect(o.display).toEqual({barsPerRow: -1, stretch: 0.8});   // no layout key: the chart reads prefs chart.display.layout
     expect(o.part.hasNotation).toBe(true);
     expect(o.part.score).toBe(b.ts.session.notation.part.score);
     expect(b.surface.kind).toBe('chart');
@@ -270,7 +265,7 @@ describe('hosting the chart', () => {
     expect(b.root.dataset.state).toBe('chart');
   });
 
-  test('band, Kit: 150 %, 18.2/26 px floors, the 0.28 anchor, Page follow and 2 bars per system', async () => {
+  test('band, Kit: 150 %, 18.2/26 px floors, the 0.28 anchor, Page follow and lines fitted to the notes (a dense part too)', async () => {
     const b = await bed({layout: 'band', distance: 'kit'});
     const o = b.chart.options;
     expect(o.scale).toBeCloseTo(1.5, 9);
@@ -278,7 +273,24 @@ describe('hosting the chart', () => {
     expect(o.fonts.marker).toBeCloseTo(26, 9);
     expect(o.followAnchor).toBe(0.28);
     expect(o.followStyle).toBe('page');
-    expect(o.display.barsPerRow).toBe(2);
+    expect(o.display.barsPerRow).toBe(-1);
+  });
+
+  test('Chart layout\'s bars per line and spacing (this device\'s prefs) relayout the chart once each, live', async () => {
+    const b = await bed({layout: 'rail'});
+    prefs.set('chart.lines.bars', '3');
+    await Promise.resolve();
+    expect(b.calls('setDisplay').at(-1)).toEqual(['setDisplay', {barsPerRow: 3, stretch: 0.8}]);
+    prefs.set('chart.lines.spacing', 'roomy');
+    await Promise.resolve();
+    expect(b.calls('setDisplay').at(-1)).toEqual(['setDisplay', {barsPerRow: 3, stretch: 1.05}]);
+    const n = b.calls('setDisplay').length;
+    prefs.set('chart.lines.spacing', 'roomy');
+    await Promise.resolve();
+    expect(b.calls('setDisplay')).toHaveLength(n);
+    // A size change carries them too.
+    b.surface.setDistance('kit');
+    expect(b.calls('configure').at(-1)[1]).toMatchObject({barsPerRow: 3, stretch: 1.05});
   });
 
   test('a sparse part keeps automatic bars per system; a pinch override from this device wins over the Distance', async () => {
@@ -445,7 +457,7 @@ describe('pinch and size', () => {
     expect(SCALE_STEPS).toContain(1.45);
   });
 
-  test('a Distance change is one chart.configure call: the floors, the Distance scale and bars per system in one relayout (I2b-5)', async () => {
+  test('a Distance change is one chart.configure call: the floors, the Distance scale and the lines in one relayout (I2b-5)', async () => {
     const b = await bed({layout: 'rail'});
     const before = b.chart.raw.revision;
     b.surface.setDistance('kit');
@@ -454,7 +466,7 @@ describe('pinch and size', () => {
     expect(next.scale).toBeCloseTo(1.6, 9);
     expect(next.fonts.barNumber).toBeCloseTo(18.2, 9);
     expect(next.fonts.marker).toBeCloseTo(26, 9);
-    expect(next.barsPerRow).toBe(4);
+    expect(next).toMatchObject({barsPerRow: -1, stretch: 0.8});
     expect(opts).toEqual({anchor: true});
     expect(b.calls('setScale')).toHaveLength(0);
     expect(b.calls('setFonts')).toHaveLength(0);
@@ -518,12 +530,12 @@ describe('pinch and size', () => {
     expect(b.calls('setFonts')).toHaveLength(0);
   });
 
-  test('a layout switch moves the follow line, the dense bars per system and the Distance scale in place', async () => {
+  test('a layout switch moves the follow line and the Distance scale in place, the lines with them', async () => {
     const b = await bed({layout: 'rail'});
     b.surface.setLayout('band');
     expect(b.calls('setFollowStyle').at(-1)).toEqual(['setFollowStyle', 'scroll', 0.28]);
     expect(b.calls('configure')).toHaveLength(1);
-    expect(b.calls('configure')[0][1]).toMatchObject({barsPerRow: 2, scale: 1.2});
+    expect(b.calls('configure')[0][1]).toMatchObject({barsPerRow: -1, stretch: 0.8, scale: 1.2});
     expect(b.calls('setDisplay')).toHaveLength(0);
     expect(b.calls('setScale')).toHaveLength(0);
   });
@@ -577,7 +589,7 @@ describe('pinch and size', () => {
     expect(b.root.dataset.relayoutMs).toBe('200');
   });
 
-  test('a dense layout switch is one size change, and its follow line moves once, at the new layout', async () => {
+  test('a layout switch is one size change, and its follow line moves once, at the new layout', async () => {
     const b = await bed({layout: 'rail'});
     const before = b.chart.raw.revision;
     const followCalls = b.calls('setFollowStyle').length;
@@ -587,9 +599,9 @@ describe('pinch and size', () => {
     expect(b.calls('setFollowStyle')).toHaveLength(followCalls);   // not with the rail's 0.33
     b.surface.setLayout('band');
     expect(b.calls('setFollowStyle').slice(followCalls)).toEqual([['setFollowStyle', 'page', 0.28]]);
-    expect(b.chart.state.barsPerRow).toBe(2);
+    expect(b.chart.state.barsPerRow).toBe(-1);
     expect(b.chart.state.scale).toBe(1.2);
-    expect(b.chart.raw.revision - before).toBe(1);   // bars per system and the scale: one configure call
+    expect(b.chart.raw.revision - before).toBe(1);   // the lines and the scale: one configure call
     expect(b.calls('configure')).toHaveLength(1);
     expect(b.root.dataset.relayouts).toBe('1');
     expect(b.root.dataset.relayoutMs).toBe('40');
@@ -600,7 +612,7 @@ describe('pinch and size', () => {
     const b = await bed({layout: 'band', distance: 'kit', surfaceOpts: {layout: 'rail', distance: 'stand'}});
     expect(b.chart.options.scale).toBe(1.5);   // Stand's pinch does not apply at Kit
     expect(b.chart.options.followAnchor).toBe(0.28);
-    expect(b.chart.options.display.barsPerRow).toBe(2);
+    expect(b.chart.options.display.barsPerRow).toBe(-1);
     expect(b.chart.options.fonts.barNumber).toBeCloseTo(18.2, 9);
     expect(prefs.get('chart.pinchScale')).toBe(0.9);   // kept for Stand
   });
