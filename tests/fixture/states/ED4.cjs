@@ -18,7 +18,7 @@
 //   ed4-find-leave         leaving for the Stage mid-audition asks "Use this map?"; Use it applies the
 //                          map that was being tried
 //   ed4-find-import        ?import=1 focuses Import a file…; a Clone Hero .chart with drums joins the
-//                          rows and offers "Use map + drum chart (64 hits)", which writes the drum part
+//                          rows and offers "Use this chart (map + 64 drum hits)", which writes the drum part
 //                          and commits the map
 //   ed4-find-has-chart     a song that already has a drum chart: the drum commit asks "Replace the drum
 //                          chart?" (capture: replace); Cancel keeps the audition, Replace chart imports and commits
@@ -240,7 +240,7 @@ module.exports = [
       await page.setInputFiles('input[type=file]', CHART_FILE);
       await page.waitForFunction(() => document.querySelectorAll('.find-row').length === 5, null, {timeout: 10000});
       t.expect(await page.getByRole('radio', {name: 'glasshouse-drums.chart', exact: true}).isChecked(), 'the file is tried at once');
-      const drums = page.getByRole('button', {name: 'Use map + drum chart (64 hits)'});
+      const drums = page.getByRole('button', {name: 'Use this chart (map + 64 drum hits)'});
       await drums.waitFor({state: 'visible', timeout: 5000});
       t.expect(await drums.getAttribute('aria-disabled') !== 'true', 'the drum commit is available');
       t.expect(await page.$eval('.find-row[data-state=selected] .find-badge', (el) => !el.hidden), 'the file row has the Drum chart badge');
@@ -258,7 +258,7 @@ module.exports = [
     async fn(page, t) {
       await ready(page);
       await page.setInputFiles('input[type=file]', CHART_FILE);
-      const drums = page.getByRole('button', {name: 'Use map + drum chart (64 hits)'});
+      const drums = page.getByRole('button', {name: 'Use this chart (map + 64 drum hits)'});
       await drums.waitFor({state: 'visible', timeout: 10000});
       t.expect(await drums.getAttribute('aria-disabled') !== 'true', 'the drum commit is available');
       const before = await page.evaluate(() => window.__find.partHits());

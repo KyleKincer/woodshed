@@ -64,6 +64,13 @@ export class SongMapStore {
    * longer fit); `keep(id)` protects bars from being trimmed off the end.
    */
   setGuard(name, guard) { this.guards.set(name, guard); return () => { if (this.guards.get(name) === guard) this.guards.delete(name); }; }
+  /** Lift a guard until the returned function puts it back (unless another took its place meanwhile). */
+  suspendGuard(name) {
+    const guard = this.guards.get(name);
+    if (!guard) return () => {};
+    this.guards.delete(name);
+    return () => { if (!this.guards.has(name)) this.guards.set(name, guard); };
+  }
   _kept(id) { for (const guard of this.guards.values()) if (guard.keep?.(id)) return true; return false; }
   _guard(data) { const timeline = toTimeline(data); for (const guard of this.guards.values()) guard(timeline, data); }
   /** Whether any bar after `index` holds drum notation (re-barring would shift it). */

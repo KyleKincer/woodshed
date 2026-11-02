@@ -69,6 +69,7 @@ import {closeSheets as hostCloseSheets, openSheet as hostOpenSheet} from './shee
 import {applyStageAttributes, createLayoutWatcher, distanceOf, isNarrow, stageLayout, FRAME} from './layout.js';
 import {armStageEntry, canEntryTransition, dropEntryGhost, entryGhost, ENTRY_WAIT_MS, openSpot, SURFACE_ORDER} from './commands.js';
 import {COPY, loadingLabel, mixWord, resumeText} from './stage.copy.js';
+import {bindChartDrop} from '../edit/chart-file.js';
 
 // Later-wave modules, by contract path (D2; Appendix C item 58).
 const LATER = import.meta.glob(['./surfaces/chart-surface.js', './surfaces/roadmap-surface.js', './surfaces/stems-surface.js',
@@ -278,6 +279,8 @@ async function mountStage(el, match, ctx, guard) {
   // going (the banner hides while playing) never moves or resizes the music (spec §3.5, §4.10).
   const floatEl = h('div', {class: 'stage-float'}, banners, statusEl);
   const root = h('div', {class: 'stage', dataset: {songId}}, hudHost, main, controlsHost, floatEl, revealZone);
+  // A chart file (Guitar Pro, MIDI, …) dropped on the song opens Import a chart with it (src/edit/chart-file.js).
+  cleanup(bindChartDrop(root, {songId, navigate: (path) => router?.navigate?.(path), canDrop: () => !session.readOnly}));
 
   const anchors = new (class AnchorMap extends Map {
     get(name) {

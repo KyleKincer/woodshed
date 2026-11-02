@@ -3,7 +3,7 @@
 //   editMenu(state)          Edit ▾: Copy ⌘C, Paste ⌘V, Repeat bars… ⌘D, Select all bars (⌘A twice), Delete,
 //                            Move notes… ⌥←/→, Tuplet on this beat…,
 //                            Mark bars reviewed, Loop selection L, Bar meter & label…, Align in tempo map…
-//   partMenu(state)          Part ▾: Export .woodshed.json, Print, Open .woodshed.json part…, Drum part from file…,
+//   partMenu(state)          Part ▾: Export .woodshed.json, Print, Open .woodshed.json part…, Import a chart from a file…,
 //                            Clear drum chart…,
 //                            Drum keys…, Note list ✓, Show every kit piece ✓ (Lanes only), Keyboard shortcuts ?
 //   viewMenu(state)          View ▾: Score · Lanes, Pages · Continuous (the modes the editor offers, D48), Follow playback
@@ -59,10 +59,6 @@ export const COPY = Object.freeze({
   retry: 'Retry',
   saveStatus: 'Save status',
   editor: 'Drum chart editor',
-  importing: 'Importing the drum part…',
-  imported: (count, skipped, replaced = false) => `${replaced ? 'Replaced the drum chart with' : 'Imported'} ${count} note${count === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''}. Undo restores the ${replaced ? 'previous chart' : 'empty part'}.`,
-  importFailed: 'That file could not be imported.',
-  importAccept: '.gp,.gp3,.gp4,.gp5,.gpx,.gp7,.mid,.midi,.chart,.json,.woodshed.json,.txt',
 });
 
 /** The toolbar's controls (role, accessible name, command when it runs one). */

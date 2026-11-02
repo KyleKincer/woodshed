@@ -17,7 +17,10 @@ export const handlers = {
   },
   'notation:save': ({songId, header, bars}) => {
     const cur = db.notation[songId] || {score: {...header, bars: []}, revision: 0};
-    const merged = {...header, bars: [...cur.score.bars.filter(b => !bars.some(n => n.measureId === b.measureId)), ...bars].filter(b => b.hits.length || b.coverage !== 'unstarted')};
+    // Like convex/notation.ts: bars whose measure left the header's timeline are deleted with it.
+    const measureIds = new Set(header.timeline.measures.map(m => m.id));
+    const kept = cur.score.bars.filter(b => measureIds.has(b.measureId) && !bars.some(n => n.measureId === b.measureId));
+    const merged = {...header, bars: [...kept, ...bars].filter(b => b.hits.length || b.coverage !== 'unstarted')};
     db.notation[songId] = {score: merged, revision: cur.revision + 1};
     return {revision: cur.revision + 1};
   },

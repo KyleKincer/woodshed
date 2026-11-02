@@ -1,7 +1,7 @@
 // ED5's states: Edit · Chart (src/edit/chart/chart-edit.js) on its harness (/__harness/chart-edit: a
 // real song session with the demo drum part, 64 bars of 4/4 at 120 bpm on the 8-section rehearsal
-// map), in the app theme (?place=edit). The page reaches ED4's src/edit/drum-import.js (Part ▾ →
-// Drum part from file…), so every state lists it in opts.requires; the posture-frame states also
+// map), in the app theme (?place=edit). Part ▾ → Import a chart from a file… leads to ED4's import (Find a
+// chart, through src/edit/chart-file.js), so every state lists drum-import.js in opts.requires; the posture-frame states also
 // need ED2's src/edit/edit.js.
 //   ed5-chart-score         score: engraved 16-bar page, toolbar rows 44 px (52 coarse), Undo/Redo text
 //                           only at ≥ 1200 px, key-cap hints hidden until keyboard use; laptop: inspector
@@ -206,7 +206,7 @@ module.exports = [
       await page.waitForSelector('.ui-menu [role^=menuitem]');
       await page.waitForTimeout(250);
       const names = (await menuItems(page)).map(([n]) => n);
-      t.expect(names.join(' | ') === ['Export .woodshed.json', 'Print', 'Open .woodshed.json part…', 'Drum part from file (Guitar Pro, MIDI, Clone Hero)…',
+      t.expect(names.join(' | ') === ['Export .woodshed.json', 'Print', 'Open .woodshed.json part…', 'Import a chart from a file…',
         'Clear drum chart…', 'Drum keys…', 'Note list', 'Show every kit piece', 'Keyboard shortcuts'].join(' | '), `Part ▾ items (${names.join(' | ')})`);
     },
   },

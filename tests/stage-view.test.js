@@ -88,6 +88,7 @@ const TABLE = [
   ['song.resplit', 'Library', [], [S, L], false],
   ['map.detect', 'Map', [], [S, EM], false],
   ['map.find', 'Map', [], [S, EM], false],
+  ['map.importFile', 'Map', [], [S, EM], false],
   ['sections.suggest', 'Map', [], [S, EM], false],
   ['sections.keepAll', 'Map', [], [S, EM], false],
   ['sections.review', 'Map', [], [S, EM], false],
@@ -410,13 +411,16 @@ describe('the Stage commands (§3.2)', () => {
     expect(commandsBed(null, {desktop: true}).state('song.resplit')?.visible).toBe(false);
   });
 
-  test('Detect beats takes its disabled reason from the detect flow; Find a chart opens Edit · Map Find', async () => {
+  test('Detect beats takes its disabled reason from the detect flow; Find a chart opens Edit · Map Find, Import a chart its import', async () => {
     const ts = await session();
     const b = commandsBed(ts);
     expect(b.state('map.detect')).toMatchObject({visible: true, enabled: false});
     expect(b.state('map.detect').reason).toBe(ts.detect.canDetect.peek().reason);
     b.run('map.find');
     expect(b.router.navigate).toHaveBeenCalledWith(`/s/${ts.id}/edit/map/find`);
+    // Import a chart from a file… opens the same panel's import (its file picker, then the automatic alignment).
+    b.run('map.importFile');
+    expect(b.router.navigate).toHaveBeenLastCalledWith(`/s/${ts.id}/edit/map/find?import=1`);
     const desk = await session({desktop: true});
     expect(commandsBed(desk).state('map.detect')).toMatchObject({enabled: true});
   });
@@ -450,7 +454,7 @@ describe('the Stage commands (§3.2)', () => {
     const ts = await session({shared: {token: 'a'.repeat(64)}});
     const stage = {session: ts.session, share() {}, openSheet() {}, shareAvailable: signal(true)};
     const b = commandsBed(ts, {stage, desktop: true, later: {'../library/resplit-dialog.js': async () => ({})}});
-    for (const id of ['edit.open', 'edit.map', 'edit.chart', 'edit.details', 'stage.share', 'map.detect', 'map.find', 'sections.suggest',
+    for (const id of ['edit.open', 'edit.map', 'edit.chart', 'edit.details', 'stage.share', 'map.detect', 'map.find', 'map.importFile', 'sections.suggest',
       'stage.tapBeat', 'stage.getBars', 'song.resplit']) {
       expect(b.state(id).enabled, id).toBe(false);
     }

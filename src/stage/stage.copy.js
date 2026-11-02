@@ -122,6 +122,7 @@ export const COPY = Object.freeze({
     resplit: 'Re-split…',
     detect: 'Detect beats',
     find: 'Find a chart…',
+    importChart: 'Import a chart from a file…',
     suggest: 'Suggest sections',
     keepAll: 'Keep suggested sections',
     review: 'Review suggested sections',

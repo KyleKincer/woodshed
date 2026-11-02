@@ -38,7 +38,7 @@ export const EDIT_TABS = Object.freeze(['map', 'chart', 'details']);
 /** The ids this module registers (registry CI and the tests). */
 export const STAGE_COMMAND_IDS = Object.freeze([
   'marker.add', 'spot.save', 'spot.list', 'spot.open', 'stage.menu', 'song.resplit',
-  'map.detect', 'map.find', 'sections.suggest', 'sections.keepAll', 'sections.review',
+  'map.detect', 'map.find', 'map.importFile', 'sections.suggest', 'sections.keepAll', 'sections.review',
   'view.cycle', 'view.chart', 'view.roadmap', 'view.stems', 'view.focus',
   'view.distance.near', 'view.distance.stand', 'view.distance.kit', 'view.bigger', 'view.smaller', 'view.followResume',
   'view.display', 'view.followStyle', 'stage.scrollUp', 'stage.scrollDown', 'stage.scrollTop',
@@ -357,6 +357,15 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
       id: 'map.find', title: C.find, group: 'Map', scopes: [S, EM], icon: 'search', palette: {keywords: ['find', 'chart', 'tab', 'import', 'songsterr']},
       when: (c) => ownerSong(c) && !!c?.router,
       run: (c) => c.router.navigate(`/s/${encodeURIComponent(songSession(c).id)}/edit/map/find`),
+    },
+    {
+      // Import a chart from a file… (src/edit/chart-file.js): the one way in, from the Stage too. Find a chart's
+      // import opens its file picker while the click's gesture lasts, and lines the chart up with the recording.
+      id: 'map.importFile', title: C.importChart, group: 'Map', scopes: [S, EM], icon: 'file-music',
+      menu: {label: C.importChart, electron: 'File'},
+      palette: {keywords: ['import', 'file', 'guitar pro', 'gp', 'gp5', 'tab', 'songsterr', 'midi', 'chart', 'drums', 'clone hero']},
+      when: (c) => ownerSong(c) && !!c?.router,
+      run: (c) => c.router.navigate(`/s/${encodeURIComponent(songSession(c).id)}/edit/map/find?import=1`),   // chart-file.js chartImportPath
     },
     {
       id: 'sections.suggest', title: C.suggest, group: 'Map', scopes: [S, EM], icon: 'sparkles', palette: {keywords: ['sections', 'suggest', 'verse', 'chorus']},

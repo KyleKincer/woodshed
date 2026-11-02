@@ -51,6 +51,7 @@ import {pressPolicy} from '../glass.js';
 import {createPressRecognizer} from '../press.js';
 import {createPinch} from '../pinch.js';
 import {musicalStarts, number, toTime} from '../../../shared/notation.ts';
+import {chartImportPath} from '../../edit/chart-file.js';
 
 /** The chart module, loaded on first use (alphaTab is heavy). */
 const loadChartModule = () => import('../../js/notation/chart.js');
@@ -595,7 +596,7 @@ export async function createChartSurface(host, opts = {}) {
       if (registry.get?.('map.find')) actions.findChart = run('map.find');
       const router = opts.router ?? registry.context?.()?.router ?? null;
       if (router?.navigate) {
-        actions.importFile = () => router.navigate(`/s/${encodeURIComponent(session.id)}/edit/map/find?import=1`);
+        actions.importFile = () => router.navigate(chartImportPath(session.id));
       }
       if (registry.get?.('edit.chart')) actions.write = run('edit.chart');
       return actions;
