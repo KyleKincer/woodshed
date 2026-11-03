@@ -30,7 +30,7 @@ describe('error codes (§6.1)', () => {
     const contract = [
       'not_signed_in', 'account_suspended', 'account_export_only', 'not_found', 'not_owner', 'invalid',
       'device_unpaired', 'device_revoked_admin', 'device_other_account', 'device_limit', 'queue_full',
-      'storage_full_user', 'storage_full_app', 'resplit_no_source', 'resplit_wrong_device', 'retry_wrong_device',
+      'storage_full_user', 'storage_full_app', 'resplit_no_source', 'resplit_own_stems', 'resplit_wrong_device', 'retry_wrong_device',
       'job_live', 'job_not_failed', 'practice_too_large', 'setlist_limit', 'setlist_full', 'pins_full',
       'lookup_unavailable', 'lookup_busy', 'artwork_expired',
     ];

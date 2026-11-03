@@ -29,6 +29,7 @@ export const COPY = Object.freeze({
   delete: 'Delete…',
   /** Disabled reasons, shown under the item (Menu `reason`). */
   needsDesktop: 'Needs Woodshed for desktop',
+  ownStems: 'Added from your own stems: nothing to split',
   pausedAccount: 'Paused on this account',
   notBuilt: 'Not built yet',
   inSetlist: 'Already in this list',

@@ -70,8 +70,9 @@ import {PLATFORMS} from '../download/download.copy.js';
 import {
   COPY as MODEL_COPY, audioFiles, badges, classify, defaultsParts, findDuplicate, jobSettings, removesMyStem, removesMyStemLine,
 } from './add-model.js';
-import {COPY as UPLOAD_COPY, MAX_UPLOAD_BYTES, startUploads, uploadDevice} from './upload.js';
-import {takeStagedFiles} from './dropzone.js';
+import {COPY as UPLOAD_COPY, MAX_UPLOAD_BYTES, startStemUpload, startUploads, uploadDevice} from './upload.js';
+import {COPY as STEM_COPY, ROLES, guessRole, looksLikeStems, songTitleFrom, stemPlan} from './stem-set.js';
+import {droppedFiles, folderOf, takeStagedFiles} from './dropzone.js';
 import {COPY, PROVIDERS, QUALITY_OPTIONS, STEM_OPTIONS} from './add-sheet.copy.js';
 
 export {COPY, CONTROLS} from './add-sheet.copy.js';
@@ -219,7 +220,7 @@ function parts(list) {
 export function createAddSheet(options = {}) {
   const o = {
     store: appStore, account: appAccount, prefs: appPrefs, platform: appPlatform, desktop: appDesktop,
-    jobs: jobsApi, lookups: {resolveSource, searchSources}, uploads: {startUploads, uploadDevice}, takeStagedFiles,
+    jobs: jobsApi, lookups: {resolveSource, searchSources}, uploads: {startUploads, startStemUpload, uploadDevice}, takeStagedFiles,
     feedback: {toast: appToast, announce: appAnnounce}, settings: settingsApi, fetchRelease: appFetchRelease, detectPlatform,
     now: clockNow, navigator: globalThis.navigator, origin: globalThis.location?.origin ?? '', durationOf: probeDuration,
     router: null, host: null, onClose: null, ...options,
@@ -248,8 +249,9 @@ export function createAddSheet(options = {}) {
     // up, or a transient code: asked again once it is) belong to the input `key`.
     lookup: {status: 'idle', key: null, kind: null, candidates: [], query: null},
     selected: 0,
-    files: [],            // {id, file, name, size, audio, tooLarge, duration, probing}
-    title: '',            // the single file's title field
+    files: [],            // {id, file, name, dir, size, audio, tooLarge, duration, probing, role}
+    asStems: null,        // several files: true = stems of one song, false = separate songs, null = as their names suggest
+    title: '',            // the title field (one file, or a set of stems)
     titleEdited: false,
     duplicateDismissed: null,   // the duplicate song id the user chose to add again
     error: null,          // describeError() result shown inline
@@ -280,6 +282,11 @@ export function createAddSheet(options = {}) {
   const mode = () => (desktopApp ? 'desktop' : hasDevices() ? 'web' : 'explainer');
   const chosenDevice = () => chooseDevice(devices(), st.deviceId ?? o.prefs?.get?.('deviceId'), at());
   const audio = () => st.files.filter(f => f.audio && !f.tooLarge);
+  /** Several files added as one song's stems (shared/own-stems.ts): the user's choice, else what the names suggest. */
+  const asStems = () => mode() === 'desktop' && audio().length >= 2 && (st.asStems ?? looksLikeStems(audio().map(f => f.name)));
+  const planNow = () => stemPlan(audio().map(f => f.role), settingsNow().stemMode);
+  /** The title field's starting value: the file's name, or the stem set's song name. */
+  const defaultTitle = () => (asStems() ? songTitleFrom(audio().map(f => f.name), audio().map(f => f.dir)) : fileStem(audio()[0]?.name ?? ''));
   const resolvedChoice = () => ({...(st.choice.stemMode ? {stemMode: st.choice.stemMode} : {}), ...(st.choice.preset ? {preset: st.choice.preset} : {})});
   const settingsNow = () => jobSettings(profile(), accountValue(), resolvedChoice());
 
@@ -405,7 +412,9 @@ export function createAddSheet(options = {}) {
     dragDepth = 0;
     dropTarget.hidden = true;
     if (mode() === 'explainer') return;
-    addFiles(Array.from(e.dataTransfer?.files ?? []));
+    // A dropped folder (a stem pack) brings the audio files inside it.
+    const got = droppedFiles(e.dataTransfer);
+    if (Array.isArray(got)) addFiles(got); else void got.then(files => { if (st.open) addFiles(files); });
   });
 
   // ---------- omnibox
@@ -548,8 +557,10 @@ export function createAddSheet(options = {}) {
     if (!fresh.length) return;
     const {audio: ok} = audioFiles(fresh);
     for (const file of fresh) {
-      const entry = {id: `f${++fileSeq}`, file, name: String(file.name || 'upload'), size: Math.max(0, Number(file.size) || 0),
-        audio: ok.includes(file), tooLarge: false, duration: null, probing: false};
+      const name = String(file.name || 'upload');
+      const dir = folderOf(file) || String(file.webkitRelativePath ?? '').split('/').slice(0, -1).join('/');
+      const entry = {id: `f${++fileSeq}`, file, name, dir, size: Math.max(0, Number(file.size) || 0),
+        audio: ok.includes(file), tooLarge: false, duration: null, probing: false, role: guessRole(name)};
       entry.tooLarge = entry.audio && entry.size > MAX_UPLOAD_BYTES;
       if (entry.audio && !entry.tooLarge && desktopApp) {
         entry.probing = true;
@@ -581,9 +592,8 @@ export function createAddSheet(options = {}) {
   }
 
   function syncTitle() {
-    const single = audio().length === 1 ? audio()[0] : null;
-    if (!single) { st.title = ''; st.titleEdited = false; return; }
-    if (!st.titleEdited) st.title = fileStem(single.name);
+    if (audio().length !== 1 && !asStems()) { st.title = ''; st.titleEdited = false; return; }
+    if (!st.titleEdited) st.title = defaultTitle();
   }
 
   // ---------- candidate selection
@@ -638,7 +648,7 @@ export function createAddSheet(options = {}) {
 
   function renderSubmit() {
     const files = audio();
-    const label = files.length > 1 ? COPY.submitFiles(files.length) : COPY.submit;
+    const label = asStems() ? COPY.submitStems : files.length > 1 ? COPY.submitFiles(files.length) : COPY.submit;
     const ready = canSubmit();
     submitButton.set({label, disabled: !ready || st.busy, busy: st.busy ? COPY.busy : false});
     anotherHint.hidden = coarse;
@@ -653,7 +663,7 @@ export function createAddSheet(options = {}) {
   function canSubmit() {
     if (exportOnly() || mode() === 'explainer') return false;
     if (lookupError()) return false;
-    if (mode() === 'desktop' && audio().length) return true;
+    if (mode() === 'desktop' && audio().length) return !asStems() || planNow().ok;
     if (st.input.kind === 'empty') return false;
     if (st.lookup.status === 'ready' && st.lookup.key === lookupKey(st.input) && !st.lookup.candidates.length) return false;
     return true;
@@ -703,7 +713,8 @@ export function createAddSheet(options = {}) {
 
   /** What the resolution area shows; it is rebuilt only when this changes (focus inside it survives store ticks). */
   function resolutionKey(m) {
-    const files = st.files.map(f => f.id);   // a duration arriving updates its row in place (updateFileMeta)
+    // A duration arriving updates its row in place (updateFileMeta), a role its plan line (updatePlan).
+    const files = [...st.files.map(f => f.id), asStems() ? 'stems' : 'songs'];
     const lookup = st.lookup.key === lookupKey(st.input) ? [st.lookup.status, st.lookup.candidates.map(c => c.id)] : ['loading'];
     return JSON.stringify([m, files, st.input.kind, st.input.value, lookup]);
   }
@@ -712,12 +723,13 @@ export function createAddSheet(options = {}) {
   function renderResolution() {
     const m = mode();
     const key = resolutionKey(m);
-    if (key === shownResolution) { updateFileMeta(); return; }
+    if (key === shownResolution) { updateFileMeta(); updatePlan(); return; }
     shownResolution = key;
     // Focus inside the area (the title field, a row's ✕) survives a rebuild.
     const active = doc.activeElement;
     const kept = active && resolution.contains(active)
-      ? {selector: active.classList.contains('lib-add-title-input') ? '.lib-add-title-input' : null,
+      ? {selector: active.classList.contains('lib-add-title-input') ? '.lib-add-title-input'
+        : active.closest('.lib-add-files-as') ? '.lib-add-files-as [role=radio][aria-checked=true]' : null,
         start: active.selectionStart ?? null, end: active.selectionEnd ?? null}
       : null;
     resolution.replaceChildren();
@@ -825,24 +837,73 @@ export function createAddSheet(options = {}) {
     };
     const list = h('ul', {class: 'lib-add-files', 'aria-label': COPY.filesLabel});
     const flags = [];
+    const stems = asStems();
     for (const f of st.files) {
       if (!f.audio || f.tooLarge) {
         const text = f.audio ? `${f.name}: ${UPLOAD_COPY.tooLarge}` : MODEL_COPY.notAudio(f.name);
         flags.push(h('p', {class: 'lib-add-flag', role: 'status'}, icon('alert-circle'), h('span', {class: 'selectable'}, text), removeButton(f)));
         continue;
       }
-      list.append(h('li', {class: 'lib-add-file', dataset: {disabled: m !== 'desktop' ? '' : null}},
+      list.append(h('li', {class: 'lib-add-file', dataset: {disabled: m !== 'desktop' ? '' : null, role: stems ? f.role : null}},
         icon('file-audio'),
         h('span', {class: 'lib-add-file-name selectable'}, f.name),
         h('span', {class: 'lib-add-file-meta tabular', dataset: {fileId: f.id}}, fileMetaText(f)),
+        stems ? roleSelect(f) : null,
         removeButton(f)));
     }
     const out = [];
+    if (m === 'desktop' && audio().length >= 2) out.push(asControl(stems));
     if (list.childNodes.length) out.push(list);
     out.push(...flags);
+    if (stems) out.push(planBlock());
     // On the web the reason is the files note under the omnibox (shown once).
-    if (m === 'desktop' && audio().length === 1) out.push(titleField());
+    if (m === 'desktop' && (audio().length === 1 || stems)) out.push(titleField());
     return h('div', {class: 'lib-add-files-block'}, ...out);
+  }
+
+  /** Several files: Separate songs · Stems of one song. */
+  function asControl(stems) {
+    const control = prim(Segmented({label: COPY.filesAs, size: 'sm', className: 'lib-add-files-as', value: stems ? 'stems' : 'songs',
+      options: [{value: 'songs', label: COPY.filesAsSongs}, {value: 'stems', label: COPY.filesAsStems}],
+      onChange: value => {
+        st.asStems = value === 'stems';
+        if (!st.titleEdited) st.title = '';
+        syncTitle();
+        render();
+      }}));
+    return control.el;
+  }
+
+  /** A stem set's file: which stem it is (or the full mix, or left out). */
+  function roleSelect(f) {
+    const select = h('select', {class: 'lib-add-file-role', 'aria-label': COPY.roleOf(f.name), dataset: {fileId: f.id}},
+      ...ROLES.map(r => h('option', {value: r.value, selected: r.value === f.role}, r.label)));
+    select.value = f.role;
+    select.addEventListener('change', () => {
+      f.role = select.value;
+      select.closest('.lib-add-file')?.setAttribute('data-role', f.role);
+      updatePlan();
+      renderSubmit();
+      renderDefaults();
+    });
+    return select;
+  }
+
+  /** What adding the stem set does (stem-set.js stemPlan), or why it can't be added yet. */
+  function planBlock() {
+    const block = h('div', {class: 'lib-add-plan', role: 'status', 'aria-live': 'polite'});
+    fillPlan(block);
+    return block;
+  }
+  function fillPlan(block) {
+    const plan = planNow();
+    block.dataset.ok = String(plan.ok);
+    block.replaceChildren(...(plan.ok ? plan.lines.map(t => h('p', {class: 'lib-add-plan-line'}, t))
+      : [h('p', {class: 'lib-add-plan-line lib-add-plan-problem'}, icon('alert-circle'), plan.reason)]));
+  }
+  function updatePlan() {
+    const block = resolution.querySelector('.lib-add-plan');
+    if (block) fillPlan(block);
   }
 
   function titleField() {
@@ -852,11 +913,11 @@ export function createAddSheet(options = {}) {
       'aria-describedby': hintId});
     field.addEventListener('input', () => {
       st.title = field.value;
-      st.titleEdited = field.value.trim() !== fileStem(audio()[0]?.name ?? '');
+      st.titleEdited = field.value.trim() !== defaultTitle();
     });
     return h('div', {class: 'lib-add-title-field'},
       h('label', {class: 'lib-add-label', for: id}, COPY.titleField), field,
-      h('p', {class: 'lib-add-field-hint', id: hintId}, COPY.titleHint));
+      h('p', {class: 'lib-add-field-hint', id: hintId}, asStems() ? COPY.titleHintStems : COPY.titleHint));
   }
 
   /** What the duplicate check runs on, in order: [{url?, title?, artist?, duration?}]. */
@@ -864,6 +925,10 @@ export function createAddSheet(options = {}) {
     const files = audio();
     if (files.length && mode() === 'desktop') {
       const f = files[0];
+      if (asStems()) {
+        const longest = Math.max(0, ...files.map(x => x.duration ?? 0));
+        return longest ? [{title: st.title.trim() || defaultTitle(), duration: longest}] : [];
+      }
       return f.duration ? [{title: st.titleEdited ? st.title : fileStem(f.name), duration: f.duration}] : [];
     }
     const out = [];
@@ -905,13 +970,18 @@ export function createAddSheet(options = {}) {
   // ---------- defaults line and Change
   let stemsControl = null, qualityControl = null, saveBox = null, estimateNote = null, twoPartNote = null;
   function renderDefaults() {
-    const choice = resolvedChoice();
+    // A stem set: nothing is split without a full mix (no layout or quality to choose); with one, the line names the
+    // split that will run (stem-set.js stemPlan: guitar or piano stems need 6).
+    const plan = asStems() ? planNow() : null;
+    const ownOnly = !!plan?.ok && !plan.mix;
+    defaultsLine.hidden = ownOnly;
+    const choice = plan?.mix ? {...resolvedChoice(), stemMode: plan.mode} : resolvedChoice();
     defaultsText.replaceChildren(...defaultsParts(profile(), accountValue(), choice).map(p => (p.strong ? h('strong', {}, p.text) : p.text)));
     changeButton.setAttribute('aria-expanded', String(st.changeOpen));
-    panel.hidden = !st.changeOpen;
-    const settings = settingsNow();
-    if (st.changeOpen) renderPanel(settings);
-    const lost = removesMyStem(profile(), settings.stemMode, settings);
+    panel.hidden = !st.changeOpen || ownOnly;
+    const settings = plan?.mix ? {...settingsNow(), stemMode: plan.mode} : settingsNow();
+    if (st.changeOpen && !ownOnly) renderPanel(settingsNow());
+    const lost = ownOnly ? null : removesMyStem(profile(), settings.stemMode, settings);
     warning.hidden = !lost;
     warning.textContent = lost ? removesMyStemLine(lost) : '';
   }
@@ -926,6 +996,8 @@ export function createAddSheet(options = {}) {
     const files = audio();
     if (files.length && mode() === 'desktop') {
       if (files.some(f => !f.duration)) return null;
+      // A stem set is one song: as long as its longest file (and only a mix is split).
+      if (asStems()) return planNow().mix ? Math.max(...files.filter(f => f.role === 'mix').map(f => f.duration)) : 0;
       return files.reduce((sum, f) => sum + f.duration, 0);
     }
     return chosenCandidate()?.duration ?? null;
@@ -1149,6 +1221,16 @@ export function createAddSheet(options = {}) {
   async function submitFiles(files) {
     // Asking for the processor first shows a missing one inline, before the sheet closes.
     const deviceId = await o.uploads.uploadDevice();
+    if (asStems()) {
+      const songTitle = st.title.trim() || defaultTitle();
+      const choice = resolvedChoice();
+      const handle = o.uploads.startStemUpload(files.map(f => ({file: f.file, role: f.role})), {
+        settings: accountValue(), profile: profile(), choice: Object.keys(choice).length ? choice : null, deviceId, title: songTitle,
+      });
+      if (!handle) throw {code: 'invalid', message: STEM_COPY.nothing, data: {}};
+      return {kind: 'upload', handles: [handle], title: songTitle, keys: [`job:upload:${handle.id}`],
+        undo: async () => Promise.resolve(handle.cancel()).catch(() => false)};
+    }
     const single = files.length === 1;
     const titleOverride = single && st.titleEdited && st.title.trim() ? st.title.trim() : undefined;
     const handles = o.uploads.startUploads(files.map(f => f.file), {

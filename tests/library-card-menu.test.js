@@ -89,6 +89,13 @@ describe('cardMenuItems', () => {
     expect(resplit.reason).toBe('Needs Woodshed for desktop');
   });
 
+  it('a song added only from the user\'s own stems has nothing to re-split', () => {
+    const own = {...JAM, id: 'own', stemMode: 'own'};
+    const {ctx} = setup({songs: [HARBOR, own]});
+    expect(find(cardMenuItems(own, ctx), 'card.resplit').reason).toBe(COPY.ownStems);
+    expect(find(cardMenuItems(HARBOR, ctx), 'card.resplit').reason ?? null).toBeNull();
+  });
+
   it('a paused (export-only) account may pin but not share, re-split or change setlists (D10)', () => {
     const {ctx} = setup({status: 'export_only', share: true});
     const items = cardMenuItems(HARBOR, ctx);

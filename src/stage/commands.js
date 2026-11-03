@@ -21,6 +21,9 @@
 import {registry as appRegistry} from '../app/commands.js';
 import {COPY} from './stage.copy.js';
 
+/** shared/own-stems.ts OWN_STEM_MODE (a commands module imports no shared modules statically). */
+const OWN_STEM_MODE = 'own';
+
 // Later-wave modules, resolved by contract path (D2; Appendix C item 58): LB3's Re-split dialog.
 const LATER = import.meta.glob(['../library/resplit-dialog.js']);
 const RESPLIT_PATH = '../library/resplit-dialog.js';
@@ -333,6 +336,8 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
         return writable(songSession(c));
       },
       disabledReason: (c) => {
+        // A song added only from the user's own stems has no mix to split again (shared/own-stems.ts).
+        if (!argOf(c, 'songId') && peek(songSession(c)?.song)?.stemMode === OWN_STEM_MODE) return COPY.resplitOwnStems;
         if (!c?.desktop?.available) return COPY.resplitDesktop;
         if (!later?.[RESPLIT_PATH]) return COPY.notBuilt;
         return null;

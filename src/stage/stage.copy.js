@@ -87,6 +87,7 @@ export const COPY = Object.freeze({
   // Read-only and later-build reasons.
   readOnly: 'Shared songs are read-only. Add it to your library to change it.',
   resplitDesktop: 'Re-split from Woodshed for desktop.',
+  resplitOwnStems: 'This song was added from your own stems, so there’s nothing to split again.',
   // The recording check (D43, spec §3.5).
   reviewQuestion: 'Is this the right recording?',
   reviewYes: 'Yes',

@@ -272,5 +272,78 @@ class SeparationJobTests(Workspace):
         self.assertIn('Original file is not on this computer', last['error'])
 
 
+
+@unittest.skipUnless(HAS_FFMPEG, 'ffmpeg is not installed')
+class OwnStemsTests(Workspace):
+    """A song added from the user's own stems (shared/own-stems.ts)."""
+
+    def setUp(self):
+        super().setUp()
+        self.uploads = self.root.parent.parent / 'uploads'
+        self.uploads.mkdir()
+        self.encoded = {}
+
+        def encode(src, dest, quality):
+            self.encoded[dest.stem] = pathlib.Path(src)
+            dest.write_bytes(b'webm')
+
+        patches = [patch.object(process, 'encode', encode), patch.object(process, 'fingerprint', lambda wav: None),
+                   patch.dict(sys.modules, {'separator': types.SimpleNamespace(cpu_budget=lambda: 2)})]
+        for p in patches: p.start()
+        self.addCleanup(lambda: [p.stop() for p in patches])
+
+    def file(self, name, seconds=2):
+        path = self.uploads / name
+        tone(path, seconds=seconds)
+        return str(path)
+
+    def job(self, own, value='', **extra):
+        return {'kind': 'separate', 'source': {'type': 'upload', 'value': value, 'filename': 'Harbor Lights', 'stems': []},
+                'settings': {'stemMode': 'full'}, 'quality': {'model': 'htdemucs', 'shifts': 1, 'bitrate': 192}, 'ownStems': own, **extra}
+
+    def test_stems_only_are_the_song_and_nothing_is_split(self):
+        own = [{'name': 'drums', 'path': self.file('drums_1.wav'), 'filename': 'drums_1.wav'},
+               {'name': 'bass', 'path': self.file('bass.wav', seconds=3), 'filename': 'bass.wav'},
+               {'name': 'drums', 'path': self.file('drums_2.wav'), 'filename': 'drums_2.wav'}]
+        with patch.object(process, 'separate', side_effect=AssertionError('split')), \
+             patch.object(process, 'acquire', side_effect=AssertionError('acquired a mix')):
+            self.assertEqual(self.run_main(self.job(own)), 0)
+        result = json.loads((self.root / 'result.json').read_text())
+        self.assertEqual(result['stemMode'], 'own')
+        self.assertEqual([f['stem'] for f in result['files'] if f.get('stem')], ['drums', 'bass'])
+        # The two drum files are mixed into one stem; the bass file is used as it is.
+        self.assertEqual(self.encoded['drums'], self.root / 'own_drums.wav')
+        self.assertEqual(self.encoded['bass'], pathlib.Path(own[1]['path']))
+        # Their sum is the song: the source the detection jobs read, as long as the longest stem.
+        self.assertTrue((self.root / 'source.wav').is_file())
+        self.assertEqual(result['duration'], 3)
+        self.assertEqual(result['title'], 'Harbor Lights')
+
+    def test_with_a_mix_the_split_runs_and_the_users_stem_replaces_its_own(self):
+        mix = self.file('mix.wav')
+        own = [{'name': 'drums', 'path': self.file('drums.wav'), 'filename': 'drums.wav'}]
+
+        def separate(wav, out, quality, mode, rep):
+            folder = out / quality['model'] / wav.stem
+            folder.mkdir(parents=True)
+            for name in ['drums', 'bass', 'other', 'vocals']:
+                (folder / f'{name}.wav').write_bytes(b'RIFF')
+
+        with patch.object(process, 'separate', separate):
+            self.assertEqual(self.run_main(self.job(own, value='a' * 36, localSource=mix)), 0)
+        result = json.loads((self.root / 'result.json').read_text())
+        self.assertEqual(result['stemMode'], 'full')
+        self.assertEqual([f['stem'] for f in result['files'] if f.get('stem')], ['drums', 'bass', 'other', 'vocals'])
+        self.assertEqual(self.encoded['drums'], pathlib.Path(own[0]['path']))
+        self.assertEqual(self.encoded['bass'].parent.name, 'source')   # the split's own
+
+    def test_a_missing_stem_file_reports_source_missing(self):
+        own = [{'name': 'drums', 'path': str(self.uploads / 'gone'), 'filename': 'drums.wav'}]
+        self.assertEqual(self.run_main(self.job(own)), 1)
+        last = lines(self.out)[-1]
+        self.assertEqual(last['code'], 'source_missing')
+        self.assertIn('Your drums file is not on this computer', last['error'])
+
+
 if __name__ == '__main__':
     unittest.main()

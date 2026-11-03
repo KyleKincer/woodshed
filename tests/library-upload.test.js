@@ -10,7 +10,7 @@ vi.mock('../src/js/companion.js', () => ({requireCompanion: vi.fn(), uploadXHR: 
 const jobs = await import('../src/api/jobs.js');
 const companion = await import('../src/js/companion.js');
 const {store} = await import('../src/app/store.js');
-const {CANCEL_RETRY_MS, MAX_UPLOAD_BYTES, COPY, startUpload, startUploads, uploadDevice, uploadError} = await import('../src/library/upload.js');
+const {CANCEL_RETRY_MS, MAX_UPLOAD_BYTES, COPY, startStemUpload, startUpload, startUploads, uploadDevice, uploadError} = await import('../src/library/upload.js');
 const {describeError} = await import('../src/app/error-copy.js');
 
 const flush = async (n = 6) => { for (let i = 0; i < n; i++) await Promise.resolve(); await new Promise(r => setTimeout(r, 0)); };
@@ -44,6 +44,65 @@ afterEach(() => {
 });
 
 const entries = () => store.library.uploads.peek();
+
+describe('one song from the user\'s own stems (startStemUpload)', () => {
+  const id = n => `${n}${n}${n}${n}${n}${n}${n}${n}-1111-4222-8333-944455556666`;
+
+  test('the mix uploads first, then each stem; one Jobs entry with the summed progress, then one job', async () => {
+    const drums = file('drums.wav', 100), mix = file('song.ogg', 300), bass = file('bass.wav', 200);
+    const h = startStemUpload([{file: drums, role: 'drums'}, {file: mix, role: 'mix'}, {file: bass, role: 'bass'}, {file: file('crowd.ogg'), role: 'skip'}],
+      {settings: SETTINGS, title: ' Harbor  Lights '});
+    expect(h).toMatchObject({name: 'Harbor Lights', title: 'Harbor Lights'});
+    expect(h.progress.value).toEqual({loaded: 0, total: 600});
+    expect(entries()).toEqual([h]);
+    await flush();
+    expect(uploads.map(u => u.file)).toEqual([mix]);
+    uploads[0].onProgress({loaded: 150});
+    expect(h.progress.value).toEqual({loaded: 150, total: 600});
+    uploads[0].resolve(id(1));
+    await flush();
+    expect(uploads.map(u => u.file)).toEqual([mix, drums]);
+    uploads[1].onProgress({loaded: 50});
+    expect(h.progress.value).toEqual({loaded: 350, total: 600});
+    uploads[1].resolve(id(2));
+    await flush();
+    expect(jobs.createSeparation).not.toHaveBeenCalled();
+    uploads[2].resolve(id(3));
+    await expect(h.promise).resolves.toEqual({jobId: 'job-1'});
+    expect(jobs.createSeparation).toHaveBeenCalledTimes(1);
+    expect(jobs.createSeparation).toHaveBeenCalledWith({
+      source: {type: 'upload', value: id(1), filename: 'song.ogg',
+        stems: [{name: 'drums', value: id(2), filename: 'drums.wav'}, {name: 'bass', value: id(3), filename: 'bass.wav'}]},
+      deviceId: 'dev-local', settings: SETTINGS, label: 'Harbor Lights', meta: {title: 'Harbor Lights'},
+    });
+    expect(entries()).toEqual([]);
+  });
+
+  test('stems only: no mix, the song\'s name is the source\'s; canceling mid-set makes no job', async () => {
+    const h = startStemUpload([{file: file('drums.wav', 10), role: 'drums'}, {file: file('bass.wav', 10), role: 'bass'}], {settings: SETTINGS, deviceId: 'dev-9', title: 'Harbor Lights'});
+    await flush();
+    uploads[0].resolve(id(1));
+    await flush();
+    uploads[1].resolve(id(2));
+    await expect(h.promise).resolves.toEqual({jobId: 'job-1'});
+    expect(jobs.createSeparation.mock.calls[0][0].source).toEqual({type: 'upload', value: '', filename: 'Harbor Lights',
+      stems: [{name: 'drums', value: id(1), filename: 'drums.wav'}, {name: 'bass', value: id(2), filename: 'bass.wav'}]});
+
+    const second = startStemUpload([{file: file('drums.wav', 10), role: 'drums'}, {file: file('bass.wav', 10), role: 'bass'}], {settings: SETTINGS, deviceId: 'dev-9', title: 'x'});
+    await flush();
+    uploads[2].resolve(id(3));
+    await flush();
+    await expect(second.cancel()).resolves.toBe(true);
+    await flush();
+    expect(jobs.createSeparation).toHaveBeenCalledTimes(1);
+    expect(entries()).toEqual([]);
+  });
+
+  test('nothing to upload (every file left out) starts nothing', () => {
+    expect(startStemUpload([{file: file('crowd.ogg'), role: 'skip'}], {settings: SETTINGS, title: 'x'})).toBeNull();
+    expect(entries()).toEqual([]);
+  });
+});
 
 describe('one upload', () => {
   test('real bytes, then the job; the entry leaves the list once the job exists', async () => {

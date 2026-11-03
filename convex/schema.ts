@@ -19,6 +19,9 @@ export const sourceValidator = v.object({
   value: v.string(),
   // Original filename, for `upload` sources only.
   filename: v.optional(v.string()),
+  // The user's own stems (upload ids on the computer that added them), for `upload` sources only. With them,
+  // `value` is the full mix's upload id, or '' when there is no mix (shared/own-stems.ts).
+  stems: v.optional(v.array(v.object({ name: v.string(), value: v.string(), filename: v.optional(v.string()) }))),
 });
 
 export const qualityValidator = v.object({

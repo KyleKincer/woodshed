@@ -112,7 +112,7 @@ export function createCompanion(win, fx = {}) {
     if (auth !== `Bearer ${TOKEN}`) return fail(401, 'invalid', 'Unauthorized');
     if (path === '/status' && method === 'GET') { await delay(30); return {status: 200, body: status()}; }
     if (path === '/connect' && method === 'POST') { await delay(30); return {status: 200, body: {deviceId: 'dev1', userId: 'user1', name: 'Studio MacBook'}}; }
-    if (path === '/upload' && method === 'POST') { await delay(300); return {status: 200, body: {id: `up-${++uploadIds}`}}; }
+    if (path === '/upload' && method === 'POST') { await delay(300); return {status: 200, body: {id: `00000000-0000-4000-8000-${String(++uploadIds).padStart(12, '0')}`}}; }
     if (path === '/resolve' && method === 'GET') return resolve(parsed.searchParams.get('url') ?? '');
     if (path === '/search' && method === 'GET') return search(parsed.searchParams.get('q') ?? '', Number(parsed.searchParams.get('n') ?? 5));
     if (path === '/legacy' && method === 'GET') return {status: 200, body: fx.legacy === '1' ? [{directory: '~/Library/Application Support/woodshed', count: 48}] : []};

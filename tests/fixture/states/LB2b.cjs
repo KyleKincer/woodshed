@@ -169,6 +169,37 @@ module.exports = [
     },
   },
   {
+    // The user's own stems (shared/own-stems.ts): files named like stems are one song, each with its role.
+    name: 'lb2b-stems',
+    url: `${H}?fx-reset=1&fx-desktop=1&${NOW}&files=${encodeURIComponent('Glasshouse - song.ogg,Glasshouse - drums.wav,Glasshouse - bass.wav,crowd.ogg')}&duration=204`,
+    opts: {devices: LAPTOP},
+    async fn(page, t) {
+      const f = await facts(page);
+      await expectFrame(page, t, f);
+      const as = page.getByRole('radiogroup', {name: 'These files are'});
+      t.expect(await as.getByRole('radio', {name: 'Stems of one song'}).getAttribute('aria-checked') === 'true', 'named like stems: one song');
+      const roles = await page.locator('.lib-add-file-role').evaluateAll(els => els.map(e => e.value));
+      t.expect(JSON.stringify(roles) === JSON.stringify(['mix', 'drums', 'bass', 'skip']), `roles from the names (${roles})`);
+      t.expect(await page.getByRole('textbox', {name: 'Song title'}).inputValue() === 'Glasshouse', 'the song title from the names');
+      t.expect(f.text.includes('Woodshed splits the full mix and uses your Drums and Bass instead of its own.'), 'the plan');
+      t.expect(f.submitLabel === 'Add song', `"Add song" (${f.submitLabel})`);
+      await t.capture('stems');
+      // Without the mix: nothing to split.
+      await page.getByRole('combobox', {name: 'What Glasshouse - song.ogg is'}).selectOption('skip');
+      t.expect((await facts(page)).text.includes('Nothing to split: your 2 stems are the song, as they are.'), 'stems only: nothing to split');
+      await page.getByRole('combobox', {name: 'What Glasshouse - song.ogg is'}).selectOption('mix');
+      await page.locator('.lib-add-submit').click();
+      await page.waitForFunction(() => window.fixture.db().jobs.some(j => j.source?.stems), null, {timeout: 15_000});
+      const job = await page.evaluate(() => window.fixture.db().jobs.find(j => j.source?.stems));
+      t.expect(job.source.filename === 'Glasshouse - song.ogg' && /^[0-9a-f-]{36}$/.test(job.source.value), `the mix is the source (${JSON.stringify(job.source)})`);
+      t.expect(JSON.stringify(job.source.stems.map(x => [x.name, x.filename])) === JSON.stringify([['drums', 'Glasshouse - drums.wav'], ['bass', 'Glasshouse - bass.wav']]),
+        `one job with the user's stems (${JSON.stringify(job.source.stems)})`);
+      t.expect(job.meta?.title === 'Glasshouse' && job.label === 'Glasshouse', `the song's title (${job.label}, ${job.meta?.title})`);
+      const uploads = await page.evaluate(() => window.fixture.companion.uploads().length);
+      t.expect(uploads === 3, `three files uploaded, the crowd track left out (${uploads})`);
+    },
+  },
+  {
     name: 'lb2b-duplicate',
     url: `${H}?fx-reset=1&fx-desktop=1&${NOW}&q=${encodeURIComponent('https://www.youtube.com/watch?v=fixture01')}`,
     opts: {devices: LAPTOP},

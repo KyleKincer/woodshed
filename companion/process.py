@@ -14,7 +14,10 @@ import json, pathlib, sys, shutil
 from concurrent.futures import ThreadPoolExecutor
 from errors import classify, describe
 from fingerprint import fingerprint
-from pipeline import Reporter, acquire, separate, encode, expected_stems, probe_duration, run
+from pipeline import Reporter, acquire, acquire_own, own_stem_files, separate, encode, expected_stems, probe_duration, run
+
+#: A song made only of the user's own stems (shared/own-stems.ts OWN_STEM_MODE).
+OWN_STEM_MODE = 'own'
 
 #: The sample rate detection works at: BeatNet's input rate, and the mix CPC's sections read.
 DETECT_RATE = 22050
@@ -142,11 +145,15 @@ def process(job, root, rep=None):
         if cover and cover.is_file(): shutil.copyfile(cover, root / 'cover.jpg')
         mode = old.get('stemMode', 'full')
     else:
+        # The user's own stems (shared/own-stems.ts): with a full mix they replace the split's stems of the same
+        # name; without one nothing is split and they are the song.
+        own = job.get('ownStems') or []
+        own_only = bool(own) and not (job.get('source') or {}).get('value')
         meta_file = root / 'source-meta.json'
         if meta_file.exists() and (root / 'source.wav').exists():
             meta = json.loads(meta_file.read_text()); wav = root / 'source.wav'
         else:
-            wav, meta = acquire(job, root, rep)
+            wav, meta = acquire_own(job, root, rep) if own_only else acquire(job, root, rep)
             if wav != root / 'source.wav': shutil.copyfile(wav, root / 'source.wav')
             wav = root / 'source.wav'
             meta['cover'] = str(meta['cover']) if meta.get('cover') else None
@@ -156,14 +163,22 @@ def process(job, root, rep=None):
         if 'fingerprint' not in meta:
             meta['fingerprint'] = fingerprint(wav)
             meta_file.write_text(json.dumps(meta))
-        out = root / 'separated'
-        model_dir = out / quality['model'] / wav.stem
-        wanted = expected_stems(mode, quality['model'])
-        # Only reuse a completed separation, never partially written stems.
-        if not (root / 'separation.complete').exists():
-            separate(wav, out, quality, mode, rep)
-            (root / 'separation.complete').touch()
-        sources = [(name, model_dir / f'{name}.wav') for name in wanted]
+        if own_only:
+            mode = OWN_STEM_MODE
+            sources = own_stem_files(own, root, rep)
+        else:
+            out = root / 'separated'
+            model_dir = out / quality['model'] / wav.stem
+            wanted = expected_stems(mode, quality['model'])
+            # Only reuse a completed separation, never partially written stems.
+            if not (root / 'separation.complete').exists():
+                separate(wav, out, quality, mode, rep)
+                (root / 'separation.complete').touch()
+            sources = [(name, model_dir / f'{name}.wav') for name in wanted]
+            if own:
+                # The user's stem replaces the split's one of the same name; one the split has no slot for is added.
+                yours = dict(own_stem_files(own, root, rep))
+                sources = [(name, yours.pop(name, src)) for name, src in sources] + list(yours.items())
     rep.progress('finalize', 90, 'Encoding sync copies locally…')
     # Join every independent encoder before committing result.json.
     for name, src in sources:

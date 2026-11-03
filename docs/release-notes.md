@@ -1,3 +1,11 @@
+Woodshed 2.4.0 adds songs from stems you already have.
+
+- **Stems of one song.** Choose or drop several audio files in Add a song and choose "Stems of one song" instead of "Separate songs". Woodshed picks this for you when the file names look like stems. Each file gets a role, guessed from its name: Full mix, Drums, Bass, Vocals, Guitar, Keys, Other or Leave out. Change any of them, and give the song its title.
+- **Some stems.** With a full mix, Woodshed splits the mix as usual and uses your stems instead of its own, so your drum stem is the drums you hear. If you have a guitar or keys stem, the mix is split into 6 stems so it has a place.
+- **All stems.** Without a full mix, nothing is split: your stems are the song, as they are. Files that are the same stem (drums_1 to drums_4 in a Clone Hero pack) are mixed into one. Finding bars and sections still works, from your stems mixed together.
+- **Drop a folder.** Drop a stem pack's folder (Clone Hero, Rock Band or a folder of DAW bounces) onto the Library or the Add sheet, and its audio files are added. The folder's name becomes the song's title.
+- A song added only from your own stems can't be re-split, because there's no mix to split.
+
 Woodshed 2.3.0 makes busy drum charts easier to read, and lets you lay a chart out your way.
 
 - **Lines that fit the notes.** The Stage's chart used to squeeze a busy part into four bars a line on a laptop (two on an iPad), so the notes ran into each other. Now each line holds as many bars as their notes fit: a groove gets three or four bars a line, and a dense fill gets the room it needs. Notes are also spaced a little more evenly.

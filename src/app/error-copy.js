@@ -154,6 +154,8 @@ export function copyFor(code, {kind = 'api', context = 'job', retryAt = null, da
       return plain(SENTENCES.appStorageFull, isJob ? LABELS.tryAgain : undefined, isJob ? LABELS.dismiss : undefined);
     case 'resplit_no_source':
       return plain(SENTENCES.resplitNoSource);
+    case 'resplit_own_stems':
+      return plain(SENTENCES.resplitOwnStems);
     case 'resplit_wrong_device':
       return plain(withDevice(SENTENCES.resplitWrongDevice, data.deviceName ?? data.device ?? device));
     case 'retry_wrong_device':

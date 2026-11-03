@@ -23,6 +23,7 @@ export const CODES = [
   'storage_full_user',
   'storage_full_app',
   'resplit_no_source',
+  'resplit_own_stems',
   'resplit_wrong_device',
   'retry_wrong_device',
   'job_live',

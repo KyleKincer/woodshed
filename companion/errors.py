@@ -51,7 +51,7 @@ DISK_FULL = re.compile(
 )
 
 SOURCE_MISSING = re.compile(
-    r"Original file is not on this computer|Original file unavailable locally|Legacy files missing", re.I
+    r"Original file is not on this computer|Your \w+ file is not on this computer|Original file unavailable locally|Legacy files missing", re.I
 )
 
 # A Python module the detector needs is not installed (BeatNet, madmom, librosa, …).

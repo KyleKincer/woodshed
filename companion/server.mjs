@@ -569,8 +569,14 @@ export async function startCompanion({
     run.root = root;
     await fs.mkdir(root, { recursive: true });
     if (job.source?.type === 'upload' && job.kind !== 'beats' && job.kind !== 'sections') {
-      if (!/^[a-f0-9-]{36}$/.test(job.source.value)) throw new CodedError('source_missing', 'Original file unavailable locally. Add the file again.');
-      job.localSource = path.join(accountDir(), 'uploads', job.source.value);
+      const upload = (id) => {
+        if (!/^[a-f0-9-]{36}$/.test(String(id))) throw new CodedError('source_missing', 'Original file unavailable locally. Add the file again.');
+        return path.join(accountDir(), 'uploads', id);
+      };
+      // The user's own stems (shared/own-stems.ts): with them, an empty value means there is no full mix.
+      const own = Array.isArray(job.source.stems) ? job.source.stems : [];
+      if (job.source.value || !own.length) job.localSource = upload(job.source.value);
+      if (own.length) job.ownStems = own.map(s => ({ name: String(s.name), path: upload(s.value), filename: String(s.filename ?? '') }));
     }
     if (job.kind === 'import') {
       let entries = {};
