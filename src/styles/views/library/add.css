@@ -123,6 +123,12 @@
   .lib-add-input::placeholder { color: var(--ink-3); opacity: 1; }
   .lib-add-file-input { display: none; }
   .lib-add-choose, .lib-add-paste { flex: none; white-space: nowrap; }
+  /* A phone: the link gets the field's whole first line; Paste and Choose files… share a line under it. */
+  @media (max-width: 599px) {
+    .lib-add-omnibox { flex-wrap: wrap; row-gap: 0; padding: 0 var(--s1) var(--s1) var(--s3); }
+    .lib-add-input { flex-basis: calc(100% - 20px - var(--s2)); }
+    .lib-add-choose, .lib-add-paste { flex: 1 1 0; border-block-start: 1px solid var(--line); border-radius: 0; }
+  }
 
   .lib-add-hint, .lib-add-files-note, .lib-add-field-hint {
     margin: 0;

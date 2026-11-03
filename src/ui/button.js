@@ -216,7 +216,8 @@ export function Button(props = {}) {
     const disabled = !!p.disabled || !!reason || (p.command ? !s?.enabled : false);
     const pressed = p.pressed !== undefined ? p.pressed : def?.checked ? !!s?.checked : undefined;
     const tip = p.title ?? (p.command ? s?.title : null) ?? (p.iconOnly ? label : null);
-    return {label, icon: p.icon ?? def?.icon ?? null, key, shownKbd, reason, disabled, pressed, tip};
+    // A button with an end icon (Bar ›) does not also take the command's icon at its start.
+    return {label, icon: p.icon ?? (p.iconEnd ? null : def?.icon) ?? null, key, shownKbd, reason, disabled, pressed, tip};
   }
 
   function subscribe() {

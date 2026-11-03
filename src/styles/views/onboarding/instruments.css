@@ -46,4 +46,12 @@
   }
   .onboarding-instruments-open-choice { max-width: 100%; }
   .onboarding-instruments-open-choice .ui-segmented-options { flex-wrap: wrap; }
+  /* A phone: two chips a row, so "Drums · Primary" keeps room; the open-with choice stacks (a card, segmented.js
+   * [data-wrapped]). */
+  @media (max-width: 479px) {
+    .onboarding-instruments-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+    .onboarding-instruments-chips .ui-chip-main { padding: 0 var(--s2); }
+    .onboarding-instruments-open { justify-items: stretch; }
+    .onboarding-instruments-open-choice .ui-segmented-options { flex-direction: column; }
+  }
 }

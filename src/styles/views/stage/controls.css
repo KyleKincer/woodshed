@@ -117,6 +117,49 @@
   .ctl-set[data-variant=dock] [data-ctl=play] .ui-button { min-block-size: var(--ctl-play-h); }
   .ctl-set[data-variant=dock] .ui-stepper-button { inline-size: 56px; }
 
+  /* ---- the dock on a phone (under 600 px): two rows, nothing clipped ----
+   *   [−  Speed  +        ][Mix       ⌃]
+   *   [Again][  Play  ][Loop][Count-in]       52 + 64 px rows, 8 px gaps */
+  @media (max-width: 599px) {
+    .ctl-set[data-variant=dock] {
+      --ctl-h: 52px;
+      --ctl-play-h: 64px;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-rows: 52px 64px;
+      grid-template-areas:
+        "speed speed speed speed speed speed speed mix   mix   mix     mix     mix"
+        "again again play  play  play  play  loop  loop  loop  countIn countIn countIn";
+      gap: 8px;
+      inline-size: 100%;
+      padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+    .ctl-set[data-variant=dock] .ctl,
+    .ctl-set[data-variant=dock] [data-ctl] { inline-size: auto; block-size: auto; }
+    .ctl-set[data-variant=dock] [data-ctl=speed] { grid-area: speed; }
+    .ctl-set[data-variant=dock] [data-ctl=mix] { grid-area: mix; }
+    .ctl-set[data-variant=dock] [data-ctl=again] { grid-area: again; }
+    .ctl-set[data-variant=dock] [data-ctl=play] { grid-area: play; }
+    .ctl-set[data-variant=dock] [data-ctl=loop] { grid-area: loop; }
+    .ctl-set[data-variant=dock] [data-ctl=countIn] { grid-area: countIn; }
+    .ctl-set[data-variant=dock] .ui-button,
+    .ctl-set[data-variant=dock] [data-ctl=play] .ui-button { min-block-size: 0; block-size: 100%; }
+    .ctl-set[data-variant=dock] .ui-stepper-button { inline-size: 52px; }
+    .ctl-set[data-variant=dock] [data-ctl=mix] .ctl-mix-main { flex-direction: row; gap: var(--s1); }
+  }
+
+  /* ---- the dock on a short screen (a phone on its side): 48 px controls, the label beside the icon ---- */
+  @media (max-height: 519px) and (min-width: 600px) {
+    .ctl-set[data-variant=dock] { --ctl-h: 48px; --ctl-play-h: 48px; padding-block: 4px calc(4px + env(safe-area-inset-bottom, 0px)); }
+    .ctl-set[data-variant=dock] .ui-button { flex-direction: row; gap: var(--s1); }
+    .ctl-set[data-variant=dock] .ui-button .ui-button-sublabel { display: none; }
+    .ctl-set[data-variant=dock] [data-ctl=again],
+    .ctl-set[data-variant=dock] [data-ctl=loop],
+    .ctl-set[data-variant=dock] [data-ctl=countIn] { inline-size: auto; }
+    .ctl-set[data-variant=dock] .ui-stepper-button { inline-size: 48px; }
+    .ctl-set[data-variant=dock] [data-ctl=speed] { inline-size: 160px; }
+  }
+
   /* ---- rail (2 columns, 56 px rows, Play 72) ---- */
   .ctl-set[data-variant=rail] {
     --ctl-h: 56px;
@@ -211,6 +254,13 @@
   .ctl-pos-sep { padding: 0 .12em; color: var(--ink-3); font-family: var(--font-ui); }
   .ctl-pos-sub { color: var(--ink-3); font: var(--fw-semibold) var(--fs-16)/1 var(--font-mono); font-variant-numeric: tabular-nums; }
   .ctl-set[data-variant=slim] .ui-stepper { min-block-size: var(--h-md); }
+  /* An iPad in portrait or a narrower window: the clock gives way, so the row's buttons fit without a sideways
+   * scroll (bar · beat stays; the clock is in Edit's Map ruler and the Stage). */
+  @media (max-width: 959px) {
+    .ctl-set[data-variant=slim] { gap: var(--s1); padding-inline: var(--s2); }
+    .ctl-set[data-variant=slim] .ctl-pos-sub { display: none; }
+    .ctl-set[data-variant=slim] .ui-button { padding: 0 var(--s2); }
+  }
   /* A load error (spec §4.12): the Speed stepper reads disabled like the buttons (controls.js lockStepper). */
   .ctl-set .ui-stepper[data-disabled] .ui-stepper-value { color: var(--ink-3); cursor: not-allowed; }
 }

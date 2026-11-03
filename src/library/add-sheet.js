@@ -627,6 +627,8 @@ export function createAddSheet(options = {}) {
     input.placeholder = firstRun ? COPY.placeholderFirst : COPY.placeholder;
     const filesOk = m === 'desktop';
     chooseButton.set({disabled: !filesOk});
+    // On a phone or tablet there is no drop and no desktop app: the note says where files go, without a dead button.
+    chooseButton.el.hidden = !filesOk && coarse;
     if (filesOk) chooseButton.el.removeAttribute('aria-describedby'); else chooseButton.el.setAttribute('aria-describedby', ids.files);
     filesNote.hidden = filesOk;
     renderError();

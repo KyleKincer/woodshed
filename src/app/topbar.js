@@ -24,6 +24,7 @@ import {registry as appRegistry} from './commands.js';
 import {effect} from './store.js';
 import {Button} from '../ui/button.js';
 import {h} from '../ui/h.js';
+import {icon} from '../ui/icon.js';
 import {Kbd} from '../ui/kbd.js';
 import {Menu} from '../ui/menu.js';
 
@@ -80,7 +81,9 @@ export function mountTopbar(el, {router, store, desktop = {available: false}, re
   const input = h('input', {class: 'shell-search-input', type: 'search', placeholder: COPY.searchPlaceholder,
     autocomplete: 'off', spellcheck: false, attrs: {'aria-label': COPY.search, enterkeyhint: 'search'}});
   const hint = Kbd({keys: 'Mod+KeyK', className: 'shell-search-kbd', attrs: {'aria-hidden': 'true'}});
-  const search = h('div', {class: 'shell-search', attrs: {role: 'search'}}, input, hint.el);
+  // A phone shows the field as a magnifier that opens across the bar while focused (topbar.css).
+  const glass = h('span', {class: 'shell-search-glass', attrs: {'aria-hidden': 'true'}}, icon('search', {size: 20}));
+  const search = h('div', {class: 'shell-search', attrs: {role: 'search'}}, glass, input, hint.el);
   let handlers = null;
 
   function defaultInput(value) {

@@ -6,7 +6,7 @@
 //
 // Mapped songs (top to bottom):
 //   BAR 41 · beat 3       [◀ Bar] [Bar ▶]                              map.prevBar / map.nextBar
-//   Go to [ 41 ] [Go] ⏮ ⏭  the typed digits show in the field              map.goOrApply, map.prevPin/nextPin
+//   Go to [ 41 ] [Go] [‹ Change] [Change ›]  the typed digits show in the field              map.goOrApply, map.prevPin/nextPin
 //   Meter  Beats [−] 7 [+] (every step is one edit, ↑↓)                    map.beatsDown / map.beatsUp
 //          Unit 1·2·4·8·16 · Groups [2+2+3] · Pickup length (bar 1 or a short bar)
 //          Apply to This bar · Until next change · To the end · Keep in place Beats · Bar lines · [Apply ↵]
@@ -182,9 +182,9 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     const goField = keep(TextField({label: COPY.goToField, inputmode: 'numeric', size: 'sm', maxLength: 4, className: 'map-goto-field',
       onCommit: (v) => { if (String(v).trim()) goTo(v); }}));
     const goButton = commandButton({label: COPY.go, hintKeys: 'Enter', onClick: () => goTo(goField.input.value)});
-    const prevPin = commandButton({label: '⏮', command: C.prevPin, attrs: {'aria-label': COPY.prevPinName}, hint: false});
-    const nextPin = commandButton({label: '⏭', command: C.nextPin, attrs: {'aria-label': COPY.nextPinName}, hint: false});
-    const goto = section(COPY.goTo, row(goField.el, goButton.el, prevPin.el, nextPin.el));
+    const prevPin = commandButton({label: COPY.prevPin, icon: 'chevron-left', command: C.prevPin, attrs: {'aria-label': COPY.prevPinName, title: COPY.prevPinName}, hint: false});
+    const nextPin = commandButton({label: COPY.nextPin, iconEnd: 'chevron-right', command: C.nextPin, attrs: {'aria-label': COPY.nextPinName, title: COPY.nextPinName}, hint: false});
+    const goto = section(COPY.goTo, row(goField.el, goButton.el), row(prevPin.el, nextPin.el));
 
     // Meter
     const beats = keep(Stepper({label: COPY.beats, min: 1, max: 16, step: 1, value: span().meter.numerator, size: 'sm',

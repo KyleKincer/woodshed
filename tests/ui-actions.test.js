@@ -283,6 +283,13 @@ describe('Button', () => {
       expect(own.el.querySelector('.ui-button-kbd').textContent).toContain('L');
     });
 
+    it('an end icon (Bar ›) replaces the command’s icon instead of doubling it', () => {
+      const b = mount(Button({command: 'loop.toggle', registry: r, label: 'Next', iconEnd: 'chevron-right'}));
+      const icons = [...b.el.querySelectorAll('use')].map((u) => u.getAttribute('href'));
+      expect(icons).toEqual(['#i-chevron-right']);
+      expect(b.el.querySelector('.ui-button-icon-end')).not.toBeNull();
+    });
+
     it('runs the command with source pointer and the click event', () => {
       const onClick = vi.fn();
       const b = mount(Button({command: 'loop.toggle', registry: r, onClick}));
