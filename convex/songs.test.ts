@@ -487,6 +487,20 @@ describe('songs.remove, confirmRecording, dismissSectionSuggestion, exportPage',
     expect(await code(alice.mutation(api.songs.remove, { id: doomed }))).toBe('not_found');
   });
 
+  test('setVideos: the owner\'s playthrough videos, validated, on the song and on its shared link', async () => {
+    const { t, alice, bob } = setup();
+    const id = await insert(t, songRow('alice'));
+    const videos = [{ id: 'v1', videoId: 'dQw4w9WgXcQ', label: ' Overhead ', offset: 14.30049 }, { id: 'v2', videoId: 'abcdefghijk', label: '', offset: -2 }];
+    expect(await code(bob.mutation(api.songs.setVideos, { id, videos }))).toBe('not_owner');
+    await alice.mutation(api.songs.setVideos, { id, videos });
+    expect((await alice.query(api.songs.get, { id }))!.videos).toEqual([{ id: 'v1', videoId: 'dQw4w9WgXcQ', label: 'Overhead', offset: 14.3 }, { ...videos[1] }]);
+    for (const bad of [[{ ...videos[0], videoId: 'nope' }], [videos[0], videos[0]], [{ ...videos[0], offset: 99999 }]])
+      expect(await code(alice.mutation(api.songs.setVideos, { id, videos: bad }))).toBe('invalid');
+    await alice.mutation(api.songs.setVideos, { id, videos: [] });
+    expect((await read(t, id))!.videos).toBeUndefined();
+    expect((await alice.query(api.songs.get, { id }))!.videos).toEqual([]);
+  });
+
   test('confirmRecording and dismissSectionSuggestion clear their flags for the owner only', async () => {
     const { t, alice, bob } = setup();
     const jobId = await t.run(ctx => ctx.db.insert('jobs', { userId: 'alice', kind: 'beats', label: 'x', status: 'done', stage: 'done', percent: 100, createdAt: 1, updatedAt: 1 }));

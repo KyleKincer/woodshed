@@ -50,12 +50,14 @@
 import '../styles/views/stage/stage.css';
 import '../styles/views/stage/status.css';
 import '../styles/views/stage/focus.css';
+import '../styles/views/stage/video.css';
 import {registry as appRegistry} from '../app/commands.js';
 import {batch, computed, effect, readonly, signal, store as appStore} from '../app/store.js';
 import {prefs as appPrefs} from '../app/prefs.js';
 import * as appFeedback from '../app/feedback.js';
 import {createWakeLock, platform as appPlatform, startGestureAudio, startMediaSession, watchInterruptions} from '../app/platform.js';
 import * as setlistsApi from '../api/setlists.js';
+import * as songsApi from '../api/songs.js';
 import {h} from '../ui/h.js';
 import {Button} from '../ui/button.js';
 import {Menu} from '../ui/menu.js';
@@ -70,10 +72,13 @@ import {applyStageAttributes, createLayoutWatcher, distanceOf, isNarrow, stageLa
 import {armStageEntry, canEntryTransition, dropEntryGhost, entryGhost, ENTRY_WAIT_MS, openSpot, SURFACE_ORDER} from './commands.js';
 import {COPY, loadingLabel, mixWord, resumeText} from './stage.copy.js';
 import {bindChartDrop} from '../edit/chart-file.js';
+import {createVideoStore} from './video-store.js';
 
 // Later-wave modules, by contract path (D2; Appendix C item 58).
 const LATER = import.meta.glob(['./surfaces/chart-surface.js', './surfaces/roadmap-surface.js', './surfaces/stems-surface.js',
-  './menus.js', '../share/share-dialog.js']);
+  './menus.js', '../share/share-dialog.js', './video-panel.js']);
+/** The playthrough video beside the music (shared/video.ts), loaded when the song has one and this device shows it. */
+const VIDEO_PATH = './video-panel.js';
 const SURFACE_MODULES = Object.freeze({
   chart: ['./surfaces/chart-surface.js', 'createChartSurface'],
   roadmap: ['./surfaces/roadmap-surface.js', 'createRoadmapSurface'],
@@ -190,7 +195,7 @@ function mountMissing(el, {error, router}) {
 
 const DEPS = Object.freeze({
   createWakeLock, watchInterruptions, startMediaSession, startGestureAudio,
-  setlists: setlistsApi, later: LATER, prefs: appPrefs, Menu,
+  setlists: setlistsApi, songs: songsApi, later: LATER, prefs: appPrefs, Menu,
 });
 
 export async function mount(el, match, ctx = {}) {
@@ -268,8 +273,10 @@ async function mountStage(el, match, ctx, guard) {
   const errorPanel = h('div', {class: 'stage-error', hidden: true});
   const pillLayer = h('div', {class: 'stage-pill-layer'});
   const music = h('div', {class: 'stage-music', attrs: {role: 'region', 'aria-label': COPY.music}}, surfaces, errorPanel, notesHost, pillLayer);
+  const videoHost = h('div', {class: 'stage-video', hidden: true, attrs: {'data-stage-anchor': 'video'}});
+  const stageBody = h('div', {class: 'stage-body'}, music, videoHost);
   const stripHost = h('div', {class: 'stage-strip', attrs: {'data-stage-anchor': 'strip'}});
-  const main = h('div', {class: 'stage-main'}, music, stripHost);
+  const main = h('div', {class: 'stage-main'}, stageBody, stripHost);
   const controlsHost = h('div', {class: 'stage-controls', attrs: {'data-stage-anchor': 'controls'}});
   const statusText = h('span', {class: 'stage-status-text'});
   const statusActions = h('span', {class: 'stage-status-actions'});
@@ -293,6 +300,28 @@ async function mountStage(el, match, ctx, guard) {
       return controlsHost;
     }
   })();
+
+  // ---------------- playthrough video ----------------
+  const videos = createVideoStore({session, save: (args) => deps.songs.setVideos(args)});
+  const hasVideo = computed(() => videos.videos.value.length > 0);
+  const videoOn = computed(() => hasVideo.value && store.prefs.value?.video?.show !== false);
+  let videoPanel = null, videoLoading = null;
+  function mountVideo() {
+    cleanup(effect(() => {
+      const on = videoOn.value;
+      videoHost.hidden = !on;
+      if (!on) { videoPanel?.destroy(); videoPanel = null; return; }
+      if (videoPanel || videoLoading) return;
+      const load = deps.later[VIDEO_PATH];
+      if (!load) return;
+      videoLoading = Promise.resolve().then(load).then((mod) => {
+        videoLoading = null;
+        if (unmounted || !videoOn.peek() || videoPanel) return;
+        videoPanel = mod.createVideoPanel(videoHost, {session, stage: api, store: videos, prefs});
+      }).catch((err) => { videoLoading = null; console.error('[stage] the video panel could not load', err); });
+    }));
+    cleanup(() => { videoPanel?.destroy(); videoPanel = null; videos.destroy(); });
+  }
 
   // ---------------- the stage API ('stage' context) ----------------
   const api = {
@@ -325,8 +354,14 @@ async function mountStage(el, match, ctx, guard) {
     scrollTop: () => scrollMusic(null),
     /** The signal batch (commands.js imports no store): one spot open reaches the engine once. */
     batch,
+    // Playthrough videos (video-store.js): the song's list, and whether this device shows the video beside the music.
+    videos,
+    video: readonly(videoOn),
+    hasVideo: readonly(hasVideo),
+    setVideoShown: (on) => prefs.set('video.show', !!on),
   };
   guard.teardown = teardown;
+  mountVideo();
 
   // ---------------- layout, Focus, Distance ----------------
   function attributes() {

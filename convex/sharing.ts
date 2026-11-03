@@ -9,7 +9,7 @@
 // public metadata, its stems, its map (unless the owner turned off "Sections
 // and tempo map", `songShares.includeMap === false`; spec §6.1), and its practice setup run through
 // `shared/practice.ts#sanitizeForShare` (loops, spots and markers; no spot
-// notes, no practice history, no Minus me / Only me, no tombstones). Notes,
+// notes, no practice history, no Minus me / Only me, no tombstones), and its playthrough videos. Notes,
 // personal tags, source paths, emails and account ids never leave the account.
 //
 // Stored data is read through the same one-way upgrades as everywhere else:
@@ -19,6 +19,7 @@
 // tempo in its snapshot) commits through the same normalisation, so nothing
 // here needs a backfill.
 import {v} from 'convex/values';
+import {validVideos, type Video} from '../shared/video';
 import {query, mutation, internalQuery, internalMutation} from './_generated/server';
 import type {QueryCtx, MutationCtx} from './_generated/server';
 import type {Doc, Id} from './_generated/dataModel';
@@ -54,6 +55,7 @@ export type ShareSnapshot = {
   duration: number; stems: Song['stems']; stemMode: string; quality: Song['quality'];
   coverKey: string | undefined; artwork: Song['artwork'];
   tempo: SharedTempo | undefined; practice: PracticeV2;
+  videos?: Video[];
 };
 
 /** What an owner chose for a link; absent fields mean true (1.9 links always carried the map and the chart). */
@@ -131,6 +133,7 @@ export async function sharedSnapshot(ctx: QueryCtx | MutationCtx, song: Song, {i
     coverKey: coverKeyOf(song), artwork: song.artwork?.kind === 'release' ? song.artwork : undefined,
     tempo: includeMap ? sharedTempo(song.tempo, song.duration) : undefined,
     practice: sharedPractice(await storedPractice(ctx, song), song.tempo, song.duration),
+    ...(song.videos?.length ? {videos: song.videos} : {}),
   };
 }
 
@@ -347,6 +350,7 @@ export const finishImport = internalMutation({
       musicalKey: text(snapshot.musicalKey), tuning: text(snapshot.tuning),
       duration, stems, stemMode: text(snapshot.stemMode), quality: snapshot.quality as Song['quality'],
       ...(coverKey ? {coverKey} : {}), ...(artwork ? {artwork} : {}), ...(tempo ? {tempo} : {}),
+      ...(validVideos(snapshot.videos) && snapshot.videos.length ? {videos: snapshot.videos} : {}),
       tempoRev: 0, hasChart,
       mapSummary: mapSummaryOf(tempo, duration, {hasPart: hasChart}),
       practiceSummary: summarize(practice, summaryMapOf(tempo, duration, hasChart)),

@@ -28,7 +28,8 @@ export const PREFS_DEFAULTS = deepFreeze({
   stage: 'dark',                   // 'dark'|'match'   (Appearance → Stage)
   library: {layout: 'grid', group: 'none', sort: null, filter: null, opened: []},
   practice: {distance: 'stand', focus: false, follow: {rail: 'scroll', band: 'page'}, edgeFlash: false, announceSections: false},
-  chart: {display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null},   // pinchDistance: the Distance pinchScale was set at
+  chart: {display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null},
+  video: {show: true, volume: 0},   // the playthrough video beside the music (src/stage/video-panel.js); volume 0–100, 0 = muted   // pinchDistance: the Distance pinchScale was set at
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
   roadmap: {waveRowSec: null, follow: null},                         // follow: 'scroll'|'page'; null → 'scroll' (spec §4.4B)
   edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
@@ -142,6 +143,7 @@ export function normalizePrefs(raw) {
   // One-way upgrade: a pinch override stored before chart.pinchDistance existed belongs to
   // the Distance that was current, so it is not applied at the others.
   if (p.chart.pinchScale !== null && p.chart.pinchDistance === null) p.chart.pinchDistance = p.practice.distance;
+  p.video.volume = Math.max(0, Math.min(100, Math.round(p.video.volume)));
   return p;
 }
 

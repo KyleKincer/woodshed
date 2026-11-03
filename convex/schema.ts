@@ -153,6 +153,8 @@ export default defineSchema({
     album: v.optional(v.string()),
     duration: v.number(),
     source: v.optional(sourceValidator),
+    // Playthrough videos lined up with the recording (shared/video.ts).
+    videos: v.optional(v.array(v.object({ id: v.string(), videoId: v.string(), label: v.string(), offset: v.number() }))),
     // R2 key for cover art, if we found any.
     coverKey: v.optional(v.string()),
     stems: v.array(stemValidator),

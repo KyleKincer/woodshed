@@ -626,6 +626,7 @@ describe('PWA assets', () => {
     const csp = v.headers.flatMap(h => h.headers).find(h => h.key === 'Content-Security-Policy').value;
     expect(csp).not.toMatch(/127\.0\.0\.1|localhost/);
     expect(csp).toMatch(/media-src [^;]*blob:/);          // the iOS keep-alive WAV is a blob URL
+    expect(csp).toMatch(/frame-src 'self' https:\/\/www\.youtube-nocookie\.com;/);   // playthrough videos, and no other frame
     expect(csp).toMatch(/connect-src 'self' https:\/\/\*\.convex\.cloud wss:\/\/\*\.convex\.cloud/);
     const manifest = v.headers.find(h => h.source === '/manifest.webmanifest').headers;
     expect(manifest).toContainEqual({key: 'Content-Type', value: 'application/manifest+json'});

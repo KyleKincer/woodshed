@@ -158,12 +158,13 @@ function choose(b, items, label) {
 }
 
 /** The scenario predicates of CONTROLS' `when`; `surface` is the kind the Stage shows (the bed's default: the Road map). */
-function scenario({mapped = true, part = false, surface = 'roadmap', sectionsMissing = false, shared = false} = {}) {
+function scenario({mapped = true, part = false, surface = 'roadmap', sectionsMissing = false, shared = false, video = false} = {}) {
   const one = (when) => {
     if (when === 'mapped') return mapped;
     if (when === 'unmapped') return !mapped;
     if (when === 'part') return part;
     if (when === 'chart') return surface === 'chart';
+    if (when === 'video') return video;
     if (when === 'follows') return surface === 'chart' || (surface === 'roadmap' && mapped);
     if (when === 'sections-missing') return mapped && sectionsMissing;
     if (when === 'owner') return !shared;
@@ -201,7 +202,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(rows.length).toBe(wanted.length);
     // The order of the top level (spec §2.14.11).
     expect(labels(stageMenu(b.ts.session, b.stage, b.opts), b.reg)).toEqual([
-      'View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
+      'View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Playthrough video…', 'Tap the beat…', 'Detect beats',
       'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
   });
 
@@ -231,7 +232,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     }
     expect(rows.length).toBe(wanted.length);
     expect(labels(items, b.reg)).toEqual([
-      'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Tap the beat…', 'Detect beats',
+      'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Playthrough video…', 'Tap the beat…', 'Detect beats',
       'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
     expect(row(rows, 'Road map', 'View').checked).toBe(true);
     // The radios read stage.followStyle (the Road map's default is Scroll, spec §4.4B) …

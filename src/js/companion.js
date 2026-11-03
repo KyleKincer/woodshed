@@ -227,6 +227,28 @@ export function parseSearchResult(body) {
   return { query: text(body.query, 200), provider: body.provider, candidates };
 }
 
+/**
+ * A playthrough video's audio as WAV bytes (companion/video-audio.mjs), for lining it up with the recording.
+ * The processor downloads it with yt-dlp first, so this can take a minute (timeout 3 min).
+ */
+export async function videoAudio(videoId, { signal, timeoutMs = 180_000 } = {}) {
+  if (signal?.aborted) throw abortedError(signal);
+  const bounds = combine(signal, timeoutMs);
+  await endpointWithin(signal, bounds);
+  const { combined, timeout } = bounds;
+  let response;
+  try {
+    response = await fetch(`${origin}/video-audio?id=${encodeURIComponent(videoId)}`, { headers: { authorization: `Bearer ${token}` }, signal: combined });
+    if (!response.ok) throw answerError(response.status, await response.json().catch(() => undefined));
+    return await response.arrayBuffer();
+  } catch (error) {
+    if (error instanceof CompanionError) throw error;
+    if (signal?.aborted) throw abortedError(signal);
+    if (timeout.aborted) throw timeoutError(error);
+    throw offline('Woodshed’s processor isn’t answering on this computer.', error);
+  }
+}
+
 /** B4: what a pasted link points at (one candidate; Spotify → search candidates). A playlist rejects with code 'playlist'. */
 export async function resolveSource(url, { signal } = {}) {
   return parseResolveResult(await request(`/resolve?url=${encodeURIComponent(url)}`, { method: 'GET', signal }));

@@ -1,0 +1,40 @@
+@layer views {
+  /* The Playthrough video sheet (src/stage/sheets/video.js): the videos (angles), add a link, line it up, this device. */
+  .sheet-video { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
+  .sheet-video-section, .sheet-video-add { display: grid; gap: var(--s2); }
+  .sheet-video-heading { font-size: var(--fs-16); font-weight: var(--fw-semibold); }
+  .sheet-video-intro, .sheet-video-hint { margin: 0; color: var(--ink-3); font-size: var(--fs-14); line-height: 1.4; }
+  .sheet-video-error { margin: 0; color: var(--warn); font-size: var(--fs-14); }
+  .sheet-video-label { font-size: var(--fs-14); font-weight: var(--fw-semibold); }
+  .sheet-video-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+  .sheet-video-input, .sheet-video-time, .sheet-video-name {
+    box-sizing: border-box;
+    min-block-size: var(--h-md);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: inherit;
+  }
+  .sheet-video-input { flex: 1 1 12rem; min-width: 0; }
+  .sheet-video-time { inline-size: 9rem; font-variant-numeric: tabular-nums; }
+  .sheet-video-list { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+  .sheet-video-item { display: grid; grid-template-columns: auto minmax(0, 1fr) 44px; align-items: center; gap: var(--s2); }
+  .sheet-video-pick { inline-size: 20px; block-size: 20px; margin: 0; }
+  .sheet-video-remove {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 44px;
+    block-size: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--ink-2);
+  }
+  .sheet-video-remove:hover { background: var(--surface-2); color: var(--ink); }
+  /* Earlier on the first row, later on the second. */
+  .sheet-video-nudges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s1); }
+  .sheet-video-nudges .ui-button { min-width: 0; padding-inline: var(--s1); }
+}

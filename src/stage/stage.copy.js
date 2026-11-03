@@ -107,7 +107,7 @@ export const COPY = Object.freeze({
   // Sheets (§2.14.11).
   sheets: Object.freeze({
     speed: 'Speed & trainer', click: 'Click & count-in', mix: 'Mix', loop: 'Loop',
-    spots: 'Spots', notes: 'Notes', tapBeat: 'Tap the beat', getBars: 'Get bars', chartLayout: 'Chart layout',
+    spots: 'Spots', notes: 'Notes', tapBeat: 'Tap the beat', getBars: 'Get bars', chartLayout: 'Chart layout', video: 'Playthrough video',
   }),
   // The accessible names of the music's target menus (spec §8 "Defined menus"); the others are "More…".
   menuLabels: Object.freeze({spot: 'Spot', marker: 'Marker', loopBand: 'Loop', stem: 'Stem'}),
@@ -144,6 +144,8 @@ export const COPY = Object.freeze({
     display: 'Display: Together / Hands & feet',
     followStyle: 'Follow: Scroll / Page',
     chartLayout: 'Chart layout…',
+    video: 'Playthrough video…',
+    videoShow: 'Show video',
     scrollUp: 'Scroll up one screen',
     scrollDown: 'Scroll down one screen',
     scrollTop: 'Scroll to top',
