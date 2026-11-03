@@ -29,7 +29,11 @@ export const PREFS_DEFAULTS = deepFreeze({
   library: {layout: 'grid', group: 'none', sort: null, filter: null, opened: []},
   practice: {distance: 'stand', focus: false, follow: {rail: 'scroll', band: 'page'}, edgeFlash: false, announceSections: false},
   chart: {display: {layout: null}, lines: {bars: 'auto', spacing: 'normal'}, pinchScale: null, pinchDistance: null},
-  video: {show: true, volume: 0},   // the playthrough video beside the music (src/stage/video-panel.js); volume 0–100, 0 = muted   // pinchDistance: the Distance pinchScale was set at
+  // The playthrough video (src/stage/video-panel.js): shown, its sound (0–100, 0 = muted; `unmuted` is the level the
+  // sound button restores), where it sits (dock: 'auto' = beside the music on the rail, above it on the band), the
+  // size the user dragged it to for each dock (side: share of the width; top: share of the height, null = as tall as
+  // the full width needs, at most 40%; float: px wide and its corner) and whether every angle shows at once.
+  video: {show: true, volume: 0, unmuted: 60, dock: 'auto', side: 0.32, top: null, float: {corner: 'br', width: 360}, all: false},   // pinchDistance: the Distance pinchScale was set at
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
   roadmap: {waveRowSec: null, follow: null},                         // follow: 'scroll'|'page'; null → 'scroll' (spec §4.4B)
   edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
@@ -52,6 +56,8 @@ export const LEGACY_KEYS = Object.freeze([
 /** Chart scale steps (§2.14.12); legacy ws.chart.scale snaps to these, ties upward. */
 export const SCALE_STEPS = Object.freeze([0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.45, 1.6, 1.8, 2.0]);
 
+/** The playthrough video's size limits per dock: side and top as a share of the music's width or height, float in px. */
+export const VIDEO_SIZE = Object.freeze({side: Object.freeze([0.18, 0.62]), top: Object.freeze([0.15, 0.62]), float: Object.freeze([200, 760])});
 export const OPENED_CAP = 500;
 export const FRECENCY_CAP = 200;
 export const TAP_OFFSET_LIMIT = 0.2;
@@ -71,6 +77,8 @@ const ENUMS = {
   // The Stage chart's lines (Chart layout): bars per line ('auto' fits them to their notes) and note spacing.
   'chart.lines.bars': ['auto', '1', '2', '3', '4', '5', '6'],
   'chart.lines.spacing': ['tight', 'normal', 'roomy'],
+  'video.dock': ['auto', 'side', 'top', 'float'],
+  'video.float.corner': ['tl', 'tr', 'bl', 'br'],
 };
 
 // Paths whose default is null, and the type a stored value must have
@@ -84,6 +92,7 @@ const NULLABLE = {
   'stems.zoom': 'number',
   'roadmap.waveRowSec': 'number',
   'roadmap.follow': ['scroll', 'page'],
+  'video.top': 'number',
   deviceId: 'string',
   'remote.hostId': 'string',
   'remote.last': 'string',
@@ -144,6 +153,10 @@ export function normalizePrefs(raw) {
   // the Distance that was current, so it is not applied at the others.
   if (p.chart.pinchScale !== null && p.chart.pinchDistance === null) p.chart.pinchDistance = p.practice.distance;
   p.video.volume = Math.max(0, Math.min(100, Math.round(p.video.volume)));
+  p.video.unmuted = Math.max(5, Math.min(100, Math.round(p.video.unmuted)));
+  p.video.side = Math.max(VIDEO_SIZE.side[0], Math.min(VIDEO_SIZE.side[1], p.video.side));
+  if (p.video.top !== null) p.video.top = Math.max(VIDEO_SIZE.top[0], Math.min(VIDEO_SIZE.top[1], p.video.top));
+  p.video.float.width = Math.max(VIDEO_SIZE.float[0], Math.min(VIDEO_SIZE.float[1], Math.round(p.video.float.width)));
   return p;
 }
 

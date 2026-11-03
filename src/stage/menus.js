@@ -793,7 +793,8 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitemradio', STAGE_COPY.distances.kit, {command: 'view.distance.kit', parent: COPY.distance}),
   row('stage', 'menuitem', COPY.spots, {command: 'spot.list', kbd: 'KeyJ'}),
   row('stage', 'menuitem', STAGE_COPY.commands.notes, {command: 'stage.notes'}),
-  row('stage', 'menuitem', STAGE_COPY.commands.video, {command: 'stage.video', when: 'owner'}),
+  // Labelled for a song without a video (the tests' songs); with one it reads Playthrough video….
+  row('stage', 'menuitem', STAGE_COPY.commands.videoAdd, {command: 'stage.video', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.tapBeat, {command: 'stage.tapBeat'}),
   row('stage', 'menuitem', STAGE_COPY.commands.getBars, {command: 'stage.getBars', when: 'unmapped'}),
   row('stage', 'menuitem', STAGE_COPY.commands.detect, {command: 'map.detect', when: 'mapped'}),

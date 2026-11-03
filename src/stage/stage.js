@@ -359,6 +359,13 @@ async function mountStage(el, match, ctx, guard) {
     video: readonly(videoOn),
     hasVideo: readonly(hasVideo),
     setVideoShown: (on) => prefs.set('video.show', !!on),
+    nextVideoAngle: () => {
+      const list = videos.videos.peek();
+      if (list.length < 2) return;
+      const at = list.findIndex((v) => v.id === videos.angle.peek());
+      videos.setAngle(list[(at + 1) % list.length].id);
+      if (!videoOn.peek()) prefs.set('video.show', true);
+    },
   };
   guard.teardown = teardown;
   mountVideo();

@@ -23,6 +23,7 @@ import {icon} from '../../ui/icon.js';
 import {Button} from '../../ui/button.js';
 import {Slider} from '../../ui/slider.js';
 import {Toggle} from '../../ui/toggle.js';
+import {Segmented} from '../../ui/segmented.js';
 import {linkStart, parseYouTubeId, videoLabel} from '../../../shared/video.ts';
 import {COPY, clockTime, parseClock} from '../video.copy.js';
 
@@ -33,14 +34,14 @@ let seq = 0;
 export async function autoLineUp({session, videoId, fetchAudio, signal}) {
   const [{alignVideo, mixdown}, {onsetStrength}] = await Promise.all([import('../../js/video-align.js'), import('../../js/onsets.js')]);
   const buffers = (session?.engine?.tracks ?? []).map((t) => t?.buffer).filter(Boolean);
-  if (!buffers.length) return null;
+  if (!buffers.length) return {notReady: true};
   const bytes = await fetchAudio(videoId, {signal});
   const ctx = session.engine?.ctx ?? new OfflineAudioContext(1, 1, 16000);
   const video = await ctx.decodeAudioData(bytes.slice(0));
   return alignVideo({song: onsetStrength(mixdown(buffers, 16000)), video: onsetStrength(video)});
 }
 
-export function render(container, {session, registry = appRegistry, prefs = appPrefs, desktop = appDesktop, fetchAudio = null} = {}) {
+export function render(container, {session, registry = appRegistry, prefs = appPrefs, desktop = appDesktop, fetchAudio = null, search = null} = {}) {
   if (!session) throw new TypeError('video sheet: a session is required');
   const id = `sheet-video-${++seq}`;
   const offs = [], parts = [];
@@ -48,6 +49,9 @@ export function render(container, {session, registry = appRegistry, prefs = appP
   const store = stage()?.videos ?? null;
   const readOnly = !store || store.readOnly;
   const getAudio = fetchAudio ?? ((videoId, opts) => import('../../js/companion.js').then((m) => m.videoAudio(videoId, opts)));
+  const runSearch = search ?? ((q, opts) => import('../../js/companion.js').then((m) => m.searchSources(q, {n: 6, ...opts})));
+  const song = () => session.song?.peek?.() ?? {};
+  let searchAbort = null;
   let lineUpAbort = null;
 
   const section = (key, title, ...children) => {
@@ -66,11 +70,67 @@ export function render(container, {session, registry = appRegistry, prefs = appP
     const videoId = parseYouTubeId(linkInput.value);
     const fail = (text) => { linkError.textContent = text; linkError.hidden = false; linkInput.focus(); };
     if (!videoId) { fail(COPY.notYouTube); return; }
-    const added = store.add({videoId, offset: linkStart(linkInput.value)});
-    if (!added) { fail(COPY.full); return; }
+    const start = linkStart(linkInput.value);
+    if (!addVideo(videoId, {offset: start, auto: !start})) { fail(COPY.full); return; }
     linkInput.value = '';
     linkError.hidden = true;
   }
+  /** Adds a video; on the desktop it then lines itself up (unless its link said where the song starts). */
+  function addVideo(videoId, {offset = 0, label = '', auto = true} = {}) {
+    const added = store.add({videoId, offset, label});
+    if (!added) return null;
+    if (auto && desktop?.available) queueMicrotask(() => void runAuto());
+    return added;
+  }
+
+  // ---- find a playthrough: the desktop searches YouTube through the processor; the web opens YouTube's search
+  const queryOf = () => [song().artist, song().title, 'drum playthrough'].filter((x) => String(x ?? '').trim()).join(' ');
+  const findInput = h('input', {type: 'search', class: 'sheet-video-input selectable', id: `${id}-find`, autocomplete: 'off', spellcheck: false});
+  const findButton = Button({label: COPY.search, size: 'md', variant: 'secondary', icon: 'search', onClick: () => void find()});
+  parts.push(findButton);
+  const findStatus = h('p', {class: 'sheet-video-hint', attrs: {role: 'status', 'aria-live': 'polite'}});
+  const results = h('ul', {class: 'sheet-video-results', attrs: {'aria-label': COPY.results}});
+  const webSearch = h('a', {class: 'sheet-video-web', target: '_blank', rel: 'noopener noreferrer'}, COPY.searchYouTube, icon('external-link', {size: 20}));
+  const webHint = h('p', {class: 'sheet-video-hint'}, COPY.searchYouTubeHint);
+  findInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void find(); } });
+  findInput.addEventListener('input', () => { webSearch.href = youtubeSearch(findInput.value); });
+  const youtubeSearch = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+  async function find() {
+    const q = findInput.value.trim();
+    if (!q) return;
+    searchAbort?.abort();
+    const abort = searchAbort = new AbortController();
+    findStatus.textContent = COPY.searching;
+    results.replaceChildren();
+    try {
+      const answer = await runSearch(q, {signal: abort.signal});
+      if (abort.signal.aborted) return;
+      const found = (answer?.candidates ?? []).map((c) => ({...c, videoId: parseYouTubeId(c.url)})).filter((c) => c.videoId && !c.live);
+      findStatus.textContent = found.length ? '' : COPY.noResults;
+      const have = new Set((store.videos.peek() ?? []).map((v) => v.videoId));
+      results.replaceChildren(...found.map((c) => {
+        const meta = [c.channel, c.duration ? clockTime(c.duration).replace(/\.\d$/, '') : ''].filter(Boolean).join(' · ');
+        const added = have.has(c.videoId);
+        const use = Button({label: added ? COPY.added : COPY.use, size: 'sm', variant: added ? 'quiet' : 'secondary', disabled: added,
+          attrs: {'aria-label': `${added ? COPY.added : COPY.use}: ${c.title}`},
+          onClick: () => { if (addVideo(c.videoId, {label: ''})) { use.set({label: COPY.added, disabled: true}); } }});
+        parts.push(use);
+        return h('li', {class: 'sheet-video-result'},
+          h('img', {src: c.thumbnail || `https://i.ytimg.com/vi/${c.videoId}/mqdefault.jpg`, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer'}),
+          h('span', {class: 'sheet-video-result-text'}, h('span', {class: 'sheet-video-result-title'}, c.title), h('span', {class: 'sheet-video-hint'}, meta)),
+          use.el);
+      }));
+    } catch (error) {
+      if (abort.signal.aborted) return;
+      findStatus.textContent = COPY.searchFailed(describeError(error, {context: 'add'}).sentence);
+    } finally {
+      if (searchAbort === abort) searchAbort = null;
+    }
+  }
+  const findSection = section('find', COPY.find,
+    h('div', {class: 'sheet-video-row', dataset: {desktop: ''}}, findInput, findButton.el), findStatus, results,
+    h('div', {class: 'sheet-video-webfind', dataset: {web: ''}}, webSearch, webHint));
+  findInput.setAttribute('aria-labelledby', `${id}-find`);
   linkInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   linkInput.addEventListener('input', () => { linkError.hidden = true; });
   const addLabel = h('label', {class: 'sheet-video-label', for: linkInput.id});
@@ -120,6 +180,7 @@ export function render(container, {session, registry = appRegistry, prefs = appP
     try {
       const fit = await autoLineUp({session, videoId: v.videoId, fetchAudio: getAudio, signal: abort.signal});
       if (abort.signal.aborted) return;
+      if (fit?.notReady) { autoLine.textContent = COPY.autoNotReady; return; }
       if (!fit || fit.quality === 'poor') { autoLine.textContent = COPY.autoPoor; return; }
       store.update(v.id, {offset: fit.offset});
       autoLine.textContent = (fit.quality === 'good' ? COPY.autoGood : COPY.autoCheck)(clockTime(fit.offset));
@@ -138,14 +199,21 @@ export function render(container, {session, registry = appRegistry, prefs = appP
     onInput: (v) => prefs.set('video.volume', Math.round(v)), onChange: (v) => prefs.set('video.volume', Math.round(v))});
   const show = Toggle({label: COPY.show, size: 'md', pressed: prefs.get('video.show') !== false,
     onChange: (on) => prefs.set('video.show', !!on)});
-  parts.push(sound, show);
-  const device = h('section', {class: 'sheet-video-section', dataset: {section: 'device'}},
-    h('p', {class: 'sheet-video-label', attrs: {'aria-hidden': 'true'}}, COPY.sound), sound.el, show.el);
+  const dock = Segmented({label: COPY.layout, size: 'sm', className: 'sheet-video-dock', value: prefs.get('video.dock') ?? 'auto',
+    options: ['auto', 'side', 'top', 'float'].map((value) => ({value, label: COPY.docks[value]})),
+    onChange: (value) => prefs.set('video.dock', value)});
+  const all = Toggle({label: COPY.allAngles, size: 'md', pressed: !!prefs.get('video.all'), onChange: (on) => prefs.set('video.all', !!on)});
+  parts.push(sound, show, dock, all);
+  const device = section('device', COPY.thisDevice,
+    h('p', {class: 'sheet-video-label', attrs: {'aria-hidden': 'true'}}, COPY.layout), dock.el,
+    h('p', {class: 'sheet-video-label', attrs: {'aria-hidden': 'true'}}, COPY.sound), sound.el, all.el, show.el);
 
   const intro = h('p', {class: 'sheet-video-intro'}, COPY.intro);
   const readOnlyNote = h('p', {class: 'sheet-video-hint'}, COPY.readOnly);
   const saveNote = h('p', {class: 'sheet-video-error', role: 'alert', hidden: true}, COPY.saveFailed);
-  const root = h('div', {class: 'sheet-video', dataset: {sheetBody: 'video'}}, intro, list, addRow, lineUp, device, readOnlyNote, saveNote);
+  const root = h('div', {class: 'sheet-video', dataset: {sheetBody: 'video'}}, intro, list, findSection, addRow, lineUp, device, readOnlyNote, saveNote);
+  findInput.value = queryOf();
+  webSearch.href = youtubeSearch(findInput.value);
   container.append(root);
 
   function paint() {
@@ -155,6 +223,13 @@ export function render(container, {session, registry = appRegistry, prefs = appP
     addLabel.textContent = videos.length ? COPY.addAnother : COPY.link;
     addButton.set({label: videos.length ? COPY.addAnother : COPY.add});
     addRow.hidden = readOnly;
+    findSection.hidden = readOnly;
+    findSection.querySelector('h3').textContent = videos.length ? COPY.findAnother : COPY.find;
+    findSection.querySelector('[data-desktop]').hidden = !desktop?.available;
+    findSection.querySelector('[data-web]').hidden = !!desktop?.available;
+    all.el.hidden = videos.length < 2;
+    all.set({pressed: !!prefs.get('video.all')});
+    dock.set({value: prefs.get('video.dock') ?? 'auto'});
     readOnlyNote.hidden = !readOnly;
     lineUp.hidden = !current || readOnly;
     device.hidden = !videos.length;
@@ -184,6 +259,7 @@ export function render(container, {session, registry = appRegistry, prefs = appP
     el: root,
     destroy() {
       lineUpAbort?.abort();
+      searchAbort?.abort();
       for (const off of offs.splice(0)) { try { off(); } catch { /* best effort */ } }
       for (const p of parts) p.destroy?.();
       root.remove();

@@ -1,10 +1,15 @@
 // PV1's states: the playthrough video (shared/video.ts) in the app on the fixture database, with the fixture's
 // fake YouTube player (fakes/youtube.js).
-//   pv1-add          ⋯ › Playthrough video…: a YouTube link (t=14) is added and saved with the song; the video sits
+//   pv1-add          ⋯ › Add a playthrough video…: a YouTube link (t=14) is added and saved with the song; the video sits
 //                    beside the chart on the rail (above it on the band), the chart keeps the rest; axe on the sheet
 //   pv1-follow       playing: the video plays along, the song's time + 14 s; paused, it waits on the song's frame;
 //                    a nudge moves it at once
-//   pv1-hide         ✕ Hide video gives the music its whole width back; ⋯ › Show video brings it back
+//   pv1-hide         the video's ⋯ › Hide video gives the music its whole width back; ⋯ › Show video and Y bring it back
+//   pv1-crop         YouTube's title bar and pause overlays stay outside the picture: the frame overhangs the 16:9 box
+//   pv1-angles       two angles: a thumbnail beside the music, ⇧Y switches, Show all angles plays both in step
+//   pv1-float        Floating: a corner window over the music (which keeps its whole area); dragged, it snaps to a corner
+//   pv1-wide         a 2560×1440 screen: the divider widens the video, remembered
+//   pv1-phone        a phone: the video above the music at the full width, its controls on it
 //   pv1-blocked      a video its owner won't let play elsewhere: the sentence and Open on YouTube
 'use strict';
 
@@ -13,14 +18,14 @@ const {checkAxe} = require('../probes/probe-axe.cjs');
 const APP = (query = '') => `/s/glasshouse?fx-reset=1&fx-jobs=0&fx-now=2026-10-28T12:00:00Z${query ? `&${query}` : ''}`;
 const LINK = 'https://youtu.be/dQw4w9WgXcQ?t=14';
 
-async function addVideo(page, t) {
+async function addVideo(page, t, link = LINK, {menu = 'Add a playthrough video…'} = {}) {
   await t.loadPhase('ready');
   await page.getByRole('button', {name: 'More…'}).click();
-  await page.getByRole('menuitem', {name: 'Playthrough video…'}).click();
+  await page.getByRole('menuitem', {name: menu}).click();
   const sheet = page.locator('[data-sheet="video"]');
-  await sheet.locator('.sheet-video-input').waitFor({timeout: 10_000});
-  await sheet.locator('.sheet-video-input').fill(LINK);
-  await sheet.getByRole('button', {name: 'Add video'}).click();
+  await sheet.locator('.sheet-video-input[type=url]').waitFor({timeout: 10_000});
+  await sheet.locator('.sheet-video-input[type=url]').fill(link);
+  await sheet.getByRole('button', {name: /^Add (video|another angle)$/}).click();
   await page.waitForSelector('.stage-video-panel', {timeout: 10_000});
   return sheet;
 }
@@ -96,7 +101,9 @@ module.exports = [
       await addVideo(page, t);
       await page.keyboard.press('Escape');
       const before = await box(page, '.stage-music');
-      await page.getByRole('button', {name: 'Hide video'}).click();
+      await page.locator('.stage-video-box').hover();
+      await page.getByRole('button', {name: 'Video options'}).click();
+      await page.getByRole('menuitem', {name: /Hide video/}).click();
       await page.waitForFunction(() => document.querySelector('.stage-video')?.hidden === true);
       const after = await box(page, '.stage-music');
       t.expect(after.w > before.w + 200, `the music gets its width back (${before.w} → ${after.w})`);
@@ -104,7 +111,118 @@ module.exports = [
       await page.getByRole('menuitemcheckbox', {name: 'Show video'}).click();
       await page.waitForSelector('.stage-video-panel');
       t.expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ws.prefs')).video.show) === true, 'Show video is this device\'s');
+      // Y hides it and brings it back.
+      await page.keyboard.press('y');
+      await page.waitForFunction(() => document.querySelector('.stage-video')?.hidden === true);
+      await page.keyboard.press('y');
+      await page.waitForSelector('.stage-video-panel');
       await settleChart(page);
+    },
+  },
+  {
+    // YouTube's chrome stays outside the picture: the frame is taller than the box by a band above and below.
+    name: 'pv1-crop', url: APP(), opts: {ready: 'stage', devices: ['laptop'], themes: ['dark']},
+    async fn(page, t) {
+      await addVideo(page, t);
+      await page.keyboard.press('Escape');
+      const f = await page.evaluate(() => {
+        const box = document.querySelector('.stage-video-box').getBoundingClientRect();
+        const frame = document.querySelector('.stage-video-frame').getBoundingClientRect();
+        return {box: {top: box.top, h: box.height, w: box.width}, frame: {top: frame.top, h: frame.height}};
+      });
+      t.expect(f.frame.top <= f.box.top - 60 && f.frame.h >= f.box.h + 120, `the frame overhangs the box above and below (${JSON.stringify(f)})`);
+      t.expect(Math.abs(f.box.w / f.box.h - 16 / 9) < 0.05, 'the picture is 16:9');
+      await settleChart(page);
+    },
+  },
+  {
+    // Two angles: beside the music the other waits as a thumbnail; Show all angles plays both; above the music, chips.
+    name: 'pv1-angles', url: APP(), opts: {ready: 'stage', devices: ['laptop'], themes: ['dark']},
+    async fn(page, t) {
+      await addVideo(page, t);
+      const sheet = page.locator('[data-sheet="video"]');
+      await sheet.locator('.sheet-video-input[type=url]').fill('https://www.youtube.com/watch?v=aqz-KE-bpKQ');
+      await sheet.getByRole('button', {name: 'Add another angle'}).click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.querySelectorAll('.stage-video-thumb').length === 1, null, {timeout: 5_000});
+      t.expect(await page.evaluate(() => document.querySelector('.stage-video-panel').dataset.videoId) === 'aqz-KE-bpKQ', 'the angle just added is shown');
+      await t.capture('thumbs');
+      await page.locator('.stage-video-thumb').click();
+      await page.waitForFunction(() => document.querySelector('.stage-video-panel').dataset.videoId === 'dQw4w9WgXcQ');
+      await page.keyboard.press('Shift+Y');
+      await page.waitForFunction(() => document.querySelector('.stage-video-panel').dataset.videoId === 'aqz-KE-bpKQ');
+      await page.locator('.stage-video-box').first().hover();
+      await page.getByRole('button', {name: 'Video options'}).click();
+      await page.getByRole('menuitemcheckbox', {name: 'Show all angles'}).click();
+      await page.waitForFunction(() => document.querySelectorAll('.stage-video-box').length === 2);
+      const players = await page.evaluate(() => window.fixture.youtube.players().length);
+      t.expect(players === 2, `both angles play (${players} players)`);
+      await t.capture('all');
+      await page.evaluate(() => window.__woodshed.commands.run('transport.playStop', {source: 'pointer'}));
+      await page.waitForTimeout(2000);
+      const times = await page.evaluate(() => window.fixture.youtube.players().map((p) => p.time));
+      // Each plays at the song's time plus its own offset (14 s and 0 s): 14 s apart, in step.
+      t.expect(Math.abs(Math.abs(times[0] - times[1]) - 14) < 0.3, `the angles play in step (${times})`);
+      await page.evaluate(() => window.__woodshed.commands.run('transport.playStop', {source: 'pointer'}));
+      await settleChart(page);
+    },
+  },
+  {
+    // Floating: a window in a corner of the music, which keeps its whole width; dragged to another corner, it snaps there.
+    name: 'pv1-float', url: APP(), opts: {ready: 'stage', devices: ['laptop', 'ipad'], themes: ['dark']},
+    async fn(page, t) {
+      await addVideo(page, t);
+      await page.locator('[data-sheet="video"]').getByRole('radio', {name: 'Floating'}).click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.querySelector('.stage-video')?.dataset.dock === 'float');
+      await settleChart(page);
+      const music = await box(page, '.stage-music'), body = await box(page, '.stage-body'), video = await box(page, '.stage-video');
+      t.expect(music.w >= body.w - 1 && music.h >= body.h - 1, `the music keeps the whole area (${JSON.stringify({music, body})})`);
+      t.expect(video.x + video.w <= body.x + body.w && video.y + video.h <= body.y + body.h && video.x > body.x + body.w / 2, `bottom-right corner (${JSON.stringify(video)})`);
+      await t.capture('float');
+      const shield = await box(page, '.stage-video-shield');
+      await page.mouse.move(shield.x + shield.w / 2, shield.y + shield.h / 2);
+      await page.mouse.down();
+      await page.mouse.move(body.x + 60, body.y + 60, {steps: 8});
+      await page.mouse.up();
+      await page.waitForFunction(() => document.querySelector('.stage-video').dataset.corner === 'tl');
+      t.expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ws.prefs')).video.float.corner) === 'tl', 'dragged to the top-left corner and remembered');
+    },
+  },
+  {
+    // A 1440p monitor: beside the music, sized by dragging the divider.
+    name: 'pv1-wide', url: APP(), opts: {ready: 'stage', devices: ['laptop'], themes: ['dark']},
+    async fn(page, t) {
+      await page.setViewportSize({width: 2560, height: 1440});
+      await addVideo(page, t);
+      await page.keyboard.press('Escape');
+      await settleChart(page);
+      const before = await box(page, '.stage-video');
+      const divider = await box(page, '.stage-video-divider');
+      await page.mouse.move(divider.x + divider.w / 2, divider.y + divider.h / 2);
+      await page.mouse.down();
+      await page.mouse.move(divider.x - 300, divider.y + divider.h / 2, {steps: 6});
+      await page.mouse.up();
+      await settleChart(page);
+      const after = await box(page, '.stage-video');
+      t.expect(after.w > before.w + 250, `the divider widens the video (${before.w} → ${after.w})`);
+      t.expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ws.prefs')).video.side) > 0.4, 'the size is remembered');
+      await t.capture('wide');
+    },
+  },
+  {
+    // A phone: above the music, the full width, the controls on the video.
+    name: 'pv1-phone', url: APP('fx-platform=ipad'), opts: {ready: 'stage', devices: ['ipad'], themes: ['dark']},
+    async fn(page, t) {
+      await page.setViewportSize({width: 393, height: 852});
+      await addVideo(page, t);
+      await page.keyboard.press('Escape');
+      await settleChart(page);
+      const video = await box(page, '.stage-video-box'), body = await box(page, '.stage-body');
+      t.expect(video.w >= body.w - 24, `the full width (${video.w} of ${body.w})`);
+      const tools = await page.evaluate(() => getComputedStyle(document.querySelector('.stage-video-overlay')).opacity);
+      t.expect(tools === '1', `touch: the controls stay on the video (${tools})`);
+      await t.capture('phone');
     },
   },
   {
