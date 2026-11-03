@@ -45,7 +45,7 @@ export const STAGE_COMMAND_IDS = Object.freeze([
   'view.cycle', 'view.chart', 'view.roadmap', 'view.stems', 'view.focus',
   'view.distance.near', 'view.distance.stand', 'view.distance.kit', 'view.bigger', 'view.smaller', 'view.followResume',
   'view.display', 'view.followStyle', 'stage.scrollUp', 'stage.scrollDown', 'stage.scrollTop',
-  'stage.chartLayout', 'stage.video', 'view.video', 'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
+  'stage.chartLayout', 'stage.video', 'view.video', 'view.videoAngle', 'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
   'edit.open', 'edit.map', 'edit.chart', 'edit.details', 'practice.undo', 'practice.redo', 'setlist.next', 'setlist.prev',
 ]);
 
@@ -467,14 +467,21 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
 
     // ---- sheets -------------------------------------------------------------------------------------------------
     // Playthrough video (shared/video.ts): the sheet (add, line up, sound), and whether this device shows the video.
-    {id: 'stage.video', title: C.video, group: 'View', icon: 'monitor',
+    {id: 'stage.video', title: (c) => (peek(stageOf(c)?.hasVideo) ? C.video : C.videoAdd), group: 'View', icon: 'monitor',
       palette: {keywords: ['video', 'youtube', 'playthrough', 'drum cam', 'sync', 'watch']},
       ...sheet('video', {when: (c) => !!stageOf(c)?.videos && (writable(sessionOf(c)) || !!peek(stageOf(c)?.hasVideo))})},
     {
-      id: 'view.video', title: C.videoShow, group: 'View', scopes: [S], icon: 'monitor', palette: {keywords: ['video', 'playthrough', 'hide video']},
+      id: 'view.video', title: C.videoShow, group: 'View', keys: ['KeyY'], scopes: [S], icon: 'monitor', palette: {keywords: ['video', 'playthrough', 'hide video']},
       when: (c) => typeof stageOf(c)?.setVideoShown === 'function' && !!peek(stageOf(c)?.hasVideo),
       checked: (c) => !!peek(stageOf(c)?.video),
       run: (c) => stageOf(c).setVideoShown(!peek(stageOf(c).video)),
+    },
+    {
+      // The next angle (several videos): shows the video first when it is hidden.
+      id: 'view.videoAngle', title: C.videoAngle, group: 'View', keys: ['Shift+KeyY'], scopes: [S], icon: 'monitor',
+      palette: {keywords: ['angle', 'camera', 'next video']},
+      when: (c) => typeof stageOf(c)?.nextVideoAngle === 'function' && (peek(stageOf(c)?.videos?.videos)?.length ?? 0) > 1,
+      run: (c) => stageOf(c).nextVideoAngle(),
     },
     {id: 'stage.chartLayout', title: C.chartLayout, group: 'View', icon: 'sliders-horizontal',
       palette: {keywords: ['layout', 'bars per line', 'spacing', 'cramped', 'tight', 'roomy', 'line break', 'notation']},

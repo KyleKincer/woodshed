@@ -1,3 +1,13 @@
+Woodshed 2.6.0 makes the playthrough video fit every screen and gets YouTube's clutter out of the way.
+
+- **No more subtitles or YouTube pop-ups.** YouTube's automatic captions ("[music]") are turned off, and its title bar, logo and pause overlays are cropped out of the picture.
+- **Controls on the video.** Sound on/off and a ⋯ menu sit on the video itself: Line up…, Mirror, Reset zoom, Show all angles, Layout and Hide video. With a mouse they appear when you point at the video; on a touch screen they stay, small.
+- **Put it where you want it.** Choose Beside the music, Above the music or Floating from the ⋯ menu or the Playthrough video sheet. Drag the edge between the video and the music to resize it, from a narrow column up to more than half the screen. A floating video sits in a corner over the music; drag it to another corner and resize it from its inner corner. Each device remembers its own layout and sizes. On a phone, the video above the music now uses the full width.
+- **Zoom in on the hands.** Scroll or pinch on the video to zoom in up to 3×, drag to look around, and double-click to reset. Mirror flips the picture. Both are remembered for each video on each device.
+- **Angles.** With two or more videos, switch from the chips on the video or the thumbnails under it, or press ⇧Y. Show all angles plays every angle at once, in step.
+- **Finding a video.** "Add a playthrough video…" in the ⋯ menu opens a search already filled in with the song's name. In Woodshed for desktop, the results appear right there: press Add, and the video is added and lined up with the recording automatically. In the browser, Search on YouTube opens YouTube's results; copy a video's link and paste it in.
+- Press Y to show or hide the video.
+
 Woodshed 2.5.0 plays a playthrough video beside the chart, in time with the song.
 
 - **Playthrough video.** On the Stage, choose ⋯ → Playthrough video… and paste a YouTube link to a drum cam or playthrough of the song. The video plays muted beside the chart on a laptop, or above it on an iPad, and follows everything you do: play, pause, jumps, loops and speed. At 70% the video plays at 70% too, so you can watch the drummer's hands on the bar you're stuck on.

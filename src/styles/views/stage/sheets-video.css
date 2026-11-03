@@ -35,6 +35,16 @@
   }
   .sheet-video-remove:hover { background: var(--surface-2); color: var(--ink); }
   /* Earlier on the first row, later on the second. */
+  /* Find a playthrough: YouTube's results (desktop) or a link to its search (web). */
+  .sheet-video-section[hidden], .sheet-video-row[hidden], .sheet-video-webfind[hidden] { display: none; }
+  .sheet-video-results { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+  .sheet-video-results:empty { display: none; }
+  .sheet-video-result { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: var(--s2); }
+  .sheet-video-result img { inline-size: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-control); background: var(--surface-2); }
+  .sheet-video-result-text { display: grid; gap: 2px; min-width: 0; }
+  .sheet-video-result-title { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--fs-14); font-weight: var(--fw-semibold); }
+  .sheet-video-webfind { display: grid; gap: var(--s1); }
+  .sheet-video-web { display: inline-flex; align-items: center; gap: var(--s1); color: var(--accent); font-weight: var(--fw-semibold); }
   .sheet-video-nudges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s1); }
   .sheet-video-nudges .ui-button { min-width: 0; padding-inline: var(--s1); }
 }

@@ -1,5 +1,6 @@
 // A YouTube player the Stage drives (src/stage/video-panel.js): the privacy-enhanced embed (youtube-nocookie.com),
-// muted, without its own controls, steered over postMessage. That is the protocol YouTube's iframe API library
+// muted, without its own controls or captions, steered over postMessage. The panel crops the frame so YouTube's title
+// bar and pause overlays fall outside the picture (video.css .stage-video-frame). That is the protocol YouTube's iframe API library
 // speaks, so no third-party script runs in the app; the only thing the app's CSP admits is that frame.
 //
 //   createYouTubePlayer(host, {videoId, origin?, win?, onChange?}) → Player
@@ -21,7 +22,7 @@ let seq = 0;
 export function embedUrl(videoId, origin) {
   const params = new URLSearchParams({
     enablejsapi: '1', origin, widget_referrer: origin, controls: '0', playsinline: '1', rel: '0', iv_load_policy: '3',
-    disablekb: '1', fs: '0', mute: '1', modestbranding: '1',
+    disablekb: '1', fs: '0', mute: '1', modestbranding: '1', cc_load_policy: '0',
   });
   return `${EMBED_ORIGIN}/embed/${encodeURIComponent(videoId)}?${params}`;
 }
@@ -46,6 +47,12 @@ export function createYouTubePlayer(host, {videoId, origin = globalThis.location
   function post(message) {
     try { el.contentWindow?.postMessage(JSON.stringify({...message, id, channel: 'widget'}), EMBED_ORIGIN); } catch { /* frame gone */ }
   }
+  /** YouTube's automatic captions ("[music]") come back with each new playback: unloaded every time it starts playing. */
+  function captionsOff() {
+    if (!ready) return;
+    post({event: 'command', func: 'unloadModule', args: ['captions']});
+    post({event: 'command', func: 'unloadModule', args: ['cc']});
+  }
   function command(func, args = []) {
     if (destroyed) return;
     if (!ready) { queue.push([func, args]); return; }
@@ -62,13 +69,14 @@ export function createYouTubePlayer(host, {videoId, origin = globalThis.location
     switch (data.event) {
       case 'onReady':
         ready = true;
+        captionsOff();
         for (const [func, args] of queue.splice(0)) post({event: 'command', func, args});
         break;
       case 'initialDelivery':
       case 'infoDelivery': {
         const i = data.info ?? {};
         if (Number.isFinite(i.currentTime)) { info.time = i.currentTime; info.at = at; }
-        if (Number.isFinite(i.playerState)) info.state = i.playerState;
+        if (Number.isFinite(i.playerState)) { if (i.playerState === PLAYING && info.state !== PLAYING) captionsOff(); info.state = i.playerState; }
         if (Number.isFinite(i.playbackRate)) info.rate = i.playbackRate;
         if (Number.isFinite(i.duration)) info.duration = i.duration;
         if (Array.isArray(i.availablePlaybackRates) && i.availablePlaybackRates.length) info.rates = i.availablePlaybackRates.filter(Number.isFinite);
@@ -76,7 +84,7 @@ export function createYouTubePlayer(host, {videoId, origin = globalThis.location
         break;
       }
       case 'onStateChange':
-        if (Number.isFinite(data.info)) { info.time = player.time(); info.at = at; info.state = data.info; }
+        if (Number.isFinite(data.info)) { if (data.info === PLAYING) captionsOff(); info.time = player.time(); info.at = at; info.state = data.info; }
         break;
       case 'onPlaybackRateChange':
         if (Number.isFinite(data.info)) { info.time = player.time(); info.at = at; info.rate = data.info; }

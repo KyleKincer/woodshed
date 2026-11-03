@@ -1,48 +1,86 @@
 @layer views {
-  /* The playthrough video (src/stage/video-panel.js): a column beside the music on the rail, a band above it on the
-   * band (iPad portrait). The music area (.stage-music) keeps the rest; the surfaces relayout to it as for any resize. */
+  /* The playthrough video (src/stage/video-panel.js), docked (data-dock on .stage-video):
+   *   side   a column beside the music, its width dragged on the divider (prefs.video.side)
+   *   top    a band above the music, its height dragged on the divider (prefs.video.top)
+   *   float  a window in a corner of the music, dragged between corners and resized from its inner corner
+   * The music (.stage-music) keeps the rest; its surfaces relayout to it as for any resize. */
   .stage-body {
+    position: relative;
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
   }
-  .stage[data-stage-layout=rail] .stage-body { flex-direction: row; }
-  .stage[data-stage-layout=band] .stage-body { flex-direction: column-reverse; }
+  .stage-body:has(> .stage-video[data-dock=top]:not([hidden])) { flex-direction: column-reverse; }
   .stage-video[hidden] { display: none; }
   .stage-video {
+    position: relative;
     flex: none;
     min-width: 0;
     min-height: 0;
     background: var(--bg);
   }
-  .stage[data-stage-layout=rail] .stage-video {
-    inline-size: clamp(280px, 36%, 640px);
-    border-inline-start: 1px solid var(--line);
+  .stage-video[data-dock=side] { border-inline-start: 1px solid var(--line); }
+  .stage-video[data-dock=top] { border-block-end: 1px solid var(--line); }
+  .stage-video[data-dock=float] {
+    position: absolute;
+    z-index: var(--z-local-2);
+    max-inline-size: calc(100% - 2 * var(--s3));
+    border-radius: var(--r-control);
+    background: transparent;
+    box-shadow: var(--shadow-overlay);
   }
-  .stage[data-stage-layout=band] .stage-video { border-block-end: 1px solid var(--line); }
+  .stage-video[data-corner=tl] { inset-block-start: var(--s3); inset-inline-start: var(--s3); }
+  .stage-video[data-corner=tr] { inset-block-start: var(--s3); inset-inline-end: var(--s3); }
+  .stage-video[data-corner=bl] { inset-block-end: var(--s3); inset-inline-start: var(--s3); }
+  .stage-video[data-corner=br] { inset-block-end: var(--s3); inset-inline-end: var(--s3); }
+  .stage-video[data-moving] { opacity: .85; }
 
   .stage-video-panel {
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--s2);
-    padding: var(--s3);
+    block-size: 100%;
+    padding: var(--s2);
+    overflow: auto;
   }
-  .stage[data-stage-layout=band] .stage-video-panel { flex-direction: row; align-items: flex-end; justify-content: center; }
+  .stage-video-panel[data-dock=float] { padding: 0; overflow: visible; }
 
+  .stage-video-screens { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; min-height: 0; }
+  .stage-video-panel[data-dock=top] .stage-video-screens { flex-direction: row; justify-content: center; block-size: 100%; }
+
+  /* ---- one video: 16:9, YouTube's chrome cropped away ---- */
   .stage-video-box {
     position: relative;
-    aspect-ratio: 16 / 9;
+    flex: none;
+    container-type: inline-size;
     inline-size: 100%;
+    aspect-ratio: 16 / 9;
     overflow: hidden;
     border-radius: var(--r-control);
     background: var(--surface-2);
   }
-  /* The band: as tall as fits (at most 30% of the screen), 16:9, the bar beside it. */
-  .stage[data-stage-layout=band] .stage-video-box { flex: none; inline-size: auto; block-size: min(30vh, calc((100vw - 2 * var(--s3) - 160px) * 9 / 16)); }
-  .stage-video-frame, .stage-video-frame iframe { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; border: 0; }
-  /* Presses never reach YouTube's player: a stray tap must not pause or seek it. */
-  .stage-video-shield { position: absolute; inset: 0; }
+  .stage-video-panel[data-dock=top] .stage-video-box { inline-size: auto; block-size: 100%; max-inline-size: 100%; }
+  .stage-video-viewport {
+    position: absolute;
+    inset: 0;
+    transform-origin: 50% 50%;
+  }
+  /* The frame is taller than the picture by a band above and below: the video still fills the width, and YouTube's
+   * title bar, its logo and its pause overlays (drawn at the frame's top and bottom) land outside the box. */
+  .stage-video-frame {
+    --yt-band: max(64px, 13cqw);
+    position: absolute;
+    inset-inline: 0;
+    inset-block: calc(-1 * var(--yt-band));
+  }
+  .stage-video-frame > * { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; border: 0; }
+  /* Presses never reach YouTube's player: a stray tap must not pause or seek it. Wheel/pinch zoom, drag pans. */
+  .stage-video-shield { position: absolute; inset: 0; touch-action: none; }
+  .stage-video-box[data-zoomed] .stage-video-shield { cursor: grab; }
+  .stage-video-panel[data-dock=float] .stage-video-shield { cursor: move; }
+
   .stage-video-status {
     position: absolute;
     inset: auto var(--s2) var(--s2) var(--s2);
@@ -57,54 +95,93 @@
     color: var(--ink);
     font-size: var(--fs-14);
   }
-  .stage-video-panel[data-status=waiting] .stage-video-status,
-  .stage-video-panel[data-status=error] .stage-video-status,
-  .stage-video-panel[data-status=before] .stage-video-status { inset: 0; justify-content: center; text-align: center; border-radius: 0; }
+  .stage-video-box[data-status=waiting] .stage-video-status,
+  .stage-video-box[data-status=error] .stage-video-status,
+  .stage-video-box[data-status=before] .stage-video-status { inset: 0; justify-content: center; text-align: center; border-radius: 0; }
   .stage-video-link { color: var(--accent); font-weight: var(--fw-semibold); }
 
-  .stage-video-bar {
+  /* ---- controls on the video: shown on hover or focus with a mouse, always (and small) on touch ---- */
+  .stage-video-overlay {
+    position: absolute;
+    inset: var(--s2) var(--s2) auto var(--s2);
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: var(--s2);
-    min-width: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--ease);
   }
-  .stage[data-stage-layout=band] .stage-video-bar { flex-direction: column; align-items: stretch; flex: none; }
-  .stage-video-gap { flex: 1 1 auto; }
-  .stage-video-name {
-    overflow: hidden;
-    color: var(--ink-2);
-    font-size: var(--fs-14);
-    font-weight: var(--fw-semibold);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .stage-video-angle {
-    min-block-size: var(--h-sm);
-    max-inline-size: 60%;
+  .stage-video-overlay > * { pointer-events: auto; }
+  .stage-video-box:hover .stage-video-overlay,
+  .stage-video-box:focus-within .stage-video-overlay,
+  .stage-video-box[data-status=error] .stage-video-overlay { opacity: 1; }
+  @media (hover: none) { .stage-video-overlay { opacity: 1; } }
+  .stage-video-chips, .stage-video-tools { display: flex; flex-wrap: wrap; gap: var(--s1); min-width: 0; }
+  .stage-video-tools { flex: none; margin-inline-start: auto; }
+  .stage-video-chip, .stage-video-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 32px;
+    min-inline-size: 32px;
     padding: 0 var(--s2);
     border: 1px solid var(--line-strong);
-    border-radius: var(--r-control);
+    border-radius: var(--r-pill);
     background: var(--surface);
     color: var(--ink);
     font: inherit;
     font-size: var(--fs-14);
-  }
-  .stage-video-button, .stage-video-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--s1);
-    min-block-size: var(--h-sm);
-    min-inline-size: var(--h-sm);
-    padding: 0 var(--s2);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--r-control);
-    background: transparent;
-    color: var(--ink);
-    font: inherit;
-    font-size: var(--fs-14);
+    font-weight: var(--fw-semibold);
     cursor: pointer;
   }
-  .stage-video-icon { padding: 0; border-color: transparent; }
-  .stage-video-button:hover, .stage-video-icon:hover { background: var(--surface-2); }
+  .stage-video-tool { padding: 0; }
+  .stage-video-chip[data-label] { cursor: default; }
+  .stage-video-chip[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+  .stage-video-chip:hover, .stage-video-tool:hover { background: var(--surface-2); }
+  @media (pointer: coarse) { .stage-video-chip, .stage-video-tool { min-block-size: 44px; min-inline-size: 44px; } }
+
+  /* ---- the other angles, under the video (side dock, one at a time) ---- */
+  .stage-video-thumbs[hidden] { display: none; }
+  .stage-video-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s2); }
+  .stage-video-thumb {
+    display: grid;
+    gap: var(--s1);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink-2);
+    font: inherit;
+    font-size: var(--fs-14);
+    text-align: start;
+    cursor: pointer;
+  }
+  .stage-video-thumb img { inline-size: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-control); background: var(--surface-2); }
+  .stage-video-thumb:hover img, .stage-video-thumb:focus-visible img { outline: 2px solid var(--accent); }
+
+  /* ---- size: the divider (side, top) and the floating window's grip ---- */
+  .stage-video-divider[hidden], .stage-video-grip[hidden] { display: none; }
+  .stage-video-divider { position: absolute; z-index: var(--z-local); touch-action: none; }
+  .stage-video-panel[data-dock=side] .stage-video-divider { inset-block: 0; inset-inline-start: -6px; inline-size: 12px; cursor: col-resize; }
+  .stage-video-panel[data-dock=top] .stage-video-divider { inset-inline: 0; inset-block-end: -6px; block-size: 12px; cursor: row-resize; }
+  .stage-video-divider:hover, .stage-video-divider:focus-visible, .stage-video[data-resizing] .stage-video-divider {
+    background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+  }
+  .stage-video-panel[data-dock=top] .stage-video-divider:hover,
+  .stage-video-panel[data-dock=top] .stage-video-divider:focus-visible,
+  .stage-video[data-resizing] .stage-video-panel[data-dock=top] .stage-video-divider { background-size: 100% 2px; }
+  .stage-video-grip {
+    position: absolute;
+    z-index: var(--z-local);
+    inline-size: 20px;
+    block-size: 20px;
+    touch-action: none;
+    border: 2px solid var(--accent);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+  }
+  .stage-video[data-corner=br] .stage-video-grip { inset-block-start: -6px; inset-inline-start: -6px; cursor: nwse-resize; }
+  .stage-video[data-corner=bl] .stage-video-grip { inset-block-start: -6px; inset-inline-end: -6px; cursor: nesw-resize; }
+  .stage-video[data-corner=tr] .stage-video-grip { inset-block-end: -6px; inset-inline-start: -6px; cursor: nesw-resize; }
+  .stage-video[data-corner=tl] .stage-video-grip { inset-block-end: -6px; inset-inline-end: -6px; cursor: nwse-resize; }
 }

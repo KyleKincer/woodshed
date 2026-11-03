@@ -202,7 +202,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     expect(rows.length).toBe(wanted.length);
     // The order of the top level (spec §2.14.11).
     expect(labels(stageMenu(b.ts.session, b.stage, b.opts), b.reg)).toEqual([
-      'View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Playthrough video…', 'Tap the beat…', 'Detect beats',
+      'View', 'Display', 'Follow', 'Chart layout…', 'Focus', 'Distance', 'Spots…', 'Notes', 'Add a playthrough video…', 'Tap the beat…', 'Detect beats',
       'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
   });
 
@@ -232,7 +232,7 @@ describe('the ⋯ menu (stageMenu, stage.menu)', () => {
     }
     expect(rows.length).toBe(wanted.length);
     expect(labels(items, b.reg)).toEqual([
-      'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Playthrough video…', 'Tap the beat…', 'Detect beats',
+      'View', 'Follow', 'Focus', 'Distance', 'Spots…', 'Notes', 'Add a playthrough video…', 'Tap the beat…', 'Detect beats',
       'Share…', 'Import a chart from a file…', 'Export song…', 'Phone remote…', 'Edit map', 'Edit drum chart', 'Edit details', 'Re-split…', 'Keyboard shortcuts']);
     expect(row(rows, 'Road map', 'View').checked).toBe(true);
     // The radios read stage.followStyle (the Road map's default is Scroll, spec §4.4B) …
