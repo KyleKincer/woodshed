@@ -131,6 +131,17 @@
       clip-path: inset(50%);
     }
   }
+  /* A small phone (360 px): Done keeps its chevron; its name stays for screen readers. */
+  @media (max-width: 399px) {
+    .edit-bar:not([data-variant=bulk]) .edit-done .ui-button-text {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
 
   /* ---- the body: main and the inspector ---- */
   .edit-body {
