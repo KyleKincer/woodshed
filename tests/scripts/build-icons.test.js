@@ -16,7 +16,10 @@ const CONTRACT_ICONS = 'play, square, pause, rotate-ccw, repeat, repeat-1, gauge
 // Names added after the §7.4 initial list, each with the ticket that asked for it.
 // 'minus' (I0B-14): the U1 Stepper's − button, paired with 'plus'.
 // 'smartphone', 'monitor-smartphone', 'qr-code' (2.1): the phone remote.
-const ADDED_ICONS = ['minus', 'smartphone', 'monitor-smartphone', 'qr-code'];
+// 'skip-back', 'skip-forward', 'corner-down-left', 'chevrons-left', 'chevrons-right', 'trending-up' (2.7): icons
+// Edit · Map's commands already named, which drew blank (tests/icon-names.test.js now catches that).
+const ADDED_ICONS = ['minus', 'smartphone', 'monitor-smartphone', 'qr-code',
+  'skip-back', 'skip-forward', 'corner-down-left', 'chevrons-left', 'chevrons-right', 'trending-up'];
 
 describe('build-icons', () => {
   it('ICONS is the §7.4 initial list plus the ticketed additions, and CUSTOM the five custom glyphs', () => {
