@@ -1,3 +1,11 @@
+Woodshed 2.5.0 plays a playthrough video beside the chart, in time with the song.
+
+- **Playthrough video.** On the Stage, choose ⋯ → Playthrough video… and paste a YouTube link to a drum cam or playthrough of the song. The video plays muted beside the chart on a laptop, or above it on an iPad, and follows everything you do: play, pause, jumps, loops and speed. At 70% the video plays at 70% too, so you can watch the drummer's hands on the bar you're stuck on.
+- **Lining it up.** Woodshed for desktop can line it up for you: Line up automatically listens to the video's sound and finds where the recording starts in it. You can also type where the song starts in the video (or paste a link with a start time, like ?t=14), then nudge it by 10 ms, 100 ms or 1 s while it plays.
+- **Angles.** Add more than one video (an overhead cam and a front cam, say) and switch between them under the video. Each device remembers which one you were watching.
+- The video is muted by default because your stems are the sound. Turn up Video sound in the sheet to hear it. ✕ under the video hides it on this device, and ⋯ → Show video brings it back.
+- Videos are saved with the song, so they show on all your devices and on links you share. Woodshed uses YouTube's privacy-enhanced player and never downloads the video itself. A video whose owner doesn't allow playback in other apps says so and offers Open on YouTube.
+
 Woodshed 2.4.0 adds songs from stems you already have.
 
 - **Stems of one song.** Choose or drop several audio files in Add a song and choose "Stems of one song" instead of "Separate songs". Woodshed picks this for you when the file names look like stems. Each file gets a role, guessed from its name: Full mix, Drums, Bass, Vocals, Guitar, Keys, Other or Leave out. Change any of them, and give the song its title.

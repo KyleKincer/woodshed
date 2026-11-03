@@ -8,7 +8,7 @@
 //   getMany({ids})                           → SongFull[]            1–100 ids, the caller's only (G9)
 //   savePractice({id, practice, final?})     → null                  ApiError 'practice_too_large' over 32,768 (B2)
 //   saveTempo({id, tempo, baseRev?, saveId?}) → {tempoRev, conflict, tempo?}
-//   remove({id}) · confirmRecording({id}) · dismissSectionSuggestion({id})
+//   remove({id}) · confirmRecording({id}) · dismissSectionSuggestion({id}) · setVideos({id, videos}) (shared/video.ts)
 //   exportPage({paginationOpts})             → a page of SongFull with `practice`
 import {mutation, query, subscribe} from './client.js';
 
@@ -23,6 +23,7 @@ export const saveTempo = args => mutation('songs:saveTempo', args);
 export const remove = args => mutation('songs:remove', args);
 export const confirmRecording = args => mutation('songs:confirmRecording', args);
 export const dismissSectionSuggestion = args => mutation('songs:dismissSectionSuggestion', args);
+export const setVideos = args => mutation('songs:setVideos', args);
 
 /** The library (store.library, S1 data.js). */
 export const subscribeList = (onValue, onError) => subscribe('songs:list', {}, onValue, onError);

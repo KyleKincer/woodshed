@@ -12,6 +12,7 @@ import { coverKeyOf } from './lib/songMetadata';
 import { readPart, deletePart } from './notation';
 import { sameContent } from '../shared/content';
 import { PRACTICE_CAP } from '../shared/practice';
+import { validVideos } from '../shared/video';
 import { cleanSongMap, hasRealMap, sectionsOf } from '../shared/song-map';
 import { chartOf, ensureBackfill, mapSummaryFor, practiceSummaryFor, storedPractice } from './migrations';
 
@@ -189,6 +190,7 @@ export function toClient(s: Song, hasChart = s.hasChart === true) {
     coverKey: coverKeyOf(s) ?? null,
     stems: s.stems,
     stemMode: s.stemMode,
+    videos: s.videos ?? [],
     quality: s.quality,
     addedAt: s.addedAt,
     tempo: s.tempo ?? null,
@@ -288,6 +290,19 @@ export const confirmRecording = mutation({
   handler: async (ctx, args) => {
     const song = await requireOwned(ctx, args.id);
     if (song.recordingUnconfirmed !== undefined) await ctx.db.patch('songs', song._id, { recordingUnconfirmed: undefined });
+    return null;
+  },
+});
+
+/** The song's playthrough videos, replaced as a whole (shared/video.ts; the Stage's Playthrough video sheet). */
+export const setVideos = mutation({
+  args: { id: v.id('songs'), videos: v.array(v.object({ id: v.string(), videoId: v.string(), label: v.string(), offset: v.number() })) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const song = await requireOwned(ctx, args.id);
+    if (!validVideos(args.videos)) fail('invalid', 'These videos could not be saved.', { field: 'videos' });
+    const videos = args.videos.map(({ id, videoId, label, offset }) => ({ id, videoId, label: label.trim(), offset: Math.round(offset * 1000) / 1000 }));
+    if (!sameContent(song.videos ?? [], videos)) await ctx.db.patch('songs', song._id, { videos: videos.length ? videos : undefined });
     return null;
   },
 });

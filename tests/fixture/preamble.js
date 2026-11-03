@@ -8,13 +8,14 @@
 //   fx-nofeature=<list>            remove features first; a removed feature is never faked (fakes/features.js)
 //   fx-audio=manual                AudioContext time moves only through fixture.advance(ms) (fakes/manual-audio.js)
 //   fx-desktop=1                   window.woodshedDesktop and the local processor (fakes/desktop-bridge.js, fakes/companion.js)
+//   fx-video=blocked               every playthrough video refuses to play (fakes/youtube.js)
 // Always installed (unless removed): wakeLock, requestMIDIAccess, the Media Session recorder,
 // beforeinstallprompt on demand, navigator.share and navigator.clipboard recorders.
 //
 // window.fixture = {fx, db(), update(fn), reset(), freezeJobs(), changed(),       (db/index.js)
 //   now(), platform, removed: [...],
 //   advance(ms), audio,                                                        (fx-audio=manual)
-//   wakeLock, midi, media, install, share, clipboard,
+//   wakeLock, midi, media, install, share, clipboard, youtube,
 //   companion, upload, desktop}                                                (fx-desktop=1)
 import {fx, installFixtureApi} from './db/index.js';
 import {applyPlatform} from './fakes/platform.js';
@@ -27,6 +28,7 @@ import {installInstallPrompt} from './fakes/install-prompt.js';
 import {installShare, installClipboard} from './fakes/share-clipboard.js';
 import {createCompanion} from './fakes/companion.js';
 import {installDesktopBridge} from './fakes/desktop-bridge.js';
+import {installYouTube} from './fakes/youtube.js';
 
 export function installFixture(win, switches) {
   const fixture = installFixtureApi(win);
@@ -41,6 +43,7 @@ export function installFixture(win, switches) {
   } else if (switches.audio !== undefined) win.console.error(`[fixture] fx-audio must be "manual", got ${JSON.stringify(switches.audio)}`);
   if (!fixture.advance) fixture.advance = async () => { throw new Error('fixture.advance needs ?fx-audio=manual'); };
 
+  fixture.youtube = installYouTube(win, switches);
   if (!removed.has('wakelock')) fixture.wakeLock = installWakeLock(win);
   if (!removed.has('midi')) fixture.midi = installMidi(win);
   if (!removed.has('mediasession')) fixture.media = installMediaSession(win);

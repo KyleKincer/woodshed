@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { ConvexClient } from 'convex/browser';
 import { anyApi as api } from 'convex/server';
 import { createLookup, createLookupRoutes, createYtDlp, ytDlpCommand } from './lookup.mjs';
+import { createVideoAudio } from './video-audio.mjs';
 import { createHeartbeat } from './heartbeat.mjs';
 
 // ---------------------------------------------------------------- job error codes
@@ -392,6 +393,8 @@ export async function startCompanion({
   const lookupRoutes = createLookupRoutes(createLookup({
     ytDlp: createYtDlp({ ...ytDlpCommand({ processor: env.WOODSHED_PROCESSOR, python }), env: childEnv }),
   }));
+  // A playthrough video's audio, for lining it up (video-audio.mjs); like the lookups, it reads no account data.
+  const videoAudio = createVideoAudio({ ytDlp: createYtDlp({ ...ytDlpCommand({ processor: env.WOODSHED_PROCESSOR, python }), env: childEnv }) });
   const accountDir = () => path.join(data, 'accounts', crypto.createHash('sha256').update(`${config.convexUrl}:${identity.userId}`).digest('hex').slice(0, 24));
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
 
@@ -672,6 +675,7 @@ export async function startCompanion({
       if (req.url === '/connect' && req.method === 'POST') { const input = await body(req); await connect(input.convexUrl); json(res, 200, identity); return; }
       // Lookups read no account data, so they sit before the pairing and identity checks.
       if (await lookupRoutes(req, res)) return;
+      if (await videoAudio.route(req, res)) return;
       if (!client || !identity) throw new Error('Pair the companion in Settings first.');
       // Recheck revocation before any filesystem operation.
       await client.query(api.devices.identity, { token: config.token });
@@ -732,6 +736,7 @@ export async function startCompanion({
    */
   async function shutdown(){ // the brace stays on this line: lookup.test.mjs checks abortAll() comes first
     lookupRoutes.abortAll(); // B4: kill yt-dlp lookups now (lookup.mjs also kills any left on exit)
+    videoAudio.abortAll();
     if (shuttingDown) return;
     shuttingDown = true; acceptingJobs = false;
     killCurrent('shutdown');

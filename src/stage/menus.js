@@ -3,7 +3,7 @@
 // items it returns act when chosen.
 //
 //   stageMenu(session, stage, opts?)          the identity-row ⋯ menu (stage.menu): View ▸ · Display ▸ (a part exists)
-//                                             · Follow ▸ (Chart, mapped Road map) · Chart layout… (Chart, a part exists) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
+//                                             · Follow ▸ (Chart, mapped Road map) · Chart layout… (Chart, a part exists) · Show video ✓ (the song has one) · Focus · Distance ▸ · ── · Spots… · Notes · Tap the beat…
 //                                             · Get bars… (unmapped) / Detect beats (mapped) · Suggest sections (mapped, no
 //                                             sections) · ── · Share… · Edit map · Edit drum chart · Edit details · Re-split…
 //                                             · ── · Keyboard shortcuts
@@ -512,6 +512,8 @@ export function stageMenu(session, stage, opts = {}) {
     ]});
   }
   if (surface === 'chart' && hasPart) items.push({command: 'stage.chartLayout'});
+  const hasVideo = !!peek(stage?.hasVideo);
+  if (hasVideo) items.push({command: 'view.video', type: 'checkbox'});
   items.push(
     {command: 'view.focus', type: 'checkbox'},
     {type: 'submenu', label: COPY.distance, icon: 'maximize-2', items: [
@@ -522,6 +524,7 @@ export function stageMenu(session, stage, opts = {}) {
     SEPARATOR,
     {command: 'spot.list', label: COPY.spots},
     {command: 'stage.notes'},
+    ...(!readOnly || hasVideo ? [{command: 'stage.video'}] : []),
     {command: 'stage.tapBeat', ...(readOnly ? {reason: readOnly} : {})},
     mapped ? {command: 'map.detect', ...(readOnly ? {reason: readOnly} : {})} : {command: 'stage.getBars', ...(readOnly ? {reason: readOnly} : {})},
   );
@@ -763,7 +766,7 @@ export async function makeMine(instrument, opts = {}) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The controls table (§9.0): every menu's rows, with the role and accessible name the Menu renders.
-// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'chart' (the Chart is shown) | 'follows' (the
+// `when` names the song the row needs: 'mapped' | 'unmapped' | 'part' (a drum part) | 'chart' (the Chart is shown) | 'video' (a playthrough video) | 'follows' (the
 // Chart, or the mapped Road map: a surface that follows by rows) | 'sections-missing' (mapped without sections) | 'owner' (not a shared song: Edit is hidden there,
 // spec §4.13), space-separated when a row needs several; rows without it are always present. `via` names the command
 // a plain row runs itself (it is not command-bound).
@@ -782,6 +785,7 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitemradio', COPY.scroll, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
   row('stage', 'menuitemradio', COPY.page, {command: 'view.followStyle', parent: COPY.follow, when: 'follows'}),
   row('stage', 'menuitem', STAGE_COPY.commands.chartLayout, {command: 'stage.chartLayout', when: 'chart part'}),
+  row('stage', 'menuitemcheckbox', STAGE_COPY.commands.videoShow, {command: 'view.video', when: 'video'}),
   row('stage', 'menuitemcheckbox', STAGE_COPY.commands.focus, {command: 'view.focus', kbd: 'KeyF'}),
   row('stage', 'menuitem', COPY.distance),
   row('stage', 'menuitemradio', STAGE_COPY.distances.near, {command: 'view.distance.near', parent: COPY.distance}),
@@ -789,6 +793,7 @@ export const CONTROLS = Object.freeze([
   row('stage', 'menuitemradio', STAGE_COPY.distances.kit, {command: 'view.distance.kit', parent: COPY.distance}),
   row('stage', 'menuitem', COPY.spots, {command: 'spot.list', kbd: 'KeyJ'}),
   row('stage', 'menuitem', STAGE_COPY.commands.notes, {command: 'stage.notes'}),
+  row('stage', 'menuitem', STAGE_COPY.commands.video, {command: 'stage.video', when: 'owner'}),
   row('stage', 'menuitem', STAGE_COPY.commands.tapBeat, {command: 'stage.tapBeat'}),
   row('stage', 'menuitem', STAGE_COPY.commands.getBars, {command: 'stage.getBars', when: 'unmapped'}),
   row('stage', 'menuitem', STAGE_COPY.commands.detect, {command: 'map.detect', when: 'mapped'}),

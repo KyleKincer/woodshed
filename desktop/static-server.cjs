@@ -41,6 +41,8 @@ const CSP = [
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
   "worker-src 'self' blob:",
+  // Playthrough videos (src/js/video/youtube-player.js): the privacy-enhanced YouTube embed, and nothing else.
+  "frame-src 'self' https://www.youtube-nocookie.com",
   "object-src 'none'",
   "base-uri 'self'",
 ].join('; ');

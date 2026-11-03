@@ -146,12 +146,12 @@ const abortError = signal =>
   signal?.reason instanceof LookupError ? signal.reason : new LookupError('aborted', 'The lookup was canceled.');
 
 /**
- * `ytDlp(args, {signal}) → Promise<object>`: runs yt-dlp, resolves its JSON stdout,
+ * `ytDlp(args, {signal, json}) → Promise<object>`: runs yt-dlp, resolves its JSON stdout (nothing with json: false),
  * rejects a LookupError classified from stderr. Aborting `signal` kills the child
  * and rejects with the signal's LookupError reason (timeout, lookup_busy) when it has one.
  */
 export function createYtDlp({ command, prefix = [], env = process.env, spawn = nodeSpawn, kill = killTree, platform = process.platform, maxOutput = 32 * 1024 * 1024 }) {
-  return function ytDlp(args, { signal } = {}) {
+  return function ytDlp(args, { signal, json = true } = {}) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(abortError(signal)); return; }
       let child;
@@ -189,6 +189,7 @@ export function createYtDlp({ command, prefix = [], env = process.env, spawn = n
       child.on('close', code => {
         if (settled) return;
         if (code !== 0) { finish(reject, failureFrom(stderr, code)); return; }
+        if (!json) { finish(resolve, undefined); return; }
         try { finish(resolve, JSON.parse(Buffer.concat(out).toString('utf8'))); }
         catch { finish(reject, new LookupError('lookup_unavailable', 'The lookup returned unreadable data.', { detail: stderr.slice(-2000) })); }
       });

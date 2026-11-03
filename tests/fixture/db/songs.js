@@ -7,10 +7,11 @@
 // saved by 2.0 lives in `db.songPractice` ({songId, userId, practice, updatedAt});
 // v1 rows still hold `songs.practice` (pre-backfill).
 //   fx-library=slow   the library never arrives (the loading skeleton)
-import {db, fx, clone, findSong, publicSong, convexError, NEVER} from './runtime.js';
+import {db, fx, clone, changed, findSong, publicSong, convexError, NEVER} from './runtime.js';
 import {PRACTICE_CAP, upgradePractice, summarize} from '../../../shared/practice.ts';
 import {cleanSongMap, hasRealMap, mapSummaryOf, songMapFromTempo, barsOf, sectionsFromBars, sectionsOf} from '../../../shared/song-map.ts';
 import {sameContent} from '../../../shared/content.ts';
+import {validVideos} from '../../../shared/video.ts';
 
 const MAP_KEYS = new Set(['songMap', 'source', 'map', 'detected']);
 const fail = (code, message, data = {}) => { throw convexError({...data, code, message}); };
@@ -78,7 +79,8 @@ function fullSong(s) {
   const {practice: _practice, practiceSummary: _summary, lastPracticedAt: _last, mapSummary: _map, sectionSuggestion: _suggestion,
     tempoRev: _rev, tempoSaveId: _saveId, recordingUnconfirmed: _unconfirmed, ...rest} = publicSong(s);
   return {...rest, metadataSuggestion: s.metadataSuggestion ? clone(s.metadataSuggestion) : null, needsReview: s.needsReview === true,
-    resolvedUrl: s.resolvedUrl ?? null, provider: s.provider ?? null, originDeviceId: s.originDeviceId ?? null, tempo: clone(s.tempo ?? null), hasChart: hasChart(s)};
+    resolvedUrl: s.resolvedUrl ?? null, provider: s.provider ?? null, originDeviceId: s.originDeviceId ?? null, tempo: clone(s.tempo ?? null), hasChart: hasChart(s),
+    videos: clone(s.videos ?? [])};
 }
 
 function owned(id) {
@@ -160,6 +162,15 @@ export const handlers = {
 
   'songs:confirmRecording': ({id}) => { delete owned(id).recordingUnconfirmed; return null; },
   'songs:dismissSectionSuggestion': ({id}) => { delete owned(id).sectionSuggestion; return null; },
+  // convex/songs.ts setVideos: the playthrough videos, replaced as a whole (shared/video.ts).
+  'songs:setVideos': ({id, videos}) => {
+    const song = owned(id);
+    if (!validVideos(videos)) fail('invalid', 'These videos could not be saved.', {field: 'videos'});
+    const next = videos.map(({id: vid, videoId, label, offset}) => ({id: vid, videoId, label: label.trim(), offset: Math.round(offset * 1000) / 1000}));
+    if (next.length) song.videos = next; else delete song.videos;
+    changed();
+    return null;
+  },
 
   'songs:exportPage': () => ({
     page: sortedSongs().map(s => ({...fullSong(s), practice: clone(practiceRow(s.id)?.practice ?? s.practice ?? null)})),

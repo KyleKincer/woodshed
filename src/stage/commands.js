@@ -45,7 +45,7 @@ export const STAGE_COMMAND_IDS = Object.freeze([
   'view.cycle', 'view.chart', 'view.roadmap', 'view.stems', 'view.focus',
   'view.distance.near', 'view.distance.stand', 'view.distance.kit', 'view.bigger', 'view.smaller', 'view.followResume',
   'view.display', 'view.followStyle', 'stage.scrollUp', 'stage.scrollDown', 'stage.scrollTop',
-  'stage.chartLayout', 'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
+  'stage.chartLayout', 'stage.video', 'view.video', 'stage.notes', 'stage.tapBeat', 'stage.getBars', 'stage.share', 'stage.export', 'stage.remote', 'stage.startOver', 'stage.leave', 'stage.close',
   'edit.open', 'edit.map', 'edit.chart', 'edit.details', 'practice.undo', 'practice.redo', 'setlist.next', 'setlist.prev',
 ]);
 
@@ -466,6 +466,16 @@ export function defineStageCommands({registry = appRegistry, later = LATER} = {}
       when: canStage('scrollTop'), run: (c) => stageOf(c).scrollTop()},
 
     // ---- sheets -------------------------------------------------------------------------------------------------
+    // Playthrough video (shared/video.ts): the sheet (add, line up, sound), and whether this device shows the video.
+    {id: 'stage.video', title: C.video, group: 'View', icon: 'monitor',
+      palette: {keywords: ['video', 'youtube', 'playthrough', 'drum cam', 'sync', 'watch']},
+      ...sheet('video', {when: (c) => !!stageOf(c)?.videos && (writable(sessionOf(c)) || !!peek(stageOf(c)?.hasVideo))})},
+    {
+      id: 'view.video', title: C.videoShow, group: 'View', scopes: [S], icon: 'monitor', palette: {keywords: ['video', 'playthrough', 'hide video']},
+      when: (c) => typeof stageOf(c)?.setVideoShown === 'function' && !!peek(stageOf(c)?.hasVideo),
+      checked: (c) => !!peek(stageOf(c)?.video),
+      run: (c) => stageOf(c).setVideoShown(!peek(stageOf(c).video)),
+    },
     {id: 'stage.chartLayout', title: C.chartLayout, group: 'View', icon: 'sliders-horizontal',
       palette: {keywords: ['layout', 'bars per line', 'spacing', 'cramped', 'tight', 'roomy', 'line break', 'notation']},
       ...sheet('chartLayout', {when: (c) => surfaceOf(c) === 'chart' && !!sessionOf(c)?.notation?.part})},

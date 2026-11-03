@@ -46,7 +46,7 @@ describe('songs', () => {
   test('the deleted songs.rename has no wrapper', () => {
     expect(songs).not.toHaveProperty('rename');
     expect(Object.keys(songs).sort()).toEqual(['confirmRecording', 'dismissSectionSuggestion', 'exportPage', 'get', 'getMany', 'getPractice', 'list',
-      'remove', 'savePractice', 'saveTempo', 'subscribeList', 'subscribePractice', 'subscribeSong']);
+      'remove', 'savePractice', 'saveTempo', 'setVideos', 'subscribeList', 'subscribePractice', 'subscribeSong']);
   });
 
   test('subscriptions go through client.subscribe and return its off()', () => {
