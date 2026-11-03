@@ -78,7 +78,7 @@ export const ETA = Object.freeze({
 /** The settings line (spec §2.8 `Balanced · 4 stems`). Preset names come from convex/lib/presets.ts. */
 export const SETTINGS = Object.freeze({
   custom: 'Custom',
-  stems: Object.freeze({full: '4 stems', six: '6 stems', drums: 'Drums + rest', vocals: 'Vocals + rest', bass: 'Bass + rest'}),
+  stems: Object.freeze({full: '4 stems', six: '6 stems', drums: 'Drums + rest', vocals: 'Vocals + rest', bass: 'Bass + rest', own: 'Your stems'}),
   join: ' · ',
 });
 

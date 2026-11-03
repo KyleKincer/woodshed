@@ -22,6 +22,7 @@
 // items are disabled with "Paused on this account". Share… opens SH1's share dialog (src/share/share-dialog.js, wave
 // 3a, resolved by its contract path) with {song, session: null}; until that file exists the item says "Not built yet".
 
+import {OWN_STEM_MODE} from '../../shared/own-stems.ts';
 import {store as appStore} from '../app/store.js';
 import {account as appAccount} from '../app/account.js';
 import {desktop as appDesktop} from '../app/desktop.js';
@@ -185,7 +186,10 @@ function shareItem(song, d) {
 }
 
 function resplitItem(songIds, label, d) {
-  const reason = !d.desktop?.available ? COPY.needsDesktop : pausedOf(d.store) ? COPY.pausedAccount : null;
+  // A song added only from the user's own stems (shared/own-stems.ts) has no mix to split again.
+  const songs = d.store.library.songs.peek();
+  const ownOnly = songIds.length > 0 && songIds.every(id => songs?.get?.(id)?.stemMode === OWN_STEM_MODE);
+  const reason = ownOnly ? COPY.ownStems : !d.desktop?.available ? COPY.needsDesktop : pausedOf(d.store) ? COPY.pausedAccount : null;
   return {id: 'card.resplit', label, icon: 'refresh-cw', reason,
     run: () => openResplitDialog({songIds, router: d.router, desktop: d.desktop, store: d.store, account: d.account})};
 }

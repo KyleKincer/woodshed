@@ -164,6 +164,41 @@ describe('createSeparation', () => {
     expect((await alice.query(api.jobs.listActive, {}))[0]).toMatchObject({ deviceId: pc, source });
   });
 
+  test('an upload with the user’s own stems: validated, and the split fits them (shared/own-stems.ts)', async () => {
+    const { t, alice, pc } = await setup();
+    const id = (n: number) => `${String(n).repeat(8)}-${String(n).repeat(4)}-${String(n).repeat(4)}-${String(n).repeat(4)}-${String(n).repeat(12)}`;
+    const create = (source: Record<string, unknown>, settings: Record<string, unknown> = {}) =>
+      alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: { type: 'upload', ...source } as any, settings, label: 'Harbor Lights' });
+    // Stems only: no mix, nothing to split; the job keeps the stems for the processor.
+    const only = await create({ value: '', filename: 'Harbor Lights', stems: [{ name: 'drums', value: id(1), filename: 'drums.wav' }, { name: 'bass', value: id(2) }] });
+    expect((await readJob(t, only.jobId))?.source?.stems).toHaveLength(2);
+    expect((await alice.query(api.jobs.listActive, {})).find(r => r.jobId === only.jobId)?.source).toMatchObject({ value: '', stems: 2 });
+    expect((await alice.query(api.jobs.listActive, {})).find(r => r.jobId === only.jobId)?.settingsSummary?.stemMode).toBe('own');
+    // A mix with a guitar stem is split into 6 stems; one with a drums stem on "Bass + rest" into 4.
+    const guitar = await create({ value: id(3), stems: [{ name: 'guitar', value: id(4) }] });
+    expect((await readJob(t, guitar.jobId))?.settings?.stemMode).toBe('six');
+    const drums = await create({ value: id(5), stems: [{ name: 'drums', value: id(6) }] }, { stemMode: 'bass' });
+    expect((await readJob(t, drums.jobId))?.settings?.stemMode).toBe('full');
+    const fits = await create({ value: id(7), stems: [{ name: 'drums', value: id(8) }] }, { stemMode: 'drums' });
+    expect((await readJob(t, fits.jobId))?.settings?.stemMode).toBe('drums');
+    // Unknown names, bad ids, the mix as a stem, too many, or stems on a link are refused.
+    for (const source of [
+      { value: '', stems: [{ name: 'kazoo', value: id(1) }] },
+      { value: '', stems: [{ name: 'drums', value: '../x' }] },
+      { value: '', stems: [] },
+      { value: id(1), stems: [{ name: 'drums', value: id(1) }] },
+      { value: '', stems: Array.from({ length: 17 }, (_, i) => ({ name: 'other', value: id(i % 10).replace(/^./, String.fromCharCode(97 + Math.floor(i / 10))) })) },
+    ]) expect(await errorOf(create(source))).toMatchObject({ code: 'invalid', field: 'source.stems' });
+    expect(await errorOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, source: { type: 'url', value: 'https://youtu.be/x', stems: [{ name: 'drums', value: id(1) }] }, settings: {}, label: 'x' })))
+      .toMatchObject({ code: 'invalid', field: 'source.stems' });
+    // A song made only of the user's stems has nothing to split again; one with a mix re-splits with its stems.
+    const ownSong = await t.run(ctx => ctx.db.insert('songs', song('alice', 'stems', { source: { type: 'upload', value: '', stems: [{ name: 'drums', value: id(1) }] }, originDeviceId: pc })));
+    expect(await codeOf(alice.mutation(api.jobs.createSeparation, { deviceId: pc, settings: {}, label: 'x', replaceSongId: ownSong }))).toBe('resplit_own_stems');
+    const mixSong = await t.run(ctx => ctx.db.insert('songs', song('alice', 'mix', { source: { type: 'upload', value: id(3), stems: [{ name: 'guitar', value: id(4) }] }, originDeviceId: pc })));
+    const resplit = await alice.mutation(api.jobs.createSeparation, { deviceId: pc, settings: {}, label: 'x', replaceSongId: mixSong });
+    expect(await readJob(t, resplit.jobId)).toMatchObject({ source: { value: id(3), stems: [{ name: 'guitar', value: id(4) }] }, settings: { stemMode: 'six' } });
+  });
+
   test('a new upload’s title is stored as a protected override (ticket I2a-5)', async () => {
     const { t, alice, mac, pc } = await setup();
     const source = { type: 'upload' as const, value: 'up-9c1d', filename: 'take 3.wav' };

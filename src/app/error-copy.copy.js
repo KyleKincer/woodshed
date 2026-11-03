@@ -134,6 +134,7 @@ export const SENTENCES = Object.freeze({
   queueFull: 'Too many songs are waiting. Add more once these finish.',
   appStorageFull: 'Woodshed’s cloud storage is full right now. Try again later.',
   resplitNoSource: 'This song can’t be split again. Its original audio is gone.',
+  resplitOwnStems: 'This song was added from your own stems, so there’s nothing to split again.',
   jobLive: 'This song is still being processed.',
   jobNotFailed: 'Only songs that failed can be tried again.',
   practiceTooLarge: 'This song has too much practice data to save. Remove some markers or notes.',

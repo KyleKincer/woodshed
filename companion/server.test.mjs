@@ -680,6 +680,25 @@ test('an upload whose original is not on this computer fails as source_missing b
   assert.equal(existsSync(path.join(jobDir('job7'), 'pid')), false);
 });
 
+test('the user\'s own stems reach the processor as files on this computer; a bad stem id fails as source_missing', { timeout: 20_000 }, async t => {
+  const drums = '22222222-2222-2222-2222-222222222222';
+  const { client, jobDir } = await companion(t, { jobs: [
+    { _id: 'job8', kind: 'separate', source: { type: 'upload', value: '', stems: [{ name: 'drums', value: drums, filename: 'drums.wav' }] }, settings: {}, quality: {},
+      fake: { lines: [{ error: 'stop here', code: 'separation_failed' }], exit: 1 } },
+  ] });
+  await until(() => progressOf(client).find(p => p.jobId === 'job8' && p.stage === 'error'), 'job8 ends');
+  const job = readJson(path.join(jobDir('job8'), 'job.json'));
+  assert.equal(job.localSource, undefined, 'no full mix');
+  assert.deepEqual(job.ownStems.map(s => [s.name, path.basename(s.path), path.basename(path.dirname(s.path)), s.filename]), [['drums', drums, 'uploads', 'drums.wav']]);
+});
+
+test('a stem whose upload id is not one fails as source_missing before the processor runs', { timeout: 20_000 }, async t => {
+  const { client, jobDir } = await companion(t, { jobs: [{ _id: 'job9', kind: 'separate', source: { type: 'upload', value: '', stems: [{ name: 'drums', value: '../../etc/passwd' }] }, settings: {}, quality: {} }] });
+  const failure = await until(() => progressOf(client).find(p => p.stage === 'error'), 'error report');
+  assert.equal(failure.errorCode, 'source_missing');
+  assert.equal(existsSync(path.join(jobDir('job9'), 'pid')), false);
+});
+
 test('a resumed job whose first processor line is meta keeps its stage; meta never carries yt-dlp’s provider', { timeout: 20_000 }, async t => {
   const { client } = await companion(t, { jobs: [{
     _id: 'job4r', kind: 'separate', source: { type: 'url', value: 'https://youtu.be/x' }, settings: {}, quality: { model: 'htdemucs' },

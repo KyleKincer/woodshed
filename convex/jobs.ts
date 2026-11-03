@@ -7,6 +7,7 @@ import { PRESETS, STEM_MODES, resolveQuality, withDefaults } from './lib/presets
 import { jobKindValidator, jobMetaValidator, jobStatusValidator, type JobMeta } from './lib/validators';
 import { hasRealMap } from '../shared/song-map';
 import { sourceValidator } from './schema';
+import { OWN_STEM_MODE, separationMode, validOwnStems } from '../shared/own-stems';
 
 /**
  * Jobs, as the browser sees them (architecture §6.4).
@@ -111,7 +112,7 @@ export const jobRowValidator = v.object({
   retryAt: orNull(v.number()),
   chainedFrom: orNull(v.id('jobs')),
   confirmed: v.boolean(),
-  source: orNull(v.object({ type: sourceValidator.fields.type, value: v.string(), filename: orNull(v.string()) })),
+  source: orNull(v.object({ type: sourceValidator.fields.type, value: v.string(), filename: orNull(v.string()), stems: v.optional(v.number()) })),
   settingsSummary: orNull(v.object({ preset: v.string(), stemMode: v.string(), model: v.string() })),
 });
 export type JobRow = Infer<typeof jobRowValidator>;
@@ -130,7 +131,9 @@ function settingsSummary(job: Job): JobRow['settingsSummary'] {
   if (job.kind !== 'separate' || !isObject(job.settings)) return null;
   const settings = withDefaults(job.settings);
   // The preset (or custom) resolved, as the worker resolves it, never a stale stored `model`.
-  return { preset: String(settings.preset), stemMode: String(settings.stemMode), model: resolveQuality(settings).model };
+  // A song made only of the user's own stems is not split (shared/own-stems.ts).
+  const stemMode = job.source?.stems && !job.source.value ? OWN_STEM_MODE : String(settings.stemMode);
+  return { preset: String(settings.preset), stemMode, model: resolveQuality(settings).model };
 }
 
 export function toRow(job: Job): JobRow {
@@ -154,7 +157,7 @@ export function toRow(job: Job): JobRow {
     retryAt: job.retryAt ?? null,
     chainedFrom: job.chainedFrom ?? null,
     confirmed: job.confirmed === true,
-    source: job.source ? { type: job.source.type, value: job.source.value, filename: job.source.filename ?? null } : null,
+    source: job.source ? { type: job.source.type, value: job.source.value, filename: job.source.filename ?? null, ...(job.source.stems ? { stems: job.source.stems.length } : {}) } : null,
     settingsSummary: settingsSummary(job),
   };
 }
@@ -423,7 +426,15 @@ export const createSeparation = mutation({
     const source = args.source ?? song?.source;
     if (!source) fail('resplit_no_source', NO_SOURCE);
     if (args.label.length > LABEL_MAX) fail('invalid', `The label is too long (${LABEL_MAX} characters max).`, { field: 'label' });
-    if (!source.value.trim()) fail('invalid', 'Enter a link or search.', { field: 'source' });
+    const ownStems = source.stems;
+    if (ownStems !== undefined) {
+      if (source.type !== 'upload' || !validOwnStems(ownStems)) fail('invalid', 'These stems could not be read. Add the files again.', { field: 'source.stems' });
+      if (ownStems.some(s => s.filename !== undefined && s.filename.length > FILENAME_MAX)) fail('invalid', `The file name is too long (${FILENAME_MAX} characters max).`, { field: 'source.stems' });
+      if (source.value && ownStems.some(s => s.value === source.value)) fail('invalid', 'The full mix can\u2019t also be a stem.', { field: 'source.stems' });
+      // A song made only of the user's stems has nothing to split again.
+      if (song && !source.value) fail('resplit_own_stems', 'This song was added from your own stems, so there is nothing to split.');
+    }
+    if (!source.value.trim() && !ownStems) fail('invalid', 'Enter a link or search.', { field: 'source' });
     if (source.value.length > SOURCE_MAX) fail('invalid', `The source is too long (${SOURCE_MAX} characters max).`, { field: 'source' });
     if (source.filename !== undefined && source.filename.length > FILENAME_MAX) fail('invalid', `The file name is too long (${FILENAME_MAX} characters max).`, { field: 'source.filename' });
 
@@ -438,7 +449,9 @@ export const createSeparation = mutation({
     const queued = await ctx.db.query('jobs').withIndex('by_device_status', q => q.eq('deviceId', device._id).eq('status', 'queued')).take(QUEUE_CAP);
     if (queued.length >= QUEUE_CAP) fail('queue_full', 'Process the queued songs before adding more.');
 
-    const settings = separationSettings(args.settings);
+    const chosen = separationSettings(args.settings);
+    // The user's stems decide the split their mix needs (guitar or piano: 6 stems; a two-part split takes only its focus).
+    const settings = ownStems && source.value ? { ...chosen, stemMode: separationMode(String(chosen.stemMode), ownStems.map(s => s.name)) } : chosen;
     const cleaned = cleanMeta(args.meta);
     // I2a-5: a new upload's title came from the user (the single-file title field), never from the processor.
     // A re-split keeps its song's title, so its meta is not an override.

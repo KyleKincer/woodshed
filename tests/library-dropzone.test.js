@@ -9,7 +9,7 @@ import {signal} from '../src/app/store.js';
 import {openOverlays} from '../src/app/dispatch.js';
 import * as feedback from '../src/app/feedback.js';
 import {installPopoverShim, isPopoverOpen, restoreDomShims} from './helpers/dom.js';
-import {COPY, DRAG_IDLE_MS, stageFiles, startLibraryDrop, takeStagedFiles} from '../src/library/dropzone.js';
+import {COPY, DRAG_IDLE_MS, folderOf, stageFiles, startLibraryDrop, takeStagedFiles} from '../src/library/dropzone.js';
 
 const ROUTES = {
   library: {name: 'library', route: {place: 'library'}},
@@ -100,6 +100,29 @@ describe('on the Library', () => {
     expect(router.navigate).toHaveBeenCalledWith('/add');
     expect(takeStagedFiles()).toEqual(files);
     expect(takeStagedFiles()).toEqual([]);          // taken once
+  });
+
+  test('a dropped folder (a stem pack) brings the audio files inside it, with their folder', async () => {
+    const fileEntry = (name, path) => ({isFile: true, isDirectory: false, name, fullPath: path, file: ok => ok(file(name))});
+    const dirEntry = (name, path, children) => {
+      let read = false;
+      return {isFile: false, isDirectory: true, name, fullPath: path,
+        createReader: () => ({readEntries: ok => { const batch = read ? [] : children; read = true; ok(batch); }})};
+    };
+    const pack = dirEntry('Glasshouse', '/Glasshouse', [
+      fileEntry('song.ogg', '/Glasshouse/song.ogg'), fileEntry('drums_1.ogg', '/Glasshouse/drums_1.ogg'),
+      fileEntry('notes.chart', '/Glasshouse/notes.chart'), fileEntry('.DS_Store', '/Glasshouse/.DS_Store'),
+      fileEntry('album.png', '/Glasshouse/album.png'),
+    ]);
+    const dt = transfer({files: []});
+    dt.items = [{kind: 'file', webkitGetAsEntry: () => pack}];
+    drag('dragenter', transfer({files: [file('Glasshouse')]}));
+    drag('drop', dt);
+    await vi.waitFor(() => expect(router.navigate).toHaveBeenCalledWith('/add'));
+    const staged = takeStagedFiles();
+    expect(staged.map(f => f.name)).toEqual(['drums_1.ogg', 'song.ogg']);
+    expect(staged.map(folderOf)).toEqual(['Glasshouse', 'Glasshouse']);
+    expect(folderOf(file('loose.mp3'))).toBe('');
   });
 
   test('a drop with no files only hides the target', () => {

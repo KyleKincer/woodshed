@@ -275,6 +275,68 @@ def acquire(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, 
     return first_unblocked(download_candidates(source, query), fetch, rep)
 
 
+def mix_files(paths: list, dest: pathlib.Path) -> pathlib.Path:
+    """Sum several audio files into one WAV (no level change: stems of one song add up to it)."""
+    inputs = [arg for path in paths for arg in ["-i", str(path)]]
+    run(["ffmpeg", "-y", *inputs, "-filter_complex", f"amix=inputs={len(paths)}:normalize=0:duration=longest", "-vn", str(dest)])
+    return dest
+
+
+def own_stem_files(own: list, tmp: pathlib.Path, rep: Reporter | None = None) -> list[tuple[str, pathlib.Path]]:
+    """The user's stems as (name, file), in the order given. Files that are the same stem are mixed into one."""
+    names: list[str] = []
+    groups: dict[str, list[pathlib.Path]] = {}
+    for stem in own:
+        path = pathlib.Path(stem["path"])
+        if not path.is_file():
+            raise RuntimeError(f"Your {stem['name']} file is not on this computer. Add it again.")
+        if stem["name"] not in groups:
+            names.append(stem["name"])
+            groups[stem["name"]] = []
+        groups[stem["name"]].append(path)
+    out = []
+    for name in names:
+        paths = groups[name]
+        if len(paths) > 1:
+            if rep: rep.progress("finalize", 85, f"Mixing your {name} files…")
+            out.append((name, mix_files(paths, tmp / f"own_{name}.wav")))
+        else:
+            out.append((name, paths[0]))
+    return out
+
+
+def acquire_own(job: dict, tmp: pathlib.Path, rep: Reporter) -> tuple[pathlib.Path, dict]:
+    """A song made only of the user's stems: their sum is the song (source.wav, for the fingerprint and the
+    detection jobs that follow), and the first file's tags are its metadata."""
+    own = job["ownStems"]
+    rep.progress("download", 10, "Reading your stems…")
+    files = [pathlib.Path(s["path"]) for s in own]
+    for stem, path in zip(own, files):
+        if not path.is_file():
+            raise RuntimeError(f"Your {stem['name']} file is not on this computer. Add it again.")
+    rep.progress("download", 40, "Mixing your stems…")
+    wav = mix_files(files, tmp / "source.wav")
+    first = files[0]
+    tags = probe_tags(first)
+    cover = tmp / "cover.jpg"
+    for path in files:
+        try:
+            subprocess.run(["ffmpeg", "-y", "-i", str(path), "-an", "-vframes", "1", str(cover)], check=True, capture_output=True)
+            if cover.exists() and cover.stat().st_size: break
+        except Exception:
+            pass
+    name = (job.get("source") or {}).get("filename") or own[0].get("filename") or first.name
+    meta = {
+        "title": tags["title"] or pathlib.Path(name).stem, "uploader": tags["artist"] or "Your stems",
+        "artist": tags["artist"] or "", "album": tags["album"] or "",
+        "duration": max(probe_duration(path) for path in files),
+        "cover": cover if cover.exists() and cover.stat().st_size else None,
+    }
+    meta.update({k: tags.get(k) or "" for k in ["albumArtist", "year", "genre", "trackNumber", "discNumber", "musicalKey"]})
+    rep.progress("download", 100, "Ready")
+    return wav, meta
+
+
 def download_candidates(source: dict, query: str | None) -> list[tuple[str, list[str]]]:
     """(target, extra yt-dlp args) to try, in order.
 

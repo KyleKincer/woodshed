@@ -25,6 +25,7 @@
 import {db, fx, changed, clone, findSong, convexError} from './runtime.js';
 import {PRESETS, STEM_MODES, resolveQuality, withDefaults} from '../../../convex/lib/presets.ts';
 import {hasRealMap as songHasRealMap} from '../../../shared/song-map.ts';
+import {OWN_STEM_MODE, separationMode, validOwnStems} from '../../../shared/own-stems.ts';
 
 const LIST_PER_STATUS = 50;
 const QUEUE_CAP = 20;
@@ -55,7 +56,8 @@ const newJobId = () => `job-${Date.now().toString(36)}${(seq++).toString(36)}${M
 function settingsSummary(j) {
   if (j.kind !== 'separate' || !isObject(j.settings)) return null;
   const s = withDefaults(j.settings);
-  return {preset: String(s.preset), stemMode: String(s.stemMode), model: resolveQuality(s).model};
+  const own = j.source?.stems && !j.source.value;   // the user's own stems only: nothing is split
+  return {preset: String(s.preset), stemMode: own ? OWN_STEM_MODE : String(s.stemMode), model: resolveQuality(s).model};
 }
 
 /** The `jobs:listActive` row. */
@@ -65,7 +67,7 @@ export function toRow(j) {
     message: j.message ?? null, error: j.error ?? null, meta: j.meta ?? null, deviceId: j.deviceId ?? null,
     createdAt: j.createdAt, startedAt: j.startedAt ?? null, updatedAt: j.updatedAt, attempts: j.attempts ?? 0,
     errorCode: j.errorCode ?? null, retryAt: j.retryAt ?? null, chainedFrom: j.chainedFrom ?? null, confirmed: j.confirmed === true,
-    source: j.source ? {type: j.source.type, value: j.source.value, filename: j.source.filename ?? null} : null,
+    source: j.source ? {type: j.source.type, value: j.source.value, filename: j.source.filename ?? null, ...(j.source.stems ? {stems: j.source.stems.length} : {})} : null,
     settingsSummary: settingsSummary(j),
   });
 }
@@ -295,7 +297,13 @@ export const handlers = {
     const source = given ?? song?.source;
     if (!source) fail('resplit_no_source', 'This song can’t be split again — its original audio is gone.');
     if (typeof label !== 'string' || label.length > LABEL_MAX) fail('invalid', `The label is too long (${LABEL_MAX} characters max).`, {field: 'label'});
-    if (!String(source.value ?? '').trim()) fail('invalid', 'Enter a link or search.', {field: 'source'});
+    // The user's own stems (convex/jobs.ts): validated; a song of stems only has nothing to split again.
+    const ownStems = source.stems;
+    if (ownStems !== undefined) {
+      if (source.type !== 'upload' || !validOwnStems(ownStems) || (source.value && ownStems.some(x => x.value === source.value))) fail('invalid', 'These stems could not be read. Add the files again.', {field: 'source.stems'});
+      if (song && !source.value) fail('resplit_own_stems', 'This song was added from your own stems, so there is nothing to split.');
+    }
+    if (!String(source.value ?? '').trim() && !ownStems) fail('invalid', 'Enter a link or search.', {field: 'source'});
     if (source.value.length > SOURCE_MAX) fail('invalid', `The source is too long (${SOURCE_MAX} characters max).`, {field: 'source'});
     if (source.filename !== undefined && source.filename.length > FILENAME_MAX) fail('invalid', `The file name is too long (${FILENAME_MAX} characters max).`, {field: 'source.filename'});
     const device = pairedDevice(deviceId);
@@ -306,7 +314,8 @@ export const handlers = {
       fail('resplit_wrong_device', `Re-split this song on ${name}, which has the original file.`, {deviceName: name});
     }
     if (db.jobs.filter(j => j.deviceId === device.id && j.status === 'queued').length >= QUEUE_CAP) fail('queue_full', 'Process the queued songs before adding more.');
-    const settings = separationSettings(rawSettings), cleaned = cleanMeta(rawMeta), now = Date.now();
+    const chosen = separationSettings(rawSettings), cleaned = cleanMeta(rawMeta), now = Date.now();
+    const settings = ownStems && source.value ? {...chosen, stemMode: separationMode(String(chosen.stemMode), ownStems.map(x => x.name))} : chosen;
     // I2a-5 (convex/jobs.ts): a new upload's meta.title is the user's title override.
     const meta = cleaned?.title && source.type === 'upload' && !song ? {...cleaned, titleOverride: true} : cleaned;
     const jobId = newJobId();

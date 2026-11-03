@@ -249,6 +249,27 @@
   }
   .lib-add-flag > .ui-icon { flex: none; }
   .lib-add-flag > span { flex: 1 1 auto; color: var(--ink-2); }
+  /* Stems of one song (shared/own-stems.ts): Separate songs · Stems of one song, each file's role, the plan. */
+  .lib-add-files-as { align-self: flex-start; }
+  .lib-add-file:has(.lib-add-file-role) { grid-template-columns: 20px minmax(0, 1fr) auto auto 44px; }
+  .lib-add-file-role {
+    min-block-size: var(--h-sm);
+    padding: 0 var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-control);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--fs-14);
+  }
+  .lib-add-file[data-role=skip] .lib-add-file-name { color: var(--ink-3); text-decoration: line-through; }
+  .lib-add-plan { display: grid; gap: var(--s1); }
+  .lib-add-plan-line { margin: 0; color: var(--ink-2); font-size: var(--fs-14); }
+  .lib-add-plan-problem { display: flex; align-items: center; gap: var(--s2); color: var(--warn); }
+  @media (max-width: 520px) {
+    .lib-add-file:has(.lib-add-file-role) { grid-template-columns: 20px minmax(0, 1fr) auto 44px; }
+    .lib-add-file:has(.lib-add-file-role) .lib-add-file-meta { display: none; }
+  }
   .lib-add-title-field { display: flex; flex-direction: column; gap: var(--s1); }
   .lib-add-label { font-size: var(--fs-14); font-weight: var(--fw-semibold); }
   .lib-add-title-input {

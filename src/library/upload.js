@@ -9,6 +9,9 @@
 //       the files upload one after another in the order given (a file waiting for its turn is already
 //       'uploading', at 0 bytes), so their jobs queue in that order too. `title` overrides a single file's title; `titles` (array or Map by file) per file.
 //   startUpload(file, {settings, deviceId, title?}) → UploadHandle      a batch of one
+//   startStemUpload(parts, {settings, profile?, choice?, deviceId?, title}) → UploadHandle
+//       one song from the user's own stems: parts = [{file, role}] (role 'mix' or a stem name, shared/own-stems.ts);
+//       the files upload in order (the mix first) and become one job whose source carries the stems
 //   uploadDevice() → Promise<deviceId>   the paired processor's device id, rejecting with a mapped error
 //   uploadError(error) → {code, message, data, raw}|null                 the describeError input; null = canceled
 //
@@ -117,9 +120,16 @@ async function cancelJob(jobId) {
   }
 }
 
-function createHandle(file, {settings, title, device, turn}) {
-  const name = fileName(file);
-  const total = Math.max(0, Number(file?.size) || 0);
+/**
+ * One upload: one song from `parts` ([{file, role}]: role 'mix' is the song's audio, any other role is one of the
+ * user's own stems, shared/own-stems.ts). A plain file is [{file, role: 'mix'}]. The parts upload one after another
+ * and then become one job; `name` is what the Jobs row shows (the file's name, or the song's for a set of stems).
+ */
+function createHandle(parts, {settings, title, device, turn, name: setName}) {
+  const file = parts[0].file;
+  const name = setName || fileName(file);
+  const sizeOf = f => Math.max(0, Number(f?.size) || 0);
+  const total = parts.reduce((sum, p) => sum + sizeOf(p.file), 0);
   const progress = signal({loaded: 0, total}, {equals: (a, b) => a.loaded === b.loaded && a.total === b.total});
   const state = signal('uploading');
   const error = signal(null);
@@ -161,8 +171,9 @@ function createHandle(file, {settings, title, device, turn}) {
     try {
       await wait;
       if (run.stale()) return;
-      if (total > MAX_UPLOAD_BYTES) {
-        fail({code: 'unknown', message: COPY.tooLarge, data: {bytes: total, limit: MAX_UPLOAD_BYTES}, raw: null}, run);
+      const largest = Math.max(...parts.map(p => sizeOf(p.file)));
+      if (largest > MAX_UPLOAD_BYTES) {
+        fail({code: 'unknown', message: COPY.tooLarge, data: {bytes: largest, limit: MAX_UPLOAD_BYTES}, raw: null}, run);
         return;
       }
       let id;
@@ -174,18 +185,24 @@ function createHandle(file, {settings, title, device, turn}) {
       }
       if (run.stale()) return;
       device$.value = id;
-      controller = new AbortController();
       progress.value = {loaded: 0, total};
-      let uploaded;
+      const uploaded = [];   // the processor's upload id of each part, in order
       try {
-        uploaded = await uploadXHR(file, {
-          signal: controller.signal,
-          onProgress: ({loaded, total: size}) => {
-            if (run.stale()) return;
-            const all = Number(size) > 0 ? Number(size) : total;
-            progress.value = {loaded: Math.min(Math.max(0, Number(loaded) || 0), all || Infinity), total: all};
-          },
-        });
+        let done = 0;
+        for (const part of parts) {
+          controller = new AbortController();
+          const result = await uploadXHR(part.file, {
+            signal: controller.signal,
+            onProgress: ({loaded}) => {
+              if (run.stale()) return;
+              progress.value = {loaded: Math.min(done + Math.max(0, Number(loaded) || 0), total), total};
+            },
+          });
+          if (run.stale()) return;
+          uploaded.push(result.id);
+          done += sizeOf(part.file);
+          progress.value = {loaded: done, total};
+        }
       } catch (uploadFailure) {
         if (run.stale()) return;
         const mapped = uploadError(uploadFailure);
@@ -200,7 +217,7 @@ function createHandle(file, {settings, title, device, turn}) {
       let created;
       try {
         created = await jobs.createSeparation({
-          source: {type: 'upload', value: uploaded.id, filename: name.slice(0, FILENAME_MAX)},
+          source: sourceOf(parts, uploaded, name),
           deviceId: id,
           settings,
           label: name.slice(0, LABEL_MAX),
@@ -307,6 +324,15 @@ function createHandle(file, {settings, title, device, turn}) {
   return {handle, turnDone};
 }
 
+/** The job's source for uploaded parts: the mix's id as `value` ('' when none), the user's stems in `stems`. */
+function sourceOf(parts, ids, name) {
+  const mix = parts.findIndex(p => p.role === 'mix');
+  const stems = parts.map((p, i) => ({p, id: ids[i]})).filter(({p}) => p.role !== 'mix')
+    .map(({p, id}) => ({name: p.role, value: id, filename: fileName(p.file).slice(0, FILENAME_MAX)}));
+  return {type: 'upload', value: mix >= 0 ? ids[mix] : '', filename: (mix >= 0 ? fileName(parts[mix].file) : name).slice(0, FILENAME_MAX),
+    ...(stems.length ? {stems} : {})};
+}
+
 /**
  * Starts a batch of uploads (spec §3.2: the files confirmed in the Add sheet). The device id is fetched once for
  * the whole batch unless `deviceId` is passed; files upload one at a time, in order.
@@ -339,11 +365,27 @@ export function startUploads(files, {settings: stored, profile = null, choice = 
   const handles = [];
   let turn = Promise.resolve();
   list.forEach((file, i) => {
-    const {handle, turnDone} = createHandle(file, {settings, title: titleFor(file, i), device, turn});
+    const {handle, turnDone} = createHandle([{file, role: 'mix'}], {settings, title: titleFor(file, i), device, turn});
     turn = turnDone;
     handles.push(handle);
   });
   return handles;
+}
+
+/**
+ * One song from the user's own stems (the Add sheet's "Stems of one song"): `parts` = [{file, role}], role 'mix'
+ * for the full mix (at most one) or a stem name (shared/own-stems.ts OWN_STEM_NAMES). The files upload in order
+ * and become one job; the song is called `title`. Returns one UploadHandle.
+ */
+export function startStemUpload(parts, {settings: stored, profile = null, choice = null, deviceId, title} = {}) {
+  const list = [...(parts ?? [])].filter(p => p?.file && p.role && p.role !== 'skip');
+  if (!list.length) return null;
+  // A mix is always uploaded first, so a set that fails part-way never leaves a job without it.
+  list.sort((a, b) => (a.role === 'mix' ? 0 : 1) - (b.role === 'mix' ? 0 : 1));
+  const settings = jobSettings(profile, stored, choice);
+  const device = () => (deviceId ? Promise.resolve(deviceId) : uploadDevice());
+  const name = clean(title, TITLE_MAX) || fileName(list[0].file);
+  return createHandle(list, {settings, title: name, device, turn: Promise.resolve(), name}).handle;
 }
 
 /** One file (a batch of one); `deviceId` is the processor's device when the caller has it. */

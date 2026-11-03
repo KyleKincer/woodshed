@@ -384,7 +384,7 @@ describe('the local processor (XHR uploads)', () => {
     expect(progress.at(-1)).toEqual([10_000, 10_000]);
     expect(xhr.status).toBe(200);
     expect(xhr.readyState).toBe(4);
-    expect(JSON.parse(xhr.responseText)).toEqual({id: 'up-1'});
+    expect(JSON.parse(xhr.responseText)).toEqual({id: '00000000-0000-4000-8000-000000000001'});
     expect(xhr.getResponseHeader('content-type')).toBe('application/json');
     expect(events).toEqual(['loadstart', 'load', 'loadend']);
     expect(companion.uploads()).toEqual([{filename: 'take 1.wav', size: 10_000, auth: true, via: 'xhr'}]);

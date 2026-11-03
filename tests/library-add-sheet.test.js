@@ -55,7 +55,7 @@ function nameOf(el) {
 }
 const ROLE_SELECTORS = {
   button: 'button', link: 'a[href]', dialog: 'dialog', textbox: 'input[type=text]', checkbox: 'input[type=checkbox]',
-  radiogroup: '[role=radiogroup]', radio: '[role=radio]', list: 'ul', menuitemradio: '[role=menuitemradio]',
+  radiogroup: '[role=radiogroup]', radio: '[role=radio]', list: 'ul', menuitemradio: '[role=menuitemradio]', combobox: 'select',
 };
 const visible = el => !el.closest('[hidden]');
 const allByRole = (root, role) => [...root.querySelectorAll(ROLE_SELECTORS[role])].filter(visible);
@@ -100,6 +100,7 @@ function makeDeps({desktop = true, coarse = false, ipad = false, devices, songs,
     },
     uploads: {
       startUploads: vi.fn(files => files.map((f, i) => uploadHandle(`upload-${i + 1}`, f))),
+      startStemUpload: vi.fn(parts => uploadHandle('upload-stems', parts[0].file)),
       uploadDevice: vi.fn(async () => 'dev1'),
     },
     takeStagedFiles: () => { const out = staged; staged = []; return out; },
@@ -210,6 +211,7 @@ describe('controls table (spec §3.1–3.3)', () => {
     candidates: async () => { const sh = open({}, {query: {q: 'harbor lights'}}); await settle(); return sh; },
     files: async () => { makeDeps(); staged = [audioFile('Harbor Lights.mp3'), audioFile('garage-take-4.wav')]; const sh = open(); await settle(); return sh; },
     file: async () => { makeDeps(); staged = [audioFile('Harbor Lights.mp3')]; const sh = open(); await settle(); return sh; },
+    stems: async () => { makeDeps(); staged = [audioFile('drums.wav'), audioFile('bass.wav')]; const sh = open(); await settle(); return sh; },
     duplicate: async () => { const sh = open({}, {query: {q: 'https://www.youtube.com/watch?v=fixture01'}}); await settle(); return sh; },
     change: async () => { const sh = open(); sh.el.querySelector('.lib-add-change').click(); return sh; },
     web: async () => { makeDeps({desktop: false}); return open(); },
@@ -228,7 +230,7 @@ describe('controls table (spec §3.1–3.3)', () => {
 
   for (const [context, build] of Object.entries(CONTEXTS)) {
     test(`every ${context} control has its role and name`, async () => {
-      if (!d && context !== 'files' && context !== 'file') makeDeps();
+      if (!d && !['files', 'file', 'stems'].includes(context)) makeDeps();
       const sheet = await build();
       for (const row of CONTROLS.filter(r => r.context === context)) {
         if (row.count) {
@@ -617,6 +619,89 @@ describe('after submit', () => {
 });
 
 // =====================================================================================================
+describe('stems of one song (desktop; shared/own-stems.ts)', () => {
+  const roles = sheet => [...sheet.el.querySelectorAll('.lib-add-file-role')].map(x => x.value);
+  const plan = sheet => sheet.el.querySelector('.lib-add-plan').textContent;
+  const setRole = (sheet, name, role) => {
+    const select = byRole(sheet.el, 'combobox', COPY.roleOf(name));
+    select.value = role;
+    select.dispatchEvent(new Event('change', {bubbles: true}));
+  };
+
+  test('files named like stems are one song: roles from their names, the plan, the song title, one upload', async () => {
+    makeDeps();
+    staged = [audioFile('Harbor Lights - drums.wav'), audioFile('Harbor Lights - bass.wav'), audioFile('Harbor Lights - song.ogg'), audioFile('crowd.ogg')];
+    const sheet = open();
+    await settle();
+    const as = byRole(sheet.el, 'radiogroup', COPY.filesAs);
+    expect(as.querySelector('[aria-checked=true]').textContent).toBe(COPY.filesAsStems);
+    expect(roles(sheet)).toEqual(['drums', 'bass', 'mix', 'skip']);
+    expect(plan(sheet)).toContain('Woodshed splits the full mix and uses your Drums and Bass instead of its own.');
+    expect(plan(sheet)).toContain('1 file is left out.');
+    expect(byRole(sheet.el, 'textbox', COPY.titleField).value).toBe('Harbor Lights');
+    expect(nameOf(submitBtn(sheet))).toBe(COPY.submitStems);
+    submitBtn(sheet).click();
+    await settle();
+    expect(d.uploads.startUploads).not.toHaveBeenCalled();
+    const [parts, opts] = d.uploads.startStemUpload.mock.calls[0];
+    expect(parts.map(p => [p.file.name, p.role])).toEqual([['Harbor Lights - drums.wav', 'drums'], ['Harbor Lights - bass.wav', 'bass'],
+      ['Harbor Lights - song.ogg', 'mix'], ['crowd.ogg', 'skip']]);
+    expect(opts).toMatchObject({deviceId: 'dev1', title: 'Harbor Lights', choice: null});
+    expect(d.feedback.toast.mock.calls[0][0][1].textContent).toBe('Harbor Lights');
+    await d.feedback.toast.mock.calls[0][1].action.run();
+    expect(d.uploads.startStemUpload.mock.results[0].value.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test('stems only: nothing to split; two full mixes or nothing chosen can\'t be added; a role change fixes it', async () => {
+    makeDeps();
+    staged = [audioFile('drums_1.ogg'), audioFile('drums_2.ogg'), audioFile('vocals.ogg')];
+    const sheet = open();
+    await settle();
+    expect(plan(sheet)).toContain('Nothing to split: your 2 stems are the song, as they are.');
+    expect(plan(sheet)).toContain('Your 2 Drums files are mixed into one Drums stem.');
+    expect(sheet.el.querySelector('.lib-add-defaults').hidden).toBe(true);   // nothing to split: no layout or quality
+    setRole(sheet, 'drums_1.ogg', 'mix');
+    setRole(sheet, 'drums_2.ogg', 'mix');
+    expect(plan(sheet)).toBe('Choose one full mix. The other files are its stems.');
+    expect(submitBtn(sheet).disabled || submitBtn(sheet).getAttribute('aria-disabled') === 'true').toBe(true);
+    setRole(sheet, 'drums_2.ogg', 'guitar');
+    expect(plan(sheet)).toContain('uses your Guitar and Vocals instead of its own.');
+    expect(plan(sheet)).toContain('It splits into 6 stems so your stems have a place.');
+    expect(sheet.el.querySelector('.lib-add-defaults').hidden).toBe(false);
+    expect(sheet.el.querySelector('.lib-add-defaults-text').textContent).toContain('6 stems');
+    expect(submitBtn(sheet).disabled || submitBtn(sheet).getAttribute('aria-disabled') === 'true').toBe(false);
+  });
+
+  test('Separate songs: the files are added one song each, as before', async () => {
+    makeDeps();
+    staged = [audioFile('drums.wav'), audioFile('bass.wav')];
+    const sheet = open();
+    await settle();
+    const as = byRole(sheet.el, 'radiogroup', COPY.filesAs);
+    [...as.querySelectorAll('[role=radio]')].find(r => r.textContent === COPY.filesAsSongs).click();
+    await settle();
+    expect(sheet.el.querySelector('.lib-add-file-role')).toBeNull();
+    expect(sheet.el.querySelector('.lib-add-title-input')).toBeNull();
+    expect(nameOf(submitBtn(sheet))).toBe('Add 2 files');
+    submitBtn(sheet).click();
+    await settle();
+    expect(d.uploads.startStemUpload).not.toHaveBeenCalled();
+    expect(d.uploads.startUploads.mock.calls[0][0].map(f => f.name)).toEqual(['drums.wav', 'bass.wav']);
+  });
+
+  test('names that don\'t look like stems stay separate songs until the user says otherwise', async () => {
+    makeDeps();
+    staged = [audioFile('Harbor Lights.mp3'), audioFile('garage-take-4.wav')];
+    const sheet = open();
+    await settle();
+    expect(byRole(sheet.el, 'radiogroup', COPY.filesAs).querySelector('[aria-checked=true]').textContent).toBe(COPY.filesAsSongs);
+    [...byRole(sheet.el, 'radiogroup', COPY.filesAs).querySelectorAll('[role=radio]')].find(r => r.textContent === COPY.filesAsStems).click();
+    await settle();
+    expect(roles(sheet)).toEqual(['other', 'other']);
+    expect(nameOf(submitBtn(sheet))).toBe(COPY.submitStems);
+  });
+});
+
 describe('files (desktop)', () => {
   test('rows with name, size, duration and ✕; non-audio and over-1-GB files flagged and excluded', async () => {
     makeDeps();
