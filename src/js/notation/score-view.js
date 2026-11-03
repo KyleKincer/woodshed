@@ -286,7 +286,18 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, stretch = 1, 
       const at = xAt(caret.q);
       if (at) {
         append(el('line', {class: 'score-caret', x1: at.x, x2: at.x, y1: at.g.lineTop - 14, y2: at.g.lineTop + at.g.lineHeight + 14}));
-        if (caret.label) { const t = el('text', {class: 'score-caret-label', x: at.x + 4, y: at.g.lineTop - 16}); t.textContent = caret.label; append(t); }
+        // The piece's name sits under the staff on a plate: above it, it collided with section names and tempo marks.
+        if (caret.label) {
+          const y = at.g.lineTop + at.g.lineHeight + 30;
+          const plate = el('rect', {class: 'score-caret-plate', x: at.x - 2, y: y - 13, width: 0, height: 18, rx: 4});
+          const t = el('text', {class: 'score-caret-label', x: at.x + 3, y});
+          t.textContent = caret.label;
+          append(plate);
+          append(t);
+          let w = caret.label.length * 7;
+          try { w = t.getBBox().width || w; } catch { /* not laid out: the estimate */ }
+          plate.setAttribute('width', String(Math.ceil(w + 10)));
+        }
       }
     }
     drawPlayhead();

@@ -4,6 +4,7 @@
 @layer views {
   .sheet-mix {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--s4);
     padding-block: var(--s1) var(--s2);
   }
@@ -72,6 +73,10 @@
     justify-content: start;
     gap: var(--s3);
     max-width: calc(3 * 120px + 2 * var(--s3));   /* three per row on the band */
+  }
+  /* A phone: three pads share the sheet's width rather than spill past its edge. */
+  @media (max-width: 599px) {
+    .sheet-mix[data-layout=band] .sheet-mix-pads { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); max-width: none; }
   }
   .sheet-mix[data-layout=rail] .sheet-mix-pads {
     grid-template-columns: repeat(2, 160px);       /* two per row in the 360 px popover */

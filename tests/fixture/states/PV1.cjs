@@ -9,7 +9,7 @@
 //   pv1-angles       two angles: a thumbnail beside the music, ⇧Y switches, Show all angles plays both in step
 //   pv1-float        Floating: a corner window over the music (which keeps its whole area); dragged, it snaps to a corner
 //   pv1-wide         a 2560×1440 screen: the divider widens the video, remembered
-//   pv1-phone        a phone: the video above the music at the full width, its controls on it
+//   pv1-phone        a phone: the video above the music at the full width (or half the height), its controls on it
 //   pv1-blocked      a video its owner won't let play elsewhere: the sentence and Open on YouTube
 'use strict';
 
@@ -218,8 +218,9 @@ module.exports = [
       await addVideo(page, t);
       await page.keyboard.press('Escape');
       await settleChart(page);
-      const video = await box(page, '.stage-video-box'), body = await box(page, '.stage-body');
-      t.expect(video.w >= body.w - 24, `the full width (${video.w} of ${body.w})`);
+      const video = await box(page, '.stage-video-box'), body = await box(page, '.stage-body'), dock = await box(page, '.stage-video');
+      // The full width, unless that would take more than half the music's height (TOP_AUTO_MAX_NARROW).
+      t.expect(video.w >= body.w - 24 || dock.h >= body.h * 0.5 - 4, `the full width, or half the height (${video.w} of ${body.w}; ${dock.h} of ${body.h})`);
       const tools = await page.evaluate(() => getComputedStyle(document.querySelector('.stage-video-overlay')).opacity);
       t.expect(tools === '1', `touch: the controls stay on the video (${tools})`);
       await t.capture('phone');

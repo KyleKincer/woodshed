@@ -124,6 +124,15 @@ export function Segmented(props = {}) {
 
   render();
 
+  // A row that wraps onto a second line reads as a card, not a two-line pill: [data-wrapped] squares its corners.
+  const wrapObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+    const kids = row.children;
+    const wrapped = kids.length > 1 && kids[kids.length - 1].offsetTop > kids[0].offsetTop + 2;
+    if (row.hasAttribute('data-wrapped') !== wrapped) row.toggleAttribute('data-wrapped', wrapped);
+  }) : null;
+  wrapObserver?.observe(row);
+  ac.signal.addEventListener('abort', () => wrapObserver?.disconnect());
+
   return {
     el,
     get value() { return value; },

@@ -113,6 +113,35 @@
     .edit-redo .ui-button-text { display: none; }
     .edit-bar { gap: var(--s2); }
   }
+  /* A phone: the bar keeps what you act on (Done, the tabs, Undo / Redo) and drops what you already know (the
+   * song's title, "Editing drum chart"). A quiet "Saved" / "Saving…" stays for screen readers only; a status
+   * that needs you (saved on this device, another version, an error) still shows. */
+  @media (max-width: 599px) {
+    .edit-bar { gap: var(--s1); padding-inline: 0 var(--s2); }
+    .edit-bar:not([data-variant=bulk]) .edit-title,
+    .edit-bar:not([data-variant=bulk]) .edit-label { display: none; }
+    .edit-bar-lead { flex: none; }
+    .edit-tabs { flex: 0 1 auto; min-width: 0; margin-inline-start: 0; overflow-x: auto; scrollbar-width: none; }
+    .edit-save { min-inline-size: 0; margin-inline-start: var(--s1); }
+    .edit-save:is([data-state=idle], [data-state=saved], [data-state=saving]) {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+  }
+  /* A small phone (360 px): Done keeps its chevron; its name stays for screen readers. */
+  @media (max-width: 399px) {
+    .edit-bar:not([data-variant=bulk]) .edit-done .ui-button-text {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
 
   /* ---- the body: main and the inspector ---- */
   .edit-body {

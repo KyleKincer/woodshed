@@ -68,6 +68,20 @@
   .chart-bank-skip.ui-button { --family: var(--accent); }
   .chart-bank-nav { display: grid; grid-template-rows: 1fr 1fr; gap: var(--s1); }
   .chart-bank-step.ui-button { width: 56px; height: auto; min-height: 56px; }
+  /* A phone: the toolbar is one row that scrolls sideways (five wrapped rows left the score ~130 px), its Undo /
+   * Redo give way to the posture bar's, and the step arrows sit under the pads so seven pads get the width. */
+  @media (max-width: 599px) {
+    .chart-toolbar { flex-wrap: nowrap; gap: 0 var(--s2); overflow-x: auto; scrollbar-width: none; }
+    .chart-toolbar > * { flex: none; }
+    .chart-toolbar .chart-tool-history { display: none; }
+    .chart-bank { flex-direction: column; gap: var(--s1); padding: var(--s2); }
+    .chart-bank-pad.ui-button { padding: 0 2px; font-size: 0.8125rem; line-height: 1.1; }
+    .chart-bank-pad.ui-button .ui-button-text,
+    .chart-bank-pad.ui-button .ui-button-label { white-space: normal; text-align: center; hyphens: auto; }
+    .chart-bank-pad.ui-button > .ui-icon { display: none; }
+    .chart-bank-nav { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
+    .chart-bank-step.ui-button { width: auto; min-height: 44px; }
+  }
 
   @media (pointer: coarse) {
     .chart-toolbar,

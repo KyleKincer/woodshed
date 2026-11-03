@@ -241,6 +241,51 @@
   .hud-mix[data-kind=solo] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .hud-mix-icon { display: inline-flex; color: var(--ink-2); }
 
+  /* ---- a phone (band under 600 px): two rows of readouts instead of four columns ----
+   *   Section over Next     Position over the lamps   (the big numbers, side by side)
+   *   Loop · Mix            Speed and bpm on one line  (the smaller state, one line under them) */
+  @media (max-width: 599px) {
+    .hud[data-layout=band] .hud-identity { padding-inline-end: var(--s2); }
+    .hud[data-layout=band] .hud-readouts {
+      grid-template-columns: minmax(0, 1fr) max-content;
+      grid-template-areas: "section position" "loop speed";
+      column-gap: var(--s3);
+      row-gap: var(--s1);
+      min-block-size: 0;
+      padding: var(--s2) var(--s3) var(--s3);
+    }
+    .hud[data-layout=band] .hud-cell-section { grid-area: section; }
+    .hud[data-layout=band] .hud-cell-position { grid-area: position; align-items: flex-end; }
+    .hud[data-layout=band] .hud-position { align-items: flex-end; }
+    .hud[data-layout=band] .hud-lamp-row { flex-direction: column; align-items: flex-end; gap: var(--s1); }
+    .hud[data-layout=band] .hud-cell-speed { grid-area: speed; align-items: flex-end; align-self: end; }
+    .hud[data-layout=band] .hud-speed { flex-direction: row; align-items: baseline; gap: var(--s2); font-size: var(--fs-24); }
+    .hud[data-layout=band] .hud-cell-loop {
+      grid-area: loop;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      align-self: end;
+      gap: var(--s1) var(--s2);
+    }
+    .hud[data-layout=band] .hud-cell-loop:not(:has(> :not([hidden]))) { display: none; }
+    .hud[data-layout=band] .hud-loop { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: var(--s2); }
+    .hud[data-layout=band] .hud-loop-line1 { font-size: var(--fs-stage-identity); }
+  }
+
+  /* ---- a short band (a phone on its side, under 520 px tall): the readouts shrink to one slim row ---- */
+  @media (max-height: 519px) and (min-width: 600px) {
+    .hud[data-layout=band] {
+      --fs-stage-section: 28px;
+      --fs-stage-position: 36px;
+      --fs-stage-speed: 28px;
+    }
+    .hud[data-layout=band] .hud-identity { min-block-size: 40px; }
+    .hud[data-layout=band] .hud-readouts { min-block-size: 0; padding-block: var(--s1) var(--s2); }
+    .hud[data-layout=band] .hud-lamp-row { flex-wrap: nowrap; }
+    .hud[data-layout=band] .ui-beat-lamps { --ui-lamp: 14px; }
+  }
+
   /* ---- rail: one column of blocks (wireframe §10.3) ----
    * The identity is two rows (spec §4.3 "two lines"; ORCH-1), at every Distance (rail 232/264/312):
    *   1  ‹ · cover 32 · title (15/700) over artist (15, --ink-2), each one line with an ellipsis · ⋯
@@ -306,7 +351,7 @@
     border-block-start: 1px solid var(--line);
   }
   .hud[data-layout=rail] .hud-lamp-row { flex-direction: column; align-items: flex-start; }
-  .hud[data-layout=rail] .hud-speed { flex-direction: row; align-items: baseline; justify-content: space-between; inline-size: 100%; }
+  .hud[data-layout=rail] .hud-speed { flex-direction: row; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: var(--s2); inline-size: 100%; }
 
   /* ---- Focus ---- */
   .hud[data-focus][data-layout=band] .hud-identity { display: none; }

@@ -34,6 +34,7 @@ export const ICONS = [
   'info', 'loader', 'sun', 'moon', 'monitor', 'cpu', 'hard-drive', 'cloud', 'wifi-off', 'external-link', 'file-music',
   'file-audio', 'folder-open', 'wand-2', 'sparkles', 'sliders-horizontal', 'footprints', 'hand', 'keyboard-music',
   'guitar', 'piano', 'drum', 'undo-2', 'redo-2', 'gamepad-2', 'smartphone', 'monitor-smartphone', 'qr-code',
+  'skip-back', 'skip-forward', 'corner-down-left', 'chevrons-left', 'chevrons-right', 'trending-up',
 ];
 
 /** The custom glyphs the contract requires in src/styles/icons-custom/. */

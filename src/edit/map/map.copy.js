@@ -99,6 +99,8 @@ export const COPY = Object.freeze({
   nextBar: 'Bar',
   prevBarName: 'Previous bar',
   nextBarName: 'Next bar',
+  prevPin: 'Change',
+  nextPin: 'Change',
   prevPinName: 'Previous pin or meter change',
   nextPinName: 'Next pin or meter change',
   meter: 'Meter',

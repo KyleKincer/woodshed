@@ -9,6 +9,7 @@
   }
   .ui-segmented-options {
     display: inline-flex;
+    flex-wrap: wrap;
     gap: var(--s1);
     padding: var(--s1);
     border: 1px solid var(--line-strong);
@@ -34,6 +35,9 @@
     cursor: pointer;
     transition: background-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
   }
+  /* Wrapped onto two lines (segmented.js): a card with rounded-rectangle options. */
+  .ui-segmented-options[data-wrapped] { border-radius: var(--r-control); }
+  .ui-segmented-options[data-wrapped] .ui-segmented-option { border-radius: var(--r-control); }
   .ui-segmented[data-size=sm] .ui-segmented-option { padding: 0 var(--s3); }
   .ui-segmented[data-size=lg] .ui-segmented-option { min-height: var(--h-md); font-size: var(--fs-16); }
   @media (hover: hover) {

@@ -46,6 +46,7 @@
   .shell-search-input:hover { border-color: var(--line-strong); }
   .shell-search-input:focus-visible { outline-offset: 0; border-color: var(--accent); }
   .shell-search-input::-webkit-search-cancel-button { cursor: pointer; }
+  .shell-search-glass { display: none; }
   .shell-search-kbd {
     position: absolute;
     inset-block: 0;
@@ -104,6 +105,8 @@
   @media (max-width: 559px) {
     .shell-topbar { gap: var(--s2); }
     .shell-search-kbd { display: none; }
+    .shell-topbar-end { gap: var(--s2); }
+    .shell-jobs .ui-button-text,
     .shell-add .ui-button-text {
       position: absolute;
       width: 1px;
@@ -112,5 +115,37 @@
       clip-path: inset(50%);
       white-space: nowrap;
     }
+  }
+
+  /* A phone: the field folds to a 44 px magnifier, and opens across the whole bar while focused or holding a
+   * query. The field stays the one input (a tap focuses it), so the Library's live filtering is unchanged. */
+  @media (max-width: 479px) {
+    .shell-topbar { position: relative; }
+    .shell-search { flex: none; inline-size: var(--h-md); }
+    .shell-search-glass {
+      position: absolute;
+      inset-block: 0;
+      inset-inline-start: 0;
+      display: grid;
+      place-items: center;
+      inline-size: var(--h-md);
+      color: var(--ink-2);
+      pointer-events: none;
+    }
+    .shell-search-input { padding: 0 0 0 var(--h-md); }
+    .shell-search-input::placeholder { color: transparent; }
+    .shell-search:focus-within,
+    .shell-search:has(.shell-search-input:not(:placeholder-shown)) {
+      position: absolute;
+      inset-inline: 0;
+      inset-block: 0;
+      z-index: var(--z-local);
+      display: flex;
+      align-items: center;
+      inline-size: auto;
+      max-width: none;
+      background: var(--bg);
+    }
+    .shell-search:focus-within .shell-search-input::placeholder { color: var(--ink-3); }
   }
 }

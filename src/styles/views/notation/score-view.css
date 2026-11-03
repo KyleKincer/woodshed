@@ -29,6 +29,7 @@
   .score-range { fill: var(--accent-soft); opacity: .7; }
   .score-selected { fill: var(--accent); fill-opacity: .28; stroke: var(--accent); stroke-width: 1.5; }
   .score-caret { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; }
+  .score-caret-plate { fill: var(--surface); stroke: var(--accent); stroke-width: 1; }
   .score-caret-label { fill: var(--accent); font: var(--fw-semibold) var(--fs-12) var(--font-ui); }
   .score-mark-reviewed { fill: var(--ok); opacity: .08; }
   .score-mark-untranscribed { fill: var(--ink-3); opacity: .07; }

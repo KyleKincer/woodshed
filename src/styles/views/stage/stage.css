@@ -158,6 +158,9 @@
     background: var(--surface);
     border-top: 1px solid var(--line);
   }
+  @media (max-height: 519px) and (min-width: 600px) {
+    .stage[data-stage-layout=band] { --stage-strip-h: 44px; --stage-dock-h: 56px; }
+  }
   .stage[data-stage-layout=rail] .stage-controls {
     padding: var(--s3) calc(var(--stage-rail-pad) + var(--safe-right)) calc(var(--stage-rail-pad) + var(--s1) + var(--safe-bottom)) calc(var(--stage-rail-pad) + 1px);
   }
