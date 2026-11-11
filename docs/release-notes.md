@@ -1,3 +1,7 @@
+Woodshed 2.7.1 fixes Export in Woodshed for desktop.
+
+- **Export saves again.** After you chose where to save the ZIP, Export stopped with "Failed to execute 'createWritable'… not allowed". Woodshed for desktop now lets Export write the file you picked, and only that file.
+
 Woodshed 2.7.0 is a pass over every screen on phones, iPads and laptops: nothing cut off, nothing on top of anything else.
 
 - **The Stage on a phone.** The controls used to run off the right edge, so speed, count-in and the mix were out of reach. On a phone they're now two rows: speed and mix above, Again, Play, Loop and Count-in below. The readouts are two rows too: the section and what's next beside the bar and beat, with the loop, the mix and the speed under them. Nothing is cut to "In…" any more.
