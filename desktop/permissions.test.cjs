@@ -11,9 +11,9 @@ function fakeSession() {
   session.setPermissionCheckHandler = fn => { session.check = fn; };
   return session;
 }
-const ask = (session, permission, requestingUrl, contents = { getURL: () => requestingUrl }) => {
+const ask = (session, permission, requestingUrl, contents = { getURL: () => requestingUrl }, extra = {}) => {
   let answer;
-  session.request(contents, permission, granted => { answer = granted; }, { requestingUrl, isMainFrame: true });
+  session.request(contents, permission, granted => { answer = granted; }, { requestingUrl, isMainFrame: true, ...extra });
   return answer;
 };
 
@@ -53,6 +53,21 @@ test('permission checks follow the same policy', () => {
   assert.equal(session.check(null, 'notifications', UI, { isMainFrame: true }), false);
   assert.equal(session.check(null, 'midi', 'https://evil.example', { isMainFrame: false }), false);
   assert.equal(isPermissionAllowed('midi', null, UI), false);
+});
+
+test('fileSystem: a picked file from the UI origin may be written or read; directories and other origins may not', () => {
+  // Export's save dialog: handle.createWritable() raises a `fileSystem` request (isMainFrame is always false).
+  const session = fakeSession();
+  installPermissions(session, { uiOrigin: UI });
+  const file = access => ({ isMainFrame: false, filePath: '/Users/me/Downloads/song.zip', isDirectory: false, fileAccessType: access });
+  assert.equal(ask(session, 'fileSystem', `${UI}/s/abc`, undefined, file('writable')), true);
+  assert.equal(ask(session, 'fileSystem', `${UI}/s/abc`, undefined, file('readable')), true);
+  assert.equal(ask(session, 'fileSystem', `${UI}/`, undefined, { ...file('writable'), isDirectory: true }), false);
+  assert.equal(ask(session, 'fileSystem', `${UI}/`, undefined, { isMainFrame: false }), false);
+  assert.equal(ask(session, 'fileSystem', 'https://evil.example/', undefined, file('writable')), false);
+  assert.equal(session.check(null, 'fileSystem', UI, file('writable')), true);
+  assert.equal(session.check(null, 'fileSystem', UI, { ...file('readable'), isDirectory: true }), false);
+  assert.equal(session.check(null, 'fileSystem', 'https://evil.example', file('writable')), false);
 });
 
 test('navigation guards keep the window on the UI origin and open only https externally', () => {
