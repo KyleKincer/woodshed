@@ -1,87 +1,92 @@
 // Edit · Chart toolbar (spec §5.2, maps/notation.md §12.2): 44 px (52 on coarse pointers), drawn from the
-// workspace's state() and driving it through the registry (commands.js) or run().
+// workspace's state() and driving it through the registry (commands.js) or run(). It reads like the note-input
+// bar of a notation program: what the next note is worth, how it is played, then the menus.
 //
 //   createToolbar({run, registry, openMenu(name, anchor), saveStatus}) → {el, update(state), destroy()}
-//     run(action, ...args)    the workspace's run (setters with no command: tuplet, grid)
-//     openMenu(name, anchor)  opens 'view' | 'tuplet' | 'edit' | 'part' | 'sections' | 'grid' under its button
+//     run(action, ...args)    the workspace's run (setters with no command: tuplet, roll, grid)
+//     openMenu(name, anchor)  opens 'tuplet' | 'roll' | 'edit' | 'part' | 'grid' under its button
 //     saveStatus              true: draw the save status here (no posture bar with a status slot is present)
 //
-// Items, left to right: View Score · Lanes (+ View ▾), steps ♩ 1/4 · ♪ 1/8 · 1/16 · 1/32 · 1/64 with key-cap hints
-// 5·4·3·2·1 (D18; Kbd hints show only after keyboard use on fine pointers, spec §5.0), • Dotted, Tuplet ▾, Skip (R),
-// "Writing: Snare (S)", ↶ Undo ↷ Redo (text and glyph at ≥ 1200 px, glyph and accessible name below), the range
-// "Bars 17–32" with ‹ › and the section jump menu, Edit ▾ and Part ▾; in Lanes only, Grid ▾ and Fit.
+// Items, left to right:
+//   Step        the five note values as glyphs (quarter … 64th) with key-cap hints 5·4·3·2·1 (D18; Kbd hints show
+//               only after keyboard use on fine pointers, spec §5.0), Dotted, Tuplet ▾
+//   Articulation  Accent · Heavy accent · Ghost note · Flam · Drag · Roll ▾ · R · L: they show and change the
+//               selected notes, or the next note written when nothing is selected
+//   Skip (R)    a rest: move on a step without writing
+//   in Lanes only, Grid ▾ and Fit
+//   Edit ▾ and Part ▾, at the far end
+// Undo and Redo are the posture bar's; where the cursor is, the piece being written, Score · Lanes, Follow and
+// the zoom are the status bar's (statusbar.js); sections are the navigator's (navigator.js).
 
 import {registry as appRegistry} from '../../app/commands.js';
 import {Button, IconButton} from '../../ui/button.js';
 import {h} from '../../ui/h.js';
 import {Kbd} from '../../ui/kbd.js';
-import {Segmented} from '../../ui/segmented.js';
 import {Toggle} from '../../ui/toggle.js';
 import {COPY} from './menus.js';
 import {COPY as COMMANDS, STEP_VALUE} from './commands.js';
 
 /** Step buttons left to right (coarse to fine) with their digit (D18: 5 = 1/4 … 1 = 1/64). */
 export const STEP_BUTTONS = Object.freeze([5, 4, 3, 2, 1].map(digit => Object.freeze({digit, value: STEP_VALUE[digit]})));
+/** The glyph of each note value (src/styles/icons-custom). */
+export const STEP_ICONS = Object.freeze({4: 'note-quarter', 8: 'note-eighth', 16: 'note-sixteenth', 32: 'note-thirty-second', 64: 'note-sixty-fourth'});
+/** The articulation toggles: [expression key, command, icon]. */
+export const ARTICULATIONS = Object.freeze([
+  ['accent', 'chart.accent', 'accent'],
+  ['heavy', 'chart.heavy', 'accent-heavy'],
+  ['ghost', 'chart.ghost', 'ghost-note'],
+  ['flam', 'chart.flam', 'flam'],
+  ['drag', 'chart.drag', 'drag'],
+].map(Object.freeze));
 
 export function createToolbar({run, registry = appRegistry, openMenu, saveStatus = false} = {}) {
   const parts = [];
   const add = p => { parts.push(p); return p; };
-  // `name` keeps the accessible name fixed ('Tuplet') while the label shows the value ('Tuplet: Triplet').
+  // `accessibleName` keeps the name fixed ('Tuplet') while the label shows the value ('Triplet').
   const menuButton = (name, label, {className = '', icon, accessibleName = null} = {}) => add(Button({
     label, icon, iconEnd: 'chevron-down', size: 'sm', variant: 'quiet', className: `chart-tool-menu ${className}`.trim(),
     attrs: {'aria-haspopup': 'menu', 'aria-label': accessibleName}, dataset: {menu: name},
     onClick: e => openMenu?.(name, e.currentTarget),
   }));
 
-  // View
-  const view = add(Segmented({
-    label: COPY.view, size: 'sm', className: 'chart-tool-view', value: 'score',
-    options: [{value: 'score', label: COPY.score}, {value: 'lanes', label: COPY.lanes}],
-    onChange: v => registry.run('chart.view', {source: 'pointer', args: {view: v}}),
-  }));
-  const viewMenu = add(IconButton({label: COPY.viewOptions, icon: 'chevron-down', size: 'sm', variant: 'quiet',
-    attrs: {'aria-haspopup': 'menu'}, dataset: {menu: 'view'}, onClick: e => openMenu?.('view', e.currentTarget)}));
-
-  // Steps
+  // Step: the note values, the dot and the tuplet
   const steps = STEP_BUTTONS.map(({digit, value}) => {
-    const b = add(Button({
-      label: COPY.stepLabels[value], size: 'sm', className: 'chart-tool-step', command: `chart.step.${digit}`, registry,
-      attrs: {'aria-label': COPY.stepNames[value]}, title: `${COPY.stepNames[value]} · ${digit}`, dataset: {step: value},
+    const b = add(IconButton({
+      label: COPY.stepNames[value], icon: STEP_ICONS[value], size: 'sm', variant: 'quiet', className: 'chart-tool-step chart-tool-glyph',
+      command: `chart.step.${digit}`, registry, title: COPY.stepNames[value], dataset: {step: value},
     }));
-    const cap = add(Kbd({keys: `Digit${digit}`, hint: true}));
+    const cap = add(Kbd({keys: `Digit${digit}`, hint: true, className: 'chart-tool-cap'}));
+    cap.el.setAttribute('aria-hidden', 'true');
     b.el.append(cap.el);
     return {b, value};
   });
-  const dotted = add(Toggle({label: COPY.dotted, size: 'sm', className: 'chart-tool-dot', command: 'chart.dot', registry}));
-  const tuplet = menuButton('tuplet', `${COPY.tuplet}: ${COPY.tupletNames[1]}`, {className: 'chart-tool-tuplet', accessibleName: COPY.tuplet});
-  const skip = add(Button({label: COPY.skip, size: 'sm', className: 'chart-tool-skip', command: 'chart.skip', registry}));
+  const dotted = add(Toggle({label: COPY.dotted, icon: 'note-dotted', iconOnly: true, size: 'sm', variant: 'quiet',
+    className: 'chart-tool-dot chart-tool-glyph', command: 'chart.dot', registry, title: COPY.dotted}));
+  const tuplet = menuButton('tuplet', '', {className: 'chart-tool-tuplet chart-tool-glyph', icon: 'tuplet', accessibleName: COPY.tuplet});
+
+  // Articulation
+  const articulations = ARTICULATIONS.map(([key, command, icon]) => ({key, toggle: add(Toggle({
+    label: COMMANDS[key], icon, iconOnly: true, size: 'sm', variant: 'quiet', className: 'chart-tool-art chart-tool-glyph',
+    command, registry, title: COMMANDS[key], dataset: {expression: key},
+  }))}));
+  const roll = menuButton('roll', '', {className: 'chart-tool-roll chart-tool-glyph', icon: 'roll', accessibleName: COPY.roll});
+  const stickings = [['R', 'chart.stickingRight'], ['L', 'chart.stickingLeft']].map(([hand, command]) => add(Toggle({
+    label: hand, size: 'sm', variant: 'quiet', className: 'chart-tool-hand', command, registry,
+    attrs: {'aria-label': COMMANDS[hand === 'R' ? 'stickingRight' : 'stickingLeft']}, title: COMMANDS[hand === 'R' ? 'stickingRight' : 'stickingLeft'],
+    dataset: {sticking: hand},
+  })));
+
+  // Skip: the rest
+  const skip = add(Button({label: COPY.skip, icon: 'rest', size: 'sm', variant: 'quiet', className: 'chart-tool-skip', command: 'chart.skip', registry}));
   const skipCap = add(Kbd({keys: 'KeyR', hint: true}));
   skip.el.append(skipCap.el);
 
-  // Writing: Snare (S)
-  const pieceName = h('strong', {class: 'chart-tool-piece-name'});
-  const pieceCap = add(Kbd({keys: '', force: true}));
-  const writing = h('p', {class: 'chart-tool-writing'}, h('span', {class: 'chart-tool-writing-label'}, COPY.writing), ' ', pieceName, ' ', pieceCap.el);
-
-  // Undo / Redo
-  // The text hides below 1200 px (chart.css); aria-label keeps the name.
-  const undo = add(Button({label: COPY.undo, icon: 'undo-2', size: 'sm', className: 'chart-tool-history', command: 'chart.undo', registry,
-    attrs: {'aria-label': COPY.undo}}));
-  const redo = add(Button({label: COPY.redo, icon: 'redo-2', size: 'sm', className: 'chart-tool-history', command: 'chart.redo', registry,
-    attrs: {'aria-label': COPY.redo}}));
-
-  // Range
-  const rangeText = h('span', {class: 'chart-tool-range-text', 'aria-live': 'off'});
-  const prev = add(IconButton({label: COMMANDS.pagePrev, icon: 'chevron-left', size: 'sm', command: 'chart.pagePrev', registry}));
-  const next = add(IconButton({label: COMMANDS.pageNext, icon: 'chevron-right', size: 'sm', command: 'chart.pageNext', registry}));
-  const sections = menuButton('sections', COPY.sections, {className: 'chart-tool-sections'});
+  // Lanes only
+  const grid = menuButton('grid', `${COPY.grid}: ${COPY.gridValue(16)}`, {className: 'chart-tool-grid', accessibleName: COPY.grid});
+  const fit = add(Button({label: COPY.fit, icon: 'scan', size: 'sm', variant: 'quiet', className: 'chart-tool-fit', command: 'chart.fit', registry}));
 
   const edit = menuButton('edit', COPY.edit);
   const part = menuButton('part', COPY.part);
-
-  // Lanes only
-  const grid = menuButton('grid', `${COPY.grid}: ${COPY.gridValue(16)}`, {className: 'chart-tool-grid', accessibleName: COPY.grid});
-  const fit = add(Button({label: COPY.fit, icon: 'scan', size: 'sm', className: 'chart-tool-fit', command: 'chart.fit', registry}));
 
   // Save status (only without a posture bar)
   const statusText = h('span', {class: 'chart-tool-save-text'});
@@ -92,14 +97,14 @@ export function createToolbar({run, registry = appRegistry, openMenu, saveStatus
     : null;
 
   const group = (name, label, ...children) => h('div', {class: `chart-tool-group chart-tool-${name}`, role: 'group', 'aria-label': label}, ...children);
+  const lanesGroup = group('lanes', COPY.lanes, grid.el, fit.el);
+  const menusGroup = group('menus', COPY.menus, edit.el, part.el);
   const el = h('div', {class: 'chart-toolbar', role: 'toolbar', 'aria-label': COPY.toolbar},
-    group('views', COPY.view, view.el, viewMenu.el),
-    group('steps', COPY.steps, ...steps.map(s => s.b.el), dotted.el, tuplet.el, skip.el),
-    writing,
-    group('history', `${COPY.undo} and ${COPY.redo}`, undo.el, redo.el),
-    group('range', 'Bars', rangeText, prev.el, next.el, sections.el),
-    group('lanes', 'Lanes', grid.el, fit.el),
-    group('menus', 'Menus', edit.el, part.el),
+    group('steps', COPY.steps, ...steps.map(s => s.b.el), dotted.el, tuplet.el),
+    group('arts', COPY.articulation, ...articulations.map(a => a.toggle.el), roll.el, ...stickings.map(s => s.el)),
+    group('entry', COPY.skip, skip.el),
+    lanesGroup,
+    menusGroup,
     status,
   );
   // A role=toolbar is one tab stop with arrow keys in the ARIA pattern; this one keeps every control tabbable (the
@@ -110,18 +115,18 @@ export function createToolbar({run, registry = appRegistry, openMenu, saveStatus
     if (!state) return;
     last = state;
     el.dataset.layout = state.layout;
-    view.set({value: state.layout});
     for (const {b, value} of steps) b.set({pressed: state.step.value === value});
     dotted.set({pressed: !!state.step.dotted});
-    tuplet.set({label: `${COPY.tuplet}: ${COPY.tupletNames[state.step.tuplet] ?? COPY.tupletNames[1]}`});
-    pieceName.textContent = state.piece.name;
-    pieceCap.set({keys: state.piece.key || ''});
-    pieceCap.el.hidden = !state.piece.key;
-    const {first, last: lastBar, total} = state.range;
-    rangeText.textContent = total ? COPY.bars(first + 1, lastBar + 1) : '';
-    rangeText.title = total ? COPY.barsOf(first + 1, lastBar + 1, total) : '';
+    // The tuplet button names its value once one is chosen ("Triplet"); straight, it is the glyph alone.
+    const tupleted = state.step.tuplet > 1;
+    tuplet.set({label: tupleted ? COPY.tupletNames[state.step.tuplet] ?? '' : '', dataset: {menu: 'tuplet', active: tupleted},
+      title: tupleted ? `${COPY.tuplet}: ${COPY.tupletNames[state.step.tuplet] ?? ''}` : COPY.tuplet});
+    const x = state.expression ?? {};
+    const rolled = (x.roll || 0) > 0;
+    roll.set({label: rolled ? COPY.rollShort(x.roll) : '', dataset: {menu: 'roll', active: rolled},
+      title: rolled ? `${COPY.roll}: ${COPY.rollNames[x.roll] ?? ''}` : COPY.roll});
     const lanes = state.layout === 'lanes';
-    el.querySelector('.chart-tool-lanes').hidden = !lanes;
+    lanesGroup.hidden = !lanes;
     grid.set({label: `${COPY.grid}: ${COPY.gridValue(state.grid.value)}${state.grid.triplet ? ` ${COPY.triplet}` : ''}`});
     if (status) {
       statusText.textContent = state.statusText;
@@ -136,6 +141,10 @@ export function createToolbar({run, registry = appRegistry, openMenu, saveStatus
 
   return {
     el,
+    /** Edit ▾ and Part ▾: iPad portrait moves them beside the inspector buttons, so the docked toolbar is one row. */
+    menus: menusGroup,
+    /** Puts Edit ▾ and Part ▾ back at the toolbar's far end. */
+    dockMenus() { el.insertBefore(menusGroup, status); },
     update,
     get state() { return last; },
     destroy() { for (const p of parts) p.destroy?.(); el.remove(); },

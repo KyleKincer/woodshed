@@ -1,3 +1,16 @@
+Woodshed 2.8.0 rebuilds Edit · Chart around the whole song.
+
+- **The whole song on one sheet.** The score used to show 16 bars at a time, with arrows to page through the rest. Now every bar is on one sheet that scrolls, headed with the song's title like printed music. The sheet keeps the cursor on screen as you move, and an edit or Undo leaves it where it was.
+- **Getting around.** A strip under the toolbar shows every section, each as wide as its share of the song. Click one to go there. While the song is stopped the cue moves too, so Space plays from that section. The strip also marks the bars on screen, your cursor and the playhead. [ and ] jump to the previous and next section, ⌘Home and ⌘End (Ctrl on Windows and Linux) go to the first and last bar, and Page Up and Page Down scroll.
+- **It follows the song.** While the song plays, the sheet scrolls a line at a time to keep the playing bar near the top. Scroll it yourself and it stops following. Press Follow in the status bar, or Play again, to catch up.
+- **Zoom.** − and + in the status bar size the notes from 60% to 200%, and each device remembers its own. Pinching on a trackpad does the same, as does scrolling with Ctrl or ⌘ held.
+- **A toolbar you can read.** The step buttons are note glyphs, quarter to 64th, in place of "1/4" and "1/16". Accent, Heavy accent, Ghost note, Flam, Drag, Roll and sticking (R, L) sit beside them. They used to be a tab away, in Properties. They change the selected notes, or the next note you write when nothing is selected.
+- **Status bar.** One line under the sheet shows the cursor's bar and beat, the piece you're writing and what the editor last said. Click the bar and beat for a Go to menu. Score · Lanes and zoom are at its right end.
+- **Kit pads show the notation.** Each pad draws its notehead where it sits on the staff. Ride is a cross on the top line, Snare a dot in the third space.
+- **Line breaks.** Edit ▾ → New line here starts a line of the chart at the cursor's bar. These are the line breaks the Stage already draws, so the editor and the Stage now break lines in the same places.
+- After you click a toolbar button, a section or a kit pad with the mouse, the keys go back to the score, so the next drum letter writes a note.
+- Undo and Redo are in the bar at the top only. The toolbar's copies, the "Bars 1–16 ‹ ›" pager and the View ▾ menu are gone.
+
 Woodshed 2.7.1 fixes Export in Woodshed for desktop.
 
 - **Export saves again.** After you chose where to save the ZIP, Export stopped with "Failed to execute 'createWritable'… not allowed". Woodshed for desktop now lets Export write the file you picked, and only that file.

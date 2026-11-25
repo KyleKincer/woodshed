@@ -38,7 +38,10 @@ export const ICONS = [
 ];
 
 /** The custom glyphs the contract requires in src/styles/icons-custom/. */
-export const CUSTOM = ['metronome', 'drum', 'minus-me', 'trainer', 'count-in'];
+export const CUSTOM = ['metronome', 'drum', 'minus-me', 'trainer', 'count-in',
+  // Edit · Chart's note toolbar (2.8): the step values, the dot, tuplets, the articulations and the rest.
+  'note-quarter', 'note-eighth', 'note-sixteenth', 'note-thirty-second', 'note-sixty-fourth', 'note-dotted', 'tuplet',
+  'accent', 'accent-heavy', 'ghost-note', 'flam', 'drag', 'roll', 'rest'];
 
 const STRIP = new Set(['width', 'height', 'stroke-width', 'class', 'xmlns']);
 

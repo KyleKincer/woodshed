@@ -19,10 +19,13 @@
 //     commands     {setDrumKeys(keys)}: re-registers the drum-letter commands after Drum keys…
 //                  (default: the app registry's, src/edit/chart/commands.js)
 //
-// The view, top to bottom: the toolbar (toolbar.js), the message line (role=status), the score or
-// lanes (the editor's surface, focus scope `edit.chart.score`), and in iPad portrait the inspector
-// buttons and the kit pad bank (kit-bank.js) docked at the bottom. Menus (menus.js) open from the
-// toolbar. Every key is a registry command (commands.js) that calls the workspace's run().
+// The view, top to bottom: the toolbar (toolbar.js) and the section navigator (navigator.js), which
+// stay at the top while the sheet scrolls under them; the sheet (the editor's surface, focus scope
+// `edit.chart.score`: the whole song engraved, or the lanes); the status bar (statusbar.js: where
+// the cursor is, the piece being written, the editor's message, Follow and zoom); and in iPad
+// portrait the toolbar, the inspector buttons and the kit pad bank (kit-bank.js) docked under it.
+// Menus (menus.js) open from the toolbar and the status bar. Every key is a registry command
+// (commands.js) that calls the workspace's run().
 
 import '../../styles/views/edit/chart.css';
 import {registry as appRegistry} from '../../app/commands.js';
@@ -40,10 +43,14 @@ import {chartImportPath} from '../chart-file.js';
 import {reservedScoreKeys, setDrumKeys as setAppDrumKeys} from './commands.js';
 import {createToolbar} from './toolbar.js';
 import {createKitBank} from './kit-bank.js';
-import {COPY, gridMenu, tupletMenu, viewMenu} from './menus.js';
+import {createNavigator} from './navigator.js';
+import {createStatusBar} from './statusbar.js';
+import {COPY, gridMenu, rollMenu, tupletMenu} from './menus.js';
 
 const PLAYING = new Set(['playing', 'counting']);
 const RESIZE_MS = 150;
+/** The phone layout of chart.css. */
+export const PHONE_QUERY = '(max-width: 599px)';
 const peek = (v) => (v && typeof v.peek === 'function' ? v.peek() : v?.value ?? v ?? null);
 
 /** The posture bar's save status for a part status (architecture §2.15 'edit'.saveStatus). */
@@ -74,6 +81,8 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
   let destroyed = false;
   let workspace = null;
   let toolbar = null;
+  let sectionNav = null;
+  let statusBar = null;
   let kitBank = null;
   let tabs = null;
   let sheet = null;
@@ -82,17 +91,25 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
   let layout = edit?.layout ? peek(edit.layout) ?? 'wide' : windowLayout();
 
   // ---- the frame's elements --------------------------------------------------------------------------------
-  const message = h('p', {class: 'chart-edit-message', role: 'status', 'aria-live': 'polite'});
   const main = h('div', {class: 'chart-edit-main'});
   const notice = h('div', {class: 'chart-edit-notice'});
   const panelButtons = h('div', {class: 'chart-edit-panels', role: 'group', 'aria-label': COPY.inspector});
   const bankHost = h('div', {class: 'chart-edit-bank'});
   const toolHost = h('div', {class: 'chart-edit-tools'});
-  // iPad portrait docks the toolbar, the inspector buttons and the kit bank at the bottom (score on top).
-  const dock = h('div', {class: 'chart-edit-dock'}, panelButtons, bankHost);
+  const navHost = h('div', {class: 'chart-edit-nav'});
+  const statusHost = h('div', {class: 'chart-edit-status'});
+  // Both stick while the sheet scrolls between them. iPad portrait docks the toolbar, the inspector buttons and
+  // the kit bank at the bottom too (score on top), under the status bar.
+  const top = h('div', {class: 'chart-edit-top'}, toolHost, navHost);
+  const dock = h('div', {class: 'chart-edit-dock'}, statusHost, panelButtons, bankHost);
   const root = h('section', {class: 'chart-edit', 'aria-label': COPY.editor, dataset: {layout}},
-    toolHost, message, notice, main, dock);
+    top, notice, main, dock);
   el.append(root);
+  // The Edit tab panel scrolls the sheet (the place's one scroller, D26); the sticky bars cover its top and bottom.
+  const scroll = {
+    el: el.closest?.('[data-scroller]') ?? el,
+    insets: () => ({top: top.offsetHeight, bottom: dock.offsetHeight}),
+  };
 
   // The inspector panels: the editor renders the tab bodies into them (slots.inspector).
   const panels = Object.fromEntries(INSPECTOR_TABS.map((tab) => [tab, h('div', {
@@ -103,7 +120,7 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
   root.append(parked);
   for (const panel of Object.values(panels)) parked.append(panel);
 
-  const say = (text) => { message.textContent = text ?? ''; };
+  const say = (text) => { statusBar?.say(text ?? ''); };
 
   // ---- part states (opening, error, read-only) -------------------------------------------------------------
   function showNotice(text, {busy = false, retry = false} = {}) {
@@ -183,7 +200,10 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
       inspectorRoot.remove();
       for (const id of INSPECTOR_TABS) { panels[id].hidden = false; parked.append(panels[id]); }
     }
-    if (layout === 'portrait') dock.prepend(toolHost); else root.prepend(toolHost);
+    if (layout === 'portrait') dock.insertBefore(toolHost, panelButtons); else top.prepend(toolHost);
+    // iPad portrait: Edit ▾ and Part ▾ sit beside Kit · Properties · Listen, so the docked toolbar stays one row.
+    // A phone's toolbar scrolls sideways and keeps them at its end (five buttons do not fit its width).
+    if (toolbar) { if (layout === 'portrait' && !phone?.matches) panelButtons.append(toolbar.menus); else toolbar.dockMenus(); }
     panelButtons.hidden = layout !== 'portrait' || !workspace;
     bankHost.hidden = layout !== 'portrait' || !workspace;
   }
@@ -230,6 +250,13 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
     for (const [tab, b] of Object.entries(sheetButtons)) b.el.setAttribute('aria-expanded', String(sheetTab === tab));
   }
 
+  // A phone (chart.css's 599 px rule): where Edit ▾ and Part ▾ go follows it.
+  const phone = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(PHONE_QUERY) : null;
+  if (phone?.addEventListener) {
+    const onPhone = () => placePanels();
+    phone.addEventListener('change', onPhone);
+    cleanup(() => phone.removeEventListener('change', onPhone));
+  }
   if (edit?.layout?.subscribe) {
     cleanup(edit.layout.subscribe((v) => setLayout(v === 'portrait' ? 'portrait' : 'wide')));
   } else if (typeof window !== 'undefined') {
@@ -241,30 +268,48 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
 
   // ---- menus ----------------------------------------------------------------------------------------------------
   let menu = null;
+  // A pointer click on the toolbar, the navigator, the status bar or the kit bank leaves the keys with the score,
+  // as in a notation program: the next drum letter writes. Keyboard activation keeps focus where it is, and a
+  // menu or a sheet takes its own (a menu opened with the pointer hands focus to the score when it closes).
+  let pointerClick = false;
+  const noteClick = (e) => { pointerClick = e.detail > 0; };
+  const refocusScore = (e) => {
+    if (e.detail <= 0 || !workspace) return;
+    const control = e.target.closest?.('button, [role=radio]');
+    if (!control || control.getAttribute('aria-haspopup')) return;
+    queueMicrotask(() => { if (!menu && !sheet) workspace?.focus(); });
+  };
+  for (const bar of [top, dock]) {
+    bar.addEventListener('click', noteClick, true);
+    bar.addEventListener('click', refocusScore);
+  }
   function openMenu(name, anchor) {
     if (!workspace) return;
+    const byPointer = pointerClick;
     menu?.close();
     const state = workspace.state();
     const run = (...args) => workspace.run(...args);
     const menus = workspace.menus();
     const items = {
-      view: () => viewMenu(state),
       tuplet: () => tupletMenu(state, run),
+      roll: () => rollMenu(state, run),
       grid: () => gridMenu(state, run),
       edit: () => menus.edit,
       part: () => menus.part,
       sections: () => menus.sections,
     }[name]?.();
     if (!items?.length) return;
-    const label = {view: COPY.viewOptions, tuplet: COPY.tuplet, grid: COPY.grid, edit: COPY.edit, part: COPY.part, sections: COPY.sections}[name];
-    menu = Menu({items, anchor, label, registry, onClose: () => { menu = null; }});
+    const label = {tuplet: COPY.tuplet, roll: COPY.roll, grid: COPY.grid, edit: COPY.edit, part: COPY.part, sections: COPY.goTo}[name];
+    menu = Menu({items, anchor, label, registry, onClose: () => { menu = null; if (byPointer) queueMicrotask(() => { if (!menu && !sheet) workspace?.focus(); }); }});
   }
 
   // ---- the workspace --------------------------------------------------------------------------------------------
   function onState(state) {
     toolbar?.update(state);
+    sectionNav?.update(state);
+    statusBar?.update(state);
     kitBank?.update(state);
-    if (state.message !== undefined && message.textContent !== state.message) say(state.message);
+    if (state.message !== undefined) say(state.message);
     if (state.inspectorTab !== lastTab) {
       const changed = lastTab !== null;
       lastTab = state.inspectorTab;
@@ -282,19 +327,25 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
       host: main,
       slots: {inspector: panels, status: null},
       part, song, engine: session.engine, songMap: session.map,
-      transport: tr, mix, drumAudio: () => notation.drumAudio, listen, drumKeys, prefs,
+      transport: tr, mix, drumAudio: () => notation.drumAudio, listen, drumKeys, prefs, scroll,
       openMap, openDrumImport, dialog, confirm,
     });
     if (destroyed) { ws.destroy(); return; }
     workspace = ws;
+    // Provided before the controls are built, so they paint enabled (no disabled flash until the registry recomputes).
+    cleanup(registry.provide('chart', () => workspace));
     toolbar = createToolbar({run: (...a) => ws.run(...a), registry, openMenu, saveStatus: !edit?.saveStatus});
     toolHost.replaceChildren(toolbar.el);
+    sectionNav = createNavigator({run: (...a) => ws.run(...a)});
+    navHost.replaceChildren(sectionNav.el);
+    statusBar = createStatusBar({registry, openMenu});
+    statusHost.replaceChildren(statusBar.el);
     kitBank = createKitBank({run: (...a) => ws.run(...a)});
     bankHost.replaceChildren(kitBank.el);
     commands?.setDrumKeys?.(drumKeys.get());
-    cleanup(registry.provide('chart', () => workspace));
     cleanup(ws.subscribe(onState));
-    if (session.frame?.subscribe) cleanup(session.frame.subscribe((f) => ws.tick(f.position)));
+    if (session.frame?.subscribe) cleanup(session.frame.subscribe((f) => { ws.tick(f.position); sectionNav?.setPlayhead(ws.where(f.position)); }));
+    cleanup(ws.onViewport((bars) => sectionNav?.setViewport(bars)));
     // The Mix sheet and the Stage share the Recorded drums switch and chart playback: redraw Listen when they change.
     if (transport.snapshot?.subscribe) {
       const mixKey = (s) => `${!!s?.mix?.tracks?.find((t) => t.name === 'drums')?.muted}|${s?.mix?.chartAudio ?? ''}`;
@@ -304,14 +355,13 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
         if (key !== last) { last = key; ws.run('refresh'); }
       }));
     }
-    const paging = prefs.get('edit.chart.paging');
-    if (ws.state().pagingModes.includes(paging)) ws.setPaging(paging);
     const bar = Number(query?.bar);
     if (Number.isInteger(bar) && bar >= 1) ws.run('goToBar', bar - 1);
     showNotice(null);
     root.dataset.state = 'ready';
     placePanels();
     onState(ws.state());
+    sectionNav.setPlayhead(ws.where(session.engine?.getPosition?.() ?? 0));
     ws.setVisible(true);
     ws.focus();
   }
@@ -359,6 +409,8 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
       void workspace?.flush?.();
       workspace?.destroy();
       toolbar?.destroy();
+      sectionNav?.destroy();
+      statusBar?.destroy();
       kitBank?.destroy();
       tabs?.destroy();
       for (const b of Object.values(sheetButtons)) b.destroy();

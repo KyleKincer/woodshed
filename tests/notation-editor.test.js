@@ -5,9 +5,12 @@ import {beforeEach,afterEach,expect,test,vi} from 'vitest';
 const views=vi.hoisted(()=>[]);
 vi.mock('../src/js/notation/score-view.js',()=>({createScoreView:(host,options={})=>{
   const stage=document.createElement('div');host.replaceChildren(stage);
-  const calls={setScore:[],setCaret:[],setSelection:[],setPlayhead:[],setLoop:[],setRange:[]};let score=null;
-  const view={host,stage,calls,ready:true,get score(){return score;},
+  const calls={setScore:[],setCaret:[],setSelection:[],setPlayhead:[],setLoop:[],setRange:[],configure:[]};let score=null;
+  const view={host,stage,calls,options,ready:true,get score(){return score;},
     setScore(next,opts={}){score=next;calls.setScore.push([next,opts]);options.onRender?.(view);},
+    // One bar a line, 100 px apart (the scrolling tests read these); configure + relayout stand in for a zoom's re-engraving.
+    configure(next){calls.configure.push(next);return true;},relayout(){options.onRender?.(view);},
+    barsBetween(y0,y1){const n=score?.timeline.measures.length??0,on=[];for(let i=0;i<n;i++){const b=view.barBounds(i);if(b.lineTop+b.lineHeight>y0&&b.lineTop<y1)on.push(i);}return on.length?{first:on[0],last:on.at(-1)}:null;},
     setOptions(){},setScale(){},setBarsPerRow(){},setBarMarks(){},noteBoxes:()=>[],barBounds:i=>({x:0,y:i*100,w:200,h:100,lineTop:0,lineHeight:80}),barAt:()=>0,rendered:()=>true,destroy(){},
     pointer:(kind,at,event={})=>options.onPointer({kind,at,event:{button:0,pointerId:1,pointerType:'mouse',clientX:10,clientY:10,preventDefault(){},...event}})};
   for(const name of ['setCaret','setSelection','setPlayhead','setLoop','setRange'])view[name]=value=>calls[name].push(value);
@@ -27,7 +30,7 @@ import {emptyScore,fraction} from '../shared/notation.ts';
 let workspace,part,host,engine,persistence,registry,stopDispatch,offChart,slots,prefsData;
 const metronome={beats:[],sectionAt:()=>({bpm:120,beatsPerBar:4,unit:4})};
 const memoryPrefs=()=>({get:path=>path.split('.').reduce((o,k)=>o?.[k],prefsData),set(path,value){const keys=path.split('.');let o=prefsData;for(const k of keys.slice(0,-1))o=o[k]??={};o[keys.at(-1)]=value;}});
-beforeEach(()=>{views.length=0;prefsData={edit:{chart:{view:'score',paging:'pages',keys:{}}}};document.body.innerHTML='<main><section class="notation-workspace"></section></main>';host=document.querySelector('section');
+beforeEach(()=>{views.length=0;prefsData={edit:{chart:{view:'score',zoom:1,keys:{}}}};document.body.innerHTML='<main><section class="notation-workspace"></section></main>';host=document.querySelector('section');
   slots={inspector:{kit:document.createElement('div'),properties:document.createElement('div'),listen:document.createElement('div')},status:document.createElement('p')};
   for(const el of [...Object.values(slots.inspector),slots.status])document.body.append(el);
   engine={duration:8,playing:false,ctx:{currentTime:0},tracks:[],loop:{enabled:false},seek:vi.fn(),getPosition:()=>0,setLoop:vi.fn(),toggleMute:vi.fn()};
@@ -184,4 +187,129 @@ test('importScore with replace swaps a written part in one undo step',async()=>{
   part.importScore(next,{replace:true});
   expect(hits().map(h=>h.id)).toEqual(['second']);expect(part.stats).toEqual({notes:1,reviewed:1});
   key('z',{ctrlKey:true});expect(hits().map(h=>h.id)).toEqual(['first']);
+});
+
+
+// ---- the whole song on one scrolling sheet (2.8) --------------------------------------------------------------
+// A window of 600 px over the fake view's lines (one bar a line, 100 px apart): sticky bars cover its top 60 px
+// and bottom 40 px, and the sheet starts 100 px down the scroller's content.
+function sheet(){
+  const el=document.createElement('div');document.body.append(el);
+  let top=0;
+  Object.defineProperties(el,{clientHeight:{value:600},scrollHeight:{value:6000},scrollTop:{get:()=>top,set:v=>{top=v;}}});
+  el.getBoundingClientRect=()=>({top:0,left:0,width:800,height:600,bottom:600,right:800});
+  el.scrollTo=({top:t,behavior})=>{top=t;el.scrolls.push(behavior);el.dispatchEvent(new Event('scroll'));};
+  el.scrolls=[];
+  const lines=()=>{view().barBounds=i=>({x:0,y:i*100,w:200,h:100,lineTop:i*100+30,lineHeight:40});view().stage.getBoundingClientRect=()=>({top:100-top,left:0,width:800,height:6000,bottom:6100-top,right:800});};
+  return {el,lines,scroll:{el,insets:()=>({top:60,bottom:40})}};
+}
+const openSheet=async()=>{const s=sheet();await open(emptyScore(64),{scroll:s.scroll});s.lines();return s;};
+
+test('the score is the whole song in one engraving, with the part’s own line breaks',async()=>{
+  await open(emptyScore(64));
+  const [score,opts]=view().calls.setScore.at(-1);
+  expect(score.timeline.measures.length).toBe(32);
+  expect(opts).toEqual({lineBreaks:true});
+  expect(workspace.state()).toMatchObject({total:32,cursorBar:0,zoom:1});
+  expect(workspace.state().range).toBeUndefined();
+});
+
+test('a jump puts the bar’s line at the top of the window; the arrows scroll only when the caret leaves it',async()=>{
+  const s=await openSheet();
+  run('goToBar',20);
+  expect(s.el.scrollTop).toBe(2000);
+  expect(workspace.visibleBars()).toEqual({first:19,last:24});   // a sliver of bar 20's staff shows above the lead
+  // Bar 22 is on screen: stepping to it scrolls nothing.
+  for(let i=0;i<16;i++)key('ArrowRight');
+  expect(workspace.state().cursorBar).toBe(22);
+  expect(s.el.scrollTop).toBe(2000);
+  // Bar 26 is below the window: its line comes just into view.
+  for(let i=0;i<32;i++)key('ArrowRight');
+  expect(workspace.state().cursorBar).toBe(26);
+  expect(s.el.scrollTop).toBe(2252);   // the line (2600–2700) plus 12 px, against a window ending 2460
+  expect(workspace.visibleBars().last).toBe(26);
+  // And back above it.
+  run('goToBar',2);
+  expect(s.el.scrollTop).toBe(200);
+});
+
+test('the bars on screen are reported as the sheet scrolls (the navigator’s window)',async()=>{
+  const s=await openSheet();
+  const seen=[];workspace.onViewport(bars=>seen.push(bars));
+  s.el.scrollTop=1000;s.el.dispatchEvent(new Event('scroll'));
+  await new Promise(r=>requestAnimationFrame(r));
+  expect(seen.at(-1)).toEqual({first:9,last:14});
+  expect(workspace.where(5)).toBeCloseTo(2.5,6);   // 5 s at 120 bpm: half way through bar 3
+});
+
+test('playback is followed line by line; a scroll of your own pauses Follow and Play turns it back on',async()=>{
+  const s=await openSheet();
+  engine.playing=true;
+  workspace.tick(0);
+  expect(workspace.state()).toMatchObject({playing:true,follow:true});
+  expect(s.el.scrollTop).toBe(0);
+  // Bars 1 to 3 sit in the top part of the window: nothing moves.
+  workspace.tick(4.1);
+  expect(s.el.scrollTop).toBe(0);
+  // Bar 5's line is past it: that line comes to the top, smoothly.
+  workspace.tick(8.1);
+  expect(s.el.scrollTop).toBe(400);
+  expect(s.el.scrolls.at(-1)).toBe('smooth');
+  // A wheel on the sheet while the song plays lets go.
+  s.el.dispatchEvent(new WheelEvent('wheel',{deltaY:120}));
+  expect(workspace.state().follow).toBe(false);
+  s.el.scrollTop=0;
+  workspace.tick(16.1);
+  expect(s.el.scrollTop).toBe(0);
+  // Follow (the status bar's button) catches up with where the song is.
+  engine.getPosition=()=>16.1;
+  run('follow');
+  expect(workspace.state().follow).toBe(true);
+  expect(s.el.scrollTop).toBe(800);
+  // Stopping and playing again follows again.
+  run('follow');
+  engine.playing=false;workspace.tick(16.2);
+  expect(workspace.state()).toMatchObject({playing:false,follow:false});
+  engine.playing=true;workspace.tick(16.3);
+  expect(workspace.state().follow).toBe(true);
+});
+
+test('a zoom re-engraves once, is kept for the device, and holds the first bar on screen where it was',async()=>{
+  const s=await openSheet();
+  run('goToBar',10);
+  s.el.scrollTop=1030;s.el.dispatchEvent(new Event('scroll'));
+  run('zoom-in');
+  expect(workspace.state()).toMatchObject({zoom:1.1,canZoomIn:true,canZoomOut:true});
+  expect(prefsData.edit.chart.zoom).toBe(1.1);
+  expect(view().calls.configure.at(-1)).toEqual({scale:1.1,fonts:{barNumber:12,marker:15}});
+  expect(s.el.scrollTop).toBe(1030);
+  run('setZoom',5);
+  expect(workspace.state()).toMatchObject({zoom:2,canZoomIn:false});
+  run('zoom-reset');
+  expect(workspace.state().zoom).toBe(1);
+});
+
+test('an edit re-engraves the whole part and leaves the sheet where it was',async()=>{
+  const s=await openSheet();
+  run('goToBar',12);
+  const engravings=view().calls.setScore.length;
+  key('s');
+  expect(view().calls.setScore.length).toBe(engravings+1);
+  expect(s.el.scrollTop).toBe(1200);
+  key('z',{ctrlKey:true});
+  expect(s.el.scrollTop).toBe(1200);
+});
+
+test('New line here starts a line at the cursor’s bar and is undone like any edit',async()=>{
+  await open(emptyScore(64));
+  run('line-break');
+  expect(workspace.state().lineBreak).toBe(true);          // bar 1 always starts a line; nothing is stored for it
+  expect(persistence.set).not.toHaveBeenCalled();
+  run('goToBar',4);run('line-break');
+  expect(saved().lineBreaks).toEqual([saved().timeline.measures[4].id]);
+  expect(workspace.state()).toMatchObject({lineBreak:true,lineBreaks:1});
+  run('undo');
+  expect(workspace.state().lineBreaks).toBe(0);
+  run('redo');run('clear-line-breaks');
+  expect(saved().lineBreaks).toBeUndefined();
 });

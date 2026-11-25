@@ -419,6 +419,10 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, stretch = 1, 
     setSelection(ids) { selection = ids; drawOverlay(); },
     setCaret(value) { caret = value; drawOverlay(); },
     setRange(bars) { focusBars = bars; drawOverlay(); },
+    /** The caret, the selection and the bar range together, in one overlay pass (the editor sets all three on every change). */
+    setMarks({caret: nextCaret = caret, selection: nextSelection = selection, range = focusBars} = {}) {
+      caret = nextCaret; selection = nextSelection; focusBars = range; drawOverlay();
+    },
     setBarMarks(marks) { barMarks = marks; drawOverlay(); },
     locate,
     /** Notehead boxes in stage coordinates, for marquee selection. */
@@ -426,6 +430,18 @@ export function createScoreView(host, {scale = 1, barsPerRow = -1, stretch = 1, 
     /** Bar bounds in stage coordinates, for scrolling. */
     barBounds(index) { const g = geometry.get(index); return g ? {x: g.bar.x, y: g.system.y, w: g.bar.w, h: g.system.h, lineTop: g.lineTop, lineHeight: g.lineHeight} : null; },
     positionX(q) { const at = xAt(q); return at ? {x: at.x, ...this.barBounds(at.g.index)} : null; },
+    /** The first and last bars whose staff shows between y0 and y1 (stage coordinates), or null when none does. */
+    barsBetween(y0, y1) {
+      let first = null, last = null;
+      for (const g of geometry.values()) {
+        // The staff itself: the white space above and below a line does not make its bars "on screen".
+        const top = g.lineTop, bottom = g.lineTop + g.lineHeight;
+        if (bottom <= y0 || top >= y1) continue;
+        if (first === null || g.index < first) first = g.index;
+        if (last === null || g.index > last) last = g.index;
+      }
+      return first === null ? null : {first, last};
+    },
     barAt: barIndexAt,
     rendered(index) { return geometry.has(index); },
     /** Number of bars with geometry in the current engraving. */

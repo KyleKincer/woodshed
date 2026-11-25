@@ -670,6 +670,8 @@ Lines 10-16 (store, SCALES, defaultScale), 25-26 (prefs reads), 29-38 (toolbar m
 
 ## 12. Proposed Edit · Chart re-frame for spec §5.2 (minimal changes)
 
+> 2.8 note: this section describes the 2.0 re-frame. The 16-bar pages, the toolbar's pager, "Writing:" label and Undo / Redo, and the View ▾ menu are gone; see the revision note in spec §5.2 and D48 in architecture.md.
+
 **Principle:** keep §8.3 internals byte-for-byte where possible. Move every §8.4 frame piece out, behind a small interface. The internals already render through `renderChrome()` (131-150) into fixed selectors, so the least-churn cut is **slots**. The frame owns the elements; the editor renders internal content into them, and returns menu descriptors and state for the frame to draw with primitives.
 
 ### 12.1 Factory

@@ -1,0 +1,8 @@
+<!-- Woodshed custom glyph: roll (slashes through the stem). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ws-glyph ws-glyph-roll">
+  <ellipse cx="9" cy="18" rx="3.3" ry="2.4" transform="rotate(-22 9 18)" fill="currentColor" />
+  <path d="M12.2 17.2V3" />
+  <path d="M8.7 7.3 15.7 4.7" />
+  <path d="M8.7 10.6 15.7 8" />
+  <path d="M8.7 13.9 15.7 11.3" />
+</svg>

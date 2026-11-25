@@ -14,10 +14,11 @@ vi.mock('../src/js/notation/score-view.js', () => ({createScoreView: (host, opti
   const stage = document.createElement('div');
   host.replaceChildren(stage);
   let score = null;
-  const view = {host, stage, options, ready: true, ranges: [], get score() { return score; },
-    setScore(next, opts = {}) { score = next; view.ranges.push(opts.range); options.onRender?.(view); },
+  const view = {host, stage, options, ready: true, ranges: [], scoreOptions: [], configured: [], get score() { return score; },
+    setScore(next, opts = {}) { score = next; view.ranges.push(opts.range); view.scoreOptions.push(opts); options.onRender?.(view); },
     setOptions() {}, setScale() {}, setBarsPerRow() {}, setBarMarks() {}, setCaret() {}, setSelection() {}, setPlayhead() {}, setLoop() {},
-    setRange() {}, noteBoxes: () => [], barBounds: () => null, barAt: () => 0, rendered: () => true, destroy() {}};
+    setRange() {}, setMarks() {}, configure(next) { view.configured.push(next); return true; }, relayout() { options.onRender?.(view); },
+    noteBoxes: () => [], barBounds: () => null, barsBetween: () => null, barAt: () => 0, rendered: () => true, destroy() {}};
   views.push(view);
   return view;
 }}));
@@ -31,10 +32,12 @@ import {
   CHART_COMMAND_IDS, COPY as COMMAND_COPY, ECS, EC, PIECE_IDS, STEP_IDS, STEP_VALUE, defineChartCommands, drumKeyFor, drumKeyMap,
   keyStringLetter, letterToKeyString, reservedScoreKeys, validateDrumKeys,
 } from '../src/edit/chart/commands.js';
-import {COPY, CONTROLS, editMenu, gridMenu, partMenu, sectionsMenu, tupletMenu, viewMenu} from '../src/edit/chart/menus.js';
-import {STEP_BUTTONS, createToolbar} from '../src/edit/chart/toolbar.js';
+import {COPY, CONTROLS, STATUS_CONTROLS, editMenu, gridMenu, partMenu, rollMenu, sectionsMenu, tupletMenu} from '../src/edit/chart/menus.js';
+import {ARTICULATIONS, STEP_BUTTONS, STEP_ICONS, createToolbar} from '../src/edit/chart/toolbar.js';
+import {createNavigator} from '../src/edit/chart/navigator.js';
+import {createStatusBar} from '../src/edit/chart/statusbar.js';
 import {BANK_ROWS, PAD_LONG_PRESS_MS, createKitBank} from '../src/edit/chart/kit-bank.js';
-import {createNotationWorkspace} from '../src/js/notation/editor.js';
+import {ZOOM_STEPS, createNotationWorkspace, padGlyph, padHead, scoreFonts, sectionsOf, snapZoom} from '../src/js/notation/editor.js';
 import {openPart} from '../src/js/notation/part.js';
 import {restoreDomShims} from './helpers/dom.js';
 
@@ -76,9 +79,11 @@ function press(k, extra = {}, target = document.activeElement ?? document.body) 
 const TABLE = [
   ['chart.undo', ['Mod+KeyZ'], [EC, ECS]],
   ['chart.redo', ['Mod+Shift+KeyZ', 'Mod+KeyY'], [EC, ECS]],
-  ['chart.pagePrev', ['[', 'PageUp'], [EC]],
-  ['chart.pageNext', [']', 'PageDown'], [EC]],
+  ['chart.sectionPrev', ['['], [EC, ECS]],
+  ['chart.sectionNext', [']'], [EC, ECS]],
   ['chart.loopSelection', ['KeyL'], [EC]],
+  ['chart.firstBar', ['Mod+Home'], [ECS]],
+  ['chart.lastBar', ['Mod+End'], [ECS]],
   ['chart.write', ['KeyN'], [ECS]],
   ['chart.cursorBack', ['ArrowLeft'], [ECS]],
   ['chart.cursorFwd', ['ArrowRight'], [ECS]],
@@ -108,7 +113,9 @@ const TABLE = [
 ];
 const MENU_ONLY = ['chart.moveDialog', 'chart.tupletDialog', 'chart.review', 'chart.barMeter', 'chart.align', 'chart.export', 'chart.print',
   'chart.openPart', 'chart.importDrums', 'chart.drumKeys', 'chart.noteList', 'chart.allLanes', 'chart.shortcuts', 'chart.view',
-  'chart.partLayout', 'chart.listen', 'chart.playCursor', 'chart.fit', 'chart.follow', 'chart.retrySave', 'chart.resolve', 'chart.paging'];
+  'chart.partLayout', 'chart.listen', 'chart.playCursor', 'chart.fit', 'chart.follow', 'chart.retrySave', 'chart.resolve',
+  'chart.zoomIn', 'chart.zoomOut', 'chart.zoomReset', 'chart.lineBreak', 'chart.clearLineBreaks',
+  'chart.flam', 'chart.drag', 'chart.stickingRight', 'chart.stickingLeft'];
 
 describe('commands (architecture §3.4)', () => {
   let registry, handle;
@@ -249,12 +256,38 @@ describe('the score surface is a stop scope', () => {
     expect(hits()).toEqual([]);
   });
 
-  test('PageUp and PageDown pass through to the posture: previous / next 16 bars', () => {
-    expect(workspace.state().range.first).toBe(0);
-    press('PageDown');
-    expect(workspace.state().range.first).toBe(16);
-    press('PageUp');
-    expect(workspace.state().range.first).toBe(0);
+  test('PageUp and PageDown are the browser’s: they scroll the sheet, and nothing here takes them', () => {
+    const before = workspace.state().position;
+    for (const k of ['PageDown', 'PageUp']) {
+      const e = press(k);
+      expect(e.defaultPrevented, k).toBe(false);
+    }
+    expect(workspace.state().position).toBe(before);
+    expect(outer).toEqual([]);
+    expect(registry.bindingsFor(EC).has('PageDown') || registry.bindingsFor(ECS).has('PageDown')).toBe(false);
+  });
+
+  test('[ and ] jump by section with the score focused, and ⌘Home / ⌘End go to the first and last bar', () => {
+    part.editor.transact((s) => { s.timeline.measures[4].label = 'Verse'; s.timeline.measures[12].label = 'Chorus'; });
+    part.commit();
+    const bar = () => workspace.state().cursorBar;
+    expect(workspace.state().sections.map((s) => [s.label, s.bar, s.bars])).toEqual([['', 0, 4], ['Verse', 4, 8], ['Chorus', 12, workspace.state().total - 12]]);
+    press(']');
+    expect(bar()).toBe(4);
+    press(']');
+    expect(bar()).toBe(12);
+    press(']');
+    expect(bar()).toBe(12);                      // no section after the last
+    press('ArrowRight');                         // inside the section: [ goes to its start first
+    press('[');
+    expect(bar()).toBe(12);
+    expect(workspace.state().position).toBe('Bar 13 · Beat 1.00');
+    press('[');
+    expect(bar()).toBe(4);
+    press('End', {ctrlKey: true});
+    expect(bar()).toBe(workspace.state().total - 1);
+    press('Home', {ctrlKey: true});
+    expect(bar()).toBe(0);
     expect(outer).toEqual([]);
   });
 
@@ -347,10 +380,14 @@ describe('E passes through when no drum letter is E', () => {
 // Toolbar, menus and the kit bank
 
 const STATE = {
-  ready: true, layout: 'score', paging: 'pages', pagingModes: ['pages'], inspectorTab: 'kit',
+  ready: true, layout: 'score', inspectorTab: 'kit',
   step: {value: 8, dotted: false, tuplet: 1}, grid: {value: 16, triplet: false},
   piece: {id: 'snare', name: 'Snare', short: 'SD', key: 'KeyS'}, selectedCount: 0, canClear: false,
-  range: {first: 16, last: 31, page: 1, pages: 4, total: 64}, barLabel: 'Bar 17', barRange: [16, 16], position: 'Bar 17 · Beat 1.00',
+  total: 64, cursorBar: 16, section: 2, sections: [{id: 'bar-0', label: 'Intro', bar: 0, bars: 8}, {id: 'bar-8', label: 'Verse', bar: 8, bars: 8},
+    {id: 'bar-16', label: 'Chorus', bar: 16, bars: 48}],
+  zoom: 1, canZoomIn: true, canZoomOut: true, lineBreak: false, lineBreaks: 0, hint: 'Double-click the staff or press a drum key to add',
+  selectionLabel: '', playing: false,
+  barLabel: 'Bar 17', barRange: [16, 16], position: 'Bar 17 · Beat 1.00',
   canUndo: true, canRedo: false, status: 'saved', statusText: 'Saved', recovery: null, message: '',
   listenMode: 'recording', listen: {mode: 'recording', level: .65}, recordedDrums: {available: true, out: false},
   audition: false, allLanes: false, showList: false, follow: true, partLayout: 'combined',
@@ -373,25 +410,62 @@ describe('toolbar (spec §5.2)', () => {
   test.each(CONTROLS.map((c) => [c.role, c.name, c.command ?? null]))('%s "%s" (%s)', (role, name, command) => {
     const matches = byRole(toolbar.el, role).filter((el) => nameOf(el) === name);
     expect(matches.length, `${role} ${name}`).toBeGreaterThanOrEqual(1);
-    if (command && role === 'button') expect(matches.some((el) => el.getAttribute('aria-keyshortcuts') !== null || command === 'chart.fit')).toBe(true);
+    // A button whose command has a key says so (aria-keyshortcuts); Flam, Drag, the stickings and Fit have none.
+    if (command && role === 'button') expect(matches.some((el) => el.getAttribute('aria-keyshortcuts') !== null)).toBe(registry.get(command).keys.length > 0);
   });
 
-  test('the step buttons read ♩ 1/4 · ♪ 1/8 · 1/16 · 1/32 · 1/64 with key-cap hints 5·4·3·2·1', () => {
+  test('the toolbar holds what the table lists, in its order, and nothing else', () => {
+    const controls = [...toolbar.el.querySelectorAll('button, [role=radio]')].filter((el) => !el.closest('.chart-tool-save'));
+    expect(controls.map(nameOf)).toEqual(CONTROLS.filter((c) => c.role !== 'radiogroup').map((c) => c.name));
+    // Undo and Redo are the posture bar's, the view switch and zoom the status bar's, sections the navigator's.
+    for (const gone of ['.chart-tool-history', '.chart-tool-range', '.chart-tool-writing', '.chart-tool-view', '[data-menu=view]', '[data-menu=sections]']) {
+      expect(toolbar.el.querySelector(gone), gone).toBeNull();
+    }
+  });
+
+  test('the step buttons are the note values as glyphs, quarter to 64th, with key-cap hints 5·4·3·2·1', () => {
     const steps = [...toolbar.el.querySelectorAll('.chart-tool-step')];
-    expect(steps.map((b) => b.querySelector('.ui-button-label').textContent)).toEqual(['♩ 1/4', '♪ 1/8', '1/16', '1/32', '1/64']);
+    expect(steps.map((b) => b.querySelector('svg.ui-icon').dataset.icon)).toEqual(['note-quarter', 'note-eighth', 'note-sixteenth', 'note-thirty-second', 'note-sixty-fourth']);
+    expect(STEP_BUTTONS.map((s) => STEP_ICONS[s.value])).toEqual(steps.map((b) => b.querySelector('svg.ui-icon').dataset.icon));
+    expect(steps.map(nameOf)).toEqual(['Quarter step', 'Eighth step', 'Sixteenth step', '32nd step', '64th step']);
     expect(steps.map((b) => b.querySelector('kbd[data-hint]')?.dataset.keys)).toEqual(['Digit5', 'Digit4', 'Digit3', 'Digit2', 'Digit1']);
     expect(steps.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false', 'false', 'false']);
     steps[0].click();
     expect(chart.run).toHaveBeenCalledWith('step', 5);
   });
 
-  test('Writing: Snare (S), the range "Bars 17–32", Undo and Redo with text and names', () => {
-    expect(toolbar.el.querySelector('.chart-tool-writing').textContent.replace(/\s+/g, ' ').trim()).toBe('Writing: Snare S');
-    expect(toolbar.el.querySelector('.chart-tool-range-text').textContent).toBe('Bars 17–32');
-    const [undo, redo] = toolbar.el.querySelectorAll('.chart-tool-history button');
-    expect([nameOf(undo), nameOf(redo)]).toEqual(['Undo', 'Redo']);
-    expect(undo.querySelector('.ui-button-label').textContent).toBe('Undo');
-    expect(undo.getAttribute('aria-keyshortcuts')).toBe('Control+Z');
+  test('the articulations show the selected notes (or the next note) and toggle through their commands', async () => {
+    const buttons = () => Object.fromEntries(ARTICULATIONS.map(([key]) => [key, toolbar.el.querySelector(`[data-expression=${key}]`)]));
+    expect(Object.values(buttons()).map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'false', 'false', 'false']);
+    expect(ARTICULATIONS.map(([, , icon]) => icon)).toEqual(Object.values(buttons()).map((b) => b.querySelector('svg.ui-icon').dataset.icon));
+    chart.state = () => ({...STATE, expression: {...STATE.expression, accent: true, flam: true, sticking: 'L', roll: 2}});
+    registry.invalidate();
+    toolbar.update(chart.state());
+    await vi.waitFor(() => expect(buttons().accent.getAttribute('aria-pressed')).toBe('true'));   // the registry recomputes on a timer
+    expect(Object.entries(buttons()).filter(([, b]) => b.getAttribute('aria-pressed') === 'true').map(([key]) => key)).toEqual(['accent', 'flam']);
+    expect(toolbar.el.querySelector('[data-sticking=L]').getAttribute('aria-pressed')).toBe('true');
+    expect(toolbar.el.querySelector('[data-sticking=R]').getAttribute('aria-pressed')).toBe('false');
+    const roll = toolbar.el.querySelector('[data-menu=roll]');
+    expect(roll.hasAttribute('data-active')).toBe(true);
+    expect(roll.querySelector('.ui-button-label').textContent).toBe('×2');
+    expect(nameOf(roll)).toBe('Roll');
+    buttons().ghost.click();
+    expect(chart.run).toHaveBeenLastCalledWith('ghost');
+    buttons().drag.click();
+    expect(chart.run).toHaveBeenLastCalledWith('drag');
+    toolbar.el.querySelector('[data-sticking=R]').click();
+    expect(chart.run).toHaveBeenLastCalledWith('sticking', 'R');
+  });
+
+  test('Tuplet ▾ is its glyph while straight and names the tuplet once one is chosen', () => {
+    const tuplet = toolbar.el.querySelector('[data-menu=tuplet]');
+    expect(tuplet.querySelector('.ui-button-label').textContent).toBe('');
+    expect(tuplet.hasAttribute('data-active')).toBe(false);
+    expect(nameOf(tuplet)).toBe('Tuplet');
+    toolbar.update({...STATE, step: {value: 8, dotted: false, tuplet: 3}});
+    expect(tuplet.querySelector('.ui-button-label').textContent).toBe('Triplet');
+    expect(tuplet.hasAttribute('data-active')).toBe(true);
+    expect(nameOf(tuplet)).toBe('Tuplet');
   });
 
   test('Grid ▾ and Fit show in Lanes only', () => {
@@ -420,11 +494,168 @@ describe('toolbar (spec §5.2)', () => {
   test('menu buttons open their menus under themselves', () => {
     const openMenu = vi.fn();
     const t = createToolbar({run: chart.run, registry, openMenu});
-    for (const name of ['view', 'tuplet', 'sections', 'edit', 'part', 'grid']) {
+    for (const name of ['tuplet', 'roll', 'edit', 'part', 'grid']) {
       t.el.querySelector(`[data-menu=${name}]`).click();
       expect(openMenu).toHaveBeenLastCalledWith(name, t.el.querySelector(`[data-menu=${name}]`));
     }
     t.destroy();
+  });
+});
+
+describe('status bar', () => {
+  let registry, chart, bar, openMenu;
+  beforeEach(() => {
+    registry = createRegistry();
+    defineChartCommands({registry});
+    chart = {state: () => STATE, run: vi.fn()};
+    registry.provide('chart', () => chart);
+    openMenu = vi.fn();
+    bar = createStatusBar({registry, openMenu});
+    document.body.append(bar.el);
+    bar.update(STATE);
+  });
+  afterEach(() => { bar.destroy(); document.body.replaceChildren(); restoreDomShims(); });
+
+  test('its controls, left to right: Go to, Follow, Score · Lanes, Zoom out, the percentage, Zoom in', () => {
+    const controls = [...bar.el.querySelectorAll('button, [role=radio]')];
+    // The position's name holds its visible text ("Go to: Bar 17 · Beat 1.00").
+    expect(controls.map((el) => nameOf(el).replace(/^Go to: .*/, 'Go to'))).toEqual(STATUS_CONTROLS.filter((c) => c.role !== 'radiogroup').map((c) => c.name));
+    expect(nameOf(bar.el.querySelector('.chart-status-position'))).toBe('Go to: Bar 17 · Beat 1.00');
+    expect(bar.el.querySelector('[role=radiogroup]').getAttribute('aria-label')).toBe('View');
+  });
+
+  test('the position opens the Go to menu; the piece shows its key', () => {
+    const position = bar.el.querySelector('.chart-status-position');
+    expect(position.querySelector('.ui-button-label').textContent).toBe('Bar 17 · Beat 1.00');
+    position.click();
+    expect(openMenu).toHaveBeenCalledWith('sections', position);
+    expect(bar.el.querySelector('.chart-status-piece').textContent.replace(/\s+/g, ' ').trim()).toBe('Writing Snare S');
+    bar.update({...STATE, piece: {id: 'crashChoke', name: 'Crash (choke)', short: 'Crash ✕', key: ''}});
+    expect(bar.el.querySelector('.chart-status-piece kbd').hidden).toBe(true);
+  });
+
+  test('the message: what the editor said, else the selection, else the hint (quieter)', () => {
+    const message = bar.el.querySelector('.chart-status-message');
+    expect(message.getAttribute('aria-live')).toBe('polite');
+    expect([message.textContent, message.hasAttribute('data-hint')]).toEqual([STATE.hint, true]);
+    bar.update({...STATE, selectionLabel: '3 notes selected'});
+    expect([message.textContent, message.hasAttribute('data-hint')]).toEqual(['3 notes selected', false]);
+    bar.say('Looping bars 5–8.');
+    expect([message.textContent, message.hasAttribute('data-hint')]).toEqual(['Looping bars 5–8.', false]);
+    bar.say('');
+    expect(message.textContent).toBe('3 notes selected');
+  });
+
+  test('Follow shows only while the song plays; the view switch runs chart.view; zoom shows in Score', () => {
+    const follow = bar.el.querySelector('.chart-status-follow');
+    expect(follow.hidden).toBe(true);
+    bar.update({...STATE, playing: true, follow: false});
+    expect(follow.hidden).toBe(false);
+    follow.click();
+    expect(chart.run).toHaveBeenLastCalledWith('follow');
+    bar.el.querySelector('[role=radio]:not([aria-checked=true])').click();
+    expect(chart.run).toHaveBeenLastCalledWith('view', 'lanes');
+    const zoom = bar.el.querySelector('.chart-status-zoom');
+    expect(zoom.hidden).toBe(false);
+    bar.update({...STATE, zoom: 1.25});
+    expect(zoom.querySelector('.chart-status-zoom-value .ui-button-label').textContent).toBe('125%');
+    expect(nameOf(zoom.querySelector('.chart-status-zoom-value'))).toBe('Zoom to 100%, now 125%');
+    bar.update({...STATE, layout: 'lanes'});
+    expect(zoom.hidden).toBe(true);
+  });
+});
+
+describe('section navigator', () => {
+  afterEach(() => { document.body.replaceChildren(); restoreDomShims(); });
+
+  test('one segment per section, as wide as its share of the bars; a click goes to its first bar and moves the cue', () => {
+    const run = vi.fn();
+    const nav = createNavigator({run});
+    document.body.append(nav.el);
+    nav.update(STATE);
+    const sections = [...nav.el.querySelectorAll('.chart-nav-section')];
+    expect(nav.el.getAttribute('aria-label')).toBe('Sections');
+    expect(sections.map((b) => [b.querySelector('.chart-nav-name').textContent, b.querySelector('.chart-nav-bar').textContent, b.style.flexGrow]))
+      .toEqual([['Intro', '1', '8'], ['Verse', '9', '8'], ['Chorus', '17', '48']]);
+    expect(sections.map(nameOf)).toEqual(['Intro, bars 1 to 8', 'Verse, bars 9 to 16', 'Chorus, bars 17 to 64']);
+    expect(sections.map((b) => b.getAttribute('aria-current'))).toEqual([null, null, 'true']);
+    sections[1].click();
+    expect(run).toHaveBeenLastCalledWith('goToBar', 8, {seek: true});
+    nav.update({...STATE, cursorBar: 3, section: 0});
+    expect(sections.map((b) => b.getAttribute('aria-current'))).toEqual(['true', null, null]);
+    nav.destroy();
+  });
+
+  test('a song with no section names is one segment, "Bars 1–64"; an unnamed opening before named sections is "Start"', () => {
+    const nav = createNavigator({run: vi.fn()});
+    document.body.append(nav.el);
+    nav.update({...STATE, sections: [{id: 'bar-0', label: '', bar: 0, bars: 64}], section: 0});
+    expect([...nav.el.querySelectorAll('.chart-nav-section')].map((b) => b.textContent)).toEqual(['Bars 1–64']);
+    nav.update({...STATE, sections: [{id: 'bar-0', label: '', bar: 0, bars: 4}, {id: 'bar-4', label: 'Verse', bar: 4, bars: 60}], section: 0});
+    expect([...nav.el.querySelectorAll('.chart-nav-name')].map((b) => b.textContent)).toEqual(['Start', 'Verse']);
+    nav.update({...STATE, total: 0, sections: []});
+    expect(nav.el.hidden).toBe(true);
+    nav.destroy();
+  });
+
+  test('the marks: the bars on screen, the cursor and the playhead', () => {
+    const nav = createNavigator({run: vi.fn()});
+    document.body.append(nav.el);
+    nav.update(STATE);
+    const mark = (name) => nav.el.querySelector(`.chart-nav-${name}`);
+    expect(mark('window').hidden).toBe(true);
+    expect(mark('cursor').hidden).toBe(false);
+    expect(mark('now').hidden).toBe(true);
+    nav.setViewport({first: 8, last: 19});
+    expect(mark('window').hidden).toBe(false);
+    nav.setViewport({first: 0, last: 63});      // the whole song on screen needs no window
+    expect(mark('window').hidden).toBe(true);
+    nav.setViewport(null);
+    expect(mark('window').hidden).toBe(true);
+    nav.setPlayhead(12.5);
+    expect(mark('now').hidden).toBe(false);
+    nav.setPlayhead(null);
+    expect(mark('now').hidden).toBe(true);
+    nav.destroy();
+  });
+});
+
+describe('the sheet’s helpers (src/js/notation/editor.js)', () => {
+  test('sectionsOf: the first bar and every labelled bar start a section', () => {
+    const score = emptyScore(32);
+    const m = score.timeline.measures;
+    expect(sectionsOf(score.timeline)).toEqual([{id: 'bar-0', label: '', bar: 0, bars: m.length}]);
+    m[0].label = 'Intro'; m[4].label = 'Verse';
+    expect(sectionsOf(score.timeline)).toEqual([{id: 'bar-0', label: 'Intro', bar: 0, bars: 4}, {id: 'bar-4', label: 'Verse', bar: 4, bars: m.length - 4}]);
+    expect(sectionsOf(null)).toEqual([]);
+  });
+
+  test('zoom steps run 60% to 200% through 100%; a stored value snaps to the nearest', () => {
+    expect(ZOOM_STEPS[0]).toBe(0.6);
+    expect(ZOOM_STEPS.at(-1)).toBe(2);
+    expect(ZOOM_STEPS).toContain(1);
+    expect([snapZoom(1.3), snapZoom(0.1), snapZoom(9), snapZoom('x'), snapZoom(undefined)]).toEqual([1.25, 0.6, 2, 1, 1]);
+  });
+
+  test('scoreFonts: bar numbers and section names keep 12 px and 15 px on screen below 100%, and grow above it', () => {
+    expect(scoreFonts(1)).toEqual({barNumber: 12, marker: 15});
+    expect(scoreFonts(2)).toEqual({barNumber: 12, marker: 15});
+    expect(scoreFonts(0.6)).toEqual({barNumber: 20, marker: 25});
+  });
+
+  test('a pad’s picture is its notehead on the staff: crosses for cymbals, a diamond bell, a triangle cowbell', () => {
+    const head = (id) => padHead(KIT.find((k) => k.id === id));
+    expect(['snare', 'kick', 'tom1', 'closedHat', 'crash', 'openHat', 'rideBell', 'cowbell', 'crossStick', 'pedalHat', 'rimshot'].map(head))
+      .toEqual(['oval', 'oval', 'oval', 'cross', 'cross', 'circle-cross', 'diamond', 'triangle', 'cross', 'cross', 'slash']);
+    for (const kit of KIT) {
+      const svg = padGlyph(kit);
+      expect(svg, kit.id).toMatch(/^<svg class="notation-pad-glyph"[^>]*aria-hidden="true"/);
+      expect((svg.match(/class="pad-staff"/g) ?? []).length, kit.id).toBeGreaterThanOrEqual(5);
+    }
+    // The snare sits in the third space, the kick in the bottom one: lower on the picture.
+    const y = (id) => Number(/<ellipse class="pad-fill" cx="14" cy="([\d.]+)"/.exec(padGlyph(KIT.find((k) => k.id === id)))[1]);
+    expect(y('kick')).toBeGreaterThan(y('snare'));
+    expect(padGlyph(KIT.find((k) => k.id === 'crashChoke'))).toContain('v4.2');   // the stopped mark
   });
 });
 
@@ -445,8 +676,12 @@ describe('menus (spec §5.2)', () => {
       {label: 'Copy', kbd: 'Mod+KeyC'}, {label: 'Paste', kbd: 'Mod+KeyV'}, {label: 'Repeat bars…', kbd: 'Mod+KeyD'},
       {label: 'Select all bars', kbd: 'Mod+KeyA'}, {label: 'Delete selected notes', kbd: 'Backspace'},
       {label: 'Move notes…', kbd: 'Alt+ArrowLeft'}, {label: 'Tuplet on this beat…', kbd: null}, {label: 'Mark bars reviewed', kbd: null},
-      {label: 'Loop selection', kbd: 'KeyL'}, {label: 'Bar meter & label…', kbd: null}, {label: 'Align in tempo map…', kbd: null},
+      {label: 'Loop selection', kbd: 'KeyL'}, {label: 'New line here', kbd: null}, {label: 'Clear line breaks', kbd: null},
+      {label: 'Bar meter & label…', kbd: null}, {label: 'Align in tempo map…', kbd: null},
     ]);
+    // New line here: bar 1 always starts a line; a chart with no breaks has none to clear.
+    expect(registry.state('chart.lineBreak').reason).toBeFalsy();
+    expect(registry.state('chart.clearLineBreaks').reason).toBe(COMMAND_COPY.clearLineBreaksReason);
   });
 
   test('Part ▾: export, print, open part, import a chart, Drum keys…, Note list ✓, Show every kit piece ✓, Keyboard shortcuts ?', () => {
@@ -458,12 +693,18 @@ describe('menus (spec §5.2)', () => {
     expect(registry.state('chart.allLanes').reason).toBe(COMMAND_COPY.allLanesReason);
   });
 
-  test('View ▾: Score · Lanes radios and Follow; Pages · Continuous once the workspace offers both (D48)', () => {
-    const items = viewMenu(STATE);
-    expect(items.filter((i) => i.command === 'chart.view').map((i) => [i.label, i.checked])).toEqual([['Score', true], ['Lanes', false]]);
-    expect(items.some((i) => i.command === 'chart.paging')).toBe(false);
-    const both = viewMenu({...STATE, pagingModes: ['pages', 'scroll']});
-    expect(both.filter((i) => i.command === 'chart.paging').map((i) => i.label)).toEqual(['Pages', 'Continuous']);
+  test('the 16-bar pages and the paging mode are gone (2.8): the score is the whole song', () => {
+    for (const id of ['chart.pagePrev', 'chart.pageNext', 'chart.paging']) expect(registry.get(id), id).toBeFalsy();
+  });
+
+  test('Roll ▾: No roll, 1 slash, 2 slashes, 3 slashes', () => {
+    const run = vi.fn();
+    const items = rollMenu({...STATE, expression: {...STATE.expression, roll: 2}}, run);
+    expect(items.map((i) => [i.label, i.checked])).toEqual([['No roll', false], ['1 slash', false], ['2 slashes', true], ['3 slashes', false]]);
+    items[3].run();
+    expect(run).toHaveBeenLastCalledWith('setExpression', 'roll', 3);
+    items[0].run();
+    expect(run).toHaveBeenLastCalledWith('setExpression', 'roll', 0);
   });
 
   test('Tuplet ▾, Grid ▾ and the section jump menu run the workspace', () => {
@@ -474,10 +715,13 @@ describe('menus (spec §5.2)', () => {
     expect(run).toHaveBeenLastCalledWith('setGrid', 32, false);
     gridMenu(STATE, run).find((i) => i.label === 'Triplet').run();
     expect(run).toHaveBeenLastCalledWith('setGrid', 16, true);
-    const sections = sectionsMenu([{id: 'bar-0', label: 'Intro', bar: 0}, {id: 'bar-4', label: 'Verse', bar: 4}], run);
-    expect(sections.map((i) => i.label)).toEqual(['Intro · Bar 1', 'Verse · Bar 5']);
+    // Go to: the jumps with their keys, then every section; a section with no name is "Start".
+    const goTo = sectionsMenu([{id: 'bar-0', label: '', bar: 0}, {id: 'bar-4', label: 'Verse', bar: 4}], run);
+    expect(goTo.slice(0, 4).map((i) => i.command)).toEqual(['chart.firstBar', 'chart.sectionPrev', 'chart.sectionNext', 'chart.lastBar']);
+    const sections = goTo.filter((i) => i.id);
+    expect(sections.map((i) => i.label)).toEqual(['Start · Bar 1', 'Verse · Bar 5']);
     sections[1].run();
-    expect(run).toHaveBeenLastCalledWith('goToBar', 4);
+    expect(run).toHaveBeenLastCalledWith('goToBar', 4, {seek: true});
   });
 });
 
@@ -635,8 +879,12 @@ describe('chart-edit.js (mounted on a song session)', () => {
     const bank = b.panel.querySelector('.chart-edit-bank');
     expect(bank.hidden).toBe(false);
     expect(bank.querySelectorAll('.chart-bank-pad')).toHaveLength(28);
+    // Score on top; docked under it: the status bar, the toolbar, the inspector buttons (with Edit ▾ and Part ▾) and the bank.
     const dock = b.panel.querySelector('.chart-edit-dock');
-    expect(dock.firstElementChild.classList.contains('chart-edit-tools')).toBe(true);   // score on top, then the toolbar
+    expect([...dock.children].map((c) => c.className)).toEqual(['chart-edit-status', 'chart-edit-tools', 'chart-edit-panels', 'chart-edit-bank']);
+    expect(b.panel.querySelector('.chart-edit-top').firstElementChild.className).toBe('chart-edit-nav');
+    expect(b.panel.querySelector('.chart-edit-panels [data-menu=edit]')).toBeTruthy();
+    expect(b.panel.querySelector('.chart-toolbar [data-menu=edit]')).toBeNull();
     const props = [...b.panel.querySelectorAll('.chart-edit-panel-button')].find((x) => nameOf(x) === 'Properties');
     props.click();
     await b.settle();
@@ -648,6 +896,9 @@ describe('chart-edit.js (mounted on a song session)', () => {
     await b.settle();
     expect(b.inspectorEl.querySelectorAll('[role=tab]')).toHaveLength(3);
     expect(bank.hidden).toBe(true);
+    // Laptop: the toolbar and the navigator stick at the top, the status bar at the bottom; the menus are the toolbar's again.
+    expect([...b.panel.querySelector('.chart-edit-top').children].map((c) => c.className)).toEqual(['chart-edit-tools', 'chart-edit-nav']);
+    expect(b.panel.querySelector('.chart-toolbar [data-menu=edit]')).toBeTruthy();
   });
 
   test('a pad in the bank writes at the cursor through the workspace', async () => {
@@ -684,11 +935,82 @@ describe('chart-edit.js (mounted on a song session)', () => {
     again.destroy();
   });
 
-  test('?bar=N places the cursor on bar N, and 16-bar pages hold it', async () => {
+  test('?bar=N places the cursor on bar N of the whole song (no pages: every bar is engraved)', async () => {
     const b = await bed({query: {bar: '21'}});
     expect(b.ws().state().barRange).toEqual([20, 20]);
-    expect(b.ws().state().range).toMatchObject({first: 16, last: 31});
-    expect(views.at(-1).ranges.at(-1)).toEqual([16, 31]);
+    expect(b.ws().state()).toMatchObject({total: 64, cursorBar: 20, position: 'Bar 21 · Beat 1.00'});
+    // One engraving of the whole part, with the part's own line breaks (as the Stage draws it).
+    expect(views.at(-1).ranges.at(-1)).toBeUndefined();
+    expect(views.at(-1).scoreOptions.at(-1)).toEqual({lineBreaks: true});
+  });
+
+  test('the navigator shows the song’s sections and jumps to one; the status bar says where the cursor is', async () => {
+    const b = await bed();
+    const sections = [...b.panel.querySelectorAll('.chart-nav-section')];
+    expect(sections.length).toBe(b.ws().state().sections.length);
+    expect(sections.length).toBeGreaterThan(1);
+    expect(sections[0].getAttribute('aria-current')).toBe('true');
+    const target = b.ws().state().sections[2];
+    sections[2].click();
+    expect(b.ws().state().cursorBar).toBe(target.bar);
+    expect(sections[2].getAttribute('aria-current')).toBe('true');
+    expect(sections[0].hasAttribute('aria-current')).toBe(false);
+    const status = b.panel.querySelector('.chart-status');
+    expect(status.querySelector('.chart-status-position .ui-button-label').textContent).toBe(`Bar ${target.bar + 1} · Beat 1.00`);
+    expect(status.querySelector('.chart-status-piece').textContent.replace(/\s+/g, ' ').trim()).toMatch(/^Writing \S/);
+    // Stopped, the jump moves the cue too, so Play starts from the section.
+    expect(b.ts.session.transport.snapshot.peek().cue).toBeCloseTo(target.bar * 2, 3);
+  });
+
+  test('what the editor says shows in the status bar; without it, the selection, else the hint', async () => {
+    const b = await bed();
+    const message = b.panel.querySelector('.chart-status-message');
+    expect(message.getAttribute('role')).toBe('status');
+    expect(message.textContent).toBe('Double-click the staff or press a drum key to add');
+    expect(message.hasAttribute('data-hint')).toBe(true);
+    b.ws().run('select-bar');
+    expect(message.textContent).toMatch(/notes? selected$/);
+    expect(message.hasAttribute('data-hint')).toBe(false);
+    b.ws().run('loop');
+    expect(message.textContent).toMatch(/^Looping bar/);
+  });
+
+  test('zoom: the status bar steps the sheet’s scale, keeps it for the device, and the labels keep their size floor', async () => {
+    const b = await bed();
+    const zoom = b.panel.querySelector('.chart-status-zoom');
+    const [out, value, into] = zoom.querySelectorAll('button');
+    expect(value.querySelector('.ui-button-label').textContent).toBe('100%');
+    into.click();
+    expect(b.ws().state().zoom).toBe(1.1);
+    expect(b.prefs.get('edit.chart.zoom')).toBe(1.1);
+    expect(value.querySelector('.ui-button-label').textContent).toBe('110%');
+    expect(views.at(-1).configured.at(-1)).toEqual({scale: 1.1, fonts: {barNumber: 12, marker: 15}});
+    out.click(); out.click(); out.click();
+    expect(b.ws().state().zoom).toBe(0.8);
+    expect(views.at(-1).configured.at(-1)).toEqual({scale: 0.8, fonts: {barNumber: 15, marker: 19}});   // 12 px and 15 px on screen
+    value.click();
+    expect(b.ws().state().zoom).toBe(1);
+    // In Lanes there is no sheet to zoom.
+    b.registry.run('chart.view', {args: {view: 'lanes'}});
+    expect(zoom.hidden).toBe(true);
+    expect(b.registry.state('chart.zoomIn').reason).toBe(COMMAND_COPY.zoomReason);
+  });
+
+  test('New line here starts a line at the cursor’s bar (saved with the part), and Clear line breaks drops them', async () => {
+    const b = await bed({query: {bar: '9'}});
+    const score = () => b.ts.session.notation.part.score;
+    expect(b.registry.state('chart.lineBreak')).toMatchObject({checked: false});
+    b.registry.run('chart.lineBreak');
+    expect(score().lineBreaks).toEqual([score().timeline.measures[8].id]);
+    expect(b.registry.state('chart.lineBreak')).toMatchObject({checked: true});
+    b.registry.run('chart.lineBreak');
+    expect(score().lineBreaks).toBeUndefined();
+    b.registry.run('chart.lineBreak');
+    b.registry.run('chart.clearLineBreaks');
+    expect(score().lineBreaks).toBeUndefined();
+    // Bar 1 always starts a line.
+    b.ws().run('goToBar', 0);
+    expect(b.registry.state('chart.lineBreak').reason).toBe(COMMAND_COPY.lineBreakReason);
   });
 
   test('Bar meter & label… and Align in tempo map… switch to Edit · Map at the bar (replace)', async () => {

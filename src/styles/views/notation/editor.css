@@ -4,14 +4,22 @@
    (toolbar, tabs, kit bank) is src/styles/views/edit/chart.css. */
 @layer views {
   .notation-workspace { position: relative; display: flex; flex-direction: column; min-width: 0; color: var(--ink); }
-  .notation-body { display: flex; min-height: 200px; min-width: 0; }
+  .notation-body { display: flex; justify-content: center; min-height: 200px; min-width: 0; }
 
-  /* The surface: the focus scope edit.chart.score (one tab stop, keys through the registry). */
-  .notation-surface { position: relative; flex: 1; min-width: 0; outline: none; user-select: none; background: var(--surface);
-    border: 1px solid var(--line); border-radius: var(--r-surface); }
-  .notation-surface:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
-  .notation-score { padding: var(--s3) var(--s3) var(--s5); }
+  /* The surface: the focus scope edit.chart.score (one tab stop, keys through the registry). In Score it is the
+     sheet: a page of at most 1400 px on the desk, holding the whole song. It is far taller than the window, so
+     focus shows as an accent edge on the page rather than a ring that would run off both ends. */
+  .notation-surface { position: relative; flex: 1; min-width: 0; max-width: 1400px; outline: none; user-select: none;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-surface); }
+  .notation-workspace.is-lanes .notation-surface { max-width: none; }
+  .notation-surface:focus-visible { border-color: var(--focus-ring); }
+  .notation-score { padding: var(--s5) var(--s4) var(--s7); }
+  .notation-score[hidden] { display: none; }
   .notation-score .score-stage { cursor: crosshair; touch-action: pan-y; }
+  /* The sheet's heading, as on printed music. */
+  .notation-sheet-head { display: grid; justify-items: center; gap: var(--s1); padding: var(--s2) var(--s4) var(--s4); text-align: center; }
+  .notation-sheet-title { margin: 0; color: var(--ink); font: var(--fw-bold) var(--fs-24)/1.2 var(--font-ui); overflow-wrap: anywhere; }
+  .notation-sheet-sub { margin: 0; color: var(--ink-3); font: var(--fs-14)/1.3 var(--font-ui); }
   .notation-lanes { position: relative; overflow: hidden; cursor: crosshair; touch-action: none; padding-bottom: var(--s2); }
   .notation-playhead { position: absolute; width: 2px; background: var(--now); pointer-events: none; z-index: var(--z-local-2); }
   .notation-drag-preview { position: absolute; pointer-events: none; border: 1px solid var(--accent); background: var(--accent-soft);
@@ -28,7 +36,6 @@
   .notation-lane-label:hover { background: var(--surface-2); }
   .notation-lane-label[aria-pressed=true] { color: var(--accent); background: var(--accent-soft); }
 
-  .notation-help { margin: var(--s2) var(--s1) 0; color: var(--ink-3); font: var(--fs-12)/1.4 var(--font-ui); }
   .notation-unavailable { padding: var(--s7) var(--s5); text-align: center; color: var(--ink-3); font: var(--fs-16)/1.5 var(--font-ui); }
 
   /* The note list (Part ▾ → Note list): the visible page's notes. */
@@ -61,15 +68,23 @@
   .notation-segments { display: flex; flex-wrap: wrap; gap: var(--s2); }
   .notation-segments .notation-toggle { flex: 1; }
 
-  .notation-pads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); margin-bottom: var(--s4); }
-  .notation-pad-family { grid-column: 1 / -1; color: var(--ink-3); font: var(--fw-semibold) var(--fs-12)/1.2 var(--font-ui);
+  /* The Kit panel: each pad shows its notehead where it sits on the staff (editor.js padGlyph), in its family's
+     colour, then its name and key. */
+  .notation-pads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s1); margin-bottom: var(--s4); }
+  .notation-pad-family { grid-column: 1 / -1; margin-top: var(--s1); color: var(--ink-3); font: var(--fw-semibold) var(--fs-12)/1.2 var(--font-ui);
     letter-spacing: .04em; text-transform: uppercase; }
-  .notation-pad { justify-content: space-between; min-width: 0; min-height: var(--h-md); white-space: normal; text-align: left;
-    border-left: 4px solid var(--family, var(--line-strong)); }
+  .notation-pad { justify-content: flex-start; gap: 6px; min-width: 0; min-height: var(--h-md); padding: 0 6px 0 var(--s1);
+    border-color: var(--line); font-size: 0.8125rem; white-space: nowrap; text-align: left; }
   .notation-pad[data-family=cymbal] { --family: var(--warn); }
   .notation-pad[data-family=drum] { --family: var(--stem-drums); }
   .notation-pad[data-family=foot] { --family: var(--stem-bass); }
   .notation-pad[data-family=aux] { --family: var(--stem-guitar); }
+  .notation-pad-glyph { flex: none; color: var(--family, var(--ink)); }
+  .notation-pad-glyph .pad-staff { fill: none; stroke: var(--line-strong); stroke-width: 1; }
+  .notation-pad-glyph .pad-fill { fill: currentColor; stroke: none; }
+  .notation-pad-glyph .pad-stroke { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+  .notation-pad-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .notation-pad[aria-pressed=true] .notation-pad-glyph { color: var(--accent); }
   .notation-pad .ui-kbd,
   .notation-lane-label .ui-kbd { flex: none; }
 

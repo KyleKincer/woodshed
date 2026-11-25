@@ -1,44 +1,108 @@
-/* Edit · Chart (src/edit/chart/chart-edit.js, toolbar.js, kit-bank.js; spec §5.2): the toolbar
-   (44 px, 52 on coarse pointers), the message line, the score or lanes, the inspector tabs and,
-   in iPad portrait, the inspector buttons and the kit pad bank (4 × 7 pads of 56 px). The Edit
-   tab panel is the place's one scroller (D26): the toolbar sticks to its top and the kit bank
-   to its bottom, so nothing else scrolls. */
+/* Edit · Chart (src/edit/chart/chart-edit.js, toolbar.js, navigator.js, statusbar.js, kit-bank.js; spec §5.2).
+   The Edit tab panel is the place's one scroller (D26) and it scrolls the sheet: the whole song, engraved. Two
+   bars stick while it does:
+     .chart-edit-top    the toolbar (44 px, 52 on coarse pointers) and the section navigator
+     .chart-edit-dock   the status bar; in iPad portrait also the toolbar, the inspector buttons and the kit pad
+                        bank (4 × 7 pads of 56 px)
+   The sheet sits on the desk (--bg) as a page (--surface); the inspector tabs are the frame's right column. */
 @layer views {
   .chart-edit { display: flex; flex-direction: column; min-height: 100%; min-width: 0; background: var(--bg); color: var(--ink); }
-  .chart-edit-tools { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg); border-bottom: 1px solid var(--line); }
-  .chart-edit-main { flex: 1; min-width: 0; padding: var(--s3) var(--s4) var(--s4); }
-  .chart-edit-message { min-height: 1.4em; margin: var(--s2) var(--s4) 0; color: var(--ink-2); font: var(--fs-14)/1.4 var(--font-ui); }
-  .chart-edit-message:empty { visibility: hidden; }
+  .chart-edit-top { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--surface); border-bottom: 1px solid var(--line); }
+  .chart-edit-tools:empty,
+  .chart-edit-nav:empty,
+  .chart-edit-status:empty { display: none; }
+  .chart-edit-main { flex: 1; min-width: 0; padding: var(--s5) var(--s5) var(--s7); }
   .chart-edit-notice { display: grid; justify-items: center; gap: var(--s4); padding: var(--s8) var(--s5); text-align: center; }
   .chart-edit-notice-text { color: var(--ink-2); font: var(--fs-16)/1.5 var(--font-ui); }
   .chart-edit:not([data-state=ready]) .chart-edit-main { display: none; }
 
   /* ---- toolbar ------------------------------------------------------------------------------------------- */
-  .chart-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0 var(--s3); min-height: 44px; padding: 0 var(--s3); }
-  .chart-tool-group { display: flex; align-items: center; gap: var(--s1); min-height: 44px; }
+  .chart-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0 var(--s2); min-height: 44px; padding: 0 var(--s3); }
+  .chart-tool-group { display: flex; align-items: center; gap: 2px; min-height: 44px; }
   .chart-tool-group[hidden] { display: none; }
-  .chart-tool-steps { gap: var(--s1); }
-  .chart-tool-step { position: relative; font-variant-numeric: tabular-nums; }
-  .chart-tool-step .ui-kbd,
-  .chart-tool-skip .ui-kbd { margin-left: var(--s1); }
-  .chart-tool-writing { display: flex; align-items: center; gap: var(--s1); margin: 0; min-height: 44px; color: var(--ink-2);
-    font: var(--fs-14)/1 var(--font-ui); white-space: nowrap; }
-  .chart-tool-piece-name { color: var(--ink); font-weight: var(--fw-bold); }
-  .chart-tool-range { gap: var(--s1); }
-  .chart-tool-view .ui-segmented-options { padding: 2px; }
-  .chart-tool-range-text { min-width: 7.5em; color: var(--ink); font: var(--fw-semibold) var(--fs-14)/1 var(--font-ui);
-    font-variant-numeric: tabular-nums; text-align: right; }
+  /* A hairline between neighbouring groups; the view and the menus sit at the far end. */
+  .chart-tool-arts,
+  .chart-tool-entry,
+  .chart-tool-lanes { padding-left: var(--s2); border-left: 1px solid var(--line); }
   .chart-tool-menus { margin-left: auto; }
+
+  /* Glyph buttons: a note value or an articulation, drawn at 24 px. */
+  .chart-tool-glyph.ui-button { position: relative; min-width: 36px; padding: 0 var(--s1); color: var(--ink); }
+  .chart-tool-glyph > .ui-icon { width: 24px; height: 24px; }
+  .chart-tool-glyph .ui-button-icon-end { width: 16px; height: 16px; color: var(--ink-3); }
+  /* A menu button with no value yet is its glyph and chevron alone. */
+  .chart-tool-menu .ui-button-text:has(.ui-button-label:empty) { display: none; }
+  .chart-tool-menu.ui-button { gap: var(--s1); padding: 0 var(--s2); }
+  .chart-tool-menu[data-active] { background: var(--accent-soft); color: var(--accent); }
+  .chart-tool-menu[data-active] .ui-button-icon-end { color: var(--accent); }
+  .chart-tool-hand.ui-button { min-width: var(--h-sm); padding: 0 var(--s2); font-family: var(--font-mono); }
+  .chart-tool-skip.ui-button { gap: var(--s1); padding: 0 var(--s2); color: var(--ink); }
+  .chart-tool-skip > .ui-icon { width: 24px; height: 24px; }
+  .chart-tool-skip .ui-kbd { margin-left: var(--s1); }
+  /* The step digits (5·4·3·2·1) sit in the corner of their note's button, where the glyph leaves room, so the
+     hints never widen the row. */
+  .chart-tool-step.ui-button { min-width: 40px; }
+  .chart-tool-cap.ui-kbd { position: absolute; right: 1px; bottom: 1px; min-inline-size: 0; min-block-size: 0; padding: 0 2px;
+    border-block-end-width: 1px; background: var(--surface); pointer-events: none; }
   .chart-tool-save { display: flex; align-items: center; gap: var(--s2); min-height: 44px; color: var(--ink-3);
     font: var(--fs-14)/1 var(--font-ui); white-space: nowrap; }
   .chart-toolbar[data-save=conflict] .chart-tool-save,
   .chart-toolbar[data-save=offline] .chart-tool-save,
   .chart-toolbar[data-save=storage-error] .chart-tool-save { color: var(--warn); }
 
-  /* Undo / Redo: text and glyph at ≥ 1200 px; below, the glyph (the accessible name stays). */
-  @media (max-width: 1199px) {
-    .chart-tool-history .ui-button-text { display: none; }
+  /* ---- section navigator --------------------------------------------------------------------------------- */
+  .chart-nav { position: relative; padding: 0 var(--s3) var(--s2); }
+  /* The first bar's marks sit at the strip's left edge: the names start clear of them. */
+  .chart-nav[hidden] { display: none; }
+  .chart-nav-track { display: flex; gap: 2px; min-width: 0; }
+  .chart-nav-section { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+    flex: 1 1 0; min-width: 28px; min-height: 28px; padding: 0 var(--s2) 0 var(--s3); overflow: hidden; border: 0; border-radius: 0;
+    background: var(--surface-2); color: var(--ink-2); font: var(--fw-semibold) var(--fs-12)/1 var(--font-ui);
+    text-align: left; white-space: nowrap; cursor: pointer;
+    transition: background-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease); }
+  .chart-nav-section:first-child { border-start-start-radius: var(--r-control); border-end-start-radius: var(--r-control); }
+  .chart-nav-section:last-child { border-start-end-radius: var(--r-control); border-end-end-radius: var(--r-control); }
+  .chart-nav-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .chart-nav-bar { flex: none; color: var(--ink-3); font-family: var(--font-mono); font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
+  @media (hover: hover) {
+    .chart-nav-section:hover { background: var(--line); color: var(--ink); }
   }
+  .chart-nav-section[aria-current=true] { background: var(--accent-soft); color: var(--accent); }
+  .chart-nav-section[aria-current=true] .chart-nav-bar { color: var(--accent); }
+  .chart-nav-section:focus-visible { outline-offset: -2px; }
+  /* The marks: what is on screen (a bar under the strip, like a scrollbar's thumb), the edit cursor (a dashed
+     tick) and the playhead (a line). */
+  .chart-nav-window,
+  .chart-nav-cursor,
+  .chart-nav-now { position: absolute; top: 0; height: 28px; pointer-events: none; }
+  .chart-nav-window { top: 30px; height: 3px; border-radius: var(--r-pill); background: var(--ink-3); }
+  .chart-nav-cursor { width: 0; border-left: 2px dashed var(--accent); }
+  .chart-nav-now { width: 2px; margin-left: -1px; background: var(--now); }
+  .chart-nav-window[hidden],
+  .chart-nav-cursor[hidden],
+  .chart-nav-now[hidden] { display: none; }
+
+  /* ---- status bar ---------------------------------------------------------------------------------------- */
+  .chart-edit-dock { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; background: var(--surface); border-top: 1px solid var(--line); }
+  .chart-status { display: flex; align-items: center; gap: var(--s3); min-height: 36px; padding: 0 var(--s3); min-width: 0; }
+  .chart-status-lead,
+  .chart-status-trail { display: flex; flex: none; align-items: center; gap: var(--s2); }
+  .chart-status-position.ui-button { gap: var(--s1); padding: 0 var(--s2); color: var(--ink); font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums; }
+  .chart-status-position .ui-button-icon-end { width: 16px; height: 16px; color: var(--ink-3); }
+  .chart-status-piece { display: flex; align-items: center; gap: var(--s1); margin: 0; color: var(--ink-3);
+    font: var(--fs-14)/1 var(--font-ui); white-space: nowrap; }
+  .chart-status-piece-name { color: var(--ink); font-weight: var(--fw-semibold); }
+  .chart-status-message { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--ink-2);
+    font: var(--fs-14)/1.3 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
+  .chart-status-message[data-hint] { color: var(--ink-3); }
+  .chart-status-view .ui-segmented-options { padding: 2px; }
+  @media (pointer: fine) {
+    .chart-status-view .ui-segmented-option { min-height: 28px; }
+  }
+  .chart-status-zoom { display: flex; align-items: center; }
+  .chart-status-zoom[hidden] { display: none; }
+  .chart-status-zoom-value.ui-button { min-width: 6ch; padding: 0 var(--s1); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
   /* ---- inspector (laptop: the frame's right column) ------------------------------------------------------ */
   .chart-edit-inspector { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3) var(--s4) var(--s5); }
@@ -48,12 +112,16 @@
   .chart-edit-sheet .chart-edit-panel { padding: var(--s3) var(--s4) var(--s5); }
 
   /* ---- iPad portrait: the score on top; the toolbar, inspector buttons and kit bank docked below ---------- */
-  .chart-edit-dock { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; background: var(--bg); }
-  .chart-edit[data-layout=portrait] .chart-edit-tools { position: static; border-top: 1px solid var(--line); border-bottom: 0; }
-  .chart-edit-panels { display: flex; gap: var(--s2); padding: var(--s1) var(--s4) var(--s2); }
+  .chart-edit[data-layout=portrait] .chart-edit-tools { border-top: 1px solid var(--line); }
+  .chart-edit[data-layout=portrait] .chart-edit-main { padding: var(--s3) var(--s3) var(--s5); }
+  /* The kit bank has Skip; Edit ▾ and Part ▾ move beside the inspector buttons (chart-edit.js). */
+  .chart-edit[data-layout=portrait] .chart-tool-entry { display: none; }
+  .chart-edit-panels { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) var(--s4) var(--s2); }
   .chart-edit-panels[hidden] { display: none; }
-  .chart-edit-panels .ui-button { flex: 1; }
+  .chart-edit-panels > .ui-button { flex: 1; }
+  .chart-edit-panels .chart-tool-menus { flex: none; margin-left: 0; padding-left: var(--s2); border-left: 1px solid var(--line); }
   .chart-edit-bank { background: var(--surface); border-top: 1px solid var(--line); }
+  .chart-edit-bank[hidden] { display: none; }
 
   .chart-bank { display: flex; gap: var(--s2); padding: var(--s3) var(--s4); }
   .chart-bank-pads { flex: 1; display: grid; gap: var(--s1); min-width: 0; }
@@ -68,12 +136,31 @@
   .chart-bank-skip.ui-button { --family: var(--accent); }
   .chart-bank-nav { display: grid; grid-template-rows: 1fr 1fr; gap: var(--s1); }
   .chart-bank-step.ui-button { width: 56px; height: auto; min-height: 56px; }
-  /* A phone: the toolbar is one row that scrolls sideways (five wrapped rows left the score ~130 px), its Undo /
-   * Redo give way to the posture bar's, and the step arrows sit under the pads so seven pads get the width. */
+
+  /* A narrow window: the piece being written is already lit in the Kit panel and named at the caret. */
+  @media (max-width: 899px) {
+    .chart-status-piece-label { display: none; }
+  }
+  /* A phone: the toolbar is one row that scrolls sideways (wrapped rows left the score a sliver), the status bar
+   * keeps the position, the message and Follow, and the step arrows sit under the pads so seven pads get the width. */
   @media (max-width: 599px) {
     .chart-toolbar { flex-wrap: nowrap; gap: 0 var(--s2); overflow-x: auto; scrollbar-width: none; }
     .chart-toolbar > * { flex: none; }
-    .chart-toolbar .chart-tool-history { display: none; }
+    .chart-tool-menus { margin-left: 0; padding-left: var(--s2); border-left: 1px solid var(--line); }
+    .chart-edit-main { padding: var(--s2) var(--s2) var(--s4); }
+    /* The navigator scrolls sideways too: every section keeps room for its name. */
+    .chart-nav { overflow-x: auto; scrollbar-width: none; }
+    .chart-nav-track { width: max-content; min-width: 100%; }
+    .chart-nav-section { min-width: 104px; }
+    /* The status bar keeps where you are and the view switch on one row; what the editor says takes a row of its
+     * own under them, and the standing hint is left out. */
+    .chart-status { flex-wrap: wrap; gap: 0 var(--s2); padding: 0 var(--s2); }
+    .chart-status-trail { margin-left: auto; }
+    .chart-status-message { order: 3; flex-basis: 100%; padding-bottom: var(--s2); white-space: normal; }
+    .chart-status-message[data-hint],
+    .chart-status-message:empty,
+    .chart-status-piece,
+    .chart-status-zoom { display: none; }
     .chart-bank { flex-direction: column; gap: var(--s1); padding: var(--s2); }
     .chart-bank-pad.ui-button { padding: 0 2px; font-size: 0.8125rem; line-height: 1.1; }
     .chart-bank-pad.ui-button .ui-button-text,
@@ -86,7 +173,12 @@
   @media (pointer: coarse) {
     .chart-toolbar,
     .chart-tool-group,
-    .chart-tool-writing,
     .chart-tool-save { min-height: 52px; }
+    .chart-tool-glyph.ui-button { min-width: 44px; }
+    .chart-nav-section { min-height: 44px; min-width: 44px; font-size: var(--fs-14); }
+    .chart-nav-cursor,
+    .chart-nav-now { height: 44px; }
+    .chart-nav-window { top: 46px; }
+    .chart-status { min-height: 52px; }
   }
 }

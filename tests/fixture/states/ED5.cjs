@@ -3,11 +3,15 @@
 // map), in the app theme (?place=edit). Part ▾ → Import a chart from a file… leads to ED4's import (Find a
 // chart, through src/edit/chart-file.js), so every state lists drum-import.js in opts.requires; the posture-frame states also
 // need ED2's src/edit/edit.js.
-//   ed5-chart-score         score: engraved 16-bar page, toolbar rows 44 px (52 coarse), Undo/Redo text
-//                           only at ≥ 1200 px, key-cap hints hidden until keyboard use; laptop: inspector
+//   ed5-chart-score         score: the whole song engraved on one scrolling sheet (2.8), toolbar rows
+//                           44 px (52 coarse) with the note values as glyphs, key-cap hints hidden until
+//                           keyboard use, the section navigator and the status bar; laptop: inspector
 //                           tabs Kit · Properties · Listen in a 320 px column; iPad portrait: score on
-//                           top, the toolbar, inspector buttons and the 4 × 7 kit bank of 56 px pads
-//                           docked below; axe; targets
+//                           top, the status bar, the toolbar, inspector buttons and the 4 × 7 kit bank
+//                           of 56 px pads docked below; axe; targets
+//   ed5-chart-scroll        the sheet: a section in the navigator scrolls its line to the top and moves
+//                           the cue; an edit and Undo leave the sheet where it was; zoom keeps the bar
+//                           on screen; playback is followed, a wheel pauses Follow and Follow catches up
 //   ed5-chart-lanes         lanes: labels aligned with the rows, Grid ▾ and Fit shown
 //   ed5-chart-tab-*         laptop: each inspector tab (kit, properties, listen)
 //   ed5-chart-sheet         iPad portrait: Properties opens as a sheet; Esc closes it
@@ -16,7 +20,7 @@
 //   ed5-chart-drum-keys     Drum keys…: a reserved key (N) is refused inline
 //   ed5-chart-bank          iPad: a pad writes at the cursor; Skip and ▸ step the cursor
 //   ed5-chart-keys          keyboard (D18): drum letters and digits in the score; key-cap hints after
-//                           keyboard use; Esc clears, PageDown pages
+//                           keyboard use; Esc clears; ] jumps to the next section; PageDown scrolls
 //   ed5-chart-status-*      the save status without a posture bar (saving, local, conflict + Review,
 //                           offline + Retry)
 //   ed5-chart-new           a song with no chart: Edit · Chart opens an empty part to write
@@ -45,7 +49,8 @@ async function ready(page, {lanes = false} = {}) {
 const hits = (page) => page.evaluate(() => window.__chartEdit.ts.session.notation.part.score.bars.reduce((n, b) => n + b.hits.length, 0));
 const chartState = (page) => page.evaluate(() => {
   const s = window.__chartEdit.workspace().state();
-  return {range: s.range, step: s.step, selected: s.selectedCount, piece: s.piece.id, tab: s.inspectorTab, barRange: s.barRange};
+  return {total: s.total, cursorBar: s.cursorBar, zoom: s.zoom, follow: s.follow, playing: s.playing, step: s.step, selected: s.selectedCount,
+    piece: s.piece.id, tab: s.inspectorTab, barRange: s.barRange};
 });
 const box = (page, selector) => page.evaluate((sel) => {
   const el = document.querySelector(sel);
@@ -66,16 +71,26 @@ module.exports = [
     async fn(page, t) {
       await ready(page);
       const f = await page.evaluate(() => {
-        const rows = [...document.querySelectorAll('.chart-toolbar > .chart-tool-group:not([hidden]), .chart-toolbar > .chart-tool-writing')]
-          .map((el) => Math.round(el.getBoundingClientRect().height));
-        const undo = document.querySelector('.chart-tool-history button');
+        const rows = [...document.querySelectorAll('.chart-toolbar > .chart-tool-group:not([hidden])')]
+          .filter((el) => el.checkVisibility()).map((el) => Math.round(el.getBoundingClientRect().height));
         const hint = document.querySelector('.chart-tool-step kbd[data-hint]');
+        const scroller = document.querySelector('[data-scroller]');
+        const sheet = document.querySelector('.notation-surface').getBoundingClientRect();
+        const rect = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r ? {top: Math.round(r.top), bottom: Math.round(r.bottom)} : null; };
         const inspector = document.querySelector('.chart-edit-harness-inspector');
         const surface = document.querySelector('.notation-surface');
         return {
-          rows, undoText: getComputedStyle(undo.querySelector('.ui-button-text')).display !== 'none', undoName: undo.getAttribute('aria-label'),
-          hintShown: !!hint && getComputedStyle(hint).display !== 'none' && !hint.hidden,
-          range: document.querySelector('.chart-tool-range-text').textContent,
+          rows, hintShown: !!hint && getComputedStyle(hint).display !== 'none' && !hint.hidden,
+          steps: [...document.querySelectorAll('.chart-tool-step svg.ui-icon')].map((x) => x.dataset.icon),
+          gone: ['.chart-tool-history', '.chart-tool-range-text', '.chart-tool-writing'].filter((sel) => document.querySelector(sel)),
+          sections: [...document.querySelectorAll('.chart-nav-section .chart-nav-name')].map((x) => x.textContent),
+          current: document.querySelector('.chart-nav-section[aria-current=true] .chart-nav-name')?.textContent,
+          position: document.querySelector('.chart-status-position .ui-button-label')?.textContent,
+          title: document.querySelector('.notation-sheet-title')?.textContent,
+          bars: window.__chartEdit.workspace().scoreView.renderedBars(),
+          scrollH: scroller.scrollHeight, clientH: scroller.clientHeight, sheetH: Math.round(sheet.height),
+          top: rect('.chart-edit-top'), dock: rect('.chart-edit-dock'), scrollerBox: rect('[data-scroller]'),
+          zoom: document.querySelector('.chart-status-zoom-value .ui-button-label')?.textContent,
           tabs: [...document.querySelectorAll('.chart-edit-inspector [role=tab]')].map((x) => x.textContent.trim()),
           inspectorW: inspector ? Math.round(inspector.getBoundingClientRect().width) : null,
           focused: document.activeElement === surface, scope: surface.dataset.scope,
@@ -83,14 +98,20 @@ module.exports = [
           padH: [...document.querySelectorAll('.chart-bank-pad')].map((b) => Math.round(b.getBoundingClientRect().height)),
           bankHidden: document.querySelector('.chart-edit-bank').hidden,
           layout: document.querySelector('.chart-edit').dataset.layout,
-          pages: window.__chartEdit.workspace().state().range,
+          total: window.__chartEdit.workspace().state().total,
         };
       });
       const rowH = t.device === 'ipad' ? 52 : 44;
       t.expect(f.rows.length && f.rows.every((h) => h === rowH), `toolbar rows are ${rowH} px (got ${f.rows})`);
-      t.expect(f.undoText === (t.device === 'laptop') && f.undoName === 'Undo', `Undo shows text only at ≥ 1200 px, and keeps its name (${JSON.stringify(f)})`);
+      t.expect(f.steps.join() === 'note-quarter,note-eighth,note-sixteenth,note-thirty-second,note-sixty-fourth', `the steps are note glyphs (${f.steps})`);
+      t.expect(!f.gone.length, `Undo / Redo, the pager and "Writing:" left the toolbar (${f.gone})`);
       t.expect(!f.hintShown, 'key-cap hints stay hidden before keyboard use');
-      t.expect(f.range === 'Bars 1–16' && f.pages.first === 0 && f.pages.last === 15, `16-bar pages (got ${f.range})`);
+      t.expect(f.total === 64 && f.bars === 64, `the whole song is engraved: ${f.bars} of ${f.total} bars`);
+      t.expect(f.sheetH > f.clientH && f.scrollH > f.clientH * 2, `the sheet is taller than the window and scrolls (${f.sheetH} in ${f.clientH})`);
+      t.expect(f.title === 'Glasshouse', `the sheet is headed with the song (${f.title})`);
+      t.expect(f.sections.length === 8 && f.sections[0] === 'Intro' && f.current === 'Intro', `the navigator lists the 8 sections, Intro current (${f.sections})`);
+      t.expect(f.position === 'Bar 1 · Beat 1.00' && f.zoom === '100%', `the status bar: position and zoom (${f.position}, ${f.zoom})`);
+      t.expect(f.dock && f.scrollerBox && Math.abs(f.dock.bottom - f.scrollerBox.bottom) <= 1, `the status bar sticks to the bottom of the panel (${JSON.stringify([f.dock, f.scrollerBox])})`);
       t.expect(f.focused && f.scope === 'edit.chart.score', 'the score has focus, in the edit.chart.score scope');
       if (t.device === 'laptop') {
         t.expect(f.layout === 'wide' && f.inspectorW === 320, `the inspector column is 320 px (got ${f.inspectorW})`);
@@ -102,16 +123,87 @@ module.exports = [
         t.expect(f.padH.length === 28 && f.padH.every((h) => h === 56), `pads are 56 px (got ${[...new Set(f.padH)]})`);
         const order = await page.evaluate(() => {
           const y = (sel) => document.querySelector(sel).getBoundingClientRect().y;
-          return {score: y('.chart-edit-main'), tools: y('.chart-toolbar'), panels: y('.chart-edit-panels'), bank: y('.chart-edit-bank'),
-            bankBottom: document.querySelector('.chart-edit-bank').getBoundingClientRect().bottom, vh: innerHeight};
+          return {nav: y('.chart-nav'), score: y('.chart-edit-main'), status: y('.chart-status'), tools: y('.chart-toolbar'), panels: y('.chart-edit-panels'),
+            bank: y('.chart-edit-bank'), bankBottom: document.querySelector('.chart-edit-bank').getBoundingClientRect().bottom, vh: innerHeight,
+            menus: !!document.querySelector('.chart-edit-panels [data-menu=edit]')};
         });
-        t.expect(order.score < order.tools && order.tools < order.panels && order.panels < order.bank && Math.abs(order.bankBottom - order.vh) < 1,
-          `score on top, then the toolbar, the inspector buttons and the kit bank docked at the bottom (${JSON.stringify(order)})`);
+        t.expect(order.nav < order.score && order.score < order.status && order.status < order.tools && order.tools < order.panels && order.panels < order.bank
+          && Math.abs(order.bankBottom - order.vh) < 1 && order.menus,
+          `the navigator, the score, then the status bar, the toolbar, the inspector buttons (with Edit ▾ and Part ▾) and the kit bank docked at the bottom (${JSON.stringify(order)})`);
       }
       const problems = await checkAxe(page, {include: ['.chart-edit-harness']});
       t.expect(!problems.length, problems.join('; '));
       const small = await checkTargets(page);
       t.expect(!small.length, `targets: ${JSON.stringify(small.slice(0, 6))}`);
+    },
+  },
+  {
+    name: 'ed5-chart-scroll', url: HARNESS('frame=edit'), opts: {...LAPTOP, requires: FRAME, themes: ['light']},
+    async fn(page, t) {
+      await ready(page);
+      const top = () => page.evaluate(() => Math.round(document.querySelector('[data-scroller]').scrollTop));
+      const visible = () => page.evaluate(() => window.__chartEdit.workspace().visibleBars());
+      // The window's top edge (under the sticky bars) to the top of bar `index`'s staff.
+      const lead = (index) => page.evaluate((i) => {
+        const ws = window.__chartEdit.workspace(), b = ws.scoreView.barBounds(i), stage = ws.scoreView.stage.getBoundingClientRect();
+        return Math.round(stage.top + b.lineTop - document.querySelector('.chart-edit-top').getBoundingClientRect().bottom);
+      }, index);
+      t.expect((await top()) === 0 && (await visible()).first === 0, 'the sheet opens at the top');
+      // A section in the navigator: its line goes to the top of the window and the cue moves there.
+      await page.locator('.chart-nav-section', {hasText: 'Bridge'}).click();
+      await page.waitForTimeout(300);
+      const jumped = {top: await top(), vis: await visible(), state: await chartState(page), lead: await lead(40),
+        cue: await page.evaluate(() => window.__chartEdit.ts.session.transport.snapshot.peek().cue)};
+      t.expect(jumped.top > 1000 && jumped.state.cursorBar === 40 && jumped.vis.first <= 40 && jumped.vis.last >= 40, `Bridge is on screen (${JSON.stringify(jumped)})`);
+      t.expect(jumped.lead > 20 && jumped.lead < 160, `its line sits near the top of the window (${jumped.lead} px down)`);
+      t.expect(Math.abs(jumped.cue - 80) < 0.01, `the cue moved to bar 41 (${jumped.cue})`);
+      const mark = await page.evaluate(() => {
+        const w = document.querySelector('.chart-nav-window'), sec = [...document.querySelectorAll('.chart-nav-section')].find((b) => b.textContent.includes('Bridge'));
+        return {hidden: w.hidden, left: w.getBoundingClientRect().left, right: w.getBoundingClientRect().right, sec: sec.getBoundingClientRect().left, current: sec.getAttribute('aria-current')};
+      });
+      t.expect(!mark.hidden && mark.left <= mark.sec + 1 && mark.right > mark.sec && mark.current === 'true', `the navigator marks what is on screen and the cursor's section (${JSON.stringify(mark)})`);
+      await t.capture('bridge');
+      // An edit re-engraves the part; the sheet stays where it was. So does Undo. (The click on the navigator left
+      // the keys with the score, so S writes.)
+      t.expect(await page.evaluate(() => document.activeElement === window.__chartEdit.workspace().surface), 'after a click on the navigator the score has focus');
+      const before = await hits(page);
+      await page.keyboard.press('KeyS');
+      await page.waitForTimeout(150);
+      t.expect((await hits(page)) === before + 1 && (await top()) === jumped.top, `an edit leaves the sheet in place (${await top()} vs ${jumped.top})`);
+      await page.keyboard.press('ControlOrMeta+KeyZ');
+      await page.waitForTimeout(150);
+      t.expect((await hits(page)) === before && (await top()) === jumped.top, 'so does Undo');
+      // Zoom: the bar at the top of the window stays on screen.
+      await page.locator('.chart-status-zoom button[aria-label="Zoom in"]').click();
+      await page.waitForTimeout(400);
+      const zoomed = {state: await chartState(page), vis: await visible(), label: await page.textContent('.chart-status-zoom-value .ui-button-label')};
+      t.expect(zoomed.state.zoom === 1.1 && zoomed.label === '110%' && zoomed.vis.first <= 40 && zoomed.vis.last >= 40, `zoomed in around the same bars (${JSON.stringify(zoomed)})`);
+      await page.locator('.chart-status-zoom-value').click();
+      await page.waitForTimeout(400);
+      t.expect((await chartState(page)).zoom === 1, 'the percentage goes back to 100%');
+      // PageDown scrolls the sheet (the browser's own scroll; nothing binds it).
+      const y0 = await top();
+      await page.keyboard.press('PageUp');
+      await page.waitForTimeout(400);
+      t.expect((await top()) < y0, `PageUp scrolls the sheet (${await top()} from ${y0})`);
+      // Playback: Follow shows while playing, a wheel lets go, and Follow catches up.
+      await page.evaluate(() => window.__chartEdit.workspace().run('goToBar', 0, {seek: true}));
+      await page.keyboard.press('Space');
+      await t.transportPhase('playing');
+      await t.advance(13_000);                       // into bar 7, past the first lines
+      await page.waitForTimeout(600);
+      const playing = {state: await chartState(page), vis: await visible(), follow: await box(page, '.chart-status-follow')};
+      t.expect(playing.state.playing && playing.state.follow && !!playing.follow, `Follow shows while the song plays (${JSON.stringify(playing.state)})`);
+      t.expect(playing.vis.first <= 6 && playing.vis.last >= 6, `the playing bar is on screen (${JSON.stringify(playing.vis)})`);
+      await page.mouse.move(400, 400);
+      await page.mouse.wheel(0, 900);
+      await page.waitForTimeout(300);
+      t.expect((await chartState(page)).follow === false, 'a wheel on the sheet pauses Follow');
+      await page.locator('.chart-status-follow').click();
+      await page.waitForTimeout(700);
+      const caught = {state: await chartState(page), vis: await visible()};
+      t.expect(caught.state.follow && caught.vis.first <= 6 && caught.vis.last >= 6, `Follow catches up with the song (${JSON.stringify(caught)})`);
+      await page.keyboard.press('Space');
     },
   },
   {
@@ -133,7 +225,7 @@ module.exports = [
       t.expect(f.labels.length === f.rows.length && f.labels.every((l, i) => Math.abs(l.mid - f.rows[i]) <= 1.5),
         `lane labels align with their rows (${JSON.stringify(f.labels.slice(0, 3))} vs ${JSON.stringify(f.rows.slice(0, 3))})`);
       t.expect(f.grid && f.fit, 'Grid ▾ and Fit show in Lanes');
-      t.expect(f.hits > 100, `the page's hits are drawn (${f.hits})`);
+      t.expect(f.hits > 60, `the first bars' hits are drawn (${f.hits})`);
       const problems = await checkAxe(page, {include: ['.chart-edit-harness']});
       t.expect(!problems.length, problems.join('; '));
     },
@@ -193,7 +285,8 @@ module.exports = [
       const items = await menuItems(page);
       const expected = [['Copy', 'Control+C'], ['Paste', 'Control+V'], ['Repeat bars…', 'Control+D'], ['Select all bars', 'Control+A'],
         ['Delete selected notes', 'Backspace'], ['Move notes…', 'Alt+ArrowLeft'],
-        ['Tuplet on this beat…', null], ['Mark bars reviewed', null], ['Loop selection', 'L'], ['Bar meter & label…', null], ['Align in tempo map…', null]];
+        ['Tuplet on this beat…', null], ['Mark bars reviewed', null], ['Loop selection', 'L'], ['New line here', null], ['Clear line breaks', null],
+        ['Bar meter & label…', null], ['Align in tempo map…', null]];
       const norm = (list) => JSON.stringify(list.map(([n, k]) => [n, k ? k.replace(/^Meta\+/, 'Control+') : null]));
       t.expect(norm(items) === norm(expected), `Edit ▾ items and shortcuts (${JSON.stringify(items)})`);
     },
@@ -259,11 +352,13 @@ module.exports = [
       t.expect(hint === 'Digit5', 'the first step cap reads 5');
       await page.keyboard.press('Escape');
       t.expect((await chartState(page)).selected === 0, 'Esc clears the selection');
-      await page.keyboard.press('PageDown');
-      t.expect((await chartState(page)).range.first === 16, 'PageDown shows the next 16 bars');
+      await page.keyboard.press('BracketRight');
+      t.expect((await chartState(page)).cursorBar === 8, '] goes to the next section (Verse, bar 9)');
+      await page.keyboard.press('BracketLeft');
+      t.expect((await chartState(page)).cursorBar === 0, '[ goes back to Intro');
       await page.keyboard.press('Comma');
       t.expect((await hits(page)) === before + 1, ', does nothing in the score');
-      await page.keyboard.press('Control+KeyZ');
+      await page.keyboard.press('ControlOrMeta+KeyZ');
       t.expect((await hits(page)) === before, '⌘Z / Ctrl+Z undoes in the score');
     },
   },
