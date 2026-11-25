@@ -123,6 +123,7 @@ export const COPY = Object.freeze({
   label: 'Label',
   labelField: 'Section label',
   labelHint: 'Starts a section at this bar. Empty removes it.',
+  labelPlaceholder: 'Name a section that starts here',
   tempo: 'Tempo',
   tempoField: (unit) => `Tempo (${unit} per minute)`,
   tempoFromPins: 'From the pins around it',
@@ -155,12 +156,15 @@ export const COPY = Object.freeze({
   nudgeFwd10Name: 'Nudge pin +10 ms',
   renumber: 'This pin is bar',
   renumberHint: 'Wrong bar number? Type the right one (⌥← →).',
-  tools: 'Tools',
+  tools: 'Map tools',
+  moreTools: 'More tools',
+  statusBar: 'Position and status',   // never "bar": an unmapped song's main area does not say the word
   tapAlong: 'Tap along',
   stopTapping: 'Stop tapping',
   calibrate: 'Calibrate tap timing…',
   snapTaps: 'Snap taps to drum hits',
   preview: 'Preview these bars',
+  previewShort: 'Preview',
   detect: 'Detect beats',
   suggest: 'Suggest sections',
   find: 'Find a chart…',
@@ -226,8 +230,10 @@ const row = (fields) => Object.freeze(fields);
 
 /**
  * Every control of the Map tab: role, accessible name, command (when it runs one) and where it
- * shows ('toolbar', 'inspector' when mapped, 'pinned' when the cursor line is pinned, 'open' on an
- * open tempo span, 'unsectioned' on a mapped song without sections, 'unmapped' in Get a map ('unmapped-detect' where
+ * shows ('toolbar', 'more' in the toolbar's More tools menu ('more-unsectioned' there on a mapped song without
+ * sections), 'inspector' when mapped, 'pinned' when the cursor line
+ * is pinned, 'open' on an open tempo span, 'unsectioned' (the empty sections lane of a mapped song),
+ * 'unmapped' in Get a map ('unmapped-detect' where
  * Detect can run, 'unmapped-web' on the web with no paired computer), 'markers', 'suggestion', 'review', 'row' per stem,
  * 'laptop' only on fine pointers).
  */
@@ -240,6 +246,18 @@ export const CONTROLS = Object.freeze([
   row({role: 'button', name: COPY.zoomSelection, command: C.zoomSelection, context: 'toolbar'}),
   row({role: 'button', name: COPY.gridButton(COPY.divisions.beat), context: 'toolbar'}),
   row({role: 'button', name: COPY.snap, command: C.snap, context: 'toolbar'}),
+  // The tools, at the toolbar's far end (tools.js)
+  row({role: 'group', name: COPY.tools, context: 'always'}),
+  row({role: 'button', name: COPY.tapAlong, command: C.tapAlong, context: 'toolbar'}),
+  row({role: 'button', name: COPY.preview, command: C.preview, context: 'toolbar'}),
+  row({role: 'button', name: COPY.detect, command: C.detect, context: 'toolbar'}),
+  row({role: 'button', name: COPY.suggest, command: C.suggest, context: 'unsectioned'}),
+  row({role: 'button', name: COPY.find, command: C.find, context: 'toolbar'}),
+  row({role: 'button', name: COPY.moreTools, context: 'toolbar'}),
+  row({role: 'menuitem', name: COPY.suggest, command: C.suggest, context: 'more-unsectioned'}),
+  row({role: 'menuitem', name: COPY.calibrate, command: C.calibrate, context: 'more'}),
+  row({role: 'menuitemcheckbox', name: COPY.snapTaps, context: 'more'}),
+  row({role: 'group', name: COPY.statusBar, context: 'always'}),
   row({role: 'group', name: 'Drums', context: 'row'}),
   row({role: 'button', name: COPY.mute('Drums'), context: 'row'}),
   row({role: 'button', name: COPY.solo('Drums'), context: 'row'}),
@@ -274,13 +292,6 @@ export const CONTROLS = Object.freeze([
   row({role: 'button', name: COPY.nudgeFwd1Name, command: C.nudgeFwdFine, context: 'inspector'}),
   row({role: 'button', name: COPY.nudgeFwd10Name, command: C.nudgeFwd, context: 'inspector'}),
   row({role: 'textbox', name: COPY.renumber, context: 'pinned'}),
-  row({role: 'button', name: COPY.tapAlong, command: C.tapAlong, context: 'inspector'}),
-  row({role: 'button', name: COPY.calibrate, command: C.calibrate, context: 'inspector'}),
-  row({role: 'button', name: COPY.snapTaps, context: 'inspector'}),
-  row({role: 'button', name: COPY.preview, command: C.preview, context: 'inspector'}),
-  row({role: 'button', name: COPY.detect, command: C.detect, context: 'inspector'}),
-  row({role: 'button', name: COPY.suggest, command: C.suggest, context: 'unsectioned'}),
-  row({role: 'button', name: COPY.find, command: C.find, context: 'inspector'}),
   // Get a map (unmapped)
   row({role: 'button', name: COPY.detectAction, command: C.detect, context: 'unmapped-detect'}),
   row({role: 'link', name: COPY.getIt, context: 'unmapped-web'}),

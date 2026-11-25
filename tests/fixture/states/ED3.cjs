@@ -9,7 +9,7 @@
 //                         web with no paired computer reads "Needs Woodshed for desktop"
 //   ed3-map-detect        desktop, unmapped: [Detect] runs (the busy button), the job finishes server-side, the
 //                         inspector becomes the full one and the status line says "Beat grid found · Undo"
-//   ed3-map-detect-mapped desktop, mapped: Tools → Detect beats replaces the map as one map-stack step; Undo
+//   ed3-map-detect-mapped desktop, mapped: the toolbar's Detect beats replaces the map as one map-stack step; Undo
 //                         (Mod+Z) puts the old map back
 //   ed3-map-suggestion    a section suggestion (D47): dashed blocks with [Keep all] [Review]
 //   ed3-map-review        ?review=sections: ✓/✕ per block, drop one, [Apply 4] keeps four sections as one step
@@ -90,6 +90,27 @@ module.exports = [
       // 40 px on fine pointers; on iPad it grows to hold its 44 px targets.
       t.expect(portrait ? f.toolbar.h >= 44 && f.toolbar.h <= 46 : near(f.toolbar.h, 40, 0.5), `the toolbar is 40 px (44 coarse) (got ${f.toolbar.h})`);
       t.expect(near(f.ruler.h, 24, 0.5), `the ruler is 24 px (got ${f.ruler.h})`);
+      // 2.9: the tools are in the toolbar, the strip has a height, the status bar says where the cursor is, and on a
+      // laptop the stem rows take the height the window has left (96 to 220 px each).
+      const now = await page.evaluate(() => {
+        const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? 0);
+        return {
+          tools: [...document.querySelectorAll('[data-testid=map-tools] button')].filter((b) => b.checkVisibility())
+            .map((b) => b.getAttribute('aria-label') ?? b.querySelector('.ui-button-label')?.textContent.trim()),
+          toolbarH: h('.map-toolbar'), reasons: document.querySelectorAll('[data-testid=map-tools] .ui-button-reason').length,
+          strip: h('.map-strip .strip'), rows: [...document.querySelectorAll('.map-head')].map((el) => Math.round(el.getBoundingClientRect().height)),
+          position: document.querySelector('[data-testid=map-position]')?.textContent, status: !!document.querySelector('.map-statusbar [data-testid=map-status]'),
+          inspectorTools: !!document.querySelector('[data-testid=map-inspector] [data-section=tools]'),
+          meterOpen: document.querySelector('[data-testid=map-inspector] [data-section=meter]')?.open,
+        };
+      });
+      t.expect(now.tools.join(' | ') === 'Tap along | Preview these bars | Detect beats | Find a chart… | More tools' && !now.inspectorTools, `the tools are the toolbar's (${now.tools})`);
+      // Here Detect beats cannot run (the web, no computer): its reason is a tooltip, never text inside the toolbar.
+      t.expect(now.reasons === 0 && now.toolbarH <= 46, `a disabled tool keeps the toolbar one row (${now.toolbarH} px, ${now.reasons} printed reasons)`);
+      t.expect(now.strip >= 40, `the song strip shows on a mapped song (${now.strip} px)`);
+      t.expect(now.position === 'Bar 1 · 0:00.000' && now.status, `the status bar: position and the status line (${now.position})`);
+      t.expect(now.meterOpen === false, 'Meter is folded until asked for');
+      if (!portrait) t.expect(now.rows.length === 4 && now.rows.every((x) => x > 110 && x <= 221), `the stem rows fill the window (${now.rows})`);
       t.expect(portrait ? near(f.sections.h, 45, 0.5) : near(f.sections.h, 32, 0.5), `the sections lane is 32 px (45 coarse, for 44 px targets) (got ${f.sections.h})`);
       t.expect(near(f.tempo.h, 96, 0.5), `the tempo lane is 96 px (got ${f.tempo.h})`);
       t.expect(f.rulerMode === 'bars' && f.marks[0] === '1' && f.meters[0] === '4/4', `bar numbers with the meter chip (got ${f.marks.slice(0, 3)} ${f.meters})`);
@@ -132,7 +153,10 @@ module.exports = [
       t.expect(await needs.isVisible() && (await needs.textContent()).startsWith('Needs Woodshed for desktop'), 'the web without a paired computer');
       t.expect(!(await button(page, 'Detect').isVisible()), 'no [Detect] without a computer to run it');
       t.expect(await page.getByRole('link', {name: 'Get it ↗'}).isVisible(), 'Get it ↗');
-      t.expect(await button(page, 'Start tapping').isVisible() && await button(page, 'Find a chart…').isVisible(), 'Tap along and Find a chart');
+      // Get a map's own buttons (the toolbar's tools offer Tap along and Find a chart… too).
+      const getMap = page.getByTestId('map-inspector');
+      t.expect(await button(page, 'Start tapping').isVisible() && await getMap.getByRole('button', {name: 'Find a chart…', exact: true}).isVisible(), 'Tap along and Find a chart');
+      t.expect(await page.getByTestId('map-tools').getByRole('button', {name: 'Find a chart…', exact: true}).count() === 1, 'the toolbar offers Find a chart… too');
     },
   },
   {
@@ -191,7 +215,10 @@ module.exports = [
       const bar = page.getByTestId('map-sections-bar');
       t.expect(await bar.getByRole('button', {name: 'Keep all', exact: true}).isVisible() && await bar.getByRole('button', {name: 'Review', exact: true}).isVisible(),
         '[Keep all] [Review] under the lane');
-      t.expect(await button(page, 'Suggest sections').isVisible(), 'Tools offers Suggest sections on a song without sections');
+      // While a suggestion waits, Suggest sections can be run again from More tools (an empty lane offers it itself).
+      await button(page, 'More tools').click();
+      t.expect(await page.getByRole('menuitem', {name: 'Suggest sections', exact: true}).isVisible(), 'More tools offers Suggest sections on a song without sections');
+      await page.keyboard.press('Escape');
     },
   },
   {

@@ -4,20 +4,23 @@
    * the cursor and the playhead) are set inline by the modules as --x / --x0 / --w / translateX;
    * everything else is here.
    *   section.map-view[data-mapped][data-compact][data-grid][data-snap]
-   *     .map-toolbar (40 px)
+   *     .map-toolbar (40 px): the view's controls, then .map-toolbar-tools at the far end (tools.js)
    *     .map-lanes: a grid of key column | content: ruler (24) · sections (32) · the sections bar ·
    *       tempo (96) · one row per stem (.map-heads | .map-cell-rows canvas), with .map-overlay
-   *       (cursor, playhead) over the content column
-   *     .map-banners (markers → sections) · .map-strip (the song strip)
+   *       (cursor, playhead) over the content column. The stem rows share the height that is left
+   *       (--map-row-min to --map-row-max each).
+   *     .map-banners (markers → sections) · .map-strip (the song strip, 40 px) · .map-statusbar
    *   aside.map-inspector[data-mode=mapped|unmapped] inside Edit's inspector container */
   .map-view {
     --map-key: 136px;
     --map-row-min: 96px;   /* name · M S level · fader: three lines without overlap */
+    --map-row-max: 220px;  /* taller than this a waveform is no easier to line a bar up against */
     --map-rows: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
     min-height: 100%;
+    height: 100%;
     background: var(--bg);
     color: var(--ink);
     user-select: none;
@@ -41,10 +44,29 @@
     background: var(--surface);
     overflow-x: auto;
     scrollbar-width: none;
+    container: map-toolbar / inline-size;
   }
   .map-toolbar::-webkit-scrollbar { display: none; }
   .map-toolbar > * { flex: none; }
   .map-tool-group { display: inline-flex; align-items: center; gap: var(--s1); }
+  /* The tools sit at the far end, after a hairline. */
+  .map-toolbar-tools { margin-inline-start: auto; padding-inline-start: var(--s2); border-inline-start: 1px solid var(--line); }
+  .map-tools { display: inline-flex; align-items: center; gap: var(--s1); }
+  .map-tools > [hidden] { display: none; }
+  /* A narrow toolbar: the tools keep their icons and drop their words (the names stay for screen readers and as
+   * tooltips), so Find a chart… and More tools never scroll out of reach. */
+  @container map-toolbar (max-width: 1039px) {
+    .map-tools .ui-button:not([data-icon-only]) { min-width: var(--h-sm); padding-inline: var(--s2); }
+    .map-tools .ui-button-text {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .map-tools .map-hint { display: none; }
+  }
 
   /* Key-cap hints (Kbd hint) only after keyboard use on fine pointers (Edit adds [data-kbd-hints]). */
   .map-hint { margin-inline-start: var(--s1); }
@@ -53,15 +75,17 @@
   .map-lanes {
     position: relative;
     display: grid;
-    flex: none;
+    flex: 1 1 auto;
     grid-template-columns: var(--map-key) minmax(0, 1fr);
-    grid-template-rows: 24px 32px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), auto);
+    grid-template-rows: 24px 32px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), 1fr);
     min-width: 0;
+    /* The rows grow with the window up to --map-row-max each; past that the lanes stop and the desk shows. */
+    max-height: calc(24px + 32px + 96px + 48px + var(--map-row-max) * var(--map-rows));
     border-bottom: 1px solid var(--line);
   }
   /* Coarse pointers: the sections lane grows from 32 px to hold 44 px targets (names, starts, ✓ / ✕) above its border. */
-  .map-view[data-compact] .map-lanes { grid-template-rows: 24px 45px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
-  .map-view[data-mapped=false] .map-lanes { grid-template-rows: 24px 0 0 0 minmax(calc(var(--map-row-min) * var(--map-rows)), auto); }
+  .map-view[data-compact] .map-lanes { grid-template-rows: 24px 45px auto 96px minmax(calc(var(--map-row-min) * var(--map-rows)), 1fr); }
+  .map-view[data-mapped=false] .map-lanes { grid-template-rows: 24px 0 0 0 minmax(calc(var(--map-row-min) * var(--map-rows)), 1fr); }
   .map-view[data-mapped=false] :is(.map-key-sections, .map-cell-sections, .map-cell-sections-bar, .map-key-tempo, .map-cell-tempo) {
     display: none;
   }
@@ -185,10 +209,13 @@
     inset: 0;
     display: flex;
     align-items: center;
+    gap: var(--s3);
     padding: 0 var(--s3);
     color: var(--ink-3);
     font-size: var(--fs-14);
   }
+  .map-sections-empty-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-sections-suggest.ui-button { flex: none; color: var(--accent); }
   .map-section-name:focus-visible,
   .map-suggested-toggle:focus-visible,
   .map-boundary:focus-visible { outline-offset: -3px; }
@@ -365,7 +392,38 @@
   .map-banners { flex: none; padding: var(--s3) var(--s3) 0; }
   .map-banners:empty, .map-banners:has(> [hidden]:only-child) { padding: 0; }
   .map-banner-note { color: var(--ink-2); font-size: var(--fs-14); }
-  .map-strip { flex: none; margin-top: auto; padding: var(--s3); }
+  /* The strip fills its slot (strip.css), so the slot has a height: without one a mapped song's strip was 0 px tall. */
+  .map-strip { flex: none; margin-top: auto; padding: var(--s2) var(--s3); }
+  .map-strip > .strip { height: 40px; }
+  .map-view[data-compact] .map-strip > .strip { height: 44px; }   /* its slider is a 44 px target on coarse pointers */
+
+  /* ---- the status bar: where the cursor is, then the status line ---- */
+  .map-statusbar {
+    /* It sticks to the bottom of the panel: on an iPad in portrait the lanes are taller than the panel and scroll. */
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-local-2);
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s3);
+    min-height: 36px;
+    padding: 0 var(--s3);
+    box-sizing: border-box;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .map-position {
+    flex: none;
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .map-status-slot { flex: 1 1 auto; min-width: 0; }
+  .map-status-slot .map-insp-status { padding: 0; border: 0; background: none; }
 
   /* ---- the inspector ---- */
   .map-inspector {
@@ -378,11 +436,26 @@
     font-size: var(--fs-14);
   }
   .map-insp-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); }
+  .map-insp-goto { display: flex; flex-direction: column; gap: var(--s2); }
+  .map-insp-steps { flex-wrap: nowrap; align-items: flex-end; gap: var(--s1); }
+  .map-insp-steps .ui-button { flex: none; padding-inline: var(--s2); }
+  .map-insp-steps .map-goto-field { flex: 1 1 0; width: auto; min-width: 48px; max-width: 112px; margin-inline-start: var(--s1); }
+  .map-insp-scale { flex-wrap: nowrap; gap: var(--s1); }
+  .map-insp-scale .map-field-label { min-width: 0; margin-inline: auto var(--s1); }
+  .map-insp-nudge { flex-wrap: nowrap; gap: var(--s1); }
+  .map-insp-nudge .ui-button { padding-inline: var(--s2); }
+  .map-insp-nudge .map-field-label { min-width: 0; margin-inline-end: var(--s1); }
+  /* Meter is a disclosure: its heading row shows the bar's meter and opens the form. */
+  .map-insp-summary { display: flex; align-items: center; gap: var(--s2); min-height: var(--h-sm); cursor: pointer; list-style: none; }
+  .map-insp-summary::-webkit-details-marker { display: none; }
+  .map-insp-summary::after { content: ''; inline-size: 8px; block-size: 8px; margin-inline-start: auto; border-inline-end: 2px solid var(--ink-3);
+    border-block-end: 2px solid var(--ink-3); transform: rotate(-45deg); transition: transform var(--motion-fast) var(--ease); }
+  .map-insp-meter[open] > .map-insp-summary::after { transform: rotate(45deg); }
+  .map-meter-value { color: var(--ink); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .map-insp-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s2); min-width: 0; }
   .map-insp-title, .map-insp-sub { white-space: nowrap; }
   .map-insp-title { margin: 0; font-size: var(--fs-20); font-weight: var(--fw-bold); letter-spacing: 0.02em; }
   .map-insp-sub { color: var(--ink-3); font-size: var(--fs-14); }
-  .map-insp-steps { display: inline-flex; gap: var(--s1); flex: none; }
   .map-insp-section {
     display: flex;
     flex-direction: column;

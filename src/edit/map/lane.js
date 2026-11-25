@@ -94,15 +94,19 @@ const polygon = (ctx, points) => {
   ctx.closePath();
 };
 
+/** Pins closer together than this (px) are drawn as dots of this radius. */
+export const CROWDED_PX = 16;
+export const CROWDED_DOT = 2.5;
+
 /**
  * Draws a tempoGeometry() result.
  *   o: {width, height, dpr = 1, colors = laneColors(), selectedQ, band: [x0, x1]|null (the selected
  *      bar), cursorX: number|null (the selected line), cursorY, hoverQ}
- * Returns what it drew, for tests and probes: {suspect, pins, selected, labels}.
+ * Returns what it drew, for tests and probes: {suspect, pins, dots (pins drawn small because they crowd), selected, labels}.
  */
 export function drawTempoLane(ctx, geo, {width, height, dpr = 1, colors = laneColors(), selectedQ = null, band = null,
   cursorX = null, cursorY = null, hoverQ = null} = {}) {
-  const drawn = {suspect: 0, pins: 0, selected: false, labels: []};
+  const drawn = {suspect: 0, pins: 0, dots: 0, selected: false, labels: []};
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
@@ -163,10 +167,23 @@ export function drawTempoLane(ctx, geo, {width, height, dpr = 1, colors = laneCo
   }
   ctx.textAlign = 'left';
 
-  // Pins: 12 px diamonds on the curve; the selected one in --accent-fill with a ring.
-  for (const p of geo.pins) {
+  // Pins: 12 px diamonds on the curve; the selected one in --accent-fill with a ring. A detected map pins every
+  // bar or beat: where pins sit closer than CROWDED_PX their diamonds would merge into a band, so those are drawn
+  // as dots (the selected and hovered ones keep their diamond; zoom in and every pin is a diamond again).
+  for (let i = 0; i < geo.pins.length; i++) {
+    const p = geo.pins[i];
     const selected = selectedQ !== null && compare(p.pin.position, selectedQ) === 0;
     const hover = hoverQ !== null && compare(p.pin.position, hoverQ) === 0;
+    const gap = Math.min(i > 0 ? p.x - geo.pins[i - 1].x : Infinity, i < geo.pins.length - 1 ? geo.pins[i + 1].x - p.x : Infinity);
+    if (gap < CROWDED_PX && !selected && !hover) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, CROWDED_DOT, 0, Math.PI * 2);
+      ctx.fillStyle = colors.ink;
+      ctx.fill();
+      drawn.pins++;
+      drawn.dots++;
+      continue;
+    }
     polygon(ctx, diamond(p.x, p.y, DIAMOND + 4));
     ctx.fillStyle = colors.surface;
     ctx.fill();

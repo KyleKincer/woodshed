@@ -92,7 +92,7 @@ function feedbackStub() {
   return {statusLine: line, attachStatusLine: () => () => {}, status: (text, opts = {}) => { line.value = {text, ...opts}; }};
 }
 
-async function bed({desktop = false, ...options} = {}) {
+async function bed({desktop = false, statusHost = null, ...options} = {}) {
   const ts = await createTestSession({clock, desktop, ...options});
   const engine = ts.session.engine;
   const prefs = fakePrefs();
@@ -121,7 +121,8 @@ async function bed({desktop = false, ...options} = {}) {
   const host = document.createElement('div');
   document.body.append(host);
   const desktopModule = {available: !!desktop, processor: signal(desktop ? {phase: 'ready'} : {phase: 'web'})};
-  const inspector = mountInspector(host, {session: ts.session, mapSession, registry, prefs, feedback, store: {library: ts.library}, desktop: desktopModule});
+  const inspector = mountInspector(host, {session: ts.session, mapSession, registry, prefs, feedback, store: {library: ts.library}, desktop: desktopModule,
+    ...(statusHost ? {statusHost} : {})});
   // Commands evaluate `when` after a 50 ms settle (buttons enable then).
   vi.advanceTimersByTime(60);
   current.push(async () => { inspector.destroy(); mapSession.destroy(); ts.session.mapEditor.value = null; await ts.dispose(); });
@@ -140,9 +141,40 @@ describe('the mapping table (maps/mapedit.md §11.4)', () => {
     for (const row of shown) expect(byRole(b.el, row.role, row.name).length, `${row.role} "${row.name}"`).toBeGreaterThan(0);
     expect(b.el.getAttribute('aria-label')).toBe(COPY.inspector);
     const names = new Set([...b.el.querySelectorAll('*')].map(nameOf));
-    for (const row of MAPPING.filter((r) => ![COPY.sectionsLane, COPY.snap, COPY.gridButton(COPY.divisions.beat), COPY.zoomIn, COPY.zoomOut, COPY.fit, COPY.zoomSelection].includes(r.name))) {
+    // The toolbar's rows (the view, and since 2.9 the tools) are checked on the mounted view (edit-map-view.test.js).
+    const toolbar = [COPY.sectionsLane, COPY.snap, COPY.gridButton(COPY.divisions.beat), COPY.zoomIn, COPY.zoomOut, COPY.fit, COPY.zoomSelection,
+      COPY.tapAlong, COPY.calibrate, COPY.snapTaps, COPY.detect, COPY.find, COPY.preview];
+    for (const row of MAPPING.filter((r) => !toolbar.includes(r.name))) {
       expect(names.has(row.name), `${row.was} → ${row.name}`).toBe(true);
     }
+    // The tools left the inspector; what is edited on every bar comes first, and Meter is folded under it.
+    for (const name of [COPY.tapAlong, COPY.detect, COPY.find, COPY.preview, COPY.calibrate, COPY.snapTaps]) expect(byRole(b.el, 'button', name), name).toHaveLength(0);
+    expect([...b.el.children].map((c) => c.dataset.section ?? c.tagName.toLowerCase())).toEqual(['header', 'go to', 'label', 'tempo', 'pin', 'meter', 'div']);
+  });
+
+  test('Meter is a disclosure: closed until asked for, headed with the bar’s meter; E (focusMeter) opens it', async () => {
+    const b = await bed();
+    const meter = b.el.querySelector('[data-section=meter]');
+    expect(meter.tagName).toBe('DETAILS');
+    expect(meter.open).toBe(false);
+    expect(meter.querySelector('summary').textContent).toContain('4/4');
+    expect(b.inspector.focusMeter()).toBe(true);
+    expect(meter.open).toBe(true);
+    expect(document.activeElement.getAttribute('role')).toBe('spinbutton');
+    meter.open = false;
+    meter.dispatchEvent(new Event('toggle'));
+  });
+
+  test('statusHost: the status line is drawn where the view puts it (its status bar), not at the inspector’s end', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const b = await bed({statusHost: host});
+    expect(b.el.querySelector('[data-testid=map-status]')).toBeNull();
+    const status = host.querySelector('[data-testid=map-status]');
+    expect(status.hidden).toBe(true);
+    b.feedback.status('Beat grid found', {tone: 'ok', action: {label: 'Undo', run() {}}});
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toContain('Beat grid found');
   });
 });
 
@@ -341,35 +373,12 @@ describe('Pin', () => {
   });
 });
 
-describe('Tools', () => {
-  test('Snap taps to drum hits is a device pref; Preview is a toggle; Find a chart… opens Find', async () => {
-    const b = await bed();
-    const snapTaps = one(b.el, 'button', COPY.snapTaps);
-    expect(snapTaps.getAttribute('aria-pressed')).toBe('true');
-    snapTaps.click();
-    expect(b.prefs.get('edit.map.tapSnap')).toBe(false);
-    expect(one(b.el, 'button', COPY.preview).getAttribute('aria-pressed')).toBe('false');
-    one(b.el, 'button', COPY.find).click();
-    expect(b.router.calls.at(-1)[0]).toBe(`/s/${encodeURIComponent(b.session.id)}/edit/map/find`);
-    // Sections exist: no Suggest sections.
-    expect(byRole(b.el, 'button', COPY.suggest)).toHaveLength(0);
-  });
-
-  test('Detect beats runs map.detect (desktop) and shows the job line while it runs', async () => {
-    const b = await bed({desktop: true});
-    const detect = one(b.el, 'button', COPY.detect);
-    detect.click();
-    await settle();
-    b.refresh();
-    expect(b.ts.server.jobRows.some((j) => j.kind === 'beats')).toBe(true);
-    expect(detect.getAttribute('aria-busy')).toBe('true');
-  });
-
-  test('while auditioning (D20), map-editing buttons are disabled', async () => {
+describe('auditioning (D20)', () => {
+  test('while auditioning, map-editing buttons are disabled; stepping through bars is not', async () => {
     const b = await bed();
     b.mapSession.beginAudition();
     b.refresh();
-    for (const name of [COPY.pinDownbeat, COPY.doubleName, COPY.tailUp, COPY.nudgeFwd10Name, COPY.tapAlong, COPY.calibrate]) {
+    for (const name of [COPY.pinDownbeat, COPY.doubleName, COPY.tailUp, COPY.nudgeFwd10Name]) {
       const button = one(b.el, 'button', name);
       expect(button.disabled || button.getAttribute('aria-disabled') === 'true', name).toBe(true);
     }

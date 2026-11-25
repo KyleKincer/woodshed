@@ -1,24 +1,28 @@
 // Edit · Map inspector (architecture §2.15 `mountInspector`; spec §5.1 "Inspector, selected bar or
 // pin" and §5.1.1 "Get a map"; maps/mapedit.md §11.4: every key-only map edit has a control).
 //
-//   mountInspector(el, {session, mapSession, registry, prefs, feedback, store, platform}) →
+//   mountInspector(el, {session, mapSession, registry, prefs, feedback, store, platform, statusHost}) →
 //     {el, focusMeter(), applyFocused(), destroy()}
 //
-// Mapped songs (top to bottom):
-//   BAR 41 · beat 3       [◀ Bar] [Bar ▶]                              map.prevBar / map.nextBar
-//   Go to [ 41 ] [Go] [⏮ Change] [Change ⏭]  the typed digits show in the field              map.goOrApply, map.prevPin/nextPin
-//   Meter  Beats [−] 7 [+] (every step is one edit, ↑↓)                    map.beatsDown / map.beatsUp
-//          Unit 1·2·4·8·16 · Groups [2+2+3] · Pickup length (bar 1 or a short bar)
-//          Apply to This bar · Until next change · To the end · Keep in place Beats · Bar lines · [Apply ↵]
+// Mapped songs (top to bottom; reordered in 2.9 so what is edited most comes first and all of it fits a
+// laptop's height without scrolling):
+//   BAR 41 · beat 3
+//   [◀ Bar] [Bar ▶] Go to bar [ 41 ] [Go]      map.prevBar / map.nextBar; the typed digits show in the field (map.goOrApply)
+//   [⏮ Change] [Change ⏭]                       map.prevPin / map.nextPin
 //   Label  [Bridge] (Enter or leaving the field labels the bar; '' removes it)
 //   Tempo  ♩ [96.00] on an open span, else the span's tempo · [Ramp to next pin R] · [×2] [÷2] · Tail [−] [+]
 //   Pin    ● Locked at 0:48.120 | free · [Pin downbeat D] [Pin beat T] · [Unpin ⌫]
 //          Nudge [−10 ms] [−1] [+1] [+10 ms] · This pin is bar [ 41 ] (pinned lines)
-//   Tools  [Tap along] [Calibrate tap timing…] [Snap taps to drum hits] [Preview these bars P]
-//          [Detect beats] [Suggest sections] [Find a chart…]
+//   Meter ▸ 4/4   closed until asked for (its heading shows the bar's meter; E opens it and focuses Beats):
+//          Beats [−] 7 [+] (every step is one edit, ↑↓)                    map.beatsDown / map.beatsUp
+//          Unit 1·2·4·8·16 · Groups [2+2+3] · Pickup length (bar 1 or a short bar)
+//          Apply to This bar · Until next change · To the end · Keep in place Beats · Bar lines · [Apply ↵]
 //   Status the map session's messages (refusals from the model and the drum-part guards in error
 //          tone) and the app status line (results that offer Undo: Beat grid found · Undo, a tap
-//          pass, markers → sections); the inspector hosts the status line while it is mounted.
+//          pass, markers → sections). The inspector owns the status line while it is mounted and draws it
+//          in `statusHost` (the map view's status bar, always on screen), else at its own end.
+// The tools (Tap along, Preview, Detect beats, Find a chart…, Calibrate, Snap taps) are the toolbar's since 2.9
+// (tools.js); Suggest sections is in the empty sections lane (sections.js).
 // Unmapped songs show "Get a map" instead (spec §5.1.1): Detect beats (desktop or a paired
 // computer; the web without one reads "Needs Woodshed for desktop [Get it ↗]"), Tap along, Find a
 // chart, with the same status line.
@@ -26,7 +30,6 @@
 // Buttons run registry commands (so key-caps, enabled and pressed states come from §3.4), with
 // key-cap hints that show only inside [data-kbd-hints] (Edit adds it after keyboard use, spec §5.0).
 import {registry as appRegistry} from '../../app/commands.js';
-import {prefs as appPrefs} from '../../app/prefs.js';
 import * as appFeedback from '../../app/feedback.js';
 import {effect, store as appStore} from '../../app/store.js';
 import {desktop as appDesktop} from '../../app/desktop.js';
@@ -58,8 +61,11 @@ const section = (name, ...children) => h('section', {class: 'map-insp-section', 
   h('h3', {class: 'map-insp-heading'}, name), ...children);
 const row = (...children) => h('div', {class: 'map-insp-row'}, ...children);
 
-export function mountInspector(el, {session, mapSession, registry = appRegistry, prefs = appPrefs, feedback = appFeedback,
-  store = appStore, desktop = appDesktop} = {}) {
+/** Whether Meter is open: for the page session, so stepping through bars keeps it as you left it. */
+const remembered = {meterOpen: false};
+
+export function mountInspector(el, {session, mapSession, registry = appRegistry, feedback = appFeedback,
+  store = appStore, desktop = appDesktop, statusHost = null} = {}) {
   if (!session || !mapSession) throw new TypeError('mountInspector needs a session and a map session.');
   const {map} = session;
   const root = h('aside', {class: 'map-inspector', attrs: {'aria-label': COPY.inspector}, dataset: {testid: 'map-inspector'}});
@@ -75,6 +81,7 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
   const status = InlineStatus({tone: 'info', text: '', className: 'map-insp-status', attrs: {'aria-label': COPY.statusRegion},
     dataset: {testid: 'map-status'}});
   status.el.hidden = true;
+  if (statusHost) statusHost.append(status.el);
   let shown = null;    // {kind: 'message'|'status', entry}
   const detachStatus = feedback.attachStatusLine?.() ?? (() => {});
   function showStatus() {
@@ -130,7 +137,7 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
       h('h3', {class: 'map-insp-heading'}, COPY.findTitle), row(findButton.el));
     const body = h('div', {class: 'map-getmap'},
       h('h2', {class: 'map-insp-title'}, COPY.getMap), h('p', {class: 'map-getmap-intro'}, COPY.getMapIntro), detectCard, tapCard, findCard);
-    root.replaceChildren(body, status.el);
+    root.replaceChildren(body, ...(statusHost ? [] : [status.el]));
     return {kind: 'unmapped', detectButton, where, needs, tapButton};
   }
 
@@ -177,14 +184,16 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     const sub = h('span', {class: 'map-insp-sub'});
     const prev = commandButton({label: COPY.prevBar, icon: 'chevron-left', command: C.prevBar, attrs: {'aria-label': COPY.prevBarName}});
     const next = commandButton({label: COPY.nextBar, iconEnd: 'chevron-right', command: C.nextBar, attrs: {'aria-label': COPY.nextBarName}});
-    const header = h('header', {class: 'map-insp-header'}, h('div', {class: 'map-insp-name'}, title, sub), h('div', {class: 'map-insp-steps'}, prev.el, next.el));
+    const header = h('header', {class: 'map-insp-header'}, h('div', {class: 'map-insp-name'}, title, sub));
 
     const goField = keep(TextField({label: COPY.goToField, inputmode: 'numeric', size: 'sm', maxLength: 4, className: 'map-goto-field',
       onCommit: (v) => { if (String(v).trim()) goTo(v); }}));
     const goButton = commandButton({label: COPY.go, hintKeys: 'Enter', onClick: () => goTo(goField.input.value)});
     const prevPin = commandButton({label: COPY.prevPin, icon: 'skip-back', command: C.prevPin, attrs: {'aria-label': COPY.prevPinName}, hint: false});
     const nextPin = commandButton({label: COPY.nextPin, iconEnd: 'skip-forward', command: C.nextPin, attrs: {'aria-label': COPY.nextPinName}, hint: false});
-    const goto = section(COPY.goTo, row(goField.el, goButton.el), row(prevPin.el, nextPin.el));
+    const goto = h('div', {class: 'map-insp-goto', role: 'group', attrs: {'aria-label': COPY.goTo}, dataset: {section: 'go to'}},
+      h('div', {class: 'map-insp-row map-insp-steps'}, prev.el, next.el, goField.el, goButton.el),
+      h('div', {class: 'map-insp-row'}, prevPin.el, nextPin.el));
 
     // Meter
     const beats = keep(Stepper({label: COPY.beats, min: 1, max: 16, step: 1, value: span().meter.numerator, size: 'sm',
@@ -206,19 +215,27 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
       });
     }
     const beatsLabel = h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.beats);
-    keep(hint(beatsLabel, 'KeyE'));
-    const meter = section(COPY.meter,
+    // Meter is a disclosure: a time signature changes once or twice a song, so it stays folded under what is
+    // edited on every bar. Its heading shows the bar's meter; E opens it.
+    const meterValue = h('span', {class: 'map-meter-value'});
+    const meterSummary = h('summary', {class: 'map-insp-summary'}, h('span', {class: 'map-insp-heading'}, COPY.meter), meterValue);
+    keep(hint(meterSummary, 'KeyE'));
+    const meter = h('details', {class: 'map-insp-section map-insp-meter', attrs: {'aria-label': COPY.meter}, dataset: {section: 'meter'}},
+      meterSummary,
       row(beatsLabel, beats.el),
       row(h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.unit), unit.el),
       groups.el, pickup.el,
       row(h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.applyTo), applyTo.el),
       row(h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.keep), keepIn.el),
       row(apply.el));
+    meter.open = remembered.meterOpen;
+    meter.addEventListener('toggle', () => { remembered.meterOpen = meter.open; });
 
     // Label
-    const label = keep(TextField({label: COPY.labelField, hint: COPY.labelHint, maxLength: 120, size: 'sm', className: 'map-label-field',
+    const label = keep(TextField({label: COPY.labelField, placeholder: COPY.labelPlaceholder, maxLength: 120, size: 'sm', className: 'map-label-field',
       onCommit: (v) => mapSession.setLabel(span().index, v)}));
-    const labelSection = section(COPY.label, label.el);
+    // The field's own label heads it: a "Label" heading over "Section label" said the same thing twice.
+    const labelSection = h('section', {class: 'map-insp-section', attrs: {'aria-label': COPY.label}, dataset: {section: 'label'}}, label.el);
 
     // Tempo
     const tempoField = keep(TextField({label: COPY.tempoField('♩'), inputmode: 'decimal', size: 'sm', className: 'map-tempo-field',
@@ -230,8 +247,8 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     const halve = commandButton({label: COPY.halve, command: C.halve, attrs: {'aria-label': COPY.halveName}});
     const tailDown = commandButton({label: '−', command: C.tailDown, attrs: {'aria-label': COPY.tailDown}, hint: false});
     const tailUp = commandButton({label: '+', command: C.tailUp, attrs: {'aria-label': COPY.tailUp}, hint: false});
-    const tempo = section(COPY.tempo, tempoField.el, tempoRead, row(ramp.el), row(double.el, halve.el),
-      row(h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.tail), tailDown.el, tailUp.el));
+    const tempo = section(COPY.tempo, tempoField.el, tempoRead, row(ramp.el),
+      h('div', {class: 'map-insp-row map-insp-scale'}, double.el, halve.el, h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.tail), tailDown.el, tailUp.el));
 
     // Pin
     const pinState = h('p', {class: 'map-pin-state', dataset: {testid: 'map-pin-state'}}, h('span', {class: 'map-pin-text'}), h('span', {class: 'map-insp-sub'}));
@@ -245,23 +262,11 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     const renumber = keep(TextField({label: COPY.renumber, hint: COPY.renumberHint, inputmode: 'numeric', size: 'sm', maxLength: 4, className: 'map-renumber-field',
       onCommit: (v) => { if (String(v).trim()) mapSession.renumberTo(Number(v)); }}));
     const pinSection = section(COPY.pin, pinState, row(pinD.el, pinT.el, unpin.el),
-      row(h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.nudge), n10.el, n1.el, p1.el, p10.el), renumber.el);
+      h('div', {class: 'map-insp-row map-insp-nudge'}, h('span', {class: 'map-field-label', attrs: {'aria-hidden': 'true'}}, COPY.nudge), n10.el, n1.el, p1.el, p10.el), renumber.el);
 
-    // Tools
-    const tapAlong = commandButton({command: C.tapAlong, hintKeys: 'Space'});
-    const calibrate = commandButton({label: COPY.calibrate, command: C.calibrate});
-    const snapTaps = keep(Toggle({label: COPY.snapTaps, size: 'sm', className: 'map-snap-taps', pressed: prefs.get?.('edit.map.tapSnap') !== false,
-      onChange: (on) => prefs.set?.('edit.map.tapSnap', !!on)}));
-    const preview = keep(Toggle({label: COPY.preview, command: C.preview, size: 'sm', registry}));
-    keep(hint(preview.el, 'KeyP'));
-    const detect = commandButton({label: COPY.detect, command: C.detect, hint: false});
-    const suggest = commandButton({label: COPY.suggest, command: C.suggest, hint: false});
-    const find = commandButton({label: COPY.find, command: C.find, hint: false});
-    const tools = section(COPY.tools, h('div', {class: 'map-insp-grid'}, tapAlong.el, calibrate.el, snapTaps.el, preview.el, detect.el, suggest.el, find.el));
-
-    root.replaceChildren(header, goto, meter, labelSection, tempo, pinSection, tools, status.el);
-    return {kind: 'mapped', title, sub, goField, beats, unit, groups, pickup, applyTo, keepIn, apply, meter, label, tempoField, tempoRead, tempo,
-      pinState, unpin, renumber, pinSection, labelSection, goto, snapTaps, detect, suggest, tapAlong};
+    root.replaceChildren(header, goto, labelSection, tempo, pinSection, meter, ...(statusHost ? [] : [status.el]));
+    return {kind: 'mapped', title, sub, goField, beats, unit, groups, pickup, applyTo, keepIn, apply, meter, meterValue, label, tempoField, tempoRead, tempo,
+      pinState, unpin, renumber, pinSection, labelSection, goto};
   }
 
   function touch(field, value) {
@@ -322,6 +327,7 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     if (!digits && document.activeElement !== p.goField.input) p.goField.input.value = '';
     // Meter
     p.beats.set({value: s.meter.numerator});
+    p.meterValue.textContent = `${s.meter.numerator}/${s.form.denominator}${s.form.groups ? ` · ${s.form.groups}` : ''}`;
     p.unit.set({value: Number(draft.unit)});
     p.groups.set({value: draft.groups});
     p.pickup.el.hidden = !s.form.pickup.editable;
@@ -345,10 +351,6 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
     p.unpin.el.hidden = !pinned;
     p.renumber.el.hidden = !pinned;
     p.renumber.set({value: pinned && s.display !== null ? String(s.display) : ''});
-    // Tools
-    p.snapTaps.set({pressed: prefs.get?.('edit.map.tapSnap') !== false});
-    p.detect.set({busy: busyLine()});
-    p.suggest.el.hidden = !!map.hasSections;
   }
 
   // ---------------------------------------------------------------- mode and updates
@@ -380,6 +382,7 @@ export function mountInspector(el, {session, mapSession, registry = appRegistry,
   /** E (D19): focus Meter → Beats. */
   function focusMeter() {
     if (mode !== 'mapped') return false;
+    parts.meter.open = true;
     const target = parts.beats.el.querySelector('[role=spinbutton]');
     target?.focus();
     return !!target;

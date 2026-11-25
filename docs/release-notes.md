@@ -1,3 +1,14 @@
+Woodshed 2.9.0 finishes Edit · Chart and starts on Edit · Map.
+
+- **Edit · Map: the tools are in the toolbar.** Tap along, Preview, Detect beats and Find a chart… used to be the last section of the inspector, about two screens down. They now sit at the right end of the toolbar. The ⋯ button beside them has Calibrate tap timing… and Snap taps to drum hits. A song with no sections offers Suggest sections in the empty sections lane.
+- **Edit · Map: the waveforms fill the window.** The stem rows share the height the window has, up to 220 px each, in place of four short rows over an empty half.
+- **Edit · Map: a status bar.** It shows the cursor's bar, beat and time. Messages such as "Beat grid found · Undo" show there too. They used to appear at the bottom of the inspector, where you had to scroll to see them.
+- **Edit · Map: a shorter inspector.** The bar, Go to, Section label, Tempo and Pin now fit a laptop screen without scrolling. Meter is folded under them, with the bar's meter in its heading. Click it or press E to open it.
+- **Edit · Map: the song strip shows on mapped songs.** The strip under the lanes was 0 px tall on any song with bars, so it never appeared. It now shows the whole song with a bracket around the part you've zoomed into.
+- **Edit · Map: detected tempo maps are readable.** A detected map pins every bar, and at full zoom the pins ran together into a solid band. Pins closer than 16 px are now small dots. Zoom in and they are diamonds again.
+- **Edit · Chart: Properties and Listen.** The dropdowns are gone. Roll, Sticking, Voice and Listen to are rows of buttons, the articulations have their glyphs, and the sliders show a percentage. With one note selected, the panel names it and where it is.
+- **Edit · Chart on a phone.** The kit pads are two rows of six, on three pages you swipe between. The first page is the core kit and Skip. The music gets two more lines of room.
+
 Woodshed 2.8.0 rebuilds Edit · Chart around the whole song.
 
 - **The whole song on one sheet.** The score used to show 16 bars at a time, with arrows to page through the rest. Now every bar is on one sheet that scrolls, headed with the song's title like printed music. The sheet keeps the cursor on screen as you move, and an edit or Undo leaves it where it was.

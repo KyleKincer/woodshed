@@ -14,12 +14,15 @@
 //     onCloseFind  Find a chart finished (a commit): Edit goes back to /s/:id/edit/map
 //   Test and harness seams: prefs, platform, feedback, store, desktop (the inspector's), raf, caf, mountFindPanel.
 //
-// Top to bottom (spec §5.1): the 40 px toolbar ([− + Fit] [Z] Grid: Beat ▾ Snap ⇧S), the bar ruler
-// with meter chips (times when unmapped, never bars), the 32 px sections lane (editable blocks,
-// suggestions and their review), the 96 px tempo lane (steps, ramps, amber suspect spans, 12 px pin
-// diamonds), one row per stem on wave-render's drawRows with M / S and a fader, the markers banner,
-// and the song strip with a viewport bracket for the visible window. A key column on the left names
-// each lane; the tempo lane's guide values sit in it. Every lane shares one time window.
+// Top to bottom (spec §5.1, revised in 2.9): the 40 px toolbar ([− + Fit] [Z] Grid: Beat ▾ Snap ⇧S, and
+// at its far end the tools: Tap along, Preview, Detect beats, Find a chart…, More tools; tools.js), the bar ruler with meter chips (times when unmapped, never bars), the
+// 32 px sections lane (editable blocks, suggestions and their review), the 96 px tempo lane (steps,
+// ramps, amber suspect spans, pin diamonds), one row per stem on wave-render's drawRows with M / S
+// and a fader, the markers banner, the song strip with a viewport bracket for the visible window, and
+// the status bar (where the cursor is, then the status line: refusals, and results that offer Undo).
+// The stem rows share the height the window has left (up to ROW_MAX each), so the waveforms you line
+// bars up against are as tall as the window allows. A key column on the left names each lane; the
+// tempo lane's guide values sit in it. Every lane shares one time window.
 //
 // Pointer model: the ruler and a row click select the nearest bar line (rows: the nearest grid
 // line with Snap on, the exact time with Snap off) and cue there when stopped (seek while playing);
@@ -54,6 +57,8 @@ import {mountFindPanel as findPanel} from './find-panel.js';
 import {createRuler, createTempoLane, selectLine} from './lane.js';
 import {createMarkersBanner, createSectionsLane} from './sections.js';
 import {mountInspector} from './inspector.js';
+import {mountMapTools} from './tools.js';
+import {clockText} from './session.js';
 import {COPY, GRID_CHOICES, MAP_COMMANDS as C} from './map.copy.js';
 
 /** The smallest visible window (s), as the Stems surface. */
@@ -195,8 +200,12 @@ export function mountMapView(el, opts = {}) {
     rulerKey, rulerCell, sectionsKey, sectionsCell, sectionsBarCell, tempoKey, tempoCell, heads, rowsCell, overlay);
   const bannerHost = h('div', {class: 'map-banners'});
   const stripHost = h('div', {class: 'map-strip'});
+  // The status bar: where the cursor is, then the status line (the inspector's, drawn here where it can be seen).
+  const positionEl = h('p', {class: 'map-position', dataset: {testid: 'map-position'}});
+  const statusSlot = h('div', {class: 'map-status-slot'});
+  const statusBar = h('div', {class: 'map-statusbar', role: 'group', attrs: {'aria-label': COPY.statusBar}}, positionEl, statusSlot);
   const root = h('section', {class: 'map-view', attrs: {'aria-label': COPY.region}, dataset: {testid: 'map-view'}},
-    toolbar, lanes, bannerHost, stripHost);
+    toolbar, lanes, bannerHost, stripHost, statusBar);
   el.append(root);
   const ownInspector = !opts.inspectorEl;
   const inspectorHost = opts.inspectorEl ?? h('div', {class: 'map-inspector-host'});
@@ -207,14 +216,16 @@ export function mountMapView(el, opts = {}) {
     keep(IconButton({label: COPY.zoomOut, icon: 'zoom-out', command: C.zoomOut, size: 'sm', registry})).el,
     keep(IconButton({label: COPY.zoomIn, icon: 'zoom-in', command: C.zoomIn, size: 'sm', registry})).el,
     keep(Button({label: COPY.fit, command: C.fit, size: 'sm', variant: 'quiet', registry})).el);
-  const zoomSelectionButton = keep(Button({label: COPY.zoomSelection, icon: 'scan', command: C.zoomSelection, size: 'sm', variant: 'quiet', registry}));
+  const zoomSelectionButton = keep(IconButton({label: COPY.zoomSelection, icon: 'scan', command: C.zoomSelection, size: 'sm', variant: 'quiet', registry}));
   keep(hint(zoomSelectionButton.el, 'KeyZ'));
   let gridMenu = null;
   const gridButton = keep(Button({label: COPY.gridButton(COPY.divisions[grid]), iconEnd: 'chevron-down', size: 'sm', variant: 'quiet',
     attrs: {'aria-haspopup': 'menu', 'aria-expanded': 'false'}, className: 'map-grid-button', onClick: () => openGridMenu()}));
   const snapToggle = keep(Toggle({label: COPY.snap, icon: 'magnet', command: C.snap, size: 'sm', variant: 'quiet', registry}));
   keep(hint(snapToggle.el, 'Shift+KeyS'));
-  toolbar.append(zoomGroup, zoomSelectionButton.el, gridButton.el, snapToggle.el);
+  const toolsHost = h('div', {class: 'map-toolbar-tools'});
+  toolbar.append(zoomGroup, zoomSelectionButton.el, gridButton.el, snapToggle.el, toolsHost);
+  const tools = keep(mountMapTools(toolsHost, {session, mapSession, registry, prefs}));
 
   function renderToolbar() {
     gridButton.set({label: COPY.gridButton(COPY.divisions[grid])});
@@ -465,6 +476,17 @@ export function mountMapView(el, opts = {}) {
     renderRows();
     drawRowsCanvas();
     placeLines();
+    renderPosition();
+  }
+
+  /** The status bar's position: the cursor's bar, beat and time (an unmapped song: the cue's time, never a bar). */
+  function renderPosition() {
+    let text;
+    if (mapped()) {
+      const s = mapSession.span.peek();
+      text = [s?.name, s?.beat !== null && s?.beat !== undefined ? COPY.beatSub(s.beat) : null, clockText(map.timeAt(mapSession.cursorQ.peek()))].filter(Boolean).join(' · ');
+    } else text = clockText(position());
+    if (positionEl.textContent !== text) positionEl.textContent = text;
   }
 
   function drawRowsCanvas() {
@@ -526,7 +548,7 @@ export function mountMapView(el, opts = {}) {
   if (opts.find) {
     side = mountFindPanel(inspectorHost, {session, mapSession, onClose: () => opts.onCloseFind?.()});
   } else {
-    side = mountInspector(inspectorHost, {session, mapSession, registry, prefs, feedback,
+    side = mountInspector(inspectorHost, {session, mapSession, registry, prefs, feedback, statusHost: statusSlot,
       ...(opts.store ? {store: opts.store} : {}), ...(opts.desktop ? {desktop: opts.desktop} : {})});
   }
 
@@ -562,6 +584,7 @@ export function mountMapView(el, opts = {}) {
     /** The map view's own Esc layer (§3.4 edit.done): close the Grid menu, else cancel a rename or close the review. */
     escape: () => {
       if (gridMenu) { gridMenu.close?.(); return true; }
+      if (tools.escape()) return true;
       return sections.escape();
     },
   };

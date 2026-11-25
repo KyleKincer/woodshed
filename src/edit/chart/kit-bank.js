@@ -51,18 +51,28 @@ export function createKitBank({run, compact = false} = {}) {
   let rowCount = 0;
   const row = ids => h('div', {class: 'chart-bank-row', role: 'group', 'aria-label': `Row ${++rowCount}`}, ...ids.map(padEl));
   const padsEl = h('div', {class: 'chart-bank-pads'});
+  // The phone's pages fill the width, so dots under them say there are more and which one shows.
+  const dots = h('div', {class: 'chart-bank-dots', 'aria-hidden': 'true', hidden: true});
+  function showDots() {
+    const page = padsEl.clientWidth > 0 ? Math.round(padsEl.scrollLeft / padsEl.clientWidth) : 0;
+    [...dots.children].forEach((dot, i) => dot.toggleAttribute('data-current', i === page));
+  }
+  padsEl.addEventListener('scroll', showDots, {passive: true});
   function lay() {
     rowCount = 0;
     padsEl.toggleAttribute('data-compact', compact);
     if (compact) padsEl.replaceChildren(...BANK_PAGES.map(page => h('div', {class: 'chart-bank-page'}, ...page.map(row))));
     else padsEl.replaceChildren(...BANK_ROWS.map(row));
+    dots.hidden = !compact;
+    dots.replaceChildren(...(compact ? BANK_PAGES.map(() => h('span', {class: 'chart-bank-dot'})) : []));
+    showDots();
   }
   lay();
   const back = IconButton({label: COPY.stepBack, icon: 'chevron-left', size: 'lg', className: 'chart-bank-step', onClick: () => run?.('cursor', -1)});
   const forward = IconButton({label: COPY.stepForward, icon: 'chevron-right', size: 'lg', className: 'chart-bank-step', onClick: () => run?.('cursor', 1)});
   parts.push(back, forward);
   const el = h('div', {class: 'chart-bank', role: 'group', 'aria-label': COPY.kitBank},
-    padsEl,
+    h('div', {class: 'chart-bank-main'}, padsEl, dots),
     h('div', {class: 'chart-bank-nav'}, back.el, forward.el));
 
   let current = null;
