@@ -161,13 +161,17 @@
     .chart-status-message:empty,
     .chart-status-piece,
     .chart-status-zoom { display: none; }
-    .chart-bank { flex-direction: column; gap: var(--s1); padding: var(--s2); }
+    /* The bank is two rows of six a page (kit-bank.js `compact`): the pages swipe sideways, and the next one peeks
+     * in at the edge. The sheet keeps the two rows of height the full bank would take. */
+    .chart-bank { gap: var(--s1); padding: var(--s2); }
+    .chart-bank-pads[data-compact] { display: flex; gap: var(--s2); overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+    .chart-bank-page { flex: 0 0 94%; display: grid; align-content: start; gap: var(--s1); scroll-snap-align: start; }
+    .chart-bank-pads[data-compact] .chart-bank-row { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     .chart-bank-pad.ui-button { padding: 0 2px; font-size: 0.8125rem; line-height: 1.1; }
     .chart-bank-pad.ui-button .ui-button-text,
     .chart-bank-pad.ui-button .ui-button-label { white-space: normal; text-align: center; hyphens: auto; }
     .chart-bank-pad.ui-button > .ui-icon { display: none; }
-    .chart-bank-nav { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
-    .chart-bank-step.ui-button { width: auto; min-height: 44px; }
+    .chart-bank-step.ui-button { width: 44px; }
   }
 
   @media (pointer: coarse) {

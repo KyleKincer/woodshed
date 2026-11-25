@@ -36,7 +36,7 @@ import {COPY, CONTROLS, STATUS_CONTROLS, editMenu, gridMenu, partMenu, rollMenu,
 import {ARTICULATIONS, STEP_BUTTONS, STEP_ICONS, createToolbar} from '../src/edit/chart/toolbar.js';
 import {createNavigator} from '../src/edit/chart/navigator.js';
 import {createStatusBar} from '../src/edit/chart/statusbar.js';
-import {BANK_ROWS, PAD_LONG_PRESS_MS, createKitBank} from '../src/edit/chart/kit-bank.js';
+import {BANK_PAGES, BANK_ROWS, PAD_LONG_PRESS_MS, createKitBank} from '../src/edit/chart/kit-bank.js';
 import {ZOOM_STEPS, createNotationWorkspace, padGlyph, padHead, scoreFonts, sectionsOf, snapZoom} from '../src/js/notation/editor.js';
 import {openPart} from '../src/js/notation/part.js';
 import {restoreDomShims} from './helpers/dom.js';
@@ -727,6 +727,25 @@ describe('menus (spec §5.2)', () => {
 
 describe('kit pad bank (iPad portrait)', () => {
   afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); restoreDomShims(); });
+
+  test('a phone: two rows of six a page, the core kit and Skip first; the same pads, re-laid when the width changes', () => {
+    const run = vi.fn();
+    const bank = createKitBank({run, compact: true});
+    document.body.append(bank.el);
+    const pages = [...bank.el.querySelectorAll('.chart-bank-page')];
+    expect(pages.map((p) => [...p.querySelectorAll('.chart-bank-row')].map((r) => r.querySelectorAll('button').length))).toEqual([[6, 6], [6, 5], [5]]);
+    expect([...pages[0].querySelectorAll('[data-kit]')].map((b) => b.dataset.kit).sort()).toEqual(KIT.filter((k) => k.core).map((k) => k.id).sort());
+    expect(pages[0].querySelector('.chart-bank-skip')).toBeTruthy();
+    expect(BANK_PAGES.flat(2).filter((id) => id !== 'skip').sort()).toEqual(KIT.map((k) => k.id).sort());
+    const snare = bank.el.querySelector('[data-kit=snare]');
+    snare.click();
+    expect(run).toHaveBeenLastCalledWith('pad', 'snare');
+    bank.set({compact: false});
+    expect(bank.el.querySelectorAll('.chart-bank-page')).toHaveLength(0);
+    expect([...bank.el.querySelectorAll('.chart-bank-row')].map((r) => r.querySelectorAll('button').length)).toEqual([7, 7, 7, 7]);
+    expect(bank.el.querySelector('[data-kit=snare]')).toBe(snare);     // the same button, moved
+    bank.destroy();
+  });
 
   test('4 rows × 7 pads: the 27 kit pieces and Skip, grouped by family colour, then ◂ ▸', () => {
     const run = vi.fn();

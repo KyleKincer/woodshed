@@ -313,3 +313,43 @@ test('New line here starts a line at the cursor’s bar and is undone like any e
   run('redo');run('clear-line-breaks');
   expect(saved().lineBreaks).toBeUndefined();
 });
+
+// ---- Properties and Listen: every choice is a button (2.9) ------------------------------------------------------
+test('Properties: Roll, Sticking and Voice are button groups that set the next note, then the selected ones',async()=>{
+  await open();
+  const props=slots.inspector.properties,pick=v=>props.querySelector(`[data-pick="${v}"]`);
+  expect(props.querySelector('select')).toBeNull();
+  expect(props.querySelector('.notation-panel-title').textContent).toBe('Next note');
+  expect([...props.querySelectorAll('[data-pick^="roll:"]')].map(b=>[b.textContent,b.getAttribute('aria-label'),b.getAttribute('aria-pressed')])).toEqual([['None','No roll','true'],['1','1 slash','false'],['2','2 slashes','false'],['3','3 slashes','false']]);
+  pick('roll:2').click();pick('sticking:L').click();pick('voice:2').click();
+  expect(pick('roll:2').getAttribute('aria-pressed')).toBe('true');
+  expect(workspace.state().expression).toMatchObject({roll:2,sticking:'L'});
+  expect(props.querySelector('[data-action=delete]')).toBeNull();      // nothing selected: nothing to delete
+  key('s');
+  expect(hits()[0]).toMatchObject({instrument:'snare',roll:2,sticking:'L',voice:2});
+  // The note just written is selected: the panel names it and the choices change it.
+  expect(props.querySelector('.notation-panel-title').textContent).toBe('1 note selected');
+  expect(props.querySelector('.notation-note-head .notation-hint').textContent).toBe('Snare · Bar 1, beat 1.00');
+  pick('roll:0').click();pick('sticking:').click();
+  expect(hits()[0].roll).toBeUndefined();
+  expect(hits()[0].sticking).toBe('');
+  expect(props.querySelector('[data-action=delete]').textContent).toBe('Delete 1 note');
+  props.querySelector('[data-action=delete]').click();
+  expect(hits()).toEqual([]);
+});
+
+test('Properties: the velocity’s percentage follows the slider; Listen is three buttons with what each plays',async()=>{
+  const drums={mode:'recording',level:.65,play(){},setScore(){},setMode(m){this.mode=m;},setLevel(x){this.level=x;}};
+  await open(null,{drumAudio:drums});
+  const range=slots.inspector.properties.querySelector('[data-expression=velocity]'),out=slots.inspector.properties.querySelector('[data-out=velocity]');
+  expect(out.textContent).toBe('75%');
+  range.value='.4';range.dispatchEvent(new Event('input',{bubbles:true}));
+  expect(out.textContent).toBe('40%');
+  const listen=slots.inspector.listen;
+  expect(listen.querySelector('select')).toBeNull();
+  expect([...listen.querySelectorAll('[data-pick^="listen:"]')].map(b=>[b.textContent,b.getAttribute('aria-pressed')])).toEqual([['Recording','true'],['Notation','false'],['Both','false']]);
+  listen.querySelector('[data-pick="listen:both"]').click();
+  expect(drums.mode).toBe('both');
+  expect(slots.inspector.listen.querySelector('[data-pick="listen:both"]').getAttribute('aria-pressed')).toBe('true');
+  expect(slots.inspector.listen.querySelector('.notation-group .notation-hint').textContent).toMatch(/^The recording with the chart on top/);
+});

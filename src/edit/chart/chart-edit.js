@@ -253,7 +253,7 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
   // A phone (chart.css's 599 px rule): where Edit ▾ and Part ▾ go follows it.
   const phone = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(PHONE_QUERY) : null;
   if (phone?.addEventListener) {
-    const onPhone = () => placePanels();
+    const onPhone = () => { kitBank?.set({compact: phone.matches}); placePanels(); };
     phone.addEventListener('change', onPhone);
     cleanup(() => phone.removeEventListener('change', onPhone));
   }
@@ -340,7 +340,7 @@ export function mount(el, {session, query = {}, inspectorEl = null, edit = null,
     navHost.replaceChildren(sectionNav.el);
     statusBar = createStatusBar({registry, openMenu});
     statusHost.replaceChildren(statusBar.el);
-    kitBank = createKitBank({run: (...a) => ws.run(...a)});
+    kitBank = createKitBank({run: (...a) => ws.run(...a), compact: !!phone?.matches});
     bankHost.replaceChildren(kitBank.el);
     commands?.setDrumKeys?.(drumKeys.get());
     cleanup(ws.subscribe(onState));
