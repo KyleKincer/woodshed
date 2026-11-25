@@ -1,0 +1,8 @@
+<!-- Woodshed custom glyph: drag (two grace notes before the note). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ws-glyph ws-glyph-drag">
+  <ellipse cx="3.9" cy="17.2" rx="1.9" ry="1.4" transform="rotate(-22 3.9 17.2)" fill="currentColor" />
+  <ellipse cx="9.1" cy="17.2" rx="1.9" ry="1.4" transform="rotate(-22 9.1 17.2)" fill="currentColor" />
+  <path d="M5.7 16.6V9.5h5.2v7.1" />
+  <ellipse cx="17" cy="18" rx="3.1" ry="2.3" transform="rotate(-22 17 18)" fill="currentColor" />
+  <path d="M20 17.2V4" />
+</svg>

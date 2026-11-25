@@ -2,44 +2,56 @@
 //
 //   editMenu(state)          Edit ▾: Copy ⌘C, Paste ⌘V, Repeat bars… ⌘D, Select all bars (⌘A twice), Delete,
 //                            Move notes… ⌥←/→, Tuplet on this beat…,
-//                            Mark bars reviewed, Loop selection L, Bar meter & label…, Align in tempo map…
+//                            Mark bars reviewed, Loop selection L, New line here ✓, Clear line breaks,
+//                            Bar meter & label…, Align in tempo map…
 //   partMenu(state)          Part ▾: Export .woodshed.json, Print, Open .woodshed.json part…, Import a chart from a file…,
 //                            Clear drum chart…,
 //                            Drum keys…, Note list ✓, Show every kit piece ✓ (Lanes only), Keyboard shortcuts ?
-//   viewMenu(state)          View ▾: Score · Lanes, Pages · Continuous (the modes the editor offers, D48), Follow playback
 //   tupletMenu(state, run)   Tuplet ▾: Straight, Triplet, Quintuplet, Sextuplet, Septuplet
+//   rollMenu(state, run)     Roll ▾: No roll, 1 slash, 2 slashes, 3 slashes
 //   gridMenu(state, run)     Grid ▾ (Lanes): 1/4 … 1/64 and Triplet
-//   sectionsMenu(sections, run)   the section jump menu: Intro · Bar 1, Verse · Bar 5, …
+//   sectionsMenu(sections, run)   Go to (the status bar's position): First bar ⌘Home, Previous section [,
+//                            Next section ], Last bar ⌘End, then Intro · Bar 1, Verse · Bar 5, …
 //
 // Every item that has a command takes its label, key-cap, enabled state and disabled reason from the registry
 // (src/ui/menu.js resolveItem); radio items with arguments carry their own `checked` (the registry evaluates
-// `checked` without arguments). COPY holds the frame's strings; CONTROLS lists the toolbar's controls
-// (role, accessible name, command) for the table-driven test (§9.0).
+// `checked` without arguments). COPY holds the frame's strings; CONTROLS lists the toolbar's controls and
+// STATUS_CONTROLS the status bar's (role, accessible name, command) for the table-driven test (§9.0).
 
 import {COPY as COMMANDS} from './commands.js';
 
 export const COPY = Object.freeze({
   toolbar: 'Chart tools',
   view: 'View',
-  viewOptions: 'View options',
   score: 'Score',
   lanes: 'Lanes',
   steps: 'Step',
   stepNames: Object.freeze({4: 'Quarter step', 8: 'Eighth step', 16: 'Sixteenth step', 32: '32nd step', 64: '64th step'}),
-  stepLabels: Object.freeze({4: '♩ 1/4', 8: '♪ 1/8', 16: '1/16', 32: '1/32', 64: '1/64'}),
   dotted: 'Dotted',
   tuplet: 'Tuplet',
   tupletNames: Object.freeze({1: 'Straight', 3: 'Triplet', 5: 'Quintuplet', 6: 'Sextuplet', 7: 'Septuplet'}),
+  articulation: 'Articulation',
+  roll: 'Roll',
+  rollNames: Object.freeze({0: 'No roll', 1: '1 slash', 2: '2 slashes', 3: '3 slashes'}),
+  rollShort: n => `×${n}`,
   skip: 'Skip',
-  writing: 'Writing:',
-  undo: 'Undo',
-  redo: 'Redo',
+  writing: 'Writing',
   bars: (first, last) => (first === last ? `Bar ${first}` : `Bars ${first}–${last}`),
   barsOf: (first, last, total) => `${first === last ? `Bar ${first}` : `Bars ${first}–${last}`} of ${total}`,
   sections: 'Sections',
+  goTo: 'Go to',
   sectionItem: (label, bar) => `${label} · Bar ${bar}`,
+  sectionName: (label, first, last) => `${label}, ${first === last ? `bar ${first}` : `bars ${first} to ${last}`}`,
+  allBars: (total) => (total === 1 ? 'Bar 1' : `Bars 1–${total}`),
+  start: 'Start',
+  menus: 'Menus',
   edit: 'Edit',
   part: 'Part',
+  statusBar: 'Chart status',
+  zoom: 'Zoom',
+  zoomValue: z => `${Math.round(z * 100)}%`,
+  zoomResetName: z => `${COMMANDS.zoomReset}, now ${Math.round(z * 100)}%`,
+  followShort: 'Follow',
   grid: 'Grid',
   gridValue: v => `1/${v}`,
   triplet: 'Triplet',
@@ -61,12 +73,8 @@ export const COPY = Object.freeze({
   editor: 'Drum chart editor',
 });
 
-/** The toolbar's controls (role, accessible name, command when it runs one). */
+/** The toolbar's controls, left to right (role, accessible name, command when it runs one). */
 export const CONTROLS = Object.freeze([
-  {role: 'radiogroup', name: COPY.view},
-  {role: 'radio', name: COPY.score, command: 'chart.view'},
-  {role: 'radio', name: COPY.lanes, command: 'chart.view'},
-  {role: 'button', name: COPY.viewOptions},
   {role: 'button', name: COPY.stepNames[4], command: 'chart.step.5'},
   {role: 'button', name: COPY.stepNames[8], command: 'chart.step.4'},
   {role: 'button', name: COPY.stepNames[16], command: 'chart.step.3'},
@@ -74,16 +82,31 @@ export const CONTROLS = Object.freeze([
   {role: 'button', name: COPY.stepNames[64], command: 'chart.step.1'},
   {role: 'button', name: COPY.dotted, command: 'chart.dot'},
   {role: 'button', name: COPY.tuplet},
+  {role: 'button', name: COMMANDS.accent, command: 'chart.accent'},
+  {role: 'button', name: COMMANDS.heavy, command: 'chart.heavy'},
+  {role: 'button', name: COMMANDS.ghost, command: 'chart.ghost'},
+  {role: 'button', name: COMMANDS.flam, command: 'chart.flam'},
+  {role: 'button', name: COMMANDS.drag, command: 'chart.drag'},
+  {role: 'button', name: COPY.roll},
+  {role: 'button', name: COMMANDS.stickingRight, command: 'chart.stickingRight'},
+  {role: 'button', name: COMMANDS.stickingLeft, command: 'chart.stickingLeft'},
   {role: 'button', name: COPY.skip, command: 'chart.skip'},
-  {role: 'button', name: COPY.undo, command: 'chart.undo'},
-  {role: 'button', name: COPY.redo, command: 'chart.redo'},
-  {role: 'button', name: COMMANDS.pagePrev, command: 'chart.pagePrev'},
-  {role: 'button', name: COMMANDS.pageNext, command: 'chart.pageNext'},
-  {role: 'button', name: COPY.sections},
-  {role: 'button', name: COPY.edit},
-  {role: 'button', name: COPY.part},
   {role: 'button', name: COPY.grid},
   {role: 'button', name: COPY.fit, command: 'chart.fit'},
+  {role: 'button', name: COPY.edit},
+  {role: 'button', name: COPY.part},
+]);
+
+/** The status bar's controls, left to right (statusbar.js). */
+export const STATUS_CONTROLS = Object.freeze([
+  {role: 'button', name: COPY.goTo},
+  {role: 'button', name: COPY.followShort, command: 'chart.follow'},
+  {role: 'radiogroup', name: COPY.view},
+  {role: 'radio', name: COPY.score, command: 'chart.view'},
+  {role: 'radio', name: COPY.lanes, command: 'chart.view'},
+  {role: 'button', name: COMMANDS.zoomOut, command: 'chart.zoomOut'},
+  {role: 'button', name: COPY.zoomResetName(1), command: 'chart.zoomReset'},
+  {role: 'button', name: COMMANDS.zoomIn, command: 'chart.zoomIn'},
 ]);
 
 const sep = Object.freeze({type: 'separator'});
@@ -103,6 +126,9 @@ export function editMenu() {
     {command: 'chart.review'},
     sep,
     {command: 'chart.loopSelection'},
+    sep,
+    {command: 'chart.lineBreak', type: 'checkbox'},
+    {command: 'chart.clearLineBreaks'},
     sep,
     {command: 'chart.barMeter'},
     {command: 'chart.align'},
@@ -125,19 +151,11 @@ export function partMenu(state) {
   ];
 }
 
-export function viewMenu(state) {
-  // Pages · Continuous (D48) appears once the workspace offers more than one paging mode.
-  const modes = (state?.pagingModes ?? ['pages']).filter(m => m === 'pages' || m === 'scroll');
-  const paging = modes.length > 1 ? [sep, ...modes.map(m => ({
-    command: 'chart.paging', type: 'radio', label: COMMANDS[m], args: {paging: m}, checked: state?.paging === m,
-  }))] : [];
-  return [
-    {command: 'chart.view', type: 'radio', label: COPY.score, args: {view: 'score'}, checked: state?.layout === 'score'},
-    {command: 'chart.view', type: 'radio', label: COPY.lanes, args: {view: 'lanes'}, checked: state?.layout === 'lanes'},
-    ...paging,
-    sep,
-    {command: 'chart.follow', type: 'checkbox', checked: !!state?.follow},
-  ];
+export function rollMenu(state, run) {
+  return Object.entries(COPY.rollNames).map(([value, label]) => ({
+    id: `roll-${value}`, type: 'radio', label, checked: (state?.expression?.roll || 0) === Number(value),
+    run: () => run('setExpression', 'roll', Number(value)),
+  }));
 }
 
 export function tupletMenu(state, run) {
@@ -160,7 +178,14 @@ export function gridMenu(state, run) {
 }
 
 export function sectionsMenu(sections, run) {
-  return (sections ?? []).map(s => ({
-    id: s.id, label: COPY.sectionItem(s.label, s.bar + 1), run: () => run('goToBar', s.bar),
+  const list = (sections ?? []).map(s => ({
+    id: s.id, label: COPY.sectionItem(s.label || COPY.start, s.bar + 1), run: () => run('goToBar', s.bar, {seek: true}),
   }));
+  return [
+    {command: 'chart.firstBar'},
+    {command: 'chart.sectionPrev'},
+    {command: 'chart.sectionNext'},
+    {command: 'chart.lastBar'},
+    ...(list.length ? [sep, ...list] : []),
+  ];
 }

@@ -2,8 +2,10 @@
 // Session permissions and navigation guards (architecture §6.11 item 9, D31).
 //
 // Only the UI origin may use Web MIDI (no sysex), clipboard read, sanitized
-// clipboard write and fullscreen. Everything else is denied: notifications go
-// through the main-process Notification, and the display stays awake through
+// clipboard write and fullscreen, plus File System Access on a single file the
+// user picked (Export's save dialog: createWritable() asks for `fileSystem`).
+// Everything else is denied, directories included: notifications go through
+// the main-process Notification, and the display stays awake through
 // powerSaveBlocker, never through renderer permissions.
 
 const ALLOWED_PERMISSIONS = Object.freeze(['midi', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
@@ -17,9 +19,16 @@ function originOf(url) {
   }
 }
 
+/** A `fileSystem` request for one file (read or write), never a directory. */
+function isFileAccess(details) {
+  return details?.isDirectory !== true && (details?.fileAccessType === 'writable' || details?.fileAccessType === 'readable');
+}
+
 /** Pure policy: true only for an allow-listed permission from the UI origin. */
-function isPermissionAllowed(permission, origin, uiOrigin) {
-  return allowed.has(permission) && typeof origin === 'string' && origin === uiOrigin;
+function isPermissionAllowed(permission, origin, uiOrigin, details) {
+  if (typeof origin !== 'string' || origin !== uiOrigin) return false;
+  if (permission === 'fileSystem') return isFileAccess(details);
+  return allowed.has(permission);
 }
 
 function requestOrigin(webContents, details) {
@@ -38,11 +47,11 @@ function requestOrigin(webContents, details) {
 function installPermissions(session, { uiOrigin }) {
   const expected = new URL(uiOrigin).origin;
   session.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    callback(isPermissionAllowed(permission, requestOrigin(webContents, details), expected));
+    callback(isPermissionAllowed(permission, requestOrigin(webContents, details), expected, details));
   });
   session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const origin = requestingOrigin ? originOf(requestingOrigin) ?? requestingOrigin : requestOrigin(webContents, details);
-    return isPermissionAllowed(permission, origin, expected);
+    return isPermissionAllowed(permission, origin, expected, details);
   });
 }
 

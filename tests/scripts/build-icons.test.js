@@ -22,9 +22,12 @@ const ADDED_ICONS = ['minus', 'smartphone', 'monitor-smartphone', 'qr-code',
   'skip-back', 'skip-forward', 'corner-down-left', 'chevrons-left', 'chevrons-right', 'trending-up'];
 
 describe('build-icons', () => {
-  it('ICONS is the §7.4 initial list plus the ticketed additions, and CUSTOM the five custom glyphs', () => {
+  it('ICONS is the §7.4 initial list plus the ticketed additions, and CUSTOM the custom glyphs', () => {
     expect([...ICONS].sort()).toEqual([...CONTRACT_ICONS, ...ADDED_ICONS].sort());
-    expect([...CUSTOM].sort()).toEqual(['count-in', 'drum', 'metronome', 'minus-me', 'trainer']);
+    // The five contract glyphs, and Edit · Chart's note toolbar glyphs (2.8).
+    expect([...CUSTOM].sort()).toEqual(['accent', 'accent-heavy', 'count-in', 'drag', 'drum', 'flam', 'ghost-note', 'metronome', 'minus-me',
+      'note-dotted', 'note-eighth', 'note-quarter', 'note-sixteenth', 'note-sixty-fourth', 'note-thirty-second', 'rest', 'roll',
+      'tuplet', 'trainer'].sort());
     expect(readdirSync(path.join(root, 'src/styles/icons-custom')).sort()).toEqual(CUSTOM.map(n => `${n}.svg`).sort());
   });
 

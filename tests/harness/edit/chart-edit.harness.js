@@ -19,6 +19,7 @@
 //   status=saved|saving|local|conflict|offline|storage-error   the part's save status (driven here)
 //   bar=21                the ?bar= query (1-based)
 //   keys=crash:,crash2:KeyX         prefs.edit.chart.keys entries (an empty value clears a key)
+//   zoom=1.25             the sheet's zoom (prefs.edit.chart.zoom)
 // window.__chartEdit = {ts, view, registry, router, workspace(), run(id, args), setStatus(s), log}
 import {registry} from '/src/app/commands.js';
 import '/src/app/global-commands.js';
@@ -60,7 +61,8 @@ function parseKeys(text) {
 export default async function mount(el, {query, h}) {
   const view = query.get('view') === 'lanes' ? 'lanes' : 'score';
   const keys = parseKeys(query.get('keys'));
-  prefs.update((d) => { d.edit.chart = {view, paging: 'pages', keys}; d.edit.lastTab = 'chart'; });
+  const zoom = Number(query.get('zoom')) || 1;
+  prefs.update((d) => { d.edit.chart = {view, zoom, keys}; d.edit.lastTab = 'chart'; });
   setDrumKeys(keys);
   const status = signal(STATUSES.includes(query.get('status')) ? query.get('status') : 'saved');
   const log = {navigations: [], statuses: []};
@@ -94,7 +96,10 @@ export default async function mount(el, {query, h}) {
   el.removeAttribute('data-scroller');
 
   const host = h('div', {class: 'chart-edit-harness'});
-  host.style.cssText = 'position: fixed; inset: 0; display: flex; min-height: 0; background: var(--bg)';
+  // A one-cell grid, as the app frame's main area is: the Edit posture fills it whatever its toolbar's width.
+  host.style.cssText = query.get('frame') === 'edit'
+    ? 'position: fixed; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); background: var(--bg)'
+    : 'position: fixed; inset: 0; display: flex; min-height: 0; background: var(--bg)';
   el.append(host);
   const bar = query.get('bar');
   let mounted;

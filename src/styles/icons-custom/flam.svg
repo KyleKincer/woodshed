@@ -1,0 +1,9 @@
+<!-- Woodshed custom glyph: flam (one grace note before the note). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ws-glyph ws-glyph-flam">
+  <ellipse cx="5" cy="17.2" rx="2" ry="1.5" transform="rotate(-22 5 17.2)" fill="currentColor" />
+  <path d="M6.9 16.6V9" />
+  <path d="M6.9 9c.3 1.6 2.6 1.8 2.3 4" />
+  <path d="M3.6 14.2 10 10.6" />
+  <ellipse cx="15.5" cy="18" rx="3.3" ry="2.4" transform="rotate(-22 15.5 18)" fill="currentColor" />
+  <path d="M18.7 17.2V4" />
+</svg>

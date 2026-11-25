@@ -36,7 +36,7 @@ export const PREFS_DEFAULTS = deepFreeze({
   video: {show: true, volume: 0, unmuted: 60, dock: 'auto', side: 0.32, top: null, float: {corner: 'br', width: 360}, all: false},   // pinchDistance: the Distance pinchScale was set at
   stems: {grid: 'bar', snap: true, follow: true, zoom: null},
   roadmap: {waveRowSec: null, follow: null},                         // follow: 'scroll'|'page'; null → 'scroll' (spec §4.4B)
-  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', paging: 'pages', keys: {}}},   // keys: kitId → KeyString; '' = deliberately no key
+  edit: {lastTab: 'map', map: {tapSnap: true, tapOffset: 0}, chart: {view: 'score', zoom: 1, keys: {}}},   // zoom: the sheet's scale (0.6–2); keys: kitId → KeyString; '' = deliberately no key
   pedals: {enabled: false, profile: 'practice', pedals: [], custom: {}},
   midi: {enabled: false, bindings: []},
   remote: {allow: true, hostId: null, last: null},   // the phone remote (src/remote): allow control here, this device's host id, the device last controlled
@@ -73,7 +73,6 @@ const ENUMS = {
   'stems.grid': ['off', 'bar', 'beat', 'half', 'quarter'],
   'edit.lastTab': ['map', 'chart', 'details'],
   'edit.chart.view': ['score', 'lanes'],
-  'edit.chart.paging': ['pages', 'scroll'],
   // The Stage chart's lines (Chart layout): bars per line ('auto' fits them to their notes) and note spacing.
   'chart.lines.bars': ['auto', '1', '2', '3', '4', '5', '6'],
   'chart.lines.spacing': ['tight', 'normal', 'roomy'],
@@ -143,6 +142,7 @@ export function normalizePrefs(raw) {
   const keys = {};
   for (const [kit, key] of Object.entries(p.edit.chart.keys)) if (typeof key === 'string') keys[kit] = key;
   p.edit.chart.keys = keys;
+  p.edit.chart.zoom = Math.max(0.6, Math.min(2, p.edit.chart.zoom));
   const frecency = Object.entries(p.palette.frecency).filter(([, e]) => isPlainObject(e));
   if (frecency.length > FRECENCY_CAP) {
     frecency.sort((a, b) => (Number(b[1].at) || 0) - (Number(a[1].at) || 0));

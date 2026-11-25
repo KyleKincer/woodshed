@@ -1,0 +1,7 @@
+<!-- Woodshed custom glyph: sixteenth note (the 1/16 step). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ws-glyph ws-glyph-note-sixteenth">
+  <ellipse cx="9" cy="18" rx="3.3" ry="2.4" transform="rotate(-22 9 18)" fill="currentColor" />
+  <path d="M12.2 17.2V3.5" />
+  <path d="M12.2 3.5c.5 2.8 4.8 3 4.3 7" />
+  <path d="M12.2 8c.5 2.8 4.8 3 4.3 7" />
+</svg>

@@ -22,7 +22,12 @@
 // family is declared with registerDynamic so registry CI expands it.
 //
 // Arguments: chart.view {view: 'score'|'lanes'}, chart.partLayout {layout: 'combined'|'split'},
-// chart.listen {mode: 'recording'|'notation'|'both'}, chart.paging {paging: 'pages'|'scroll'}.
+// chart.listen {mode: 'recording'|'notation'|'both'}.
+//
+// 2.8: the score is the whole song on one scrolling sheet, so the 16-bar pagers (chart.pagePrev,
+// chart.pageNext) and the paging mode (chart.paging, D48) are gone. [ and ] jump by section, ⌘/Ctrl+Home
+// and End go to the first and last bar, PageUp and PageDown scroll the sheet (the browser's own scroll:
+// the score's stop scope lets them through and nothing binds them), and Zoom in / Zoom out / 100% size it.
 
 import {registry as appRegistry} from '../../app/commands.js';
 import {canonical, label as keyLabel} from '../../app/keys.js';
@@ -41,7 +46,6 @@ export const STEP_LABEL = Object.freeze({1: '1/64', 2: '1/32', 3: '1/16', 4: '1/
 export const VIEWS = Object.freeze(['score', 'lanes']);
 export const PART_LAYOUTS = Object.freeze(['combined', 'split']);
 export const LISTEN_MODES = Object.freeze(['recording', 'notation', 'both']);
-export const PAGING = Object.freeze(['pages', 'scroll']);
 
 /** Titles and menu labels (spec §5.2, architecture §3.4). */
 export const COPY = Object.freeze({
@@ -49,8 +53,18 @@ export const COPY = Object.freeze({
   redo: 'Redo notation',
   undoMenu: 'Undo',
   redoMenu: 'Redo',
-  pagePrev: 'Previous 16 bars',
-  pageNext: 'Next 16 bars',
+  sectionPrev: 'Previous section',
+  sectionNext: 'Next section',
+  firstBar: 'First bar',
+  lastBar: 'Last bar',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  zoomReset: 'Zoom to 100%',
+  zoomReason: 'Zoom works in Score.',
+  lineBreak: 'New line here',
+  lineBreakReason: 'The first bar always starts a line.',
+  clearLineBreaks: 'Clear line breaks',
+  clearLineBreaksReason: 'This chart has no line breaks.',
   loopSelection: 'Loop selection',
   write: 'Write note',
   piece: name => `Write ${name}`,
@@ -74,6 +88,10 @@ export const COPY = Object.freeze({
   accent: 'Accent',
   heavy: 'Heavy accent',
   ghost: 'Ghost note',
+  flam: 'Flam',
+  drag: 'Drag',
+  stickingRight: 'Right hand',
+  stickingLeft: 'Left hand',
   delete: 'Delete selected notes',
   deleteReason: 'Select notes or bars first.',
   copy: 'Copy',
@@ -84,9 +102,6 @@ export const COPY = Object.freeze({
   clearPart: 'Clear drum chart…',
   clearPartReason: 'The drum chart is already empty.',
   clear: 'Clear selection',
-  paging: 'Pages · Continuous',
-  pages: 'Pages',
-  scroll: 'Continuous',
   moveDialog: 'Move notes…',
   tupletDialog: 'Tuplet on this beat…',
   review: 'Mark bars reviewed',
@@ -124,7 +139,9 @@ export const COPY = Object.freeze({
 
 /** The ids this module registers (registry CI and the tests); chart.piece.<kitId> and chart.step.N expand. */
 export const CHART_COMMAND_IDS = Object.freeze([
-  'chart.undo', 'chart.redo', 'chart.pagePrev', 'chart.pageNext', 'chart.loopSelection', 'chart.paging',
+  'chart.undo', 'chart.redo', 'chart.sectionPrev', 'chart.sectionNext', 'chart.loopSelection',
+  'chart.firstBar', 'chart.lastBar', 'chart.zoomIn', 'chart.zoomOut', 'chart.zoomReset', 'chart.lineBreak', 'chart.clearLineBreaks',
+  'chart.flam', 'chart.drag', 'chart.stickingRight', 'chart.stickingLeft',
   'chart.write', 'chart.cursorBack', 'chart.cursorFwd', 'chart.extendBack', 'chart.extendFwd', 'chart.pieceUp', 'chart.pieceDown',
   'chart.moveBack', 'chart.moveFwd', 'chart.barStart', 'chart.barEnd', 'chart.skip', 'chart.finer', 'chart.coarser',
   'chart.dot', 'chart.tuplet', 'chart.accent', 'chart.heavy', 'chart.ghost', 'chart.delete', 'chart.copy', 'chart.paste',
@@ -242,21 +259,22 @@ export function defineChartCommands({registry = appRegistry, keys = {}} = {}) {
     palette: {hidden: true},
     run: (c, args) => { const v = args?.[name]; if (values.includes(v)) chartOf(c)?.run(action, v); },
   });
-  const stateKey = {view: 'layout', layout: 'partLayout', mode: 'listenMode', paging: 'paging'};
+  const stateKey = {view: 'layout', layout: 'partLayout', mode: 'listenMode'};
+  const inScore = c => chartState(c)?.layout === 'score';
 
   const defs = [
     // ---- posture (Ec) ------------------------------------------------------------------------------------------
-    // Undo, Redo and the pagers are simply unavailable at the ends of their range (a disabled button, no reason text).
+    // Undo, Redo and the section jumps are simply unavailable at the ends of their range (a disabled button, no reason text).
     ec({id: 'chart.undo', title: COPY.undo, keys: UNDO_KEYS, scopes: [EC, ECS], icon: 'undo-2', menu: {label: COPY.undoMenu},
       when: c => !!chartState(c)?.canUndo, run: act('undo')}),
     ec({id: 'chart.redo', title: COPY.redo, keys: REDO_KEYS, scopes: [EC, ECS], icon: 'redo-2', menu: {label: COPY.redoMenu},
       when: c => !!chartState(c)?.canRedo, run: act('redo')}),
-    ec({id: 'chart.pagePrev', title: COPY.pagePrev, keys: ['[', 'PageUp'], scopes: [EC], icon: 'chevron-left',
-      when: c => { const s = chartState(c); return !!s && s.range.first > 0; }, run: act('page-prev')}),
-    ec({id: 'chart.pageNext', title: COPY.pageNext, keys: [']', 'PageDown'], scopes: [EC], icon: 'chevron-right',
-      when: c => { const s = chartState(c); return !!s && s.range.last < s.range.total - 1; }, run: act('page-next')}),
+    // Bound in the score's scope too, as undo is: [ and ] are not in its pass-through list, and the score is where the keys are pressed.
+    ec({id: 'chart.sectionPrev', title: COPY.sectionPrev, keys: ['['], scopes: [EC, ECS], icon: 'skip-back',
+      when: c => { const s = chartState(c); return !!s && s.cursorBar > 0; }, run: act('section-prev')}),
+    ec({id: 'chart.sectionNext', title: COPY.sectionNext, keys: [']'], scopes: [EC, ECS], icon: 'skip-forward',
+      when: c => { const s = chartState(c); return !!s && s.sections.some(sec => sec.bar > s.cursorBar); }, run: act('section-next')}),
     ec({id: 'chart.loopSelection', title: COPY.loopSelection, keys: ['KeyL'], scopes: [EC], icon: 'repeat', run: act('loop')}),
-    radio('chart.paging', COPY.paging, 'paging', PAGING, 'paging'),
 
     // ---- the score surface (Ecs, focus and stop scope) -------------------------------------------------------
     ecs({id: 'chart.write', title: COPY.write, keys: ['KeyN'], run: act('write')}),
@@ -270,6 +288,9 @@ export function defineChartCommands({registry = appRegistry, keys = {}} = {}) {
     ecs({id: 'chart.moveFwd', title: COPY.moveFwd, keys: ['Alt+ArrowRight'], repeat: true, run: act('move', 1)}),
     ecs({id: 'chart.barStart', title: COPY.barStart, keys: ['Home'], run: act('bar-start')}),
     ecs({id: 'chart.barEnd', title: COPY.barEnd, keys: ['End'], run: act('bar-end')}),
+    ecs({id: 'chart.firstBar', title: COPY.firstBar, keys: ['Mod+Home'], icon: 'chevrons-left', run: act('goToBar', 0, {seek: true})}),
+    ecs({id: 'chart.lastBar', title: COPY.lastBar, keys: ['Mod+End'], icon: 'chevrons-right',
+      run: c => { const chart = chartOf(c); chart?.run('goToBar', Math.max(0, (chart.state().total ?? 1) - 1), {seek: true}); }}),
     ecs({id: 'chart.skip', title: COPY.skip, keys: ['KeyR'], icon: 'arrow-right', run: act('skip')}),
     ecs({id: 'chart.finer', title: COPY.finer, keys: ['='], run: act('finer')}),
     ecs({id: 'chart.coarser', title: COPY.coarser, keys: ['-'], run: act('coarser')}),
@@ -292,6 +313,22 @@ export function defineChartCommands({registry = appRegistry, keys = {}} = {}) {
       when: c => !!chartState(c)?.canClear, run: act('clear')}),
 
     // ---- menu-only (each shown with its shortcut where it has one) -------------------------------------------
+    // The toolbar's other articulations: they act on the selected notes, else on the next note written.
+    ec({id: 'chart.flam', title: COPY.flam, icon: 'flam', checked: c => !!chartState(c)?.expression.flam, run: act('flam')}),
+    ec({id: 'chart.drag', title: COPY.drag, icon: 'drag', checked: c => !!chartState(c)?.expression.drag, run: act('drag')}),
+    ec({id: 'chart.stickingRight', title: COPY.stickingRight, checked: c => chartState(c)?.expression.sticking === 'R', run: act('sticking', 'R')}),
+    ec({id: 'chart.stickingLeft', title: COPY.stickingLeft, checked: c => chartState(c)?.expression.sticking === 'L', run: act('sticking', 'L')}),
+    // The sheet: zoom (also Ctrl/⌘ + wheel, a trackpad pinch) and the part's own line breaks.
+    ec({id: 'chart.zoomIn', title: COPY.zoomIn, icon: 'zoom-in', when: c => !!chartState(c)?.canZoomIn,
+      disabledReason: c => (chartState(c) && !inScore(c) ? COPY.zoomReason : null), run: act('zoom-in')}),
+    ec({id: 'chart.zoomOut', title: COPY.zoomOut, icon: 'zoom-out', when: c => !!chartState(c)?.canZoomOut,
+      disabledReason: c => (chartState(c) && !inScore(c) ? COPY.zoomReason : null), run: act('zoom-out')}),
+    ec({id: 'chart.zoomReset', title: COPY.zoomReset,
+      disabledReason: c => (chartState(c) && !inScore(c) ? COPY.zoomReason : null), run: act('zoom-reset')}),
+    ec({id: 'chart.lineBreak', title: COPY.lineBreak, icon: 'corner-down-left', checked: c => !!chartState(c)?.lineBreak,
+      disabledReason: c => (chartState(c)?.cursorBar === 0 ? COPY.lineBreakReason : null), run: act('line-break')}),
+    ec({id: 'chart.clearLineBreaks', title: COPY.clearLineBreaks,
+      disabledReason: c => (chartState(c) && !chartState(c).lineBreaks ? COPY.clearLineBreaksReason : null), run: act('clear-line-breaks')}),
     ec({id: 'chart.moveDialog', title: COPY.moveDialog, run: act('move-dialog')}),
     ec({id: 'chart.tupletDialog', title: COPY.tupletDialog, run: act('tuplet-dialog')}),
     ec({id: 'chart.review', title: COPY.review, icon: 'check', run: act('review')}),
