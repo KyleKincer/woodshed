@@ -694,6 +694,8 @@ One per-device control, `Distance: Near · Stand · Kit`, in `⋯` and Settings 
 - **Key-cap hints** appear only on `(hover:hover) and (pointer:fine)` after keyboard use. On touch, buttons stand in for them.
 
 ### 5.1 Edit · Map (tempo, meter, sections, detection, imports)
+
+> **Revised in 2.9** (the bullets below describe 2.0; where they differ, this paragraph wins). The **tools** left the inspector's last section for the far end of the toolbar: Tap along, Preview, Detect beats, Find a chart…, and More tools (Calibrate tap timing…, Snap taps to drum hits, and Suggest sections while the song has none). An empty sections lane offers Suggest sections itself. In a toolbar narrower than 1040 px the tools keep their icons and drop their words. The **stem rows** share the height the window has left, 96 to 220 px each, so nothing under them is empty. The **song strip** has a height (a mapped song's strip was 0 px tall, so it never showed). A **status bar** under the strip says where the cursor is (bar, beat, time; an unmapped song: the cue's time) and holds the status line, which used to sit at the end of the inspector, below the fold. The **inspector** is reordered so it fits a laptop without scrolling: the bar and its Go to row, Section label, Tempo, Pin, then Meter, folded until asked for (its heading shows the bar's meter; `E` opens it). In the tempo lane, pins closer than 16 px (a detected map pins every bar) are drawn as dots; the selected one and a zoomed-in view keep their diamonds.
 **Main area, top to bottom:**
 - bar ruler with meter chips;
 - **sections lane** (32 px, editable blocks);

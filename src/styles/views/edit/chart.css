@@ -124,7 +124,12 @@
   .chart-edit-bank[hidden] { display: none; }
 
   .chart-bank { display: flex; gap: var(--s2); padding: var(--s3) var(--s4); }
-  .chart-bank-pads { flex: 1; display: grid; gap: var(--s1); min-width: 0; }
+  .chart-bank-main { flex: 1; display: grid; gap: var(--s1); min-width: 0; }
+  .chart-bank-pads { display: grid; gap: var(--s1); min-width: 0; }
+  .chart-bank-dots { display: flex; justify-content: center; gap: var(--s1); }
+  .chart-bank-dots[hidden] { display: none; }
+  .chart-bank-dot { inline-size: 6px; block-size: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+  .chart-bank-dot[data-current] { background: var(--accent); }
   .chart-bank-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--s1); }
   .chart-bank-pad.ui-button { min-width: 0; height: 56px; min-height: 56px; padding: 0 var(--s1);
     border-bottom: 4px solid var(--family, var(--line-strong)); font-variant-numeric: tabular-nums; }
@@ -161,13 +166,17 @@
     .chart-status-message:empty,
     .chart-status-piece,
     .chart-status-zoom { display: none; }
-    .chart-bank { flex-direction: column; gap: var(--s1); padding: var(--s2); }
+    /* The bank is two rows of six a page (kit-bank.js `compact`): the pages swipe sideways, with dots under them.
+     * The sheet keeps the two rows of height the full bank would take. */
+    .chart-bank { gap: var(--s1); padding: var(--s2); }
+    .chart-bank-pads[data-compact] { display: flex; gap: var(--s2); overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+    .chart-bank-page { flex: 0 0 100%; display: grid; align-content: start; gap: var(--s1); scroll-snap-align: start; }
+    .chart-bank-pads[data-compact] .chart-bank-row { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     .chart-bank-pad.ui-button { padding: 0 2px; font-size: 0.8125rem; line-height: 1.1; }
     .chart-bank-pad.ui-button .ui-button-text,
     .chart-bank-pad.ui-button .ui-button-label { white-space: normal; text-align: center; hyphens: auto; }
     .chart-bank-pad.ui-button > .ui-icon { display: none; }
-    .chart-bank-nav { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
-    .chart-bank-step.ui-button { width: auto; min-height: 44px; }
+    .chart-bank-step.ui-button { width: 44px; }
   }
 
   @media (pointer: coarse) {

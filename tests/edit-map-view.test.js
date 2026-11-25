@@ -349,13 +349,85 @@ describe.skipIf(!viewModule)('the mounted view', () => {
     expect(byRole(web.inspectorEl, 'button', COPY.detectAction)).toHaveLength(1);
   });
 
-  test('a mapped song without sections offers Suggest sections in Tools', async () => {
+  test('a mapped song without sections offers Suggest sections in the empty sections lane', async () => {
     const {pickup} = await import('./fixtures/maps.js');
     const b = await bed({tempo: structuredClone(pickup.tempo), desktop: true});
     expect(b.map.hasSections).toBe(false);
+    const lane = b.root.querySelector('.map-cell-sections');
     for (const row of CONTROLS.filter((r) => r.context === 'unsectioned')) {
-      expect(byRole(b.inspectorEl, row.role, row.name).length, row.name).toBeGreaterThan(0);
+      expect(byRole(lane, row.role, row.name).length, row.name).toBeGreaterThan(0);
     }
+    expect(lane.textContent).toContain(COPY.noSections);
+    expect(byRole(b.inspectorEl, 'button', COPY.suggest)).toHaveLength(0);
+    // A song with sections has no empty lane, so nothing offers it.
+    const sectioned = await bed({desktop: true});
+    expect(byRole(sectioned.root, 'button', COPY.suggest)).toHaveLength(0);
+  });
+
+  test('the tools sit in the toolbar (2.9): Tap along, Preview, Detect beats, Find a chart… and More tools', async () => {
+    const b = await bed({desktop: true});
+    const tools = b.root.querySelector('.map-toolbar [data-testid=map-tools]');
+    expect(tools.getAttribute('aria-label')).toBe(COPY.tools);
+    expect([...tools.querySelectorAll('button')].filter((x) => !x.hidden).map(nameOf)).toEqual([COPY.tapAlong, COPY.preview, COPY.detect, COPY.find, COPY.moreTools]);
+    // Preview is a toggle on map.preview; its visible word is short, its name the whole phrase.
+    const preview = one(tools, 'button', COPY.preview);
+    expect(preview.getAttribute('aria-pressed')).toBe('false');
+    expect(preview.querySelector('.ui-button-label').textContent).toBe(COPY.previewShort);
+    // Find a chart… opens Find.
+    one(tools, 'button', COPY.find).click();
+    expect(b.router.calls.at(-1)[0]).toBe(`/s/${encodeURIComponent(b.ts.session.id)}/edit/map/find`);
+    // More tools: Calibrate tap timing… and Snap taps to drum hits (a device pref).
+    one(tools, 'button', COPY.moreTools).click();
+    const items = [...document.querySelectorAll('.ui-menu [role^=menuitem]')];
+    expect(items.map((i) => [i.getAttribute('role'), nameOf(i)])).toEqual(CONTROLS.filter((r) => r.context === 'more').map((r) => [r.role, r.name]));
+    expect(items[1].getAttribute('aria-checked')).toBe('true');
+    items[1].click();
+    expect(b.prefs.get('edit.map.tapSnap')).toBe(false);
+  });
+
+  test('a tool that cannot run says why in its tooltip, not inside the toolbar button', async () => {
+    const b = await bed();                       // the web with no paired computer: Detect cannot run
+    const tools = b.root.querySelector('[data-testid=map-tools]');
+    const detect = one(tools, 'button', COPY.detect);
+    expect(b.reg.state(C.detect).reason).toBeTruthy();
+    expect(detect.getAttribute('aria-disabled')).toBe('true');
+    expect(tools.querySelector('.ui-button-reason')).toBeNull();
+  });
+
+  test('the tools on an unmapped song: Tap along, Detect beats and Find a chart… (Preview needs bars)', async () => {
+    const b = await bed({mapped: false, desktop: true});
+    const tools = b.root.querySelector('[data-testid=map-tools]');
+    expect([...tools.querySelectorAll('button')].filter((x) => !x.hidden).map(nameOf)).toEqual([COPY.tapAlong, COPY.detect, COPY.find, COPY.moreTools]);
+  });
+
+  test('Detect beats in the toolbar shows the job’s line while it runs', async () => {
+    const b = await bed({desktop: true});
+    const detect = one(b.root.querySelector('[data-testid=map-tools]'), 'button', COPY.detect);
+    detect.click();
+    await settle();
+    frame();
+    expect(b.ts.server.jobRows.some((j) => j.kind === 'beats')).toBe(true);
+    expect(detect.getAttribute('aria-busy')).toBe('true');
+  });
+
+  test('the status bar says where the cursor is and hosts the status line', async () => {
+    const b = await bed();
+    const bar = b.root.querySelector('.map-statusbar');
+    expect(bar.getAttribute('aria-label')).toBe(COPY.statusBar);
+    const position = bar.querySelector('[data-testid=map-position]');
+    expect(position.textContent).toBe('Bar 1 · 0:00.000');
+    b.mapSession.goToBar(10);
+    frame();
+    expect(position.textContent).toBe('Bar 10 · 0:18.000');
+    b.mapSession.step(1, 'beat');
+    frame();
+    expect(position.textContent).toBe('Bar 10 · beat 2 · 0:18.500');
+    // The inspector's status line is drawn here, where it is always on screen.
+    expect(bar.querySelector('[data-testid=map-status]')).toBeTruthy();
+    expect(b.inspectorEl.querySelector('[data-testid=map-status]')).toBeNull();
+    // An unmapped song never says Bar: the cue's time.
+    const u = await bed({mapped: false});
+    expect(u.root.querySelector('[data-testid=map-position]').textContent).toBe('0:00.000');
   });
 
   test('toolbar: − + Fit and Z change the shared window; Grid ▾ picks a division; Snap toggles (aria-pressed)', async () => {
@@ -648,7 +720,7 @@ describe.skipIf(!viewModule)('detection on a mapped song (D44, D23)', () => {
     const b = await bed({desktop: true});
     const before = JSON.stringify(b.map.data);
     expect(b.reg.isEnabled(C.detect)).toBe(true);
-    one(b.inspectorEl, 'button', COPY.detect).click();
+    one(b.root.querySelector('[data-testid=map-tools]'), 'button', COPY.detect).click();
     await settle();
     const job = b.ts.server.jobRows.find((j) => j.kind === 'beats');
     expect(job).toBeTruthy();

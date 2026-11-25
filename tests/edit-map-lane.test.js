@@ -187,6 +187,23 @@ describe('the tempo lane', () => {
     expect(ctx.callsOf('createPattern').length).toBeGreaterThan(0);                            // the hatch
   });
 
+  test('drawTempoLane: pins that crowd (a detected map pins every bar) are dots; the selected one and a zoomed-in view keep diamonds', () => {
+    // 60 bars at 120 bpm, a pin on every bar line: 2 s apart.
+    const map = new SongMapStore({version: 1, pins: Array.from({length: 61}, (_, i) => ({position: fraction(4 * i), time: 2 * i})),
+      measures: Array.from({length: 60}, (_, i) => ({id: 'm' + i, numerator: 4, denominator: 4, length: fraction(4), label: ''}))}, 120);
+    const colors = {ink: 'ink', ink2: 'ink2', ink3: 'ink3', accent: 'accent', accentFill: 'fill', accentSoft: 'soft', onAccent: 'on', now: 'now',
+      warn: 'warn', line: 'line', lineStrong: 'strong', surface: 'surface', surface2: 'surface2', bg: 'bg', edit: 'edit', fontMono: 'mono', fontUi: 'ui'};
+    // The whole song in 480 px: 8 px a pin.
+    const fit = drawTempoLane(createRecordingContext(), tempoGeometry(map, {t0: 0, span: 120, width: 480, height: 96}), {width: 480, height: 96, colors, selectedQ: fraction(8)});
+    expect(fit.pins).toBe(61);
+    expect(fit.dots).toBe(60);              // every pin but the selected one
+    expect(fit.selected).toBe(true);
+    // Eight bars in 480 px: 60 px a pin, all diamonds.
+    const near = drawTempoLane(createRecordingContext(), tempoGeometry(map, {t0: 0, span: 16, width: 480, height: 96}), {width: 480, height: 96, colors});
+    expect(near.dots).toBe(0);
+    expect(near.pins).toBeGreaterThan(0);
+  });
+
   test('a pin drag moves the pin as one map step (2 ms inside its neighbours), says where, and Undo puts it back', async () => {
     const b = await laneBed();
     const pin = b.pinAt(1);

@@ -208,7 +208,9 @@ export function createSectionsLane(host, {session, mapSession, registry, coarse 
     const items = mode === 'review' ? suggestionBlocks(map, peek(mapSession.review).blocks, view)
       : mode === 'sections' ? sectionBlocks(map, view)
         : mode === 'suggestion' ? suggestionBlocks(map, suggestion().sections ?? [], view) : [];
-    const key = JSON.stringify([mode, map.revision, map.bars.length, items.map((b) => [b.i ?? b.index, b.startBar ?? b.bar, b.label, b.name, b.accepted])]);
+    // An empty lane offers Suggest sections where it can run (the desktop app or a paired computer).
+    const canSuggest = mode === 'empty' && !!registry.state?.(MAP_COMMANDS.suggest)?.enabled;
+    const key = JSON.stringify([mode, canSuggest, map.revision, map.bars.length, items.map((b) => [b.i ?? b.index, b.startBar ?? b.bar, b.label, b.name, b.accepted])]);
     el.dataset.mode = mode;
     el.toggleAttribute('data-consume-keys', mode === 'review');
     if (mode === 'review') el.dataset.consumeKeys = 'Escape';
@@ -234,7 +236,15 @@ export function createSectionsLane(host, {session, mapSession, registry, coarse 
       const review = Button({label: COPY.review, size: 'sm', variant: 'quiet', onClick: openReview});
       setBar(COPY.suggestion, [keepAll, review]);
     } else {
-      if (real) nodes.push(h('span', {class: 'map-sections-empty'}, COPY.noSections));
+      if (real) {
+        const note = h('span', {class: 'map-sections-empty'}, h('span', {class: 'map-sections-empty-text'}, COPY.noSections));
+        if (canSuggest) {
+          const suggest = Button({label: COPY.suggest, size: 'sm', variant: 'quiet', command: MAP_COMMANDS.suggest, registry, className: 'map-sections-suggest'});
+          note.append(suggest.el);
+          note._off = () => suggest.destroy();
+        }
+        nodes.push(note);
+      }
       setBar('', []);
     }
     blocksEl.replaceChildren(...nodes);

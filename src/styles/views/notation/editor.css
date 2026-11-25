@@ -89,7 +89,26 @@
   .notation-lane-label .ui-kbd { flex: none; }
 
   .notation-inspector,
-  .notation-audition { display: grid; gap: var(--s3); }
+  .notation-audition { display: grid; gap: var(--s4); }
+  /* Properties and Listen: a small label over each group of choices (buttons, never a dropdown: every choice shows). */
+  .notation-note-head { display: grid; gap: 2px; }
+  .notation-note-head .notation-panel-title { margin: 0; font-size: var(--fs-16); }
+  .notation-group { display: grid; gap: var(--s1); min-width: 0; }
+  .notation-label { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); margin: 0; color: var(--ink-2);
+    font: var(--fw-semibold) var(--fs-12)/1.3 var(--font-ui); letter-spacing: .04em; text-transform: uppercase; }
+  .notation-label output { color: var(--ink); font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+  .notation-arts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s1); }
+  .notation-arts .notation-toggle { justify-content: flex-start; gap: var(--s2); min-width: 0; padding: 0 var(--s2); }
+  .notation-segments { flex-wrap: nowrap; gap: var(--s1); }
+  .notation-segments .notation-toggle { min-width: 0; padding: 0 var(--s2); }
+  .notation-level { gap: var(--s2); }
+  .notation-danger { color: var(--danger); border-color: var(--line); }
+  /* Part layout and Recorded drums are headed like the groups above them; their note sits on a line of its own. */
+  .notation-part-layout .notation-panel-title,
+  .notation-recorded .notation-panel-title { display: grid; gap: 2px; color: var(--ink-2); font: var(--fw-semibold) var(--fs-12)/1.3 var(--font-ui);
+    letter-spacing: .04em; text-transform: uppercase; }
+  .notation-part-layout .notation-panel-title .notation-hint { letter-spacing: 0; text-transform: none; }
+  .notation-play { gap: var(--s2); }
   .notation-field { display: grid; gap: var(--s1); color: var(--ink-2); font: var(--fs-14)/1.3 var(--font-ui); }
   .notation-field select,
   .notation-field input:not([type=range]) { min-height: var(--h-sm); padding: 0 var(--s2); border: 1px solid var(--line-strong);
